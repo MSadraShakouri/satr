@@ -1,11 +1,13 @@
 import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { search, SearchQuery, setSearchQuery, findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
 import { EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type ViewUpdate } from '@codemirror/view';
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { livePreview } from './livePreview';
+import { deleteDollarPair, inCode, inMath, mathSource } from './mathSource';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 
@@ -13,33 +15,51 @@ const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: '1.85' },
   '.cm-content': { padding: '5.5rem max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
-  '.cm-line': { padding: '0', unicodeBidi: 'plaintext' },
+  '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });
 
 // Line numbers sit in a smaller font than the text, so on their own they
-// float toward the top of each line. Tag heading lines in the gutter so CSS
-// can give their numbers the heading's line box and centre them on it.
-class HeadingGutterClass extends GutterMarker {
+// float toward the top of each line. Tag heading and code lines in the gutter
+// so CSS can give their numbers the same line box as the text beside them.
+class LineGutterClass extends GutterMarker {
   constructor(readonly elementClass: string) { super(); }
 }
-const headingGutterClasses = [1, 2, 3].map((level) => new HeadingGutterClass(`cm-ln-h${level}`));
-function buildHeadingGutter(state: EditorState) {
+const headingGutterClasses = [1, 2, 3].map((level) => new LineGutterClass(`cm-ln-h${level}`));
+const codeGutterClass = new LineGutterClass('cm-ln-code');
+const footnoteGutterClass = new LineGutterClass('cm-ln-footnote');
+// Only block containers are walked into; inline content is skipped, so this
+// costs one step per block rather than one per syntax node.
+const BLOCK_CONTAINERS = new Set(['Document', 'Blockquote', 'BulletList', 'OrderedList', 'ListItem']);
+function buildLineGutter(state: EditorState) {
   const builder = new RangeSetBuilder<GutterMarker>();
   syntaxTree(state).iterate({
     enter: (node) => {
-      const match = /^(?:ATX|Setext)Heading([1-3])$/.exec(node.name);
-      if (!match) return;
-      builder.add(node.from, node.from, headingGutterClasses[Number(match[1]) - 1]);
+      if (BLOCK_CONTAINERS.has(node.name)) return true;
+      const heading = /^(?:ATX|Setext)Heading([1-3])$/.exec(node.name);
+      if (heading) {
+        builder.add(node.from, node.from, headingGutterClasses[Number(heading[1]) - 1]);
+      } else if ((node.name === 'Paragraph' || node.name === 'LinkReference') && /^\[\^[^\]\s]+\]:/.test(state.sliceDoc(node.from, node.from + 64))) {
+        builder.add(node.from, node.from, footnoteGutterClass);
+      } else if (node.name === 'FencedCode' || node.name === 'CodeBlock') {
+        const first = state.doc.lineAt(node.from).number;
+        const last = state.doc.lineAt(node.to).number;
+        for (let n = first; n <= last; n += 1) {
+          const from = state.doc.line(n).from;
+          builder.add(from, from, codeGutterClass);
+        }
+      }
       return false;
     },
   });
   return builder.finish();
 }
-const headingGutterField = StateField.define({
-  create: buildHeadingGutter,
+// Rebuilt when the text changes or the background parser has got further —
+// not on every tree object swap.
+const lineGutterField = StateField.define({
+  create: buildLineGutter,
   update: (markers, tr) =>
-    tr.docChanged || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? buildHeadingGutter(tr.state) : markers,
+    tr.docChanged || syntaxTree(tr.startState).length !== syntaxTree(tr.state).length ? buildLineGutter(tr.state) : markers,
   provide: (field) => gutterLineClass.from(field),
 });
 
@@ -64,23 +84,50 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-const directionPlugin = ViewPlugin.fromClass(class {
-  decorations: any;
-  constructor(view: EditorView) { this.decorations = this.build(view); }
-  update(update: { docChanged: boolean; viewportChanged: boolean; view: EditorView }): void {
-    if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view);
-  }
-  build(view: EditorView) {
-    const ranges = [];
-    for (const visible of view.visibleRanges) {
-      let line = view.state.doc.lineAt(visible.from);
-      while (true) {
-        ranges.push(Decoration.line({ attributes: { dir: 'auto' } }).range(line.from));
-        if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
-        line = view.state.doc.line(line.number + 1);
-      }
+// Line direction, as Obsidian's editor does it: each line gets an explicit
+// dir from its first strong letter (list, quote and task markers skipped), and
+// a line with no letters — an empty line, a line of digits — keeps the
+// direction of the line above. So the caret on a fresh line after Persian
+// text sits on the right, ready to continue in Persian.
+const RTL_OR_LTR = /([\u200F\p{sc=Arabic}\p{sc=Hebrew}\p{sc=Syriac}\p{sc=Thaana}])|([\u200E\p{L}])/u;
+const LINE_PREFIX = /^([>\s]*)(([*+-] |(\d+|[۰-۹٠-٩]+)([.)] ))(?:\[(.)\] )?)?/;
+type Dir = 'rtl' | 'ltr' | 'auto';
+function lineDirection(text: string): Dir {
+  const prefix = LINE_PREFIX.exec(text);
+  const match = RTL_OR_LTR.exec(prefix?.[0] ? text.slice(prefix[0].length) : text);
+  return match ? (match[1] ? 'rtl' : 'ltr') : 'auto';
+}
+const dirDecorations = {
+  rtl: Decoration.line({ attributes: { dir: 'rtl' } }),
+  ltr: Decoration.line({ attributes: { dir: 'ltr' } }),
+  auto: Decoration.line({ attributes: { dir: 'auto' } }),
+};
+function buildDirections(view: EditorView) {
+  const { doc } = view.state;
+  const builder = new RangeSetBuilder<Decoration>();
+  let inherited: Dir = 'auto';
+  const blocks = view.viewportLineBlocks;
+  // Seed from the nearest line with letters above the viewport.
+  if (blocks.length) {
+    for (let n = doc.lineAt(blocks[0].from).number - 1, steps = 0; n >= 1 && steps < 200; n -= 1, steps += 1) {
+      const dir = lineDirection(doc.line(n).text);
+      if (dir !== 'auto') { inherited = dir; break; }
     }
-    return Decoration.set(ranges, true);
+  }
+  for (const block of blocks) {
+    const line = doc.lineAt(block.from);
+    let dir = lineDirection(line.text);
+    if (dir === 'auto') dir = inherited;
+    builder.add(line.from, line.from, dirDecorations[dir]);
+    inherited = dir;
+  }
+  return builder.finish();
+}
+const directionPlugin = ViewPlugin.fromClass(class {
+  decorations;
+  constructor(view: EditorView) { this.decorations = buildDirections(view); }
+  update(update: ViewUpdate): void {
+    if (update.docChanged || update.viewportChanged) this.decorations = buildDirections(update.view);
   }
 }, { decorations: (value) => value.decorations });
 
@@ -330,9 +377,32 @@ const titleField = StateField.define({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+// Code and math want a keyboard without word suggestions or autocorrect, like
+// Termux. Chromium on Android turns the suggestion strip off only for
+// autocomplete="off" (TYPE_TEXT_FLAG_NO_SUGGESTIONS; spellcheck feeds no IME
+// flag) and drops auto-correct for autocorrect="off". Prose keeps both. The
+// number row is Gboard's own choice and can't be requested from a web page.
+const technicalContext = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    if (!tr.docChanged && !tr.selection) return value;
+    const { head } = tr.state.selection.main;
+    return inCode(tr.state, head) || inMath(tr.state, head);
+  },
+});
+const keyboardAttributes = EditorView.contentAttributes.compute([technicalContext], (state): Record<string, string> => (state.field(technicalContext)
+  ? { spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off' }
+  : { spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences' }));
+
+// Brackets and quotes pair up as you type (Obsidian's "Auto pair brackets");
+// "$" has its own rules in mathSource.ts. No "'" — it's an apostrophe in prose.
+const pairs = EditorState.languageData.of(() => [{
+  closeBrackets: { brackets: ['(', '[', '{', '"', '`', '«'], before: ')]}:;>.,!?»،؛$`"' },
+}]);
+
 export class SatrEditor {
   readonly view: EditorView;
-  constructor(parent: HTMLElement, onChange: (text: string) => void, options?: {
+  constructor(parent: HTMLElement, onChange: () => void, options?: {
     title?: string;
     onRename?: (base: string) => string | null;
     checkName?: (base: string) => string | null;
@@ -344,9 +414,12 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection(), tightSelection, history(), search(),
+      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, history(), search(),
       // GFM base: strikethrough, task lists and tables get parsed.
-      markdown({ base: markdownLanguage }),
+      // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
+      // once. Obsidian deletes character by character, revealing the raw
+      // marker as the caret reaches it (see livePreview.ts).
+      markdown({ base: markdownLanguage, addKeymap: false }),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
         { tag: tags.heading1, fontWeight: '700', fontSize: '1.45em' },
@@ -358,37 +431,40 @@ export class SatrEditor {
         { tag: tags.link, color: 'var(--accent)' },
         { tag: tags.url, opacity: '0.62' },
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
-        { tag: tags.quote, color: 'var(--muted)' },
       ])),
       titleField,
-      rtlLineDirection, directionPlugin, persianListMarkerPlugin, headingGutterField, livePreview,
+      rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, livePreview, mathSource,
+      technicalContext, keyboardAttributes, closeBrackets(), pairs,
+      // Keep the caret clear of the on-screen keyboard and the toolbar on
+      // every scroll-into-view (typing, commands, selecting low on the screen).
+      EditorView.scrollMargins.of(() => ({ bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
-      EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', dir: 'auto' }),
+      EditorView.contentAttributes.of({ dir: 'auto' }),
       keymap.of([
-        { key: 'Mod-s', run: () => { onChange(this.getValue()); return true; } },
+        { key: 'Mod-s', run: () => { onChange(); return true; } },
         { key: 'Mod-f', run: (target) => { target.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) }); return true; } },
         { key: 'Mod-/', run: toggleComment },
         { key: 'Enter', run: continueOnEnter },
+        { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
         { key: 'Tab', run: indentMore, shift: outdentLess },
+        { key: 'Backspace', run: deleteDollarPair },
+        ...closeBracketsKeymap,
         ...defaultKeymap, ...historyKeymap,
       ]),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) onChange(update.state.doc.toString());
+        if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) options?.onSelection?.(update.state.selection.main.head);
       }),
     ];
     this.view = new EditorView({ state: EditorState.create({ extensions }), parent });
+    // When the keyboard opens (or the caret is placed by touch), bring the
+    // caret above it. scrollIntoView honours the scrollMargins above, which
+    // include the keyboard overlap and the toolbar.
     const focusCaret = (): void => {
       window.requestAnimationFrame(() => {
-        const head = this.view.state.selection.main.head;
-        const caret = this.view.coordsAtPos(head);
-        const scroller = this.view.scrollDOM;
-        if (!caret) return;
-        const viewport = window.visualViewport;
-        const keyboardTop = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight);
-        const safeBottom = Math.min(keyboardTop, window.innerHeight) - 28 - (options?.obscuredBottom?.() ?? 0);
-        if (caret.bottom > safeBottom) scroller.scrollBy({ top: caret.bottom - safeBottom, behavior: 'smooth' });
+        if (!this.view.hasFocus) return;
+        this.view.dispatch({ effects: EditorView.scrollIntoView(this.view.state.selection.main.head, { y: 'nearest' }) });
       });
     };
     this.view.contentDOM.addEventListener('focus', focusCaret);
@@ -410,6 +486,16 @@ export class SatrEditor {
   }
   setValue(value: string): void { this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value } }); }
   focus(): void { this.view.focus(); }
+  /** Caret / selection as [anchor, head], for remembering between sessions. */
+  getSelection(): [number, number] {
+    const { anchor, head } = this.view.state.selection.main;
+    return [anchor, head];
+  }
+  /** Put the caret back without focusing (no keyboard) and without scrolling. */
+  setSelection(anchor: number, head = anchor): void {
+    const max = this.view.state.doc.length;
+    this.view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } });
+  }
   get hasFocus(): boolean { return this.view.hasFocus; }
   /** Run a keyboard-toolbar command by name. */
   run(command: string): boolean {

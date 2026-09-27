@@ -4,6 +4,7 @@
 import { deleteLine, moveLineDown, moveLineUp, redo, undo } from '@codemirror/commands';
 import { EditorSelection, type ChangeSpec, type Line } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { editFootnote } from './footnoteDialog';
 
 const PERSIAN_TEXT = /[\u0600-\u06FF]/;
 const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
@@ -91,22 +92,49 @@ export function toggleOrdered(view: EditorView): boolean {
   }), 'input.list');
 }
 
-export function toggleTask(view: EditorView): boolean {
+// To-do cycles through three states, decided by the first touched line:
+// plain → "- [ ] " → "- [x] " → plain. Numbered items keep their number
+// ("1. [ ] ", "1. [x] ", "1. ").
+export function cycleTask(view: EditorView): boolean {
   const lines = touchedLines(view);
-  const isTask = (line: Line): boolean => Boolean(LIST.exec(line.text)?.[6]);
-  if (lines.every(isTask)) {
-    // Numbered items keep their number; bulleted to-dos become plain text.
-    return apply(view, lines.map((line) => {
-      const match = LIST.exec(line.text)!;
-      return setPrefix(line, match[3] ? `${match[3]}${match[4]} ` : '');
-    }), 'input.list');
-  }
+  const state = (line: Line): 'none' | 'open' | 'done' => {
+    const box = LIST.exec(line.text)?.[6];
+    return !box ? 'none' : /x/i.test(box) ? 'done' : 'open';
+  };
+  const next = { none: 'open', open: 'done', done: 'none' }[state(lines[0])];
   return apply(view, lines.map((line) => {
     const match = LIST.exec(line.text);
-    // Numbered items keep their number: "1. [ ] ..."
-    if (match && match[3]) return setPrefix(line, `${match[3]}${match[4]} [ ] `);
-    return setPrefix(line, '- [ ] ');
+    const number = match && match[3] ? `${match[3]}${match[4]} ` : null;
+    if (next === 'none') return setPrefix(line, number ?? '');
+    const box = next === 'open' ? '[ ] ' : '[x] ';
+    return setPrefix(line, `${number ?? '- '}${box}`);
   }), 'input.list');
+}
+
+// Insert footnote, after Obsidian's editor:insert-footnote: "[^n]" at the
+// caret (n = highest numeric footnote id + 1) and "[^n]: " appended at the
+// end of the note after a blank line. The caret stays after the reference —
+// no jump to the end of the file — and a dialog opens to write the note
+// (src/footnoteDialog.ts).
+export function insertFootnote(view: EditorView): boolean {
+  const { state } = view;
+  const text = state.doc.toString();
+  let highest = 0;
+  for (const match of text.matchAll(/\[\^(\d+)\]/g)) highest = Math.max(highest, Number(match[1]));
+  const id = String(highest + 1);
+  const label = `[^${id}]`;
+  const { to } = state.selection.main;
+  const trailing = /\n*$/.exec(text)![0].length;
+  const definition = `${'\n'.repeat(2 - Math.min(trailing, 2))}${label}: `;
+  const end = state.doc.length;
+  view.dispatch({
+    changes: [{ from: to, insert: label }, { from: end, insert: definition }],
+    selection: { anchor: to + label.length },
+    userEvent: 'input.footnote',
+    scrollIntoView: true,
+  });
+  editFootnote(view, id, { isNew: true });
+  return true;
 }
 
 export function insertMath(view: EditorView): boolean {
@@ -122,7 +150,8 @@ export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
   heading: cycleHeading,
   bullet: toggleBullet,
   ordered: toggleOrdered,
-  task: toggleTask,
+  task: cycleTask,
+  footnote: insertFootnote,
   deleteLine,
   math: insertMath,
   lineUp: moveLineUp,

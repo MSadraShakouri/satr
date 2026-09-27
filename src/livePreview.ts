@@ -10,6 +10,7 @@ import { syntaxTree } from '@codemirror/language';
 import type { Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNodeRef } from '@lezer/common';
+import { editFootnote, findDefinition } from './footnoteDialog';
 
 // Bullets and checkboxes are MARKS over the real "-" / "[ ]" text (drawn
 // with CSS), not replacing widgets — the same trick as Obsidian's
@@ -46,7 +47,52 @@ const rule = Decoration.replace({ widget: new RuleWidget() });
 const inlineCode = Decoration.mark({ class: 'cm-lp-inline-code' });
 const linkText = Decoration.mark({ class: 'cm-lp-link' });
 const doneText = Decoration.mark({ class: 'cm-lp-task-done' });
-const quoteLine = Decoration.line({ class: 'cm-lp-quote' });
+// Quote lines get a hanging indent the width of their "> " prefix, so wrapped
+// lines line up with the text instead of running under the rule (Obsidian
+// does the same: padding-inline-start plus a negative text-indent).
+const quoteLines = new Map<number, Decoration>();
+function quoteLine(indent: number): Decoration {
+  const px = Math.round(indent * 10) / 10;
+  let deco = quoteLines.get(px);
+  if (!deco) {
+    deco = Decoration.line({
+      class: 'cm-lp-quote',
+      attributes: px > 0 ? { style: `padding-inline-start:${px}px;text-indent:-${px}px` } : {},
+    });
+    quoteLines.set(px, deco);
+  }
+  return deco;
+}
+let measureContext: CanvasRenderingContext2D | null = null;
+const editorFonts = new WeakMap<EditorView, string>();
+function textWidth(view: EditorView, text: string): number {
+  measureContext ??= document.createElement('canvas').getContext('2d');
+  if (!measureContext) return 0;
+  // The editor font is read once per editor, not per quote line per keystroke
+  // (getComputedStyle can force a style recalculation).
+  let font = editorFonts.get(view);
+  if (!font) {
+    const style = getComputedStyle(view.contentDOM);
+    font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    editorFonts.set(view, font);
+  }
+  measureContext.font = font;
+  return measureContext.measureText(text).width;
+}
+// Obsidian keeps the ">" in place but transparent (so text doesn't shift when
+// it is revealed); the first level's border is drawn by the line, deeper
+// levels by the marker itself.
+const quoteMarkFirst = Decoration.mark({ class: 'cm-lp-transparent' });
+const quoteMarkNested = Decoration.mark({ class: 'cm-lp-quote-border' });
+// Footnotes, styled as in Obsidian's editor: references raised and small with
+// their brackets faint but visible; definition lines in the footnote size.
+const footref = Decoration.mark({ class: 'cm-lp-footref' });
+const footrefMark = Decoration.mark({ class: 'cm-lp-footref-mark' });
+const footnoteLine = Decoration.line({ class: 'cm-lp-footnote-line' });
+const footnoteLabel = Decoration.mark({ class: 'cm-lp-footnote-label' });
+const FOOTNOTE_DEF = /^\[\^([^\]\s]+)\]:/;
+const FOOTNOTE_REF = /\[\^([^\]\s]+)\]|\^\[([^\]]+)\]/g;
+const inCode = (name: string): boolean => /Code|CodeMark|CodeText|CodeInfo/.test(name);
 
 function build(view: EditorView): DecorationSet {
   const { state } = view;
@@ -113,27 +159,39 @@ function build(view: EditorView): DecorationSet {
           }
           case 'QuoteMark': {
             const line = state.doc.lineAt(node.from);
-            out.push(quoteLine.range(line.from));
-            if (!touches(line.from, line.to)) hideMarkWithSpace(node.from, node.to);
+            const first = node.from === line.from + line.text.indexOf('>');
+            if (first) {
+              const prefix = /^\s*(?:>\s?)+/.exec(line.text)?.[0] ?? '';
+              out.push(quoteLine(textWidth(view, prefix)).range(line.from));
+            }
+            if (!touches(line.from, line.to)) out.push((first ? quoteMarkFirst : quoteMarkNested).range(node.from, node.to));
             return;
           }
           case 'ListMark': {
+            // As in Obsidian: a marker is drawn (dot / checkbox) only while a
+            // space follows it — "- " is a bullet, "-" is just a dash — and it
+            // stays drawn wherever the caret is on the line. Backspacing the
+            // space turns it back into plain text, character by character.
+            // Only a caret inside the marker itself shows the raw syntax.
             const item = node.node.parent;
             const list = item?.parent;
+            const spaced = (end: number): boolean => /^[ \t]/.test(state.sliceDoc(end, end + 1));
+            const inside = (from: number, to: number): boolean => focused && ranges.some((r) => r.to > from && r.from <= to);
             const task = node.node.nextSibling?.name === 'Task' ? node.node.nextSibling.firstChild : null;
             if (task && task.name === 'TaskMarker') {
               const checked = /x/i.test(state.sliceDoc(task.from, task.to));
               const line = state.doc.lineAt(task.from);
               const textStart = task.to + (/^\s*/.exec(state.sliceDoc(task.to, line.to))?.[0].length ?? 0);
+              if (!spaced(task.to)) return; // "- [ ]" without the space: plain text
               if (checked && textStart < line.to) out.push(doneText.range(textStart, line.to));
               // "- [ ]" becomes a checkbox; in ordered lists the number stays.
               const start = list?.name === 'BulletList' ? node.from : task.from;
-              if (touches(start, task.to)) return;
+              if (inside(start, task.to)) return;
               if (start < task.from) out.push(listHidden.range(start, task.from));
               out.push((checked ? taskDone : taskOpen).range(task.from, task.to));
               return;
             }
-            if (list?.name === 'BulletList' && !touches(node.from, node.to + 1)) out.push(bullet.range(node.from, node.to));
+            if (list?.name === 'BulletList' && spaced(node.to) && !inside(node.from, node.to)) out.push(bullet.range(node.from, node.to));
             return;
           }
           case 'HorizontalRule': {
@@ -176,13 +234,60 @@ function build(view: EditorView): DecorationSet {
       },
     });
   }
+  addFootnotes(view, out);
   return Decoration.set(out, true);
+}
+
+function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
+  const { state } = view;
+  const tree = syntaxTree(state);
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to;) {
+      const line = state.doc.lineAt(pos);
+      pos = line.to + 1;
+      if (!line.text.includes('[^') && !line.text.includes('^[')) continue;
+      let scanFrom = 0;
+      const def = FOOTNOTE_DEF.exec(line.text);
+      if (def && !inCode(tree.resolveInner(line.from, 1).name)) {
+        const end = line.from + def[0].length - 1; // the label, without ":"
+        out.push(footnoteLine.range(line.from));
+        out.push(footnoteLabel.range(line.from, end));
+        out.push(footrefMark.range(line.from, line.from + 2));
+        out.push(footrefMark.range(end - 1, end));
+        scanFrom = def[0].length;
+      }
+      FOOTNOTE_REF.lastIndex = scanFrom;
+      for (let match = FOOTNOTE_REF.exec(line.text); match; match = FOOTNOTE_REF.exec(line.text)) {
+        const start = line.from + match.index;
+        const end = start + match[0].length;
+        if (inCode(tree.resolveInner(start, 1).name)) continue;
+        out.push(footref.range(start, end));
+        out.push(footrefMark.range(start, start + 2));
+        out.push(footrefMark.range(end - 1, end));
+      }
+    }
+  }
 }
 
 // Tapping a rendered checkbox toggles it without moving the caret or
 // opening the keyboard.
 const toggleTask = EditorView.domEventHandlers({
+  click(event, view) {
+    // Tapping a footnote reference opens its note in a dialog (Obsidian's
+    // footnote popover). A second tap, with the caret already in the
+    // reference, edits the reference text itself.
+    const ref = (event.target as HTMLElement | null)?.closest?.('.cm-lp-footref');
+    if (!ref || !(event.target as HTMLElement).isConnected) return false;
+    const pos = view.posAtDOM(ref);
+    const line = view.state.doc.lineAt(pos);
+    const match = /^\[\^([^\]\s]+)\]/.exec(view.state.sliceDoc(pos, line.to));
+    if (!match || !findDefinition(view, match[1])) return false;
+    if (lastTapHead > pos && lastTapHead < pos + match[0].length) return false;
+    editFootnote(view, match[1]);
+    return true;
+  },
   mousedown(event, view) {
+    lastTapHead = view.hasFocus ? view.state.selection.main.head : -1;
     const box = (event.target as HTMLElement | null)?.closest?.('.cm-lp-task');
     if (!box) return false;
     event.preventDefault();
@@ -195,6 +300,8 @@ const toggleTask = EditorView.domEventHandlers({
     return true;
   },
 });
+
+let lastTapHead = -1; // caret before the tap, to tell a first tap from a second
 
 const livePreviewPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet;

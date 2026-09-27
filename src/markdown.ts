@@ -5,16 +5,113 @@ import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
 
 marked.setOptions({ gfm: true, breaks: false });
+// Obsidian mobile shows a copy button on every code block (top end corner).
+const COPY_BUTTON = '<button class="copy-code-button" type="button" aria-label="Copy code"></button>';
 marked.use({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }): string {
       if (lang && hljs.getLanguage(lang)) {
         const highlighted = hljs.highlight(text, { language: lang }).value;
-        return `<pre><code class="hljs language-${escapeHtml(lang)}">${highlighted}</code></pre>`;
+        return `<pre><code class="hljs language-${escapeHtml(lang)}">${highlighted}</code>${COPY_BUTTON}</pre>`;
       }
-      return `<pre><code>${escapeHtml(text)}</code></pre>`;
+      return `<pre><code>${escapeHtml(text)}</code>${COPY_BUTTON}</pre>`;
     },
   },
+});
+
+// Footnotes, rendered like Obsidian's reading view: references become
+// <sup class="footnote-ref"><a class="footnote-link">[1]</a></sup>, numbered
+// in order of first reference; definitions are collected into a
+// <section class="footnotes"> (rule + ordered list) at the end, each with a
+// ↩︎ back-link per reference. Inline footnotes ^[like this] are supported;
+// references without a definition stay as plain text.
+interface FootnoteState {
+  defs: Map<string, string>;
+  order: string[];
+  uses: Map<string, number>;
+  inline: number;
+}
+let footnotes: FootnoteState = { defs: new Map(), order: [], uses: new Map(), inline: 0 };
+const FOOTNOTE_DEF = /^\[\^([^\]\s]+)\]:[ \t]?([^\n]*)((?:\n(?:[ ]{2,}|\t)[^\n]*)*)/;
+
+function collectFootnotes(text: string): Map<string, string> {
+  const defs = new Map<string, string>();
+  let fence: string | null = null;
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(lines[index]);
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1][0];
+      else if (fenceMatch[1][0] === fence) fence = null;
+      continue;
+    }
+    if (fence) continue;
+    if (!lines[index].startsWith('[^')) continue;
+    const match = FOOTNOTE_DEF.exec(lines.slice(index, index + 64).join('\n'));
+    if (!match) continue;
+    const id = match[1].toLowerCase();
+    const more = match[3] ? match[3].split('\n').slice(1).map((line) => line.trim()) : [];
+    if (!defs.has(id)) defs.set(id, [match[2], ...more].join('\n'));
+    index += more.length;
+  }
+  return defs;
+}
+
+function footnoteRefHtml(id: string): string {
+  let index = footnotes.order.indexOf(id);
+  if (index < 0) index = footnotes.order.push(id) - 1;
+  const uses = footnotes.uses.get(id) ?? 0;
+  footnotes.uses.set(id, uses + 1);
+  const number = String(index + 1);
+  const refId = uses > 0 ? `${number}-${uses}` : number;
+  return `<sup class="footnote-ref" data-footnote-id="fnref-${refId}"><a class="footnote-link" href="#fn-${number}">[${number}]</a></sup>`;
+}
+
+function footnotesSectionHtml(): string {
+  if (!footnotes.order.length) return '';
+  const items = footnotes.order.map((id, index) => {
+    const number = String(index + 1);
+    const uses = footnotes.uses.get(id) ?? 1;
+    const backrefs = Array.from({ length: uses }, (_, use) =>
+      `<a class="footnote-backref footnote-link" href="#fnref-${use > 0 ? `${number}-${use}` : number}">↩︎</a>`).join('');
+    const body = marked.parseInline(footnotes.defs.get(id) ?? '', { async: false }) as string;
+    return `<li data-footnote-id="fn-${number}"><p>${body.replace(/\n/g, '<br>')}${backrefs}</p></li>`;
+  }).join('');
+  return `<section class="footnotes"><hr><ol>${items}</ol></section>`;
+}
+
+marked.use({
+  extensions: [
+    {
+      name: 'footnoteDef',
+      level: 'block',
+      start: (src: string) => src.match(/^\[\^[^\]\s]+\]:/m)?.index,
+      tokenizer(src: string) {
+        const match = FOOTNOTE_DEF.exec(src);
+        if (!match) return undefined;
+        const raw = match[0] + (src.charAt(match[0].length) === '\n' ? '\n' : '');
+        return { type: 'footnoteDef', raw };
+      },
+      renderer: () => '',
+    },
+    {
+      name: 'footnoteRef',
+      level: 'inline',
+      start: (src: string) => { const at = src.search(/\[\^|\^\[/); return at < 0 ? undefined : at; },
+      tokenizer(src: string) {
+        const ref = /^\[\^([^\]\s]+)\]/.exec(src);
+        if (ref && footnotes.defs.has(ref[1].toLowerCase())) return { type: 'footnoteRef', raw: ref[0], id: ref[1].toLowerCase() };
+        const inline = /^\^\[([^\]]+)\]/.exec(src);
+        if (inline) {
+          const id = `\u0000inline-${footnotes.inline += 1}`;
+          footnotes.defs.set(id, inline[1]);
+          return { type: 'footnoteRef', raw: inline[0], id };
+        }
+        return undefined;
+      },
+      renderer: (token) => footnoteRefHtml((token as unknown as { id: string }).id),
+    },
+  ],
 });
 
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
@@ -48,6 +145,7 @@ export function renderMarkdown(source: string): string {
     return display ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(full))}` : `<span data-satr-math="${id}"></span>`;
   });
 
+  footnotes = { defs: collectFootnotes(withMathPlaceholders), order: [], uses: new Map(), inline: 0 };
   const tokens = marked.lexer(withMathPlaceholders);
   const sections: Array<{ html: string; token: Token; start: number; end: number }> = [];
   let line = 0;
@@ -59,7 +157,8 @@ export function renderMarkdown(source: string): string {
     sections.push({ html: marked.parser(single), token, start, end: line });
   }
   const sourceLine = (transformed: number): number => origin[Math.min(transformed, origin.length - 1)] ?? transformed;
-  const html = sections.map((section, index) => `<div class="md-section" data-sec="${index}">${section.html}</div>`).join('');
+  const html = sections.map((section, index) => `<div class="md-section" data-sec="${index}">${section.html}</div>`).join('')
+    + footnotesSectionHtml();
 
   let safe = DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true }, ADD_ATTR: ['data-satr-math', 'data-sec'],
@@ -94,6 +193,13 @@ export function renderMarkdown(source: string): string {
     }
   });
   document.querySelectorAll('p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th').forEach((element) => element.setAttribute('dir', 'auto'));
+  // dir=auto ignores descendants that carry their own dir (the <p>s inside),
+  // so a quote would always resolve to LTR; give it the direction of its
+  // first strong character instead, which puts the rule on the right side.
+  document.querySelectorAll('blockquote').forEach((quote) => {
+    const strong = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]|[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.exec(quote.textContent ?? '');
+    quote.setAttribute('dir', strong && /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(strong[0]) ? 'rtl' : 'ltr');
+  });
   document.querySelectorAll('ol').forEach((list, index) => {
     if (orderedStyles[index] !== 'persian') return;
     list.classList.add('persian-ordered');

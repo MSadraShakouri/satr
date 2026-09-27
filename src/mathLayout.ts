@@ -23,11 +23,13 @@ function contentWidth(el: HTMLElement): number {
 
 function reset(flow: HTMLElement, units: HTMLElement[]): void {
   flow.querySelectorAll(':scope > br.math-br').forEach((br) => br.remove());
+  flow.classList.remove('is-wrapped');
   for (const unit of units) unit.classList.remove('is-line-start', 'is-overwide');
 }
 
 function breakBefore(flow: HTMLElement, unit: HTMLElement): void {
   unit.classList.add('is-line-start');
+  flow.classList.add('is-wrapped'); // extra room between the lines (style.css)
   const br = document.createElement('br');
   br.className = 'math-br';
   flow.insertBefore(br, unit);
@@ -99,6 +101,7 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
       const last = previous[previous.length - 1];
       if (current[0].top >= last.top + last.height / 2) {
         units[i].classList.add('is-line-start');
+        flow.classList.add('is-wrapped');
         changed = true;
         break;
       }

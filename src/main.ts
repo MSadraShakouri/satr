@@ -1,6 +1,6 @@
 import '@codemirror/view';
+import { cycleTheme, onThemeChange, themeChoice, type ThemeChoice } from './theme';
 import 'katex/dist/katex.min.css';
-import 'highlight.js/styles/github.css';
 import './style.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown } from './markdown';
@@ -70,6 +70,7 @@ app.innerHTML = `
       <button class="new-file" id="new-file">＋ New file</button>
       <div class="recent-label">Recent</div>
       <button class="file-row active" id="file-current">untitled.md</button>
+      <button class="theme-row" id="theme-toggle" type="button"></button>
     </aside>
     <div class="backdrop" id="backdrop"></div>
     <main class="workspace">
@@ -84,6 +85,7 @@ app.innerHTML = `
         <button tabindex="-1" data-command="bullet" aria-label="Bulleted list"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".6"/><circle cx="4.5" cy="12" r=".6"/><circle cx="4.5" cy="18" r=".6"/></svg></button>
         <button tabindex="-1" data-command="ordered" aria-label="Numbered list">1.</button>
         <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="m8 12.5 3 3 5-6"/></svg></button>
+        <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
         <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
         <button tabindex="-1" data-command="math" aria-label="Math">$</button>
         <button tabindex="-1" data-command="lineUp" aria-label="Move line up"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
@@ -95,17 +97,31 @@ app.innerHTML = `
 const preview = document.querySelector<HTMLElement>('#preview')!;
 let mode: Mode = 'edit';
 let saveTimer: number | undefined;
+let viewTimer: number | undefined;
+let restoringView = true; // until the saved position has been applied
 const bookIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg>';
 const penIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.2 18.8 1.1-4.4L16.7 3a2.1 2.1 0 0 1 3 3L8.3 17.7z"/><path d="M11 18.8h8.5"/></svg>';
 let editor: SatrEditor;
 const toolbar = document.querySelector<HTMLElement>('#edit-toolbar')!;
 const previewPane = preview.parentElement!;
-const isShown = (el: HTMLElement): boolean => el.getClientRects().length > 0;
-// Split view (wide screens): keep the hidden-follower pane in step, by source
-// line. The flag stops the follower's own scroll event from echoing back.
+// Keyboard toolbar strip height (Obsidian: --mobile-toolbar-height = 52px,
+// holding a 44px pill).
+const TOOLBAR_STRIP = 52;
+/** How much of the layout viewport the on-screen keyboard covers (0 when the
+ *  WebView is resized for it instead, as in the Capacitor app). */
+function keyboardOverlap(): number {
+  const viewport = window.visualViewport;
+  if (!viewport) return 0;
+  return Math.max(0, window.innerHeight - (viewport.offsetTop + viewport.height));
+}
+// Split view (wide screens, same breakpoint as style.css): keep the other
+// pane in step, by source line. The flag stops the follower's own scroll
+// event from echoing back. A media query instead of measuring both panes on
+// every scroll event, which forced a layout per event.
+const splitView = window.matchMedia('(min-width: 761px)');
 let syncingScroll = false;
 function follow(from: 'editor' | 'preview'): void {
-  if (syncingScroll || !isShown(previewPane) || !isShown(editor.view.scrollDOM)) return;
+  if (syncingScroll || !splitView.matches) return;
   syncingScroll = true;
   if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view));
   else applyEditorScroll(editor.view, previewScroll(previewPane, preview));
@@ -118,16 +134,51 @@ const NAME_KEY = 'satr:file-name';
 const storageKey = (base: string): string => `satr:${base}.md`;
 const nameExists = (base: string): boolean => localStorage.getItem(storageKey(base)) !== null;
 let fileBase = localStorage.getItem(NAME_KEY) ?? 'untitled';
+// Per-file view memory, kept across sessions and app restarts: the mode and
+// the scroll position (as a fractional source line, the same measure the
+// edit/preview toggle uses), under satr:view:<base>.
+const viewKey = (base: string): string => `satr:view:${base}`;
+interface SavedView { mode: Mode; line: number; cursor?: [number, number] }
+function readView(base: string): SavedView | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(viewKey(base)) ?? 'null') as Partial<SavedView> | null;
+    if (!value || (value.mode !== 'edit' && value.mode !== 'preview') || !Number.isFinite(value.line)) return null;
+    const cursor = Array.isArray(value.cursor) && value.cursor.length === 2 && value.cursor.every(Number.isInteger)
+      ? value.cursor as [number, number] : undefined;
+    return { mode: value.mode, line: Math.max(0, value.line as number), cursor };
+  } catch {
+    return null;
+  }
+}
 const fileRow = document.querySelector<HTMLElement>('#file-current')!;
 fileRow.textContent = `${fileBase}.md`;
 
-function update(text?: string): void {
-  const source = text ?? editor.getValue();
-  preview.innerHTML = renderMarkdown(source);
+// The preview is rendered only when it can be seen. Rendering the whole note
+// (markdown, highlight.js, KaTeX) on every keystroke into a hidden pane was
+// most of the typing cost on long notes. In split view it follows typing
+// after a short pause; switching to preview renders it at once if stale.
+let previewDirty = true;
+let renderTimer: number | undefined;
+const previewVisible = (): boolean => mode === 'preview' || splitView.matches;
+function renderPreview(): void {
+  window.clearTimeout(renderTimer);
+  previewDirty = false;
+  preview.innerHTML = renderMarkdown(editor.getValue());
   scheduleMathLayout(preview);
-  window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => { localStorage.setItem(storageKey(fileBase), source); }, 700);
 }
+function saveNow(): void {
+  window.clearTimeout(saveTimer);
+  saveTimer = undefined;
+  localStorage.setItem(storageKey(fileBase), editor.getValue());
+}
+function update(): void {
+  previewDirty = true;
+  window.clearTimeout(renderTimer);
+  if (previewVisible()) renderTimer = window.setTimeout(renderPreview, 250);
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(saveNow, 700);
+}
+splitView.addEventListener('change', () => { if (splitView.matches && previewDirty) renderPreview(); });
 function setMode(next: Mode): void {
   // Read the position from the pane that is visible *now* — a display:none
   // pane reports scrollTop 0, which is what used to send preview to the top.
@@ -139,12 +190,14 @@ function setMode(next: Mode): void {
   previewButton.setAttribute('aria-label', mode === 'edit' ? 'Open preview' : 'Return to editor');
   syncingScroll = true;
   if (mode === 'preview') {
+    if (previewDirty) renderPreview();
     layoutMath(preview); // settle math line breaks before measuring positions
     applyPreviewScroll(previewPane, preview, position);
   } else {
     applyEditorScroll(editor.view, position);
   }
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+  rememberViewSoon();
 }
 function toggleFiles(open = !document.body.classList.contains('files-open')): void {
   cancelSettle();
@@ -154,47 +207,120 @@ function toggleFiles(open = !document.body.classList.contains('files-open')): vo
 
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
-  obscuredBottom: () => (document.body.classList.contains('keyboard-open') ? toolbar.offsetHeight : 0),
+  onSelection: () => rememberViewSoon(),
+  obscuredBottom: () => keyboardOverlap() + (document.body.classList.contains('keyboard-open') ? TOOLBAR_STRIP : 0),
   checkName: (base) => (nameExists(base) && base !== fileBase ? 'There is already a file with that name' : null),
   onRename: (base) => {
     if (nameExists(base) && base !== fileBase) return 'There is already a file with that name';
     const content = editor.getValue();
     localStorage.setItem(storageKey(base), content);
     localStorage.removeItem(storageKey(fileBase));
+    const view = localStorage.getItem(viewKey(fileBase));
+    localStorage.removeItem(viewKey(fileBase));
+    if (view) localStorage.setItem(viewKey(base), view);
     fileBase = base;
     localStorage.setItem(NAME_KEY, base);
     fileRow.textContent = `${base}.md`;
     return null;
   },
 });
-// The top bar hides once a downward scroll is faster than this (px per ms).
-const HIDE_SPEED = 1.5;
-let lastScrollTop = 0;
-let lastScrollTime = performance.now();
-let buttonHideTimer: number | undefined;
+// Auto-hide navigation, as Obsidian's "auto full screen" (MobileNavbar.
+// onScroll): any scroll down hides the floating buttons (and the Android
+// status bar, in the app); any scroll up, or a tap, brings them back.
+// Nothing hides while the keyboard is up. Deltas under 0.125px are noise.
+const topbarEl = document.querySelector<HTMLElement>('.topbar')!;
+type StatusBarPlugin = { hide(options?: { animation?: string }): Promise<void>; show(options?: { animation?: string }): Promise<void> };
+const statusBar = (): StatusBarPlugin | undefined =>
+  (window as unknown as { Capacitor?: { Plugins?: { StatusBar?: StatusBarPlugin } } }).Capacitor?.Plugins?.StatusBar;
+let navHidden = false;
+function hideNavigation(): void {
+  if (navHidden) return;
+  navHidden = true;
+  topbarEl.classList.add('is-hidden-nav');
+  void statusBar()?.hide({ animation: 'FADE' }).catch(() => undefined);
+}
+function restoreNavigation(): void {
+  if (!navHidden) return;
+  navHidden = false;
+  topbarEl.classList.remove('is-hidden-nav');
+  void statusBar()?.show({ animation: 'FADE' }).catch(() => undefined);
+}
+const scrollTops = new WeakMap<Element, number>();
+function onNavScroll(el: HTMLElement): void {
+  const top = el.scrollTop;
+  const previous = scrollTops.get(el) ?? 0;
+  scrollTops.set(el, top);
+  if (document.body.classList.contains('keyboard-open') || keyboardOverlap() > 120) return;
+  const delta = top - previous;
+  if ((top < 0.1 && previous < 0.1) || Math.abs(delta) < 0.125) return;
+  if (delta > 0 && top > 0) hideNavigation();
+  else restoreNavigation();
+}
+// mousedown, not pointerdown: on touch screens it only fires for taps, not
+// for the start of a scroll (same event Obsidian listens to).
+window.addEventListener('mousedown', restoreNavigation);
 editor.view.scrollDOM.addEventListener('scroll', () => {
-  const current = editor.view.scrollDOM.scrollTop;
-  const now = performance.now();
-  const delta = current - lastScrollTop;
-  const speed = delta / Math.max(1, now - lastScrollTime);
-  if (delta > 1.5 && speed > HIDE_SPEED) {
-    document.body.classList.add('editor-scrolling-down');
-    window.clearTimeout(buttonHideTimer);
-    buttonHideTimer = window.setTimeout(() => document.body.classList.remove('editor-scrolling-down'), 450);
-  } else if (delta < -2 || current <= 2) {
-    document.body.classList.remove('editor-scrolling-down');
-    window.clearTimeout(buttonHideTimer);
-  }
-  lastScrollTop = current;
-  lastScrollTime = now;
+  onNavScroll(editor.view.scrollDOM);
   follow('editor');
+  rememberViewSoon();
 }, { passive: true });
-previewPane.addEventListener('scroll', () => follow('preview'), { passive: true });
+previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); }, { passive: true });
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
 const saved = localStorage.getItem(storageKey(fileBase));
 editor.setValue(saved ?? starter);
-update(editor.getValue());
+renderPreview();
+
+function rememberView(): void {
+  window.clearTimeout(viewTimer);
+  if (restoringView) return;
+  const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  localStorage.setItem(viewKey(fileBase), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection() }));
+}
+function rememberViewSoon(): void {
+  window.clearTimeout(viewTimer);
+  viewTimer = window.setTimeout(rememberView, 400);
+}
+function restoreView(base: string): void {
+  const view = readView(base);
+  restoringView = true;
+  // The caret comes back where it was — without focus, so no keyboard and no
+  // scroll. Otherwise it sat at the top of the note, and the first tap on a
+  // toolbar command or the keyboard opening jumped the view back up there.
+  if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
+  setMode(view?.mode ?? 'edit');
+  // Positions depend on fonts, KaTeX and math line breaks: apply once now,
+  // and again when those have settled.
+  const apply = (): void => {
+    if (!view) return;
+    syncingScroll = true;
+    if (mode === 'preview') {
+      layoutMath(preview);
+      applyPreviewScroll(previewPane, preview, view.line);
+    } else {
+      applyEditorScroll(editor.view, view.line);
+    }
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+  };
+  apply();
+  const settle = (): void => {
+    apply();
+    restoringView = false;
+  };
+  if (document.fonts?.ready) void document.fonts.ready.then(() => window.requestAnimationFrame(settle));
+  else window.requestAnimationFrame(settle);
+}
+restoreView(fileBase);
+// Leaving the app (switching away, closing, the OS killing it later): write
+// the note and the view out now instead of waiting for the debounce timers.
+const flush = (): void => {
+  if (saveTimer !== undefined) saveNow();
+  rememberView();
+};
+window.addEventListener('pagehide', flush);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flush();
+});
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
 document.querySelector('#files')!.addEventListener('click', () => toggleFiles());
@@ -206,9 +332,11 @@ document.querySelector('#new-file')!.addEventListener('click', () => {
   while (nameExists(base)) base = `untitled ${(index += 1) + 1}`;
   const content = editor.getValue();
   localStorage.setItem(storageKey(fileBase), content);
+  rememberView();
   fileBase = base;
   localStorage.setItem(NAME_KEY, base);
   localStorage.setItem(storageKey(base), '');
+  localStorage.removeItem(viewKey(base));
   fileRow.textContent = `${base}.md`;
   editor.setValue('');
   editor.setTitle(base);
@@ -216,6 +344,55 @@ document.querySelector('#new-file')!.addEventListener('click', () => {
   toggleFiles(false);
   editor.focusTitle();
 });
+// Theme switch in the drawer: Auto (follows the system) → Light → Dark.
+const themeButton = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
+const THEME_LABEL: Record<ThemeChoice, string> = { auto: 'Theme: Auto', light: 'Theme: Light', dark: 'Theme: Dark' };
+const THEME_ICON: Record<ThemeChoice, string> = {
+  auto: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor" stroke="none"/></svg>',
+  light: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>',
+  dark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.6 6.6 0 0 0 10.7 10.7z"/></svg>',
+};
+function renderThemeButton(choice: ThemeChoice): void {
+  themeButton.innerHTML = `${THEME_ICON[choice]}<span>${THEME_LABEL[choice]}</span>`;
+}
+renderThemeButton(themeChoice());
+onThemeChange(renderThemeButton);
+themeButton.addEventListener('click', () => cycleTheme());
+
+// Preview links that stay inside the note: footnote references and back
+// references scroll within the preview pane (centred) and flash the target,
+// as in Obsidian's reading view. Copy buttons copy their code block.
+function flash(el: HTMLElement): void {
+  el.classList.remove('is-flashing');
+  void el.offsetWidth; // restart the transition when tapped twice
+  el.classList.add('is-flashing');
+  window.setTimeout(() => el.classList.remove('is-flashing'), 3000);
+}
+preview.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const copy = target.closest<HTMLButtonElement>('.copy-code-button');
+  if (copy) {
+    event.preventDefault();
+    const code = copy.parentElement?.querySelector('code')?.textContent ?? '';
+    void navigator.clipboard?.writeText(code).then(() => {
+      copy.classList.add('is-copied');
+      window.setTimeout(() => copy.classList.remove('is-copied'), 1500);
+    });
+    return;
+  }
+  const link = target.closest<HTMLAnchorElement>('a.footnote-link, a.footnote-backref');
+  const href = link?.getAttribute('href');
+  if (!link || !href?.startsWith('#')) return;
+  event.preventDefault();
+  const id = decodeURIComponent(href.slice(1));
+  const destination = [...preview.querySelectorAll<HTMLElement>('[data-footnote-id]')].find((el) => el.dataset.footnoteId === id);
+  if (!destination) return;
+  const paneBox = previewPane.getBoundingClientRect();
+  const box = destination.getBoundingClientRect();
+  previewPane.scrollTop += box.top - paneBox.top - (previewPane.clientHeight - box.height) / 2;
+  flash(destination);
+});
+
 // Keyboard toolbar: shown while the note body has focus and the on-screen
 // keyboard is up, pinned to the top of the keyboard. Keyboard detection
 // compares the visual viewport against the tallest height seen at this width,
@@ -231,9 +408,13 @@ function layoutToolbar(): void {
   const keyboardUp = fullHeight - height > 120;
   const show = keyboardUp && editor.hasFocus && mode === 'edit';
   document.body.classList.toggle('keyboard-open', show);
-  // Distance from the layout viewport's bottom to the visual viewport's bottom.
-  const lift = window.innerHeight - ((viewport?.offsetTop ?? 0) + height);
-  toolbar.style.transform = `translate3d(0, ${-Math.max(0, lift)}px, 0)`;
+  // Placed from the top, like Obsidian's .mobile-toolbar
+  // (top: 100vh - keyboard height - toolbar height): a 52px strip whose 44px
+  // pill sits 8px above the keyboard. Anchoring to the bottom instead put it
+  // ~30px too high in Chrome, where position:fixed; bottom:0 is measured
+  // against a box taller than what is visible above the keyboard.
+  const top = (viewport?.offsetTop ?? 0) + height - TOOLBAR_STRIP;
+  toolbar.style.transform = `translate3d(0, ${Math.round(top)}px, 0)`;
 }
 window.visualViewport?.addEventListener('resize', layoutToolbar);
 window.visualViewport?.addEventListener('scroll', layoutToolbar);

@@ -12,15 +12,126 @@
 }
 :root {
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
-  color: #1f2328;
-  background: #fff;
+}
+/* ---- Theme ----
+   Obsidian's exact neutral scale (app.css .theme-light / .theme-dark, with the
+   .is-mobile.theme-dark true-black overrides for base-00/10/20) and its
+   semantic mapping; the accent is Obsidian's blue. <html> gets theme-light or
+   theme-dark from src/theme.ts (Auto follows the system). */
+:root,
+.theme-light {
   color-scheme: light;
-  --bg: #fff;
-  --bg-alt: #f6f8fa;
-  --border: #d0d7de;
-  --muted: #57606a;
-  --accent: #0969da;
-  --editor: #fff;
+  --mono-rgb-0: 255, 255, 255;
+  --mono-rgb-100: 0, 0, 0;
+  --color-base-00: #ffffff;
+  --color-base-05: #fcfcfc;
+  --color-base-10: #fafafa;
+  --color-base-20: #f6f6f6;
+  --color-base-25: #e3e3e3;
+  --color-base-30: #e0e0e0;
+  --color-base-35: #d4d4d4;
+  --color-base-40: #bdbdbd;
+  --color-base-50: #ababab;
+  --color-base-60: #707070;
+  --color-base-70: #5c5c5c;
+  --color-base-100: #222222;
+  --color-red: #e93147;
+  --accent-rgb: 8, 109, 221; /* --color-blue */
+  --text-selection: rgba(var(--accent-rgb), 0.2);
+  --background-modifier-hover: rgba(var(--mono-rgb-100), 0.067);
+  --background-modifier-cover: rgba(0, 0, 0, 0.15);
+  /* --code-background (= base-10) as a tint, so the selection layer under
+     code lines stays visible: #fafafa exactly, over the page background */
+  --code-background-tint: rgba(0, 0, 0, 0.0196);
+  --shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.028), 0px 3.4px 6.7px rgba(0, 0, 0, 0.042), 0px 15px 30px rgba(0, 0, 0, 0.07);
+  --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.015), 0 4px 24px rgba(0, 0, 0, 0.065);
+  --raised-edge: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --raised-base: #ffffff; /* = background-primary */
+  --code-function: #e0ac00;
+  --code-keyword: #d53984;
+  --code-string: #08b94e;
+  --code-value: #7852ee;
+  --code-property: #00bfbc;
+  --code-tag: #e93147;
+  --code-important: #ec7500;
+}
+.theme-dark {
+  color-scheme: dark;
+  --mono-rgb-0: 0, 0, 0;
+  --mono-rgb-100: 255, 255, 255;
+  --color-base-00: #000000;
+  --color-base-05: #212121;
+  --color-base-10: #111111;
+  --color-base-20: #1e1e1e;
+  --color-base-25: #2a2a2a;
+  --color-base-30: #363636;
+  --color-base-35: #3f3f3f;
+  --color-base-40: #555555;
+  --color-base-50: #666666;
+  --color-base-60: #999999;
+  --color-base-70: #b3b3b3;
+  --color-base-100: #dadada;
+  --color-red: #fb464c;
+  --accent-rgb: 2, 122, 255;
+  --text-selection: rgba(var(--accent-rgb), 0.33);
+  --background-modifier-hover: rgba(var(--mono-rgb-100), 0.15);
+  --background-modifier-cover: rgba(0, 0, 0, 0.35);
+  --code-background-tint: rgba(255, 255, 255, 0.0667); /* #111 over #000 */
+  --shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.121), 0px 3.4px 6.7px rgba(0, 0, 0, 0.179), 0px 15px 30px rgba(0, 0, 0, 0.3);
+  --shadow-xs: 0 1px 6px rgba(0, 0, 0, 0.045), 0 4px 24px rgba(0, 0, 0, 0.195);
+  --raised-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --raised-base: var(--color-base-30);
+  --code-function: #e0de71;
+  --code-keyword: #fa99cd;
+  --code-string: #44cf6e;
+  --code-value: #a882ff;
+  --code-property: #53dfdd;
+  --code-tag: #fb464c;
+  --code-important: #e9973f;
+}
+:root {
+  --background-primary: var(--color-base-00);
+  --background-primary-alt: var(--color-base-10);
+  --background-secondary: var(--color-base-20);
+  --background-modifier-border: var(--color-base-30);
+  --background-modifier-border-hover: var(--color-base-35);
+  --text-normal: var(--color-base-100);
+  --text-muted: var(--color-base-70);
+  --text-faint: var(--color-base-50);
+  --text-accent: rgb(var(--accent-rgb));
+  --interactive-accent: rgb(var(--accent-rgb));
+  --text-on-accent: #fff;
+  --text-error: var(--color-red);
+  --text-highlight-bg: rgba(255, 208, 0, 0.4);
+  --caret-color: var(--text-accent); /* .is-mobile */
+  --code-background: var(--background-primary-alt);
+  --code-radius: 4px;
+  --code-size: 0.875em;
+  --blockquote-border: 2px solid var(--interactive-accent);
+  --list-marker-color: var(--text-faint);
+  --checkbox-border-color: var(--text-faint);
+  --checklist-done-color: var(--text-muted);
+  --footnote-size: 0.875em;
+  --hr-color: var(--background-modifier-border);
+  /* Raised surfaces (floating buttons, keyboard toolbar): Obsidian's
+     --blur-background — built on the page colour in light mode and on
+     --interactive-normal (= base-30, #363636) in dark mode, hence the grey
+     pill there. */
+  --raised-background: color-mix(in srgb, var(--raised-base) 65%, transparent)
+    linear-gradient(var(--raised-base), color-mix(in srgb, var(--raised-base) 65%, transparent));
+  --raised-blur: blur(6px) saturate(1.5) brightness(1.15);
+  --scrollbar-thumb-bg: rgba(var(--mono-rgb-100), 0.1);
+  --scrollbar-active-thumb-bg: rgba(var(--mono-rgb-100), 0.2);
+  --font-monospace: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Satr's older names, kept as aliases */
+  --bg: var(--background-primary);
+  --bg-alt: var(--background-secondary);
+  --border: var(--background-modifier-border);
+  --muted: var(--text-muted);
+  --accent: var(--text-accent);
+  --editor: var(--background-primary);
+  color: var(--text-normal);
+  background: var(--background-primary);
 }
 * {
   box-sizing: border-box;
@@ -31,6 +142,21 @@ body,
   height: 100%;
   margin: 0;
 }
+/* The page itself never scrolls; only the editor and preview do. Without
+   this the drawer's slide made the document briefly scrollable and the
+   browser flashed its scrollbar. */
+html,
+body,
+#app,
+.app-shell {
+  overflow: hidden;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.app-shell::-webkit-scrollbar,
+.workspace::-webkit-scrollbar {
+  display: none;
+}
 button {
   font: inherit;
   color: inherit;
@@ -38,7 +164,7 @@ button {
   cursor: pointer;
 }
 button:focus-visible {
-  outline: 2px solid #0969da;
+  outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 .app-shell {
@@ -47,24 +173,32 @@ button:focus-visible {
   display: block;
   background: var(--bg);
 }
-.editor-scrolling-down .topbar {
-  opacity: 0;
-  transform: translateY(-10px);
-  pointer-events: none;
-}
 .topbar {
+  /* Obsidian's phone view header with floating navigation: 44px buttons,
+     max(safe-area, 12px) from the top, 12px from the sides. */
   position: absolute;
   z-index: 6;
   inset: 0 0 auto;
-  min-height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 22px max(10px, env(safe-area-inset-top));
+  padding: max(12px, env(safe-area-inset-top)) 12px 0;
   background: transparent;
+  pointer-events: none;
   transition:
-    opacity 0.25s ease,
-    transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+    opacity 0.2s ease-in-out,
+    transform 0.3s ease-in-out;
+}
+.topbar > * {
+  pointer-events: auto;
+}
+.topbar.is-hidden-nav {
+  /* .is-hidden-nav .view-header: slide up by its own height and fade */
+  transform: translateY(calc(-44px - max(12px, env(safe-area-inset-top))));
+  opacity: 0;
+}
+.topbar.is-hidden-nav > * {
+  pointer-events: none;
 }
 .topbar-actions {
   display: flex;
@@ -78,9 +212,11 @@ button:focus-visible {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 5px 18px #1f23281a;
-  color: #202124;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
+  color: var(--text-normal);
   line-height: 1;
   transition:
     transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -88,22 +224,19 @@ button:focus-visible {
     background 0.18s ease;
 }
 .floating-button svg {
-  width: 27px;
-  height: 27px;
+  width: 24px; /* --icon-l on mobile */
+  height: 24px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8;
+  stroke-width: 1.75;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 .floating-button:hover {
-  background: #f3f4f6;
   transform: translateY(-1px);
-  box-shadow: 0 8px 22px #1f23282a;
 }
 .floating-button:active {
   transform: scale(0.93);
-  box-shadow: 0 3px 10px #1f232820;
 }
 .sidebar-button {
   font-size: 2rem;
@@ -125,6 +258,13 @@ button:focus-visible {
 }
 .files-open .topbar {
   transform: translate3d(min(84vw, 420px), 0, 0);
+}
+.files-open .topbar.is-hidden-nav {
+  opacity: 1;
+  transform: translate3d(min(84vw, 420px), 0, 0);
+}
+.files-open .topbar.is-hidden-nav > * {
+  pointer-events: auto;
 }
 body {
   overflow: hidden;
@@ -215,6 +355,14 @@ body {
 .math-flow.is-measuring .math-cont {
   display: inline;
 }
+/* Wrapped formulas get extra room between their lines (set by
+   src/mathLayout.ts only when a formula actually wraps). */
+.math-flow.is-wrapped.is-display > .math-unit {
+  padding-block: 0.3em;
+}
+.math-flow.is-wrapped:not(.is-display) > .math-unit {
+  padding-block: 0.15em;
+}
 .math-display {
   margin: 1em 0;
   text-align: center;
@@ -226,14 +374,156 @@ body {
   overflow-x: auto;
   overflow-y: hidden;
 }
+/* Code blocks and inline code, as Obsidian's .markdown-rendered: no border,
+   4px corners, 12px 16px padding, 0.875em monospace, wrapping lines, and a
+   copy button in the top end corner (always visible on mobile). */
 .preview-pane pre {
-  overflow: auto;
-  padding: 14px;
-  background: #f6f8fa;
-  border: 1px solid var(--border);
-  border-radius: 7px;
+  position: relative;
+  min-height: 38px;
+  overflow-x: auto;
+  padding: 12px 16px;
+  background: var(--code-background);
+  border-radius: var(--code-radius);
+  white-space: pre-wrap;
   direction: ltr;
   text-align: left;
+}
+.preview-pane .copy-code-button {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+  width: auto;
+  margin: 6px;
+  padding: 6px 8px;
+  border-radius: var(--code-radius);
+  background: transparent;
+  color: var(--text-muted);
+}
+.preview-pane .copy-code-button::before {
+  content: "";
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='8' width='14' height='14' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='8' width='14' height='14' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.preview-pane .copy-code-button.is-copied::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+}
+.preview-pane blockquote {
+  margin-inline: 0;
+  padding-block: 0;
+  padding-inline-start: 24px;
+  border-inline-start: var(--blockquote-border);
+  color: inherit;
+  font-style: normal;
+}
+.preview-pane blockquote > :first-child {
+  margin-top: 0;
+}
+.preview-pane blockquote > :last-child {
+  margin-bottom: 0;
+}
+/* Task lists (Obsidian's reading view): no bullet, its own checkbox */
+.preview-pane li:has(> input[type="checkbox"]),
+.preview-pane li:has(> p > input[type="checkbox"]) {
+  list-style: none;
+}
+.preview-pane li > input[type="checkbox"],
+.preview-pane li > p > input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  top: 0.2em;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  margin-inline-start: calc(17px * -1.5);
+  margin-inline-end: 0.6em;
+  border: 1px solid var(--checkbox-border-color);
+  border-radius: 4px;
+  background: transparent center / 12px no-repeat;
+  vertical-align: baseline;
+}
+.preview-pane li > input[type="checkbox"]:checked,
+.preview-pane li > p > input[type="checkbox"]:checked {
+  border-color: var(--interactive-accent);
+  background-color: var(--interactive-accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+}
+.preview-pane li:has(> input[type="checkbox"]:checked),
+.preview-pane li:has(> p > input[type="checkbox"]:checked) {
+  color: var(--checklist-done-color);
+  text-decoration: line-through;
+}
+/* Footnotes (Obsidian's reading view) */
+.preview-pane .footnote-link {
+  text-decoration: none;
+}
+.preview-pane .footnotes {
+  font-size: var(--footnote-size);
+}
+.preview-pane .footnotes hr {
+  border: 0;
+  border-top: 2px solid var(--hr-color);
+}
+.preview-pane .footnote-backref {
+  display: inline-block;
+  margin-inline-start: 4px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.preview-pane .is-flashing {
+  transition: color 0.25s ease, background-color 0.25s ease;
+  background-color: var(--text-highlight-bg) !important;
+  color: var(--text-normal);
+  border-radius: 4px;
+}
+/* highlight.js tokens in Obsidian's code colours */
+.preview-pane .hljs-comment,
+.preview-pane .hljs-quote {
+  color: var(--text-faint);
+}
+.preview-pane .hljs-keyword,
+.preview-pane .hljs-selector-tag,
+.preview-pane .hljs-type {
+  color: var(--code-keyword);
+}
+.preview-pane .hljs-string,
+.preview-pane .hljs-regexp,
+.preview-pane .hljs-addition {
+  color: var(--code-string);
+}
+.preview-pane .hljs-number,
+.preview-pane .hljs-literal,
+.preview-pane .hljs-symbol {
+  color: var(--code-value);
+}
+.preview-pane .hljs-title,
+.preview-pane .hljs-section {
+  color: var(--code-function);
+}
+.preview-pane .hljs-attr,
+.preview-pane .hljs-attribute,
+.preview-pane .hljs-property,
+.preview-pane .hljs-variable,
+.preview-pane .hljs-params {
+  color: var(--code-property);
+}
+.preview-pane .hljs-tag,
+.preview-pane .hljs-name,
+.preview-pane .hljs-operator,
+.preview-pane .hljs-deletion {
+  color: var(--code-tag);
+}
+.preview-pane .hljs-meta,
+.preview-pane .hljs-built_in {
+  color: var(--code-important);
+}
+.preview-pane .hljs-punctuation {
+  color: var(--text-muted);
 }
 .preview-pane pre code.hljs {
   background: transparent;
@@ -254,9 +544,20 @@ body {
   inset-inline-start: 0;
 }
 .preview-pane code {
-  background: #eff1f3;
-  padding: 0.12em 0.3em;
-  border-radius: 4px;
+  padding: 0.15em 0.3em;
+  border-radius: var(--code-radius);
+  background: var(--code-background);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--code-size);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.preview-pane pre code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  white-space: inherit;
 }
 .preview-pane pre code {
   background: none;
@@ -297,7 +598,7 @@ body {
   border-inline-end: 1px solid var(--border);
   transform: translate3d(-105%, 0, 0);
   transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  box-shadow: 8px 0 24px #1f23281c;
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.11);
   will-change: transform;
   touch-action: pan-y;
 }
@@ -331,8 +632,8 @@ body {
   font-size: 1rem;
 }
 .file-row.active {
-  color: #202124;
-  background: #eeeeef;
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
 }
 .recent-label {
   margin: 20px 0 8px;
@@ -348,7 +649,7 @@ body {
 }
 .file-toolbar button {
   background: transparent;
-  color: #5f6368;
+  color: var(--text-muted);
   font-size: 1.2rem;
   padding: 6px;
 }
@@ -360,7 +661,7 @@ body {
   align-items: center;
   padding: 10px 14px;
   border-radius: 26px;
-  background: #f4f4f5;
+  background: var(--background-secondary);
   font-size: 1.05rem;
   font-weight: 650;
 }
@@ -381,7 +682,7 @@ body {
   position: fixed;
   z-index: 9;
   inset: 0;
-  background: #1f232820;
+  background: var(--background-modifier-cover);
   opacity: 0;
   transition: opacity ease-out 0.2s;
 }
@@ -424,10 +725,10 @@ body {
   cursor: text;
 }
 .cm-file-name:focus {
-  color: #1f2328;
+  color: var(--text-normal);
 }
 .cm-file-name::selection {
-  background: #b6d7ff;
+  background: var(--text-selection);
 }
 .cm-file-name-error {
   margin: -0.35rem 0 0.5rem;
@@ -437,15 +738,19 @@ body {
     system-ui,
     sans-serif;
   letter-spacing: 0;
-  color: #cf222e;
+  color: var(--text-error);
   pointer-events: none;
 }
 .cm-file-name-error:empty {
   display: none;
 }
+/* No scroll-behavior: smooth here. CodeMirror corrects scrollTop whenever
+   lines entering its render range turn out taller or shorter than estimated;
+   smooth scrolling turned each correction into an animation that fought the
+   finger — the scroll hiccups. Obsidian leaves it at auto too. */
 .cm-scroller {
   overscroll-behavior: contain;
-  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
 }
 /* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
    active-line highlight. The line-height equals the text's line box
@@ -455,7 +760,7 @@ body {
 .cm-gutters {
   background: transparent !important;
   border: 0 !important;
-  color: #ababab;
+  color: var(--text-faint);
   font-size: 0.8em;
   font-variant-numeric: tabular-nums;
   line-height: calc(16px * 1.85);
@@ -480,29 +785,22 @@ body {
 .cm-activeLine {
   background: transparent !important;
 }
-.cm-cursor {
-  border-left-color: #0969da !important;
-  border-left-width: 2px !important;
-  border-radius: 2px;
-  animation: satr-caret 1.05s steps(1) infinite;
-}
-@keyframes satr-caret {
-  0%,
-  48% {
-    opacity: 1;
-  }
-  49%,
-  100% {
-    opacity: 0;
-  }
+/* Caret, as Obsidian mobile draws it: CodeMirror's own 1.2px cursor in the
+   accent colour, blinking every 1.2s. CodeMirror restarts the blink on every
+   edit or caret move, so it stays solid while you type — no custom animation
+   here, which is what used to keep it blinking mid-word. */
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor {
+  border-left-color: var(--caret-color);
 }
 /* Text-tight selection (src/selection.ts): boxes hug the selected glyphs,
    skip indentation, and empty lines / line breaks get a caret-sized mark. */
 .cm-satr-selection {
-  background: #b6d7ff;
+  background: var(--text-selection);
   border-radius: 2px;
 }
-/* ---- Live preview (src/livePreview.ts) ---- */
+/* ---- Live preview (src/livePreview.ts) ----
+   Measurements and colours from Obsidian's editor CSS. */
 .cm-lp-bullet {
   /* the "-" stays in the text, invisible; the dot is drawn on top */
   position: relative;
@@ -513,10 +811,10 @@ body {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 5px;
-  height: 5px;
+  width: 0.3em; /* --list-bullet-size */
+  height: 0.3em;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--list-marker-color);
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -530,72 +828,136 @@ body {
   cursor: pointer;
 }
 .cm-lp-task::before {
+  /* Obsidian mobile checkbox: 17px, 4px radius, 1px faint border */
   content: "";
   display: inline-block;
   box-sizing: border-box;
   width: 17px;
   height: 17px;
-  margin-inline-end: 1px;
+  margin-inline-end: 0.25em;
   vertical-align: -3px;
-  border: 1.5px solid #8c959f;
-  border-radius: 5px;
+  border: 1px solid var(--checkbox-border-color);
+  border-radius: 4px;
   background: transparent center / 12px no-repeat;
-  transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
+  font-size: 16px;
 }
 .cm-lp-task.is-checked::before {
-  border-color: var(--accent);
-  background-color: var(--accent);
+  border-color: var(--interactive-accent);
+  background-color: var(--interactive-accent);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
 }
 .cm-lp-task-done {
-  color: #8c959f;
+  color: var(--checklist-done-color);
   text-decoration: line-through;
 }
 .cm-lp-hr {
   display: inline-block;
   width: 100%;
   vertical-align: middle;
-  border-top: 1px solid var(--border);
+  border-top: 2px solid var(--hr-color); /* --hr-thickness */
 }
+/* Quotes: the ">" stays, transparent; a 2px accent rule per level. The first
+   level's rule is the line's ::before, deeper levels draw theirs from the
+   marker's own position (absolute, no inline offset = where the ">" sits). */
 .cm-editor .cm-line.cm-lp-quote {
-  padding-inline-start: 0.9em;
-  border-inline-start: 3px solid var(--border);
-  color: var(--muted);
+  position: relative;
+}
+.cm-editor .cm-line.cm-lp-quote::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  border-inline-start: var(--blockquote-border);
+  pointer-events: none;
+}
+.cm-lp-transparent {
+  color: transparent;
+}
+.cm-lp-quote-border {
+  color: transparent;
+}
+.cm-lp-quote-border::before {
+  content: "\200b";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-inline-start: var(--blockquote-border);
+  pointer-events: none;
 }
 .cm-lp-inline-code {
-  padding: 0.1em 0.25em;
-  border-radius: 4px;
-  /* translucent so the selection layer underneath stays visible */
-  background: rgba(175, 184, 193, 0.22);
-  font-family: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.92em;
+  padding: 0.15em 0.3em;
+  border-radius: var(--code-radius);
+  background: var(--code-background-tint);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--code-size);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
+/* Code blocks: full-width background, 4px corners, 16px start padding,
+   monospace at 0.875em, always left-to-right (Obsidian's HyperMD-codeblock). */
 .cm-editor .cm-line.cm-lp-code-line {
-  padding-inline: 0.75em;
-  background: rgba(175, 184, 193, 0.16);
-  font-family: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding-inline: 16px;
+  background: var(--code-background-tint);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--code-size);
+  direction: ltr;
+  text-align: left;
 }
 .cm-editor .cm-line.cm-lp-code-begin {
-  border-start-start-radius: 7px;
-  border-start-end-radius: 7px;
+  border-start-start-radius: var(--code-radius);
+  border-start-end-radius: var(--code-radius);
 }
 .cm-editor .cm-line.cm-lp-code-end {
-  border-end-start-radius: 7px;
-  border-end-end-radius: 7px;
+  border-end-start-radius: var(--code-radius);
+  border-end-end-radius: var(--code-radius);
 }
 .cm-lp-fence {
+  /* the language label, like Obsidian's .code-block-flair */
   display: inline-block;
   width: 100%;
-  color: var(--muted);
-  font-size: 0.75em;
+  color: var(--text-muted);
+  font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
   text-align: end;
 }
 .cm-lp-link {
-  color: var(--accent);
+  color: var(--text-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+/* Footnotes (Obsidian: span.cm-footref, .HyperMD-footnote) */
+.cm-lp-footref {
+  position: relative;
+  top: -0.2em;
+  vertical-align: text-top;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+/* the markdown highlighter colours [^1] as a link; footnotes stay grey */
+.cm-lp-footref *,
+.cm-lp-footnote-label * {
+  color: inherit;
+}
+.cm-lp-footref-mark,
+.cm-lp-footref-mark * {
+  color: var(--text-faint);
+}
+.cm-editor .cm-line.cm-lp-footnote-line {
+  font-size: var(--footnote-size);
+}
+.cm-lp-footnote-label {
+  display: inline-block;
+  position: relative;
+  top: -0.3em;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-code,
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-footnote {
+  line-height: calc(16px * 0.875 * 1.85);
 }
 /* ---- Keyboard toolbar ----
    After Obsidian 1.12 mobile (.mobile-toolbar with floating navigation): a
@@ -604,22 +966,20 @@ body {
    stroke, monospace glyphs for text options, and edge fades while the list
    can scroll. */
 .edit-toolbar {
+  /* positioned from the top by layoutToolbar() (src/main.ts) */
   position: fixed;
   z-index: 7;
-  inset: auto 8px 4px;
+  top: 0;
+  left: 8px;
+  right: 8px;
   display: none;
   height: 44px;
   border-radius: 44px;
   overflow: hidden;
-  background:
-    color-mix(in srgb, #fff 65%, transparent)
-    linear-gradient(#fff, color-mix(in srgb, #fff 65%, transparent));
-  backdrop-filter: blur(6px) saturate(1.5) brightness(1.15);
-  -webkit-backdrop-filter: blur(6px) saturate(1.5) brightness(1.15);
-  box-shadow:
-    0 1px 6px rgba(0, 0, 0, 0.015),
-    0 4px 24px rgba(0, 0, 0, 0.065),
-    0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -640,29 +1000,19 @@ body {
   width: 0;
   height: 0;
 }
-.edit-toolbar::before,
-.edit-toolbar::after {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  width: 30px;
-  height: 100%;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s ease;
+/* Scroll fades: the list is masked at the edge(s) it can scroll toward, so
+   the fade works on any pill colour. */
+.edit-toolbar.can-scroll-end .edit-toolbar-list {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
 }
-.edit-toolbar::before {
-  left: 0;
-  background: linear-gradient(to right, #fff, transparent);
+.edit-toolbar.can-scroll-start .edit-toolbar-list {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 30px);
+  mask-image: linear-gradient(to right, transparent, #000 30px);
 }
-.edit-toolbar::after {
-  right: 0;
-  background: linear-gradient(to right, transparent, #fff);
-}
-.edit-toolbar.can-scroll-start::before,
-.edit-toolbar.can-scroll-end::after {
-  opacity: 1;
+.edit-toolbar.can-scroll-start.can-scroll-end .edit-toolbar-list {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 30px, #000 calc(100% - 30px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 30px, #000 calc(100% - 30px), transparent);
 }
 .edit-toolbar button {
   flex: 1 0 40px;
@@ -674,13 +1024,13 @@ body {
   padding: 0;
   border-radius: 44px;
   background: transparent;
-  color: #222;
+  color: var(--text-normal);
   font-family: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 16px;
   -webkit-tap-highlight-color: transparent;
 }
 .edit-toolbar button:active {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--background-modifier-hover);
 }
 .edit-toolbar svg {
   width: 24px;
@@ -709,12 +1059,145 @@ body {
     display: block;
     height: 100%;
   }
-  .topbar {
-    padding-top: max(6px, env(safe-area-inset-top));
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
   }
+}
+
+/* ---- Scrollbars ----
+   After Obsidian on Android (body.styled-scrollbars + .is-android): no
+   horizontal bars anywhere; vertical bars 5px wide, square, with a faint
+   thumb (10% of the text colour, 20% while dragged) on a transparent track.
+   No scrollbar-width here: in Chromium it would override these rules. */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 0;
+  background-color: transparent;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background-color: transparent;
+}
+::-webkit-scrollbar-thumb {
+  min-height: 45px;
+  border-radius: 0;
+  background-color: var(--scrollbar-thumb-bg);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-active-thumb-bg);
+}
+.preview-pane {
+  scrollbar-gutter: stable;
+}
+.theme-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 20px;
+  padding: 9px 12px;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: start;
+  font-size: 0.95rem;
+}
+.theme-row:active {
+  background: var(--background-modifier-hover);
+}
+.theme-row svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---- Math source (src/mathSource.ts) ----
+   Not rendered while editing: math reads left to right (also inside Persian
+   text) and its dollar signs are faint. */
+.cm-math {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.cm-math-delim {
+  color: var(--text-faint);
+}
+.cm-editor .cm-line.cm-math-line {
+  direction: ltr;
+  text-align: left;
+}
+
+/* ---- Dialogs (footnotes) ----
+   After Obsidian's phone modal: page-coloured card with 12px corners and a
+   soft shadow over a dimmed page; placed near the top so the keyboard never
+   covers it. */
+.modal-container {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+}
+.modal-bg {
+  position: absolute;
+  inset: 0;
+  background: var(--background-modifier-cover);
+}
+.modal {
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + 8px);
+  left: 12px;
+  right: 12px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+.modal-title {
+  margin-bottom: 12px;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+.modal-textarea {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  outline: none;
+  background: var(--background-primary-alt);
+  color: var(--text-normal);
+  font: inherit;
+  line-height: 1.6;
+  resize: none;
+  unicode-bidi: plaintext;
+}
+.modal-textarea:focus {
+  border-color: var(--interactive-accent);
+}
+.modal-button-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.modal-button-container button {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font-size: 0.95em;
+}
+.modal-button-container .mod-cta {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
