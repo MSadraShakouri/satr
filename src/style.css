@@ -350,9 +350,12 @@ body {
   z-index: 9;
   inset: 0;
   background: #1f232820;
+  opacity: 0;
+  transition: opacity ease-out 0.2s;
 }
 .files-open .backdrop {
   display: block;
+  opacity: 1;
 }
 .cm-editor {
   height: 100%;

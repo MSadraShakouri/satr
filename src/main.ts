@@ -112,7 +112,9 @@ function setMode(next: Mode): void {
   });
 }
 function toggleFiles(open = !document.body.classList.contains('files-open')): void {
+  cancelSettle();
   document.body.classList.toggle('files-open', open);
+  clearDrawerDrag();
 }
 
 editor = new SatrEditor(document.querySelector('#editor')!, update);
@@ -146,6 +148,16 @@ document.querySelector('#files')!.addEventListener('click', () => toggleFiles())
 document.querySelector('#close-files')!.addEventListener('click', () => toggleFiles(false));
 document.querySelector('#backdrop')!.addEventListener('click', () => toggleFiles(false));
 document.querySelector('#new-file')!.addEventListener('click', () => { editor.setValue(''); setMode('edit'); toggleFiles(false); });
+// Drawer gesture, modeled on Obsidian's mobile drawer physics (measured in its
+// production bundle): EMA-smoothed velocity, fling projection on release
+// (position + 1s of velocity must cross half the width), a settle animation
+// whose duration scales with remaining distance (200ms for a full traversal),
+// and cancellation rules for scrollable content, selections and safe areas.
+const MOVE_DEADLINE_MS = 200;
+const SETTLE_MS = 200;
+const PROJECT_MS = 1000;
+const EMA_ALPHA = 0.2;
+const HIDE_FACTOR = 1.05;
 let gestureStartX = 0;
 let gestureStartY = 0;
 let gestureId = -1;
@@ -153,77 +165,191 @@ let gestureStartTime = 0;
 let gestureLastX = 0;
 let gestureLastTime = 0;
 let gestureVelocity = 0;
-let gestureMode: 'edge-open' | 'panel-close' | null = null;
+let gestureStartShift = 0;
+let gestureEngaged = false;
+let gestureWidth = 0;
+let resumeTarget: boolean | null = null;
+let settleTarget: boolean | null = null;
+let settleAnims: Animation[] = [];
 const panel = document.querySelector<HTMLElement>('.file-panel')!;
 const topbar = document.querySelector<HTMLElement>('.topbar')!;
 const workspace = document.querySelector<HTMLElement>('.workspace')!;
+const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
 const drawerWidth = (): number => Math.min(window.innerWidth * .84, 420);
-function dragDrawer(dx: number, opening: boolean): void {
+const insetProbe = document.createElement('div');
+insetProbe.setAttribute('aria-hidden', 'true');
+insetProbe.style.cssText = 'position:fixed;inset:auto 0 0;height:0;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px)';
+document.body.appendChild(insetProbe);
+const bottomInset = (): number => parseFloat(getComputedStyle(insetProbe).paddingBottom) || 0;
+const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function drawerShiftOf(): number {
+  // Current visual open-amount of the drawer in px (0 = closed, width = open),
+  // measured from the panel's computed transform so re-grabbing mid-settle
+  // continues from exactly where the animation left off.
   const width = drawerWidth();
-  const amount = opening ? Math.max(0, Math.min(width, dx)) : Math.max(-width, Math.min(0, dx));
-  panel.style.transition = 'none';
-  const progress = opening ? amount / width : 1 + amount / width;
-  panel.style.transform = opening ? `translate3d(calc(-105% + ${amount}px),0,0)` : `translate3d(${amount}px,0,0)`;
-  workspace.style.transition = 'none';
-  topbar.style.transition = 'none';
-  const contentOffset = opening ? amount : width + amount;
-  const drawerTransform = `translate3d(${contentOffset}px,0,0)`;
-  workspace.style.transform = drawerTransform;
-  topbar.style.transform = drawerTransform;
-  const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
+  const m = new DOMMatrixReadOnly(getComputedStyle(panel).transform);
+  return Math.max(0, Math.min(width, width + m.m41 / HIDE_FACTOR));
+}
+function renderDrawer(shift: number): void {
+  const width = gestureWidth || drawerWidth();
+  const s = Math.max(0, Math.min(width, shift));
+  for (const el of [panel, workspace, topbar, backdrop]) el.style.transition = 'none';
+  panel.style.transform = `translate3d(${-HIDE_FACTOR * (width - s)}px,0,0)`;
+  workspace.style.transform = `translate3d(${s}px,0,0)`;
+  topbar.style.transform = `translate3d(${s}px,0,0)`;
   backdrop.style.display = 'block';
-  backdrop.style.opacity = String(Math.max(0, Math.min(.5, progress * .5)));
+  backdrop.style.opacity = String(s / width);
 }
 function clearDrawerDrag(): void {
-  window.requestAnimationFrame(() => {
-    panel.style.transition = '';
-    panel.style.transform = '';
-    workspace.style.transition = '';
-    workspace.style.transform = '';
-    topbar.style.transition = '';
-    topbar.style.transform = '';
-    const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
-    backdrop.style.display = '';
-    backdrop.style.opacity = '';
-  });
+  // Restore steady state from the .files-open class; it equals the visual end
+  // state of the settle animation, so nothing visibly moves here.
+  for (const el of [panel, workspace, topbar, backdrop]) el.style.transition = '';
+  panel.style.transform = '';
+  workspace.style.transform = '';
+  topbar.style.transform = '';
+  backdrop.style.display = '';
+  backdrop.style.opacity = '';
+}
+function cancelSettle(): void {
+  if (settleTarget === null && settleAnims.length === 0) return;
+  const shift = drawerShiftOf();
+  for (const anim of settleAnims) anim.cancel();
+  settleAnims = [];
+  settleTarget = null;
+  gestureWidth = drawerWidth();
+  renderDrawer(shift);
+}
+function freezeDrawer(): number {
+  // Pin every drawer element to its computed (true visual) state with
+  // transitions off. Covers any animation source — a WAAPI settle AND the
+  // steady-state CSS class transition from button/backdrop toggles — so a
+  // re-grab mid-animation starts from where the drawer actually is instead
+  // of snapping back to a stale touchstart measurement.
+  gestureWidth = drawerWidth();
+  const shift = drawerShiftOf();
+  renderDrawer(shift);
+  return shift;
+}
+function settleDrawer(open: boolean): void {
+  const width = gestureWidth || drawerWidth();
+  const from = drawerShiftOf();
+  const end = open ? width : 0;
+  const duration = reducedMotion() ? 0 : Math.max(SETTLE_MS * (width ? Math.abs(end - from) / width : 1), 1);
+  const easing = 'ease-out';
+  settleTarget = open;
+  settleAnims = [
+    panel.animate([
+      { transform: `translate3d(${-HIDE_FACTOR * (width - from)}px,0,0)` },
+      { transform: open ? 'translate3d(0px,0,0)' : `translate3d(${-HIDE_FACTOR * width}px,0,0)` },
+    ], { duration, easing, fill: 'forwards' }),
+    workspace.animate(
+      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
+      { duration, easing, fill: 'forwards' }),
+    topbar.animate(
+      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
+      { duration, easing, fill: 'forwards' }),
+    backdrop.animate(
+      [{ opacity: width ? from / width : 0 }, { opacity: open ? 1 : 0 }],
+      { duration, easing, fill: 'forwards' }),
+  ];
+  for (const el of [panel, workspace, topbar, backdrop]) el.style.transition = 'none';
+  settleAnims[0].onfinish = () => {
+    document.body.classList.toggle('files-open', open);
+    clearDrawerDrag();
+    for (const anim of settleAnims) anim.cancel();
+    settleAnims = [];
+    settleTarget = null;
+  };
 }
 document.addEventListener('touchstart', (event) => {
   if (gestureId !== -1 || event.touches.length !== 1) return;
-  const touch = event.touches[0];
+  const touch = event.touches[0] as Touch & { touchType?: string };
+  if (touch.touchType === 'stylus') return;
+  for (let el = event.target as HTMLElement | null; el; el = el.parentElement) {
+    if (el.dataset && el.dataset.ignoreSwipe !== undefined) return;
+  }
+  // Ignore touches in the bottom gesture-navigation zone.
+  if (window.innerHeight - touch.clientY < bottomInset() + 4) return;
+  resumeTarget = settleTarget;
+  cancelSettle();
+  const frozenShift = freezeDrawer();
   gestureId = touch.identifier;
   gestureStartX = touch.clientX;
   gestureStartY = touch.clientY;
+  gestureStartTime = performance.now();
   gestureLastX = touch.clientX;
-  gestureLastTime = performance.now();
+  gestureLastTime = gestureStartTime;
   gestureVelocity = 0;
-  gestureMode = document.body.classList.contains('files-open') ? 'panel-close' : 'edge-open';
+  gestureStartShift = frozenShift;
+  gestureEngaged = false;
 }, { passive: true, capture: true });
+function abortGesture(): void {
+  // Not a drawer swipe. If the drag already engaged, settle back to the state
+  // the drawer came from; if we only froze a settle on touchstart, resume it.
+  // Either way the drawer can never be left hanging mid-position.
+  if (gestureEngaged) {
+    settleDrawer(resumeTarget ?? document.body.classList.contains('files-open'));
+  } else if (resumeTarget !== null) {
+    settleDrawer(resumeTarget);
+  } else {
+    clearDrawerDrag(); // release the touchstart freeze; a class transition resumes
+  }
+  resumeTarget = null;
+  gestureEngaged = false;
+  gestureId = -1;
+}
 document.addEventListener('touchmove', (event) => {
-  if (gestureId === -1 || !gestureMode) return;
+  if (gestureId === -1) return;
+  if (event.touches.length !== 1) { abortGesture(); return; }
   const touch = [...event.touches].find((item) => item.identifier === gestureId);
   if (!touch) return;
-  const dx = touch.clientX - gestureStartX;
   const now = performance.now();
-  const elapsed = Math.max(1, now - gestureLastTime);
-  gestureVelocity = (touch.clientX - gestureLastX) / elapsed;
+  const dx = touch.clientX - gestureStartX;
+  const dy = touch.clientY - gestureStartY;
+  gestureVelocity = (1 - EMA_ALPHA) * gestureVelocity + EMA_ALPHA * ((touch.clientX - gestureLastX) / Math.max(1, now - gestureLastTime));
   gestureLastX = touch.clientX;
   gestureLastTime = now;
-  const dy = Math.abs(touch.clientY - gestureStartY);
-  if (dy > 80 || Math.abs(dx) <= Math.abs(touch.clientY - gestureStartY) || (gestureMode === 'edge-open' && dx < 4) || (gestureMode === 'panel-close' && dx > -4)) return;
+  if (!gestureEngaged) {
+    // Not ours: held still too long, moved vertically, or overshot vertically.
+    if (now - gestureStartTime > MOVE_DEADLINE_MS || Math.abs(dy) > 80) { abortGesture(); return; }
+    if (Math.abs(dx) <= Math.abs(dy)) return;
+    // Only a horizontal drag away from the settled edge counts.
+    if (!((dx > 4 && gestureStartShift < gestureWidth) || (dx < -4 && gestureStartShift > 0))) return;
+    // Horizontally scrollable content under the finger wins.
+    for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollWidth <= el.clientWidth) continue;
+      if (!['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
+      if ((dx > 0 && el.scrollLeft > 0) || (dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1)) {
+        abortGesture(); return;
+      }
+    }
+    // An active text selection takes priority over the drawer.
+    if (window.getSelection()?.toString()) { abortGesture(); return; }
+    gestureEngaged = true;
+  }
   event.preventDefault();
-  dragDrawer(dx, gestureMode === 'edge-open');
+  renderDrawer(gestureStartShift + dx);
 }, { passive: false, capture: true });
 const finishGesture = (event: TouchEvent, cancelled = false): void => {
   if (gestureId === -1) return;
-  const touch = [...event.changedTouches].find((item) => item.identifier === gestureId);
-  const dx = touch ? touch.clientX - gestureStartX : 0;
-  const dy = touch ? Math.abs(touch.clientY - gestureStartY) : 999;
-  const opening = gestureMode === 'edge-open';
-  const fastEnough = opening ? gestureVelocity > .55 : gestureVelocity < -.55;
-  const shouldChange = !cancelled && dy < 80 && Math.abs(dx) > dy && ((opening && (dx > drawerWidth() * .35 || fastEnough)) || (!opening && (dx < -drawerWidth() * .35 || fastEnough)));
-  if (shouldChange) toggleFiles(opening);
-  clearDrawerDrag();
-  gestureMode = null;
+  if (gestureEngaged) {
+    const touch = [...event.changedTouches].find((item) => item.identifier === gestureId);
+    const dx = touch ? touch.clientX - gestureStartX : 0;
+    const dy = touch ? Math.abs(touch.clientY - gestureStartY) : 999;
+    if (cancelled) {
+      settleDrawer(resumeTarget ?? document.body.classList.contains('files-open'));
+    } else {
+      // Fling projection: where the drawer would land after 1s of coasting.
+      const projected = gestureStartShift + dx + gestureVelocity * PROJECT_MS;
+      settleDrawer(projected > gestureWidth / 2 && dy < 80 && Math.abs(dx) > dy);
+    }
+  } else if (resumeTarget !== null) {
+    settleDrawer(resumeTarget);
+  } else {
+    clearDrawerDrag(); // plain tap: release the touchstart freeze
+  }
+  resumeTarget = null;
+  gestureEngaged = false;
   gestureId = -1;
 };
 document.addEventListener('touchend', finishGesture, { passive: true, capture: true });
