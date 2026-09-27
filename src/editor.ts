@@ -1,10 +1,10 @@
 import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { search, SearchQuery, setSearchQuery, findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
-import { EditorState, StateField, StateEffect, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
+import { EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass } from '@codemirror/view';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
@@ -12,6 +12,32 @@ const rtlLineDirection = EditorView.theme({
   '.cm-content': { padding: '5.5rem max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0', unicodeBidi: 'plaintext' },
   '&.cm-focused': { outline: 'none' },
+});
+
+// Line numbers sit in a smaller font than the text, so on their own they
+// float toward the top of each line. Tag heading lines in the gutter so CSS
+// can give their numbers the heading's line box and centre them on it.
+class HeadingGutterClass extends GutterMarker {
+  constructor(readonly elementClass: string) { super(); }
+}
+const headingGutterClasses = [1, 2, 3].map((level) => new HeadingGutterClass(`cm-ln-h${level}`));
+function buildHeadingGutter(state: EditorState) {
+  const builder = new RangeSetBuilder<GutterMarker>();
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      const match = /^(?:ATX|Setext)Heading([1-3])$/.exec(node.name);
+      if (!match) return;
+      builder.add(node.from, node.from, headingGutterClasses[Number(match[1]) - 1]);
+      return false;
+    },
+  });
+  return builder.finish();
+}
+const headingGutterField = StateField.define({
+  create: buildHeadingGutter,
+  update: (markers, tr) =>
+    tr.docChanged || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? buildHeadingGutter(tr.state) : markers,
+  provide: (field) => gutterLineClass.from(field),
 });
 
 const persianListMarkerPlugin = ViewPlugin.fromClass(class {
@@ -182,6 +208,7 @@ class TitleWidget extends WidgetType {
 
   toDOM(view: EditorView) {
     const wrap = document.createElement('div');
+    wrap.className = 'cm-file-title';
     const el = document.createElement('div');
     el.className = 'cm-file-name';
     el.contentEditable = 'true';
@@ -197,7 +224,11 @@ class TitleWidget extends WidgetType {
     wrap.append(el, errorEl);
     let original = this.value;
     const titleText = (): string => (el.textContent ?? '').replace(/\s+/g, ' ').trim();
-    const showError = (message: string | null): void => { errorEl.textContent = message ?? ''; };
+    const showError = (message: string | null): void => {
+      if (errorEl.textContent === (message ?? '')) return;
+      errorEl.textContent = message ?? '';
+      view.requestMeasure(); // the widget changed height; keep the gutter in step
+    };
     const commit = (): boolean => {
       const name = titleText();
       const error = validateTitle(name, true, original);
@@ -324,7 +355,7 @@ export class SatrEditor {
         { tag: tags.list, opacity: '0.72' },
       ])),
       titleField,
-      rtlLineDirection, directionPlugin, persianListMarkerPlugin,
+      rtlLineDirection, directionPlugin, persianListMarkerPlugin, headingGutterField,
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', dir: 'auto' }),

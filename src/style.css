@@ -361,6 +361,11 @@ body {
   height: 100%;
   background: var(--editor);
 }
+.cm-file-title {
+  /* Keep the title's bottom margin inside the widget box so CodeMirror
+     measures its real height; otherwise every line number sits too high. */
+  display: flow-root;
+}
 .cm-file-name {
   display: block;
   width: calc(100% + 2 * max(1.25rem, calc((100% - 72ch) / 2)));
@@ -410,19 +415,35 @@ body {
   overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
+/* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
+   active-line highlight. The line-height equals the text's line box
+   (16px x 1.85), so each number is centred on its line instead of riding
+   high. Room for three digits is reserved so the text doesn't jump at
+   line 10 or 100. */
 .cm-gutters {
   background: transparent !important;
   border: 0 !important;
-  color: #a3a7ad;
-}
-.cm-lineNumbers .cm-gutterElement {
-  padding-inline: 12px 10px;
-  font-size: 0.9em;
+  color: #ababab;
+  font-size: 0.8em;
   font-variant-numeric: tabular-nums;
+  line-height: calc(16px * 1.85);
+}
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement {
+  min-width: calc(3ch + 18px);
+  padding: 0 7px 0 11px;
+  text-align: right;
+}
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h1 {
+  line-height: calc(16px * 1.45 * 1.85);
+}
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h2 {
+  line-height: calc(16px * 1.25 * 1.85);
+}
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h3 {
+  line-height: calc(16px * 1.1 * 1.85);
 }
 .cm-activeLineGutter {
   background: transparent !important;
-  color: #73777d;
 }
 .cm-activeLine {
   background: transparent !important;
