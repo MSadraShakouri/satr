@@ -59,7 +59,6 @@ app.innerHTML = `
   <div class="app-shell">
     <div class="topbar">
       <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="15" height="16" rx="2"/><path d="M8 7v10"/></svg></button>
-      <div class="topbar-center"><span class="save-state" id="save-state" aria-live="polite">Saved</span></div>
       <div class="topbar-actions">
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
@@ -72,14 +71,12 @@ app.innerHTML = `
     </aside>
     <div class="backdrop" id="backdrop"></div>
     <main class="workspace">
-      <section class="editor-pane" id="editor-pane" aria-label="Editor"><div class="file-name" id="file-name">Main</div><div id="editor"></div></section>
+      <section class="editor-pane" id="editor-pane" aria-label="Editor"><div id="editor"></div></section>
       <section class="preview-pane" id="preview-pane" aria-label="Preview"><article id="preview"></article></section>
     </main>
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
-const fileName = document.querySelector<HTMLElement>('#file-name')!;
-const state = document.querySelector<HTMLElement>('#save-state')!;
 let mode: Mode = 'edit';
 let saveTimer: number | undefined;
 const bookIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg>';
@@ -98,9 +95,8 @@ function syncScroll(source: HTMLElement, target: HTMLElement): void {
 function update(text?: string): void {
   const source = text ?? editor.getValue();
   preview.innerHTML = renderMarkdown(source);
-  state.textContent = 'Unsaved';
   window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => { localStorage.setItem('satr:untitled.md', source); state.textContent = 'Saved'; }, 700);
+  saveTimer = window.setTimeout(() => { localStorage.setItem('satr:untitled.md', source); }, 700);
 }
 function setMode(next: Mode): void {
   const previous = mode;
@@ -138,7 +134,6 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   }
   lastScrollTop = current;
   lastScrollTime = now;
-  fileName.style.opacity = current > 4 ? '0' : '1';
   syncScroll(editor.view.scrollDOM, preview);
 }, { passive: true });
 preview.addEventListener('scroll', () => syncScroll(preview, editor.view.scrollDOM), { passive: true });
@@ -160,8 +155,6 @@ let gestureLastTime = 0;
 let gestureVelocity = 0;
 let gestureMode: 'edge-open' | 'panel-close' | null = null;
 const panel = document.querySelector<HTMLElement>('.file-panel')!;
-const editorPane = document.querySelector<HTMLElement>('.editor-pane')!;
-const previewPane = document.querySelector<HTMLElement>('.preview-pane')!;
 const topbar = document.querySelector<HTMLElement>('.topbar')!;
 const workspace = document.querySelector<HTMLElement>('.workspace')!;
 const drawerWidth = (): number => Math.min(window.innerWidth * .84, 420);
@@ -200,9 +193,8 @@ document.addEventListener('touchstart', (event) => {
   gestureId = touch.identifier;
   gestureStartX = touch.clientX;
   gestureStartY = touch.clientY;
-  gestureStartTime = performance.now();
   gestureLastX = touch.clientX;
-  gestureLastTime = gestureStartTime;
+  gestureLastTime = performance.now();
   gestureVelocity = 0;
   gestureMode = document.body.classList.contains('files-open') ? 'panel-close' : 'edge-open';
 }, { passive: true, capture: true });

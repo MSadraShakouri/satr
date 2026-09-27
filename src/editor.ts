@@ -1,10 +1,10 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab, toggleComment, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { search, SearchQuery, setSearchQuery, findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
-import { EditorState, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
+import { EditorState, StateField, type Extension } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
@@ -121,6 +121,46 @@ function outdentLess(view: EditorView): boolean {
   return true;
 }
 
+class TitleWidget extends WidgetType {
+  constructor(readonly value: string) {
+    super();
+  }
+
+  toDOM() {
+    const input = document.createElement('input');
+    input.className = 'cm-file-name';
+    input.type = 'text';
+    input.value = this.value;
+    input.setAttribute('aria-label', 'File title');
+    input.spellcheck = false;
+    return input;
+  }
+
+  eq(other: TitleWidget) {
+    return other.value === this.value;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
+const titleField = StateField.define({
+  create() {
+    return Decoration.set([
+      Decoration.widget({
+        widget: new TitleWidget('Main'),
+        block: true,
+        side: -1,
+      }).range(0),
+    ]);
+  },
+  update(deco) {
+    return deco;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 export class SatrEditor {
   readonly view: EditorView;
   constructor(parent: HTMLElement, onChange: (text: string) => void, onSelection?: (position: number) => void) {
@@ -140,6 +180,7 @@ export class SatrEditor {
         { tag: tags.quote, color: 'var(--muted)' },
         { tag: tags.list, opacity: '0.72' },
       ])),
+      titleField,
       rtlLineDirection, directionPlugin, persianListMarkerPlugin,
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
@@ -166,7 +207,6 @@ export class SatrEditor {
         if (!caret) return;
         const viewport = window.visualViewport;
         const keyboardTop = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight);
-        const editorTop = Math.max(scroller.getBoundingClientRect().top, 0);
         const safeBottom = Math.min(keyboardTop, window.innerHeight) - 28;
         if (caret.bottom > safeBottom) scroller.scrollBy({ top: caret.bottom - safeBottom, behavior: 'smooth' });
       });

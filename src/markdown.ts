@@ -32,7 +32,7 @@ export function renderMarkdown(source: string): string {
   const normalizedTables = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
   const withMathPlaceholders = normalizedTables.replace(/\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g, (_full, display: string | undefined, inline: string | undefined) => {
-    const value = (display ?? inline ?? '').replace(/ {2,}/g, (spaces) => ' '.repeat(spaces.length)).replace(/(?<!\\) /g, '\\ ');
+    const value = (display ?? inline ?? '').replace(/(?<!\\) /g, '\\ ');
     const id = math.push(katex.renderToString(value, { displayMode: Boolean(display), throwOnError: false })) - 1;
     return display ? `<div data-satr-math="${id}"></div>` : `<span data-satr-math="${id}"></span>`;
   });
