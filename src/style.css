@@ -194,6 +194,38 @@ body {
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.25em;
 }
+/* ---- Math (src/math.ts + src/mathLayout.ts) ----
+   A formula is a row of unbreakable units split at relations; lines break
+   only between units. .math-cont is the unit's form with the repeated
+   relation, shown when the unit starts a line. */
+.math-unit {
+  display: inline-block;
+  white-space: nowrap;
+}
+.math-unit.is-overwide {
+  /* last resort for a unit wider than the line: allow KaTeX's own breaks */
+  display: inline;
+  white-space: normal;
+}
+.math-cont,
+.math-unit.is-line-start > .math-plain {
+  display: none;
+}
+.math-unit.is-line-start > .math-cont,
+.math-flow.is-measuring .math-cont {
+  display: inline;
+}
+.math-display {
+  margin: 1em 0;
+  text-align: center;
+  direction: ltr;
+  line-height: 2.1;
+}
+.math-display > .katex-display {
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 .preview-pane pre {
   overflow: auto;
   padding: 14px;
@@ -464,49 +496,200 @@ body {
     opacity: 0;
   }
 }
-.cm-selectionBackground {
-  background: #b6d7ff !important;
+/* Text-tight selection (src/selection.ts): boxes hug the selected glyphs,
+   skip indentation, and empty lines / line breaks get a caret-sized mark. */
+.cm-satr-selection {
+  background: #b6d7ff;
+  border-radius: 2px;
 }
-.cm-live-heading {
-  font-weight: 700;
-  line-height: 1.35;
+/* ---- Live preview (src/livePreview.ts) ---- */
+.cm-lp-bullet {
+  /* the "-" stays in the text, invisible; the dot is drawn on top */
+  position: relative;
+  color: transparent;
 }
-.cm-live-h1 {
-  font-size: 2.35em;
+.cm-lp-bullet::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
-.cm-live-h2 {
-  font-size: 1.8em;
+.cm-lp-list-hidden {
+  /* "- " in front of a checkbox: kept in the text, takes no space */
+  font-size: 0;
 }
-.cm-live-h3 {
-  font-size: 1.4em;
+.cm-lp-task {
+  /* the "[ ]" text stays in the DOM (font-size 0); the box is a ::before */
+  font-size: 0;
+  cursor: pointer;
 }
-.cm-live-marker {
-  color: #a0a6ad;
+.cm-lp-task::before {
+  content: "";
+  display: inline-block;
+  box-sizing: border-box;
+  width: 17px;
+  height: 17px;
+  margin-inline-end: 1px;
+  vertical-align: -3px;
+  border: 1.5px solid #8c959f;
+  border-radius: 5px;
+  background: transparent center / 12px no-repeat;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
 }
-.cm-live-strong {
-  font-weight: 800;
+.cm-lp-task.is-checked::before {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
 }
-.cm-live-emphasis {
-  font-style: italic;
-}
-.cm-live-strike {
+.cm-lp-task-done {
+  color: #8c959f;
   text-decoration: line-through;
 }
-.cm-live-table {
-  border-collapse: collapse;
-  margin: 1rem 0;
-  font-size: 1.05em;
-  background: #fff;
+.cm-lp-hr {
+  display: inline-block;
+  width: 100%;
+  vertical-align: middle;
+  border-top: 1px solid var(--border);
 }
-.cm-live-table th,
-.cm-live-table td {
-  border: 1px solid #d8dde3;
-  padding: 5px 12px;
-  text-align: start;
+.cm-editor .cm-line.cm-lp-quote {
+  padding-inline-start: 0.9em;
+  border-inline-start: 3px solid var(--border);
+  color: var(--muted);
 }
-.cm-live-table th {
-  font-weight: 800;
-  background: #fff;
+.cm-lp-inline-code {
+  padding: 0.1em 0.25em;
+  border-radius: 4px;
+  /* translucent so the selection layer underneath stays visible */
+  background: rgba(175, 184, 193, 0.22);
+  font-family: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+.cm-editor .cm-line.cm-lp-code-line {
+  padding-inline: 0.75em;
+  background: rgba(175, 184, 193, 0.16);
+  font-family: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.cm-editor .cm-line.cm-lp-code-begin {
+  border-start-start-radius: 7px;
+  border-start-end-radius: 7px;
+}
+.cm-editor .cm-line.cm-lp-code-end {
+  border-end-start-radius: 7px;
+  border-end-end-radius: 7px;
+}
+.cm-lp-fence {
+  display: inline-block;
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.75em;
+  text-align: end;
+}
+.cm-lp-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* ---- Keyboard toolbar ----
+   After Obsidian 1.12 mobile (.mobile-toolbar with floating navigation): a
+   44px pill inset 8px from the screen edges, translucent "raised" background
+   with backdrop blur and soft shadow, 40px options, 24px icons at 1.75
+   stroke, monospace glyphs for text options, and edge fades while the list
+   can scroll. */
+.edit-toolbar {
+  position: fixed;
+  z-index: 7;
+  inset: auto 8px 4px;
+  display: none;
+  height: 44px;
+  border-radius: 44px;
+  overflow: hidden;
+  background:
+    color-mix(in srgb, #fff 65%, transparent)
+    linear-gradient(#fff, color-mix(in srgb, #fff 65%, transparent));
+  backdrop-filter: blur(6px) saturate(1.5) brightness(1.15);
+  -webkit-backdrop-filter: blur(6px) saturate(1.5) brightness(1.15);
+  box-shadow:
+    0 1px 6px rgba(0, 0, 0, 0.015),
+    0 4px 24px rgba(0, 0, 0, 0.065),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.keyboard-open .edit-toolbar {
+  display: block;
+}
+.edit-toolbar-list {
+  display: flex;
+  height: 100%;
+  padding: 0 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+.edit-toolbar-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.edit-toolbar::before,
+.edit-toolbar::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  width: 30px;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.edit-toolbar::before {
+  left: 0;
+  background: linear-gradient(to right, #fff, transparent);
+}
+.edit-toolbar::after {
+  right: 0;
+  background: linear-gradient(to right, transparent, #fff);
+}
+.edit-toolbar.can-scroll-start::before,
+.edit-toolbar.can-scroll-end::after {
+  opacity: 1;
+}
+.edit-toolbar button {
+  flex: 1 0 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 100%;
+  padding: 0;
+  border-radius: 44px;
+  background: transparent;
+  color: #222;
+  font-family: VazirCode, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+.edit-toolbar button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+.edit-toolbar svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 @media (max-width: 760px) {
   .workspace {

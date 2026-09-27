@@ -4,6 +4,8 @@ import 'highlight.js/styles/github.css';
 import './style.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown } from './markdown';
+import { layoutMath, scheduleMathLayout } from './mathLayout';
+import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
 
 type Mode = 'edit' | 'preview';
 const starter = `# Satr demo
@@ -74,6 +76,20 @@ app.innerHTML = `
       <section class="editor-pane" id="editor-pane" aria-label="Editor"><div id="editor"></div></section>
       <section class="preview-pane" id="preview-pane" aria-label="Preview"><article id="preview"></article></section>
     </main>
+    <div class="edit-toolbar" id="edit-toolbar" role="toolbar" aria-label="Formatting" data-ignore-swipe>
+      <div class="edit-toolbar-list" id="edit-toolbar-list">
+        <button tabindex="-1" data-command="undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+        <button tabindex="-1" data-command="redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+        <button tabindex="-1" data-command="heading" aria-label="Heading">#</button>
+        <button tabindex="-1" data-command="bullet" aria-label="Bulleted list"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".6"/><circle cx="4.5" cy="12" r=".6"/><circle cx="4.5" cy="18" r=".6"/></svg></button>
+        <button tabindex="-1" data-command="ordered" aria-label="Numbered list">1.</button>
+        <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="m8 12.5 3 3 5-6"/></svg></button>
+        <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
+        <button tabindex="-1" data-command="math" aria-label="Math">$</button>
+        <button tabindex="-1" data-command="lineUp" aria-label="Move line up"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+        <button tabindex="-1" data-command="lineDown" aria-label="Move line down"><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
+      </div>
+    </div>
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
@@ -82,14 +98,18 @@ let saveTimer: number | undefined;
 const bookIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg>';
 const penIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.2 18.8 1.1-4.4L16.7 3a2.1 2.1 0 0 1 3 3L8.3 17.7z"/><path d="M11 18.8h8.5"/></svg>';
 let editor: SatrEditor;
+const toolbar = document.querySelector<HTMLElement>('#edit-toolbar')!;
+const previewPane = preview.parentElement!;
+const isShown = (el: HTMLElement): boolean => el.getClientRects().length > 0;
+// Split view (wide screens): keep the hidden-follower pane in step, by source
+// line. The flag stops the follower's own scroll event from echoing back.
 let syncingScroll = false;
-function syncScroll(source: HTMLElement, target: HTMLElement): void {
-  if (syncingScroll) return;
-  const sourceMax = Math.max(1, source.scrollHeight - source.clientHeight);
-  const targetMax = Math.max(0, target.scrollHeight - target.clientHeight);
+function follow(from: 'editor' | 'preview'): void {
+  if (syncingScroll || !isShown(previewPane) || !isShown(editor.view.scrollDOM)) return;
   syncingScroll = true;
-  target.scrollTop = (source.scrollTop / sourceMax) * targetMax;
-  window.requestAnimationFrame(() => { syncingScroll = false; });
+  if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view));
+  else applyEditorScroll(editor.view, previewScroll(previewPane, preview));
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
 }
 
 // Files persist in localStorage under satr:<base>.md; the current file's
@@ -104,21 +124,27 @@ fileRow.textContent = `${fileBase}.md`;
 function update(text?: string): void {
   const source = text ?? editor.getValue();
   preview.innerHTML = renderMarkdown(source);
+  scheduleMathLayout(preview);
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => { localStorage.setItem(storageKey(fileBase), source); }, 700);
 }
 function setMode(next: Mode): void {
-  const previous = mode;
-  const sourceScroll = previous === 'preview' ? preview : editor.view.scrollDOM;
+  // Read the position from the pane that is visible *now* — a display:none
+  // pane reports scrollTop 0, which is what used to send preview to the top.
+  const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   mode = next;
   document.body.dataset.mode = mode;
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
   previewButton.innerHTML = mode === 'edit' ? bookIcon : penIcon;
   previewButton.setAttribute('aria-label', mode === 'edit' ? 'Open preview' : 'Return to editor');
-  window.requestAnimationFrame(() => {
-    const target = mode === 'preview' ? preview : editor.view.scrollDOM;
-    syncScroll(sourceScroll, target);
-  });
+  syncingScroll = true;
+  if (mode === 'preview') {
+    layoutMath(preview); // settle math line breaks before measuring positions
+    applyPreviewScroll(previewPane, preview, position);
+  } else {
+    applyEditorScroll(editor.view, position);
+  }
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
 }
 function toggleFiles(open = !document.body.classList.contains('files-open')): void {
   cancelSettle();
@@ -128,6 +154,7 @@ function toggleFiles(open = !document.body.classList.contains('files-open')): vo
 
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
+  obscuredBottom: () => (document.body.classList.contains('keyboard-open') ? toolbar.offsetHeight : 0),
   checkName: (base) => (nameExists(base) && base !== fileBase ? 'There is already a file with that name' : null),
   onRename: (base) => {
     if (nameExists(base) && base !== fileBase) return 'There is already a file with that name';
@@ -140,6 +167,8 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
     return null;
   },
 });
+// The top bar hides once a downward scroll is faster than this (px per ms).
+const HIDE_SPEED = 1.5;
 let lastScrollTop = 0;
 let lastScrollTime = performance.now();
 let buttonHideTimer: number | undefined;
@@ -148,7 +177,7 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   const now = performance.now();
   const delta = current - lastScrollTop;
   const speed = delta / Math.max(1, now - lastScrollTime);
-  if (delta > 2 && speed > 2.0) {
+  if (delta > 1.5 && speed > HIDE_SPEED) {
     document.body.classList.add('editor-scrolling-down');
     window.clearTimeout(buttonHideTimer);
     buttonHideTimer = window.setTimeout(() => document.body.classList.remove('editor-scrolling-down'), 450);
@@ -158,9 +187,11 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   }
   lastScrollTop = current;
   lastScrollTime = now;
-  syncScroll(editor.view.scrollDOM, preview);
+  follow('editor');
 }, { passive: true });
-preview.addEventListener('scroll', () => syncScroll(preview, editor.view.scrollDOM), { passive: true });
+previewPane.addEventListener('scroll', () => follow('preview'), { passive: true });
+new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
+document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
 const saved = localStorage.getItem(storageKey(fileBase));
 editor.setValue(saved ?? starter);
 update(editor.getValue());
@@ -185,6 +216,95 @@ document.querySelector('#new-file')!.addEventListener('click', () => {
   toggleFiles(false);
   editor.focusTitle();
 });
+// Keyboard toolbar: shown while the note body has focus and the on-screen
+// keyboard is up, pinned to the top of the keyboard. Keyboard detection
+// compares the visual viewport against the tallest height seen at this width,
+// which works both when the keyboard overlays the page (Chrome's default) and
+// when it resizes the WebView (Capacitor's adjustResize).
+let fullHeight = 0;
+let fullHeightWidth = 0;
+function layoutToolbar(): void {
+  const viewport = window.visualViewport;
+  const height = viewport?.height ?? window.innerHeight;
+  if (window.innerWidth !== fullHeightWidth) { fullHeightWidth = window.innerWidth; fullHeight = 0; }
+  fullHeight = Math.max(fullHeight, height, window.innerHeight);
+  const keyboardUp = fullHeight - height > 120;
+  const show = keyboardUp && editor.hasFocus && mode === 'edit';
+  document.body.classList.toggle('keyboard-open', show);
+  // Distance from the layout viewport's bottom to the visual viewport's bottom.
+  const lift = window.innerHeight - ((viewport?.offsetTop ?? 0) + height);
+  toolbar.style.transform = `translate3d(0, ${-Math.max(0, lift)}px, 0)`;
+}
+window.visualViewport?.addEventListener('resize', layoutToolbar);
+window.visualViewport?.addEventListener('scroll', layoutToolbar);
+window.addEventListener('resize', layoutToolbar);
+document.addEventListener('focusin', () => window.requestAnimationFrame(layoutToolbar));
+document.addEventListener('focusout', () => window.setTimeout(layoutToolbar, 50));
+// Never take focus from the editor (that would close the keyboard).
+toolbar.addEventListener('pointerdown', (event) => event.preventDefault());
+toolbar.addEventListener('mousedown', (event) => event.preventDefault());
+toolbar.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-command]');
+  if (!button) return;
+  editor.run(button.dataset.command!);
+});
+const toolbarList = document.querySelector<HTMLElement>('#edit-toolbar-list')!;
+function updateToolbarFades(): void {
+  const max = toolbarList.scrollWidth - toolbarList.clientWidth;
+  toolbar.classList.toggle('can-scroll-start', toolbarList.scrollLeft > 1);
+  toolbar.classList.toggle('can-scroll-end', toolbarList.scrollLeft < max - 1);
+}
+toolbarList.addEventListener('scroll', updateToolbarFades, { passive: true });
+new ResizeObserver(updateToolbarFades).observe(toolbarList);
+layoutToolbar();
+
+// Double-tap the preview to enter editing at the same spot, without a caret
+// (and so without the keyboard) — Obsidian's reading-view double tap. The
+// position carries over through the same source-line mapping as the toggle.
+function editFromPreview(): void {
+  if (mode !== 'preview') return;
+  if (window.getSelection()?.toString()) return;
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  setMode('edit');
+}
+// Touch double taps are detected on touchend so the second one can be
+// cancelled: otherwise its synthetic mousedown/click lands on the editor that
+// just replaced the preview and focuses it (caret + keyboard).
+let tapTime = 0;
+let tapX = 0;
+let tapY = 0;
+let downX = 0;
+let downY = 0;
+let tapMoved = false;
+previewPane.addEventListener('touchstart', (event) => {
+  const touch = event.touches[0];
+  downX = touch.clientX;
+  downY = touch.clientY;
+  tapMoved = event.touches.length > 1;
+}, { passive: true });
+previewPane.addEventListener('touchmove', (event) => {
+  const touch = event.touches[0];
+  if (Math.hypot(touch.clientX - downX, touch.clientY - downY) > 10) tapMoved = true;
+}, { passive: true });
+previewPane.addEventListener('touchend', (event) => {
+  if (tapMoved || event.touches.length > 0) { tapTime = 0; return; }
+  const now = performance.now();
+  if (now - tapTime < 300 && Math.hypot(downX - tapX, downY - tapY) < 30) {
+    tapTime = 0;
+    event.preventDefault(); // no synthetic click on whatever is underneath now
+    editFromPreview();
+    return;
+  }
+  tapTime = now;
+  tapX = downX;
+  tapY = downY;
+}, { passive: false });
+previewPane.addEventListener('dblclick', (event) => {
+  if ((event as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents) return;
+  event.preventDefault();
+  editFromPreview();
+});
+
 // Drawer gesture, modeled on Obsidian's mobile drawer physics (measured in its
 // production bundle): EMA-smoothed velocity, fling projection on release
 // (position + 1s of velocity must cross half the width), a settle animation

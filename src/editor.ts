@@ -1,10 +1,13 @@
 import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { search, SearchQuery, setSearchQuery, findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
 import { EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass } from '@codemirror/view';
+import { livePreview } from './livePreview';
+import { tightSelection } from './selection';
+import { toolbarCommands } from './commands';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
@@ -334,12 +337,16 @@ export class SatrEditor {
     onRename?: (base: string) => string | null;
     checkName?: (base: string) => string | null;
     onSelection?: (position: number) => void;
+    /** Height in px hidden at the bottom of the viewport (e.g. the keyboard toolbar). */
+    obscuredBottom?: () => number;
   }) {
     initialTitle = options?.title ?? 'untitled';
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection(), history(), search(), markdown(),
+      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection(), tightSelection, history(), search(),
+      // GFM base: strikethrough, task lists and tables get parsed.
+      markdown({ base: markdownLanguage }),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
         { tag: tags.heading1, fontWeight: '700', fontSize: '1.45em' },
@@ -352,10 +359,9 @@ export class SatrEditor {
         { tag: tags.url, opacity: '0.62' },
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
         { tag: tags.quote, color: 'var(--muted)' },
-        { tag: tags.list, opacity: '0.72' },
       ])),
       titleField,
-      rtlLineDirection, directionPlugin, persianListMarkerPlugin, headingGutterField,
+      rtlLineDirection, directionPlugin, persianListMarkerPlugin, headingGutterField, livePreview,
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', dir: 'auto' }),
@@ -381,7 +387,7 @@ export class SatrEditor {
         if (!caret) return;
         const viewport = window.visualViewport;
         const keyboardTop = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight);
-        const safeBottom = Math.min(keyboardTop, window.innerHeight) - 28;
+        const safeBottom = Math.min(keyboardTop, window.innerHeight) - 28 - (options?.obscuredBottom?.() ?? 0);
         if (caret.bottom > safeBottom) scroller.scrollBy({ top: caret.bottom - safeBottom, behavior: 'smooth' });
       });
     };
@@ -404,6 +410,12 @@ export class SatrEditor {
   }
   setValue(value: string): void { this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value } }); }
   focus(): void { this.view.focus(); }
+  get hasFocus(): boolean { return this.view.hasFocus; }
+  /** Run a keyboard-toolbar command by name. */
+  run(command: string): boolean {
+    const fn = toolbarCommands[command];
+    return fn ? fn(this.view) : false;
+  }
   findNext(): void { findNext(this.view); }
   findPrevious(): void { findPrevious(this.view); }
   replaceNext(): void { replaceNext(this.view); }
