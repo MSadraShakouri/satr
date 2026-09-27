@@ -372,19 +372,39 @@ body {
   background: transparent;
   color: var(--muted);
   font:
-    700 2.35rem/1 Vazirmatn,
+    700 2.35rem/1.15 Vazirmatn,
     "Segoe UI",
     system-ui,
     sans-serif;
   letter-spacing: -0.03em;
   box-shadow: none;
   pointer-events: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  caret-color: var(--accent);
+  user-select: text;
+  cursor: text;
 }
 .cm-file-name:focus {
   color: #1f2328;
 }
 .cm-file-name::selection {
   background: #b6d7ff;
+}
+.cm-file-name-error {
+  margin: -0.35rem 0 0.5rem;
+  font:
+    500 0.8rem/1.45 Vazirmatn,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  letter-spacing: 0;
+  color: #cf222e;
+  pointer-events: none;
+}
+.cm-file-name-error:empty {
+  display: none;
 }
 .cm-scroller {
   overscroll-behavior: contain;

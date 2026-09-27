@@ -3,7 +3,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { search, SearchQuery, setSearchQuery, findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
-import { EditorState, StateField, type Extension } from '@codemirror/state';
+import { EditorState, StateField, StateEffect, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
 
 const rtlLineDirection = EditorView.theme({
@@ -121,19 +121,149 @@ function outdentLess(view: EditorView): boolean {
   return true;
 }
 
+// Inline file title, modeled on Obsidian's editor.inline-title: a
+// contenteditable, plain-text-only field sitting at the top of the note that
+// renames the file on commit (Enter / Tab / blur), reverts on failure or
+// Escape, and hands focus off to the note body like a caret would.
+const INVALID_NAME = /[\\/:*?"<>|]/;
+const UNSAFE_NAME = /[#^[\]|]/;
+const RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+const setTitleEffect = StateEffect.define<string>();
+let initialTitle = 'untitled';
+const titleRuntime: {
+  onRename: (base: string) => string | null;
+  checkName: (base: string) => string | null;
+} = { onRename: () => null, checkName: () => null };
+
+function validateTitle(name: string, forSave: boolean, original: string): string | null {
+  if (INVALID_NAME.test(name)) return 'File name cannot contain any of these characters: \\ / : * ? " < > |';
+  if (name.startsWith('.')) return 'File name cannot start with a dot';
+  if (UNSAFE_NAME.test(name)) return 'Links will not work with names that contain: # ^ [ ] |';
+  if (RESERVED_NAME.test(name)) return 'That file name is reserved';
+  if (forSave && name === '') return 'File name cannot be empty';
+  if (name !== original) return titleRuntime.checkName(name);
+  return null;
+}
+
+// Flatten whatever the IME/paste built back into ONE text node (like
+// Obsidian's ky()), preserving the caret offset across the rebuild.
+function flattenTitleDom(el: HTMLElement): void {
+  if (el.childNodes.length === 1 && el.firstChild?.nodeType === Node.TEXT_NODE) return;
+  const selection = window.getSelection();
+  let caret: number | null = null;
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    if (el.contains(range.startContainer) && range.startContainer.nodeType === Node.TEXT_NODE) {
+      caret = 0;
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let node: Node | null = walker.nextNode();
+      while (node) {
+        if (node === range.startContainer) { caret += range.startOffset; break; }
+        caret += node.textContent?.length ?? 0;
+        node = walker.nextNode();
+      }
+    }
+  }
+  const text = (el.textContent ?? '').replace(/[\r\n\t]+/g, ' ');
+  el.textContent = text;
+  if (caret !== null && el.firstChild && selection) {
+    selection.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(el.firstChild, Math.min(caret, text.length));
+    range.collapse(true);
+    selection.addRange(range);
+  }
+}
+
 class TitleWidget extends WidgetType {
   constructor(readonly value: string) {
     super();
   }
 
-  toDOM() {
-    const input = document.createElement('input');
-    input.className = 'cm-file-name';
-    input.type = 'text';
-    input.value = this.value;
-    input.setAttribute('aria-label', 'File title');
-    input.spellcheck = false;
-    return input;
+  toDOM(view: EditorView) {
+    const wrap = document.createElement('div');
+    const el = document.createElement('div');
+    el.className = 'cm-file-name';
+    el.contentEditable = 'true';
+    el.tabIndex = -1;
+    el.spellcheck = false;
+    el.dir = 'auto';
+    el.setAttribute('autocapitalize', 'on');
+    el.setAttribute('enterkeyhint', 'done');
+    el.setAttribute('aria-label', 'File title');
+    el.textContent = this.value;
+    const errorEl = document.createElement('div');
+    errorEl.className = 'cm-file-name-error';
+    wrap.append(el, errorEl);
+    let original = this.value;
+    const titleText = (): string => (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const showError = (message: string | null): void => { errorEl.textContent = message ?? ''; };
+    const commit = (): boolean => {
+      const name = titleText();
+      const error = validateTitle(name, true, original);
+      if (error) { showError(error); return false; }
+      if (name !== original) {
+        const renameError = titleRuntime.onRename(name);
+        if (renameError) { showError(renameError); return false; }
+        original = name;
+      }
+      showError(null);
+      return true;
+    };
+    const enterNote = (): void => {
+      el.blur();
+      view.dispatch({ selection: { anchor: 0 } });
+      window.requestAnimationFrame(() => view.focus());
+    };
+    el.addEventListener('focus', () => { original = titleText() || original; showError(null); });
+    el.addEventListener('input', () => {
+      flattenTitleDom(el);
+      const name = (el.textContent ?? '').trim();
+      showError(!name || name === original ? null : validateTitle(name, false, original));
+    });
+    el.addEventListener('paste', (event: ClipboardEvent) => {
+      event.preventDefault();
+      const clip = (event.clipboardData?.getData('text/plain') ?? '').replace(/[\r\n\t]+/g, ' ');
+      if (!clip) return;
+      if (document.queryCommandSupported?.('insertText') && document.execCommand('insertText', false, clip)) return;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || !el.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const node = document.createTextNode(clip);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    el.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        showError(null);
+        el.textContent = original;
+        enterNote();
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (commit()) enterNote();
+      } else if (event.key === 'ArrowDown') {
+        // Leaving through the bottom edge of the title hands the caret to the note.
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+        const caret = selection.getRangeAt(0).getBoundingClientRect();
+        if (caret.bottom + caret.height / 2 < el.getBoundingClientRect().bottom - 2) return;
+        event.preventDefault();
+        enterNote(); // blur commits (and reverts on failure)
+      }
+    });
+    el.addEventListener('blur', () => {
+      if (!commit()) el.textContent = original;
+      showError(null);
+    });
+    return wrap;
   }
 
   eq(other: TitleWidget) {
@@ -145,17 +275,22 @@ class TitleWidget extends WidgetType {
   }
 }
 
+function titleDecoration(value: string) {
+  return Decoration.set([
+    Decoration.widget({
+      widget: new TitleWidget(value),
+      block: true,
+      side: -1,
+    }).range(0),
+  ]);
+}
+
 const titleField = StateField.define({
   create() {
-    return Decoration.set([
-      Decoration.widget({
-        widget: new TitleWidget('Main'),
-        block: true,
-        side: -1,
-      }).range(0),
-    ]);
+    return titleDecoration(initialTitle);
   },
-  update(deco) {
+  update(deco, tr) {
+    for (const effect of tr.effects) if (effect.is(setTitleEffect)) return titleDecoration(effect.value);
     return deco;
   },
   provide: (field) => EditorView.decorations.from(field),
@@ -163,7 +298,15 @@ const titleField = StateField.define({
 
 export class SatrEditor {
   readonly view: EditorView;
-  constructor(parent: HTMLElement, onChange: (text: string) => void, onSelection?: (position: number) => void) {
+  constructor(parent: HTMLElement, onChange: (text: string) => void, options?: {
+    title?: string;
+    onRename?: (base: string) => string | null;
+    checkName?: (base: string) => string | null;
+    onSelection?: (position: number) => void;
+  }) {
+    initialTitle = options?.title ?? 'untitled';
+    titleRuntime.onRename = options?.onRename ?? (() => null);
+    titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
       lineNumbers({ formatNumber: (n) => String(n) }), drawSelection(), history(), search(), markdown(),
       syntaxHighlighting(HighlightStyle.define([
@@ -195,7 +338,7 @@ export class SatrEditor {
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(update.state.doc.toString());
-        if (update.selectionSet) onSelection?.(update.state.selection.main.head);
+        if (update.selectionSet) options?.onSelection?.(update.state.selection.main.head);
       }),
     ];
     this.view = new EditorView({ state: EditorState.create({ extensions }), parent });
@@ -220,6 +363,14 @@ export class SatrEditor {
     window.visualViewport?.addEventListener('resize', focusCaret);
   }
   getValue(): string { return this.view.state.doc.toString(); }
+  setTitle(base: string): void { this.view.dispatch({ effects: setTitleEffect.of(base) }); }
+  focusTitle(): void {
+    const el = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
+    if (!el) return;
+    el.focus();
+    const selection = window.getSelection();
+    selection?.selectAllChildren(el);
+  }
   setValue(value: string): void { this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value } }); }
   focus(): void { this.view.focus(); }
   findNext(): void { findNext(this.view); }

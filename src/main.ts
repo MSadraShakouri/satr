@@ -67,7 +67,7 @@ app.innerHTML = `
       <div class="panel-head"><strong>Files</strong><button class="close-button" id="close-files">×</button></div>
       <button class="new-file" id="new-file">＋ New file</button>
       <div class="recent-label">Recent</div>
-      <button class="file-row active">Untitled.md</button>
+      <button class="file-row active" id="file-current">untitled.md</button>
     </aside>
     <div class="backdrop" id="backdrop"></div>
     <main class="workspace">
@@ -92,11 +92,20 @@ function syncScroll(source: HTMLElement, target: HTMLElement): void {
   window.requestAnimationFrame(() => { syncingScroll = false; });
 }
 
+// Files persist in localStorage under satr:<base>.md; the current file's
+// base name (no extension) under satr:file-name. Renaming moves the content.
+const NAME_KEY = 'satr:file-name';
+const storageKey = (base: string): string => `satr:${base}.md`;
+const nameExists = (base: string): boolean => localStorage.getItem(storageKey(base)) !== null;
+let fileBase = localStorage.getItem(NAME_KEY) ?? 'untitled';
+const fileRow = document.querySelector<HTMLElement>('#file-current')!;
+fileRow.textContent = `${fileBase}.md`;
+
 function update(text?: string): void {
   const source = text ?? editor.getValue();
   preview.innerHTML = renderMarkdown(source);
   window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => { localStorage.setItem('satr:untitled.md', source); }, 700);
+  saveTimer = window.setTimeout(() => { localStorage.setItem(storageKey(fileBase), source); }, 700);
 }
 function setMode(next: Mode): void {
   const previous = mode;
@@ -117,7 +126,20 @@ function toggleFiles(open = !document.body.classList.contains('files-open')): vo
   clearDrawerDrag();
 }
 
-editor = new SatrEditor(document.querySelector('#editor')!, update);
+editor = new SatrEditor(document.querySelector('#editor')!, update, {
+  title: fileBase,
+  checkName: (base) => (nameExists(base) && base !== fileBase ? 'There is already a file with that name' : null),
+  onRename: (base) => {
+    if (nameExists(base) && base !== fileBase) return 'There is already a file with that name';
+    const content = editor.getValue();
+    localStorage.setItem(storageKey(base), content);
+    localStorage.removeItem(storageKey(fileBase));
+    fileBase = base;
+    localStorage.setItem(NAME_KEY, base);
+    fileRow.textContent = `${base}.md`;
+    return null;
+  },
+});
 let lastScrollTop = 0;
 let lastScrollTime = performance.now();
 let buttonHideTimer: number | undefined;
@@ -139,7 +161,7 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   syncScroll(editor.view.scrollDOM, preview);
 }, { passive: true });
 preview.addEventListener('scroll', () => syncScroll(preview, editor.view.scrollDOM), { passive: true });
-const saved = localStorage.getItem('satr:untitled.md');
+const saved = localStorage.getItem(storageKey(fileBase));
 editor.setValue(saved ?? starter);
 update(editor.getValue());
 
@@ -147,7 +169,22 @@ update(editor.getValue());
 document.querySelector('#files')!.addEventListener('click', () => toggleFiles());
 document.querySelector('#close-files')!.addEventListener('click', () => toggleFiles(false));
 document.querySelector('#backdrop')!.addEventListener('click', () => toggleFiles(false));
-document.querySelector('#new-file')!.addEventListener('click', () => { editor.setValue(''); setMode('edit'); toggleFiles(false); });
+document.querySelector('#new-file')!.addEventListener('click', () => {
+  let index = 0;
+  let base = 'untitled';
+  while (nameExists(base)) base = `untitled ${(index += 1) + 1}`;
+  const content = editor.getValue();
+  localStorage.setItem(storageKey(fileBase), content);
+  fileBase = base;
+  localStorage.setItem(NAME_KEY, base);
+  localStorage.setItem(storageKey(base), '');
+  fileRow.textContent = `${base}.md`;
+  editor.setValue('');
+  editor.setTitle(base);
+  setMode('edit');
+  toggleFiles(false);
+  editor.focusTitle();
+});
 // Drawer gesture, modeled on Obsidian's mobile drawer physics (measured in its
 // production bundle): EMA-smoothed velocity, fling projection on release
 // (position + 1s of velocity must cross half the width), a settle animation
