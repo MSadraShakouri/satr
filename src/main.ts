@@ -174,8 +174,9 @@ function dragDrawer(dx: number, opening: boolean): void {
   workspace.style.transition = 'none';
   topbar.style.transition = 'none';
   const contentOffset = opening ? amount : width + amount;
-  workspace.style.transform = `translate3d(${contentOffset}px,0,0)`;
-  topbar.style.transform = `translate3d(${contentOffset}px,0,0)`;
+  const drawerTransform = `translate3d(${contentOffset}px,0,0)`;
+  workspace.style.transform = drawerTransform;
+  topbar.style.transform = drawerTransform;
   const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
   backdrop.style.display = 'block';
   backdrop.style.opacity = String(Math.max(0, Math.min(.5, progress * .5)));
