@@ -197,7 +197,9 @@ function renderDrawer(shift: number): void {
   panel.style.transform = `translate3d(${-HIDE_FACTOR * (width - s)}px,0,0)`;
   workspace.style.transform = `translate3d(${s}px,0,0)`;
   topbar.style.transform = `translate3d(${s}px,0,0)`;
-  backdrop.style.display = 'block';
+  // A fully closed drawer must not leave the (invisible) backdrop covering the
+  // editor, or it becomes the scroll target and vertical scrolling dies.
+  backdrop.style.display = s > 0 ? 'block' : 'none';
   backdrop.style.opacity = String(s / width);
 }
 function clearDrawerDrag(): void {
@@ -227,6 +229,10 @@ function freezeDrawer(): number {
   // of snapping back to a stale touchstart measurement.
   gestureWidth = drawerWidth();
   const shift = drawerShiftOf();
+  // At rest there is nothing in flight to pin; leave the DOM untouched so a
+  // plain scroll/tap never pays for inline styles or a shown backdrop.
+  const open = document.body.classList.contains('files-open');
+  if ((!open && shift <= 0) || (open && shift >= gestureWidth)) return shift;
   renderDrawer(shift);
   return shift;
 }
