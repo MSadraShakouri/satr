@@ -9,7 +9,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, De
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: '1.85' },
-  '.cm-content': { padding: '.5rem max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: '5.5rem max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0', unicodeBidi: 'plaintext' },
   '&.cm-focused': { outline: 'none' },
 });
