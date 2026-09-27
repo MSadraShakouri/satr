@@ -6,7 +6,53 @@ import { SatrEditor } from './editor';
 import { renderMarkdown } from './markdown';
 
 type Mode = 'edit' | 'preview';
-const starter = `# Welcome to Satr\n\nA focused Markdown editor for your files.\n\n- [ ] Write something\n- [ ] Preview it\n\n## Persian and English\n\nسطر برای نوشتن فارسی و mixed English.\n`;
+const starter = `# Satr demo
+
+This file demonstrates the features currently available in Satr.
+
+## Text and direction
+
+English text and متن فارسی در یک سند.
+
+## Lists
+
+- [ ] A task
+- [x] A completed task
+
+1. English numbering
+2. Another item
+
+۱. شماره‌گذاری فارسی
+۲. مورد بعدی
+
+## Table
+
+| Name | Center | Right |
+| :--- | :---: | ---: |
+| Satr | aligned | 42 |
+| Demo | content | 100 |
+
+## Math
+
+Inline math: $a^2 + b^2 = c^2$.
+
+$$
+E = mc^2
+$$
+
+## Code
+
+~~~ts
+const message = 'Hello from Satr';
+console.log(message);
+~~~
+
+> A blockquote for preview testing.
+
+~~Strikethrough~~ and [a link](https://github.com/MSadraShakouri/satr).
+
+Mermaid diagrams are postponed for later.
+`;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -32,11 +78,12 @@ app.innerHTML = `
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
+const fileName = document.querySelector<HTMLElement>('#file-name')!;
 const state = document.querySelector<HTMLElement>('#save-state')!;
 let mode: Mode = 'edit';
 let saveTimer: number | undefined;
 const bookIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg>';
-const penIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.2 18.8 1.1-4.4L16.7 3a2.1 2.1 0 0 1 3 3L8.3 17.7z"/><path d="m14.9 4.8 4.3 4.3M4 21h8"/></svg>';
+const penIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.2 18.8 1.1-4.4L16.7 3a2.1 2.1 0 0 1 3 3L8.3 17.7z"/><path d="M11 18.8h8.5"/></svg>';
 let editor: SatrEditor;
 let syncingScroll = false;
 function syncScroll(source: HTMLElement, target: HTMLElement): void {
@@ -81,7 +128,7 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   const now = performance.now();
   const delta = current - lastScrollTop;
   const speed = delta / Math.max(1, now - lastScrollTime);
-  if (delta > 2 && speed > 2.5) {
+  if (delta > 2 && speed > 2.0) {
     document.body.classList.add('editor-scrolling-down');
     window.clearTimeout(buttonHideTimer);
     buttonHideTimer = window.setTimeout(() => document.body.classList.remove('editor-scrolling-down'), 450);
@@ -91,6 +138,7 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   }
   lastScrollTop = current;
   lastScrollTime = now;
+  fileName.style.opacity = current > 4 ? '0' : '1';
   syncScroll(editor.view.scrollDOM, preview);
 }, { passive: true });
 preview.addEventListener('scroll', () => syncScroll(preview, editor.view.scrollDOM), { passive: true });
@@ -123,6 +171,11 @@ function dragDrawer(dx: number, opening: boolean): void {
   panel.style.transition = 'none';
   const progress = opening ? amount / width : 1 + amount / width;
   panel.style.transform = opening ? `translate3d(calc(-105% + ${amount}px),0,0)` : `translate3d(${amount}px,0,0)`;
+  workspace.style.transition = 'none';
+  topbar.style.transition = 'none';
+  const contentOffset = opening ? amount : width + amount;
+  workspace.style.transform = `translate3d(${contentOffset}px,0,0)`;
+  topbar.style.transform = `translate3d(${contentOffset}px,0,0)`;
   const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
   backdrop.style.display = 'block';
   backdrop.style.opacity = String(Math.max(0, Math.min(.5, progress * .5)));

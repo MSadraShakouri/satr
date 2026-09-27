@@ -21,7 +21,7 @@ Markdown
 · Math delimiters: $...$ and $$...$$
 · Tables render as pipes (raw pipe view with alignment, not a widget)
 · Images show as a link you can tap, not an inline preview
-· Mermaid shows a placeholder with a render button, not inline
+· Mermaid postponed for later; no Mermaid dependency or rendering in the current app
 · Rendered HTML gets sanitized
 · Flavor: GFM core (tables, task lists, strikethrough, autolinks) + plugins, not pandoc
 · Extensions beyond GFM: footnotes plugin + [[wiki links]], and nothing else
@@ -45,7 +45,7 @@ Print
 · Custom CSS you control in the print output
 · Your own page-setup dialog before handing off to Android's print
 · Math: KaTeX output with fonts embedded as data URIs in the print HTML
-· Mermaid already SVG, inline as-is
+· Mermaid export support postponed with Mermaid itself
 · Images as data URIs
 · No HTML export — print/PDF is the only export path
 
@@ -132,14 +132,14 @@ Goal: the Obsidian-feel editing that's the whole point.
   ☐ Checkboxes (click to toggle)
   ☐ Fenced code blocks
   ☐ Math (inline and display)
-  ☐ Mermaid placeholder
+  ☐ Mermaid placeholder (postponed)
   ☐ Tables — pipes only, no widget
   ☐ Footnotes
   ☐ Wiki links (resolve against folder tree)
 ☐ Obsidian's cursor rule: syntax becomes visible when the cursor enters the formatted range
 ☐ [[ popup: fuzzy search over the folder tree, insert on pick
 ☐ Math: $...$ and $$...$$ with KaTeX (screen)
-☐ Mermaid: lazy-loaded, renders on button press, not automatically
+☐ Mermaid support (postponed)
 ☐ Frontmatter stripped from preview
 
 Phase 3 — Print / PDF
@@ -190,7 +190,7 @@ Known traps (worth remembering)
 · GFM has no footnotes — resolved by the footnotes plugin, worth remembering when the flavor question resurfaces.
 · CM6 state lies if you ask the DOM: `view.lineWrapping` is a measure pass behind, so wrap/gutter state must be tracked as your own flags, and a hidden pane needs `requestMeasure()` before it measures correctly.
 · KaTeX emits `style` attributes in places (array and rule sizing), and the ported DOMPurify config bans `style` outright. Verify KaTeX's output survives sanitization — if it doesn't, allow `style` only on `.katex` descendants via a sanitizer hook, never globally.
-· Mermaid's output is SVG, which the sanitizer forbids — that's fine only because mermaid renders on demand into its own DOM island, after sanitization. Never route rendered SVG back through the sanitizer.
+· Mermaid is intentionally postponed; do not reintroduce its dependency or renderer until a later phase.
 · CM6 does not run under jsdom (it throws in `measure`), so editor tests belong in a real browser/device suite, separate from `node --test`.
 · Two equally-specific `!important` rules race on load order, not specificity: the markdown-editor repo shipped a hidden-editor bug for months because `[hidden]` and `.editor-pane` both declared `!important`. Don't use `!important` for layout state.
 

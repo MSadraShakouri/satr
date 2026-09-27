@@ -14,6 +14,27 @@ const rtlLineDirection = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
 });
 
+const persianListMarkerPlugin = ViewPlugin.fromClass(class {
+  decorations: any;
+  constructor(view: EditorView) { this.decorations = this.build(view); }
+  update(update: { docChanged: boolean; viewportChanged: boolean; view: EditorView }): void {
+    if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view);
+  }
+  build(view: EditorView) {
+    const ranges = [];
+    for (const visible of view.visibleRanges) {
+      let line = view.state.doc.lineAt(visible.from);
+      while (true) {
+        const match = /^(\s*[۰-۹٠-٩]+[.)])(?=\s)/.exec(line.text);
+        if (match) ranges.push(Decoration.mark({ class: 'cm-live-marker' }).range(line.from, line.from + match[1].length));
+        if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
+        line = view.state.doc.line(line.number + 1);
+      }
+    }
+    return Decoration.set(ranges, true);
+  }
+}, { decorations: (value) => value.decorations });
+
 const directionPlugin = ViewPlugin.fromClass(class {
   decorations: any;
   constructor(view: EditorView) { this.decorations = this.build(view); }
@@ -119,7 +140,7 @@ export class SatrEditor {
         { tag: tags.quote, color: 'var(--muted)' },
         { tag: tags.list, opacity: '0.72' },
       ])),
-      rtlLineDirection, directionPlugin,
+      rtlLineDirection, directionPlugin, persianListMarkerPlugin,
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', dir: 'auto' }),
