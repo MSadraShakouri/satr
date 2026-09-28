@@ -2,8 +2,7 @@ import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
-import { findBar, openFind } from './findBar';
+import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
 import { EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type ViewUpdate } from '@codemirror/view';
@@ -458,6 +457,8 @@ export class SatrEditor {
         { key: 'Mod-s', run: () => { onChange(); return true; } },
         { key: 'Mod-f', run: (target) => { openFind(target); return true; } },
         { key: 'Mod-h', run: (target) => { openFind(target, true); return true; } },
+        { key: 'Escape', run: (target) => { if (!isFindOpen(target.state)) return false; closeFind(target); return true; } },
+        { key: 'F3', run: (target) => { findNext(target); return true; }, shift: (target) => { findPrevious(target); return true; } },
         { key: 'Mod-/', run: toggleComment },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
@@ -562,6 +563,8 @@ export class SatrEditor {
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
   openFind(replace = false): void { openFind(this.view, replace); }
+  closeFind(): void { closeFind(this.view); }
+  get findOpen(): boolean { return isFindOpen(this.view.state); }
   headings(): Heading[] { return collectHeadings(this.view.state); }
   /** Unfold whatever hides this position, so it can be shown. */
   private unfoldAround(pos: number): void {
@@ -597,8 +600,6 @@ export class SatrEditor {
   }
   findNext(): void { findNext(this.view); }
   findPrevious(): void { findPrevious(this.view); }
-  replaceNext(): void { replaceNext(this.view); }
-  replaceAll(): void { replaceAll(this.view); }
   undo(): void { undo(this.view); }
   redo(): void { redo(this.view); }
   destroy(): void { this.view.destroy(); }

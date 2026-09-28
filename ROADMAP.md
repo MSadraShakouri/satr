@@ -4,8 +4,9 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 ## Current status (September 2026)
 
-Satr runs as a web app (Vite + TypeScript + CodeMirror 6) with notes kept in
-the browser's localStorage. The Android APK (Capacitor 7) comes after the UI
+Satr runs as a web app (Vite + TypeScript + CodeMirror 6). Notes are files in
+folders behind one storage interface: a virtual file system in localStorage on
+the web, and a device backend (Capacitor Filesystem, untested until the APK). The Android APK (Capacitor 7) comes after the UI
 and the logic below are finished. The `android/` project hasn't been created yet.
 
 ### Done
@@ -20,7 +21,7 @@ Editor
 - [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
 - [x] Heading folding in the editor and the preview (chevron at the end of the heading line), fold/unfold all, remembered per note
-- [x] Find and replace in the note (count, previous/next, replace, replace all, match case, whole word, regex)
+- [x] Find and replace in the note, as Obsidian's: plain text ignoring case, `*` and `?` wildcards (`\*` for a literal), from the caret, only the current match highlighted, find all, replace row on demand (long-press the find button)
 - [x] Keeps the caret clear of the keyboard without jumping or locking the scroll
 
 Preview
@@ -31,16 +32,20 @@ Preview
 Chrome
 - [x] Obsidian themes: exact neutral colours, light/dark/auto
 - [x] Floating top buttons and bottom bar (back, forward, new note, find, fold all); they hide while scrolling down, with Obsidian's fade masks
-- [x] Left drawer with Obsidian's release physics (currently a single "Recent" row)
-- [x] Right drawer: outline (filter, current heading, tap to jump) and search (this note / all notes, match case, regex, grouped results)
+- [x] Both drawers share one implementation of Obsidian's release physics (drag, fling, re-grab mid-animation, same look)
+- [x] Right drawer built like the left one: the view name in the header (tap for Outline / Search), the note under it, pill filter field, collapse/expand all; outline (current heading, tap to jump) and search (this note / this space, `*` `?` wildcards, grouped results)
+- [x] Tabs, as Obsidian's mobile ones: each with its own back/forward history, a tab button with the count in the bottom bar, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done), "Open in new tab" on long-press, kept across restarts
+- [x] Left sidebar: Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons
+- [x] "All files" walker (Markor-style): only the current folder, ".." to go up
+- [x] Space switcher (vault-switcher style): spaces are shortcuts to folders; their notes are ordinary files, edited in place. "All files", add or remove a space
+- [x] Bottom-sheet menus in Obsidian's phone style
 - [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward
 
 ### Remaining before the APK: UI
 
-- [ ] Left sidebar, Obsidian-style file tree for a space: folders expand in place, files sorted, the open note highlighted, create/rename/delete/move via long-press menu
-- [ ] "All files" browser (Markor-style): only the current folder is listed, with a ".." row to go up; tap a folder to enter it; shows every folder on the device
-- [ ] Space switcher at the top of the left sidebar (Obsidian's vault switcher): the spaces, "All files", add or remove a space
-- [ ] Search scoped to the current space (the "All notes" scope becomes "This space")
+- [ ] Left sidebar search, Obsidian's way: a filter field above the tree that shows matching files and folders (by name) as you type
+- [ ] Gesture audit: every swipe and slide (drawer edges, swipe from over the toolbar, find bar, tab switcher, bottom sheets, text selection near the edges) checked on a phone
+- [ ] Tabs, the rest: undo close tab, reorder by dragging, swipe a card away to close
 - [ ] Settings screen: font size, line height, line numbers, theme, keyboard toolbar items
 - [ ] Empty states and first run: no space yet leads to picking a folder
 - [ ] Wiki links `[[...]]`: rendering, tap to open, and a popup while typing `[[`
@@ -49,18 +54,18 @@ Chrome
 
 ### Remaining before the APK: logic
 
-- [ ] Storage layer behind one interface: a web backend (localStorage, as now, for development) and a native backend (device files)
-- [ ] Spaces: a space is just a folder path saved in the app's own settings. Nothing is ever written into the folder (no `.obsidian`-style config). "All files" is the storage root.
-- [ ] Rename, move and delete on real files; keep view memory keyed by path
+- [x] Storage layer behind one interface: a web backend (localStorage, as now, for development) and a native backend (device files)
+- [x] Spaces: a space is just a folder path saved in the app's own settings. Nothing is ever written into the folder (no `.obsidian`-style config). "All files" is the storage root.
+- [x] Rename, move and delete; view memory and history keyed by path (real files: verify in the APK)
 - [ ] Autosave to the file (debounced, flushed on background or file switch); check the modification time on resume and before saving, and offer reload or keep if the file changed outside Satr
-- [ ] Reopen the last file on launch; if it's gone, fall back to the file browser
+- [x] Reopen the last tabs on launch; a note that's gone falls back to the first note in the space
 - [ ] Search index per space (read files lazily, cache the text, refresh on modification time)
 
 ### APK phase
 
 - [ ] `npx cap add android`, app id com.msadrashakouri.satr
 - [ ] All-files permission (MANAGE_EXTERNAL_STORAGE) flow on first run; sideload only
-- [ ] Filesystem plugin (list, read, write, stat, rename, delete, mkdir)
+- [ ] Install `@capacitor/filesystem` natively (the JS backend in `src/vault.ts` is written against it) and test list, read, write, stat, rename, delete, mkdir on the device
 - [ ] Status bar hide/show wired to auto-hide (the JS side is done)
 - [ ] Code keyboard: a small WebView subclass that overrides `onCreateInputConnection` and, while the caret is in code or math, requests `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | TYPE_TEXT_FLAG_NO_SUGGESTIONS` (Termux's trick: Gboard shows the number row and no suggestions), switched from JS through a bridge call plus `InputMethodManager.restartInput`
 - [ ] On-device IME check: Persian and Arabic composition, caret placement, selection handles

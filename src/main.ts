@@ -9,6 +9,12 @@ import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } fr
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
+import { createLeftSidebar } from './leftSidebar';
+import { initDrawers } from './drawers';
+import { openMenu } from './menu';
+import { openTabSwitcher } from './tabs';
+import { currentScope, scopeRoot } from './spaces';
+import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within, writeNow } from './vault';
 
 type Mode = 'edit' | 'preview';
 const starter = `# Satr demo
@@ -69,13 +75,7 @@ app.innerHTML = `
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
     </div>
-    <aside class="file-panel" id="file-panel" aria-label="Files">
-      <div class="panel-head"><strong>Files</strong><button class="close-button" id="close-files">×</button></div>
-      <button class="new-file" id="new-file">＋ New file</button>
-      <div class="recent-label">Recent</div>
-      <button class="file-row active" id="file-current">untitled.md</button>
-      <button class="theme-row" id="theme-toggle" type="button"></button>
-    </aside>
+    <aside class="file-panel workspace-drawer mod-left" id="file-panel" aria-label="Files"></aside>
     <aside class="right-panel workspace-drawer mod-right" id="right-panel" aria-label="Outline and search"></aside>
     <div class="backdrop" id="backdrop"></div>
     <main class="workspace">
@@ -103,6 +103,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Forward"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-fold" aria-label="Collapse all headings"></button></div>
         </div>
@@ -147,16 +148,24 @@ function follow(from: 'editor' | 'preview'): void {
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
 }
 
-// Files persist in localStorage under satr:<base>.md; the current file's
-// base name (no extension) under satr:file-name. Renaming moves the content.
-const NAME_KEY = 'satr:file-name';
-const storageKey = (base: string): string => `satr:${base}.md`;
-const nameExists = (base: string): boolean => localStorage.getItem(storageKey(base)) !== null;
-let fileBase = localStorage.getItem(NAME_KEY) ?? 'untitled';
+// Notes are files in folders (src/vault.ts: localStorage in the browser,
+// the phone's storage in the app), addressed by path. The open note's path
+// is remembered under satr:current; notes from earlier versions are moved
+// into the "Notes" folder once.
+const CURRENT_KEY = 'satr:current';
+let filePath = migrateOldNotes() ?? localStorage.getItem(CURRENT_KEY) ?? '';
+let fileBase = stem(filePath);
+/** Names in the open note's folder (lower case), for checking a new title as you type. */
+let siblingNames = new Set<string>();
+async function loadSiblings(): Promise<void> {
+  const dir = dirname(filePath);
+  siblingNames = new Set((await backend.list(dir).catch(() => [])).map((e) => e.name.toLowerCase()));
+}
+const nameTaken = (base: string): boolean => base.toLowerCase() !== fileBase.toLowerCase() && siblingNames.has(`${base}.md`.toLowerCase());
 // Per-file view memory, kept across sessions and app restarts: the mode and
 // the scroll position (as a fractional source line, the same measure the
-// edit/preview toggle uses), under satr:view:<base>.
-const viewKey = (base: string): string => `satr:view:${base}`;
+// edit/preview toggle uses), under satr:view:<path>.
+const viewKey = (path: string): string => `satr:view:${path}`;
 interface SavedView { mode: Mode; line: number; cursor?: [number, number]; folds?: number[] }
 function readView(base: string): SavedView | null {
   try {
@@ -170,8 +179,6 @@ function readView(base: string): SavedView | null {
     return null;
   }
 }
-const fileRow = document.querySelector<HTMLElement>('#file-current')!;
-fileRow.textContent = `${fileBase}.md`;
 
 // The preview is rendered only when it can be seen. Rendering the whole note
 // (markdown, highlight.js, KaTeX) on every keystroke into a hidden pane was
@@ -224,7 +231,7 @@ function applyPreviewFolds(): void {
 function saveNow(): void {
   window.clearTimeout(saveTimer);
   saveTimer = undefined;
-  localStorage.setItem(storageKey(fileBase), editor.getValue());
+  if (filePath) writeNow(filePath, editor.getValue());
 }
 function update(): void {
   previewDirty = true;
@@ -254,30 +261,29 @@ function setMode(next: Mode): void {
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
   rememberViewSoon();
 }
-function toggleFiles(open = !document.body.classList.contains('files-open')): void {
-  cancelSettle();
-  document.body.classList.toggle('files-open', open);
-  clearDrawerDrag();
-}
+function toggleFiles(open?: boolean): void { drawers.toggle('left', open); }
+function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
 
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   onSelection: () => rememberViewSoon(),
   onFold: () => { applyPreviewFolds(); renderFoldButton(); rememberViewSoon(); },
   obscuredBottom: () => obscuredBottom(),
-  checkName: (base) => (nameExists(base) && base !== fileBase ? 'There is already a file with that name' : null),
+  checkName: (base) => (nameTaken(base) ? 'There is already a file with that name' : null),
   onRename: (base) => {
-    if (nameExists(base) && base !== fileBase) return 'There is already a file with that name';
-    const content = editor.getValue();
-    localStorage.setItem(storageKey(base), content);
-    localStorage.removeItem(storageKey(fileBase));
-    const view = localStorage.getItem(viewKey(fileBase));
-    localStorage.removeItem(viewKey(fileBase));
-    if (view) localStorage.setItem(viewKey(base), view);
-    for (let i = 0; i < fileHistory.length; i += 1) if (fileHistory[i] === fileBase) fileHistory[i] = base;
+    if (nameTaken(base)) return 'There is already a file with that name';
+    const from = filePath;
+    const to = joinPath(dirname(from), `${base}.md`);
+    // Write the text out first, then move it (a note that was never saved
+    // is simply written under the new name).
+    saveNow();
+    void backend.stat(from).then((exists) => (exists ? backend.rename(from, to) : backend.write(to, editor.getValue())))
+      .then(() => { pathMoved(from, to); void loadSiblings(); })
+      .catch((error: unknown) => {
+        editor.setTitle(fileBase);
+        leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
+      });
     fileBase = base;
-    localStorage.setItem(NAME_KEY, base);
-    fileRow.textContent = `${base}.md`;
     setPreviewTitle();
     return null;
   },
@@ -319,7 +325,8 @@ function onNavScroll(el: HTMLElement): void {
   const top = el.scrollTop;
   const anchor = scrollAnchors.get(el) ?? 0; // panes start at the top
   if (syncingScroll || restoringView || performance.now() < programmaticUntil
-    || Date.now() - lastRender < 100 || el.getBoundingClientRect().height === 0) {
+    || Date.now() - lastRender < 100 || el.getBoundingClientRect().height === 0
+    || editor.findOpen) { // jumping between matches is the app scrolling, not you
     scrollAnchors.set(el, top);
     return;
   }
@@ -342,23 +349,21 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
 previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); }, { passive: true });
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
-const saved = localStorage.getItem(storageKey(fileBase));
-editor.setValue(saved ?? starter);
-renderPreview();
 
 function rememberView(): void {
   window.clearTimeout(viewTimer);
   if (restoringView) return;
   const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   const folds = editor.foldedLines();
-  localStorage.setItem(viewKey(fileBase), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) }));
+  if (!filePath) return;
+  localStorage.setItem(viewKey(filePath), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) }));
 }
 function rememberViewSoon(): void {
   window.clearTimeout(viewTimer);
   viewTimer = window.setTimeout(rememberView, 400);
 }
-function restoreView(base: string, after?: () => void): void {
-  const view = readView(base);
+function restoreView(path: string, after?: () => void): void {
+  const view = readView(path);
   restoringView = true;
   // The caret comes back where it was — without focus, so no keyboard and no
   // scroll. Otherwise it sat at the top of the note, and the first tap on a
@@ -388,7 +393,6 @@ function restoreView(base: string, after?: () => void): void {
   if (document.fonts?.ready) void document.fonts.ready.then(() => window.requestAnimationFrame(settle));
   else window.requestAnimationFrame(settle);
 }
-restoreView(fileBase);
 // Leaving the app (switching away, closing, the OS killing it later): write
 // the note and the view out now instead of waiting for the debounce timers.
 const flush = (): void => {
@@ -402,67 +406,210 @@ document.addEventListener('visibilitychange', () => {
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
 document.querySelector('#files')!.addEventListener('click', () => toggleFiles());
-document.querySelector('#close-files')!.addEventListener('click', () => toggleFiles(false));
-document.querySelector('#backdrop')!.addEventListener('click', () => toggleFiles(false));
 // Opening notes, with back/forward history like Obsidian's navbar arrows.
 // Each note comes back with its own mode, position, caret and folds.
-const fileHistory: string[] = [fileBase];
-let historyIndex = 0;
+// Tabs, as Obsidian's: each has its own back/forward history. Kept across
+// restarts under satr:tabs.
+interface Tab { history: string[]; index: number }
+const TABS_KEY = 'satr:tabs';
+let tabs: Tab[] = [{ history: [], index: -1 }];
+let activeTab = 0;
+const curTab = (): Tab => tabs[activeTab];
+function saveTabs(): void {
+  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs, active: activeTab }));
+}
+function loadTabs(): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TABS_KEY) ?? 'null') as { tabs: Tab[]; active: number } | null;
+    const valid = saved && Array.isArray(saved.tabs) && saved.tabs.length > 0 && saved.tabs.every((t) =>
+      Array.isArray(t.history) && t.history.every((p) => typeof p === 'string') && Number.isInteger(t.index) && t.index >= 0 && t.index < t.history.length);
+    if (!valid) return;
+    tabs = saved.tabs;
+    activeTab = Math.min(Math.max(0, saved.active | 0), tabs.length - 1);
+  } catch { /* keep the default */ }
+}
+loadTabs(); // before anything renders (and so saves) the navbar
 function leaveCurrent(): void {
   closePopover();
+  editor.closeFind();
   saveNow();
   rememberView();
 }
-function showFile(base: string, content: string, after?: () => void): void {
-  fileBase = base;
-  localStorage.setItem(NAME_KEY, base);
-  fileRow.textContent = `${base}.md`;
+function showFile(path: string, content: string, after?: () => void): void {
+  filePath = path;
+  fileBase = stem(path);
+  localStorage.setItem(CURRENT_KEY, path);
   restoringView = true;
   editor.setValue(content);
-  editor.setTitle(base);
+  editor.setTitle(fileBase);
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  restoreView(base, after);
+  restoreView(path, after);
   renderNavButtons();
   sidebar.refresh();
+  leftSidebar.reveal(path);
+  void loadSiblings();
 }
-function openFile(base: string, after?: () => void): void {
-  if (base === fileBase) { after?.(); return; }
+async function openFile(path: string, after?: () => void): Promise<void> {
+  if (path === filePath) { after?.(); return; }
+  const text = await backend.read(path);
+  if (text === null) { leftSidebar.hint('That note no longer exists.', true); void leftSidebar.refresh(); return; }
   leaveCurrent();
-  fileHistory.splice(historyIndex + 1, Infinity, base);
-  historyIndex = fileHistory.length - 1;
-  showFile(base, localStorage.getItem(storageKey(base)) ?? '', after);
+  curTab().history.splice(curTab().index + 1, Infinity, path);
+  curTab().index = curTab().history.length - 1;
+  showFile(path, text, after);
 }
-function goHistory(step: number): void {
-  let index = historyIndex + step;
+async function goHistory(step: number): Promise<void> {
+  let index = curTab().index + step;
   // Skip notes that no longer exist.
-  while (index >= 0 && index < fileHistory.length && !nameExists(fileHistory[index])) {
-    fileHistory.splice(index, 1);
+  while (index >= 0 && index < curTab().history.length) {
+    const text = curTab().history[index] === filePath ? '' : await backend.read(curTab().history[index]);
+    if (text !== null) {
+      if (curTab().history[index] === filePath) break;
+      leaveCurrent();
+      curTab().index = index;
+      showFile(curTab().history[index], text);
+      return;
+    }
+    curTab().history.splice(index, 1);
+    if (index < curTab().index) curTab().index -= 1;
     if (step < 0) index -= 1;
-    if (index < historyIndex) historyIndex -= 1;
   }
-  if (index < 0 || index >= fileHistory.length || fileHistory[index] === fileBase) { renderNavButtons(); return; }
-  leaveCurrent();
-  historyIndex = index;
-  showFile(fileHistory[index], localStorage.getItem(storageKey(fileHistory[index])) ?? '');
+  renderNavButtons();
 }
-function newFile(): void {
-  let index = 0;
-  let base = 'untitled';
-  while (nameExists(base)) base = `untitled ${(index += 1) + 1}`;
+/** A file or folder moved (renamed): the open note, history and view memory follow. */
+function pathMoved(from: string, to: string): void {
+  const move = (p: string): string => (within(p, from) ? to + p.slice(from.length) : p);
+  for (const tab of tabs) tab.history = tab.history.map(move);
+  saveTabs();
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i)!;
+    if (key.startsWith('satr:view:') && within(key.slice(10), from)) keys.push(key);
+  }
+  for (const key of keys) {
+    const value = localStorage.getItem(key);
+    localStorage.removeItem(key);
+    if (value !== null) localStorage.setItem(viewKey(move(key.slice(10))), value);
+  }
+  if (within(filePath, from)) {
+    filePath = move(filePath);
+    fileBase = stem(filePath);
+    localStorage.setItem(CURRENT_KEY, filePath);
+    editor.setTitle(fileBase);
+    setPreviewTitle();
+    void loadSiblings();
+  }
+  void leftSidebar.refresh();
+}
+/** A file or folder was deleted: forget it; if the open note went, open another. */
+function pathDeleted(path: string): void {
+  for (const tab of tabs) {
+    for (let i = tab.history.length - 1; i >= 0; i -= 1) {
+      if (!within(tab.history[i], path)) continue;
+      tab.history.splice(i, 1);
+      if (i <= tab.index) tab.index -= 1;
+    }
+    tab.index = Math.max(tab.index, tab.history.length ? 0 : -1);
+  }
+  // Other tabs left with nothing close.
+  const active = curTab();
+  tabs = tabs.filter((t) => t === active || t.history.length);
+  activeTab = tabs.indexOf(active);
+  if (within(filePath, path)) {
+    window.clearTimeout(saveTimer);
+    saveTimer = undefined;
+    filePath = '';
+    void openFallback();
+  }
+  renderNavButtons();
+}
+/** The note to show when none is open: the first in the space, or a new one. */
+async function firstNote(): Promise<{ path: string; text: string }> {
+  const root = scopeRoot(currentScope());
+  const notes = (await backend.list(root).catch(() => [])).filter((e) => e.kind === 'file' && isNote(e.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  for (const note of notes) {
+    const text = await backend.read(note.path);
+    if (text !== null) return { path: note.path, text };
+  }
+  // Nothing there. The note is only written once you type in it.
+  return { path: joinPath(root, await freeName(root, 'Untitled', '.md')), text: '' };
+}
+async function openFallback(): Promise<void> {
+  const { path, text } = await firstNote();
+  filePath = '';
+  curTab().history.splice(curTab().index + 1, Infinity, path);
+  curTab().index = curTab().history.length - 1;
+  showFile(path, text);
+}
+async function newFile(dir = scopeRoot(currentScope()), inNewTab = false): Promise<void> {
+  const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
+  try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
   leaveCurrent();
-  localStorage.setItem(storageKey(base), '');
-  localStorage.removeItem(viewKey(base));
-  fileHistory.splice(historyIndex + 1, Infinity, base);
-  historyIndex = fileHistory.length - 1;
-  showFile(base, '');
+  if (inNewTab) { tabs.splice(activeTab + 1, 0, { history: [], index: -1 }); activeTab += 1; }
+  localStorage.removeItem(viewKey(path));
+  curTab().history.splice(curTab().index + 1, Infinity, path);
+  curTab().index = curTab().history.length - 1;
+  showFile(path, '');
   setMode('edit');
   toggleFiles(false);
+  void leftSidebar.refresh();
   editor.focusTitle();
 }
-document.querySelector('#new-file')!.addEventListener('click', newFile);
+
+async function openInNewTab(path: string): Promise<void> {
+  const text = await backend.read(path);
+  if (text === null) { leftSidebar.hint('That note no longer exists.', true); return; }
+  leaveCurrent();
+  tabs.splice(activeTab + 1, 0, { history: [path], index: 0 });
+  activeTab += 1;
+  showFile(path, text);
+}
+async function switchTab(index: number): Promise<void> {
+  if (index === activeTab || !tabs[index]) return;
+  leaveCurrent();
+  activeTab = index;
+  const tab = curTab();
+  const path = tab.history[tab.index];
+  const text = path ? await backend.read(path) : null;
+  if (path && text !== null) showFile(path, text);
+  else { filePath = ''; await openFallback(); }
+}
+function closeTab(index: number): void {
+  if (tabs.length < 2 || !tabs[index]) return;
+  if (index !== activeTab) {
+    tabs.splice(index, 1);
+    if (index < activeTab) activeTab -= 1;
+    renderNavButtons();
+    return;
+  }
+  leaveCurrent();
+  tabs.splice(index, 1);
+  activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
+  const tab = curTab();
+  void backend.read(tab.history[tab.index]).then((text) => {
+    if (text !== null) showFile(tab.history[tab.index], text);
+    else { filePath = ''; void openFallback(); }
+  });
+}
+function showTabs(): void {
+  leaveCurrent(); // the previews read the saved text
+  openTabSwitcher({
+    tabs: () => tabs.map((t, i) => ({ title: stem(t.history[t.index] ?? ''), active: i === activeTab })),
+    preview: async (i) => {
+      const path = tabs[i].history[tabs[i].index];
+      const text = i === activeTab ? editor.getValue() : (path ? await backend.read(path) : '') ?? '';
+      return `<div class="inline-title" dir="auto">${escapeText(stem(path ?? ''))}</div>${renderMarkdown(text.slice(0, 1500))}`;
+    },
+    select: (i) => void switchTab(i),
+    close: closeTab,
+    newTab: () => void newFile(scopeRoot(currentScope()), true),
+    closeOthers: () => { tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+  });
+}
 
 // Bottom bar (no keyboard): back, forward, new note, and fold / unfold all
 // headings. Obsidian's floating navbar: a 52px pill, at most 316px wide,
@@ -471,6 +618,8 @@ document.querySelector('#new-file')!.addEventListener('click', newFile);
 const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
 const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
 const navFold = document.querySelector<HTMLButtonElement>('#nav-fold')!;
+const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-number')!;
+document.querySelector('#nav-tabs')!.addEventListener('click', showTabs);
 const FOLD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg>'; // chevrons-down-up
 const UNFOLD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>'; // chevrons-up-down
 function renderFoldButton(): void {
@@ -479,13 +628,15 @@ function renderFoldButton(): void {
   navFold.setAttribute('aria-label', anyFolded ? 'Expand all headings' : 'Collapse all headings');
 }
 function renderNavButtons(): void {
-  navBack.disabled = historyIndex <= 0;
-  navForward.disabled = historyIndex >= fileHistory.length - 1;
+  navBack.disabled = curTab().index <= 0;
+  navForward.disabled = curTab().index >= curTab().history.length - 1;
+  navTabsCount.textContent = String(tabs.length);
+  saveTabs();
   renderFoldButton();
 }
-navBack.addEventListener('click', () => goHistory(-1));
-navForward.addEventListener('click', () => goHistory(1));
-document.querySelector('#nav-new')!.addEventListener('click', newFile);
+navBack.addEventListener('click', () => void goHistory(-1));
+navForward.addEventListener('click', () => void goHistory(1));
+document.querySelector('#nav-new')!.addEventListener('click', () => void newFile());
 navFold.addEventListener('click', () => {
   ownScroll();
   if (editor.foldedLines().length) editor.unfoldAll();
@@ -494,21 +645,50 @@ navFold.addEventListener('click', () => {
 // The bar never takes focus from the note (no keyboard flicker).
 document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
 renderNavButtons();
-document.querySelector('#nav-find')!.addEventListener('click', () => {
+// Find: a tap opens "Find in note"; a long press offers find and replace too
+// (Obsidian's long-press menu on a navbar button; the small chevron shows it
+// has one).
+const navFind = document.querySelector<HTMLButtonElement>('#nav-find')!;
+navFind.insertAdjacentHTML('beforeend', '<svg class="mobile-navbar-action-flair" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>');
+function find(replace = false): void {
   if (mode !== 'edit') setMode('edit');
-  editor.openFind();
+  editor.openFind(replace);
+}
+let findPressTimer: number | undefined;
+let findPressed = false;
+function findMenu(): void {
+  findPressed = true;
+  navigator.vibrate?.(10);
+  openMenu([
+    { title: 'Find in note', icon: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>', action: () => find(false) },
+    { title: 'Find and replace', icon: '<svg viewBox="0 0 24 24"><path d="M14 4a2 2 0 0 1 2-2M16 10a2 2 0 0 1-2-2M20 2a2 2 0 0 1 2 2M22 8a2 2 0 0 1-2 2M3 7l3 3 3-3M6 10V5a3 3 0 0 1 3-3h1"/><rect x="2" y="14" width="8" height="8" rx="2"/></svg>', action: () => find(true) },
+  ]);
+}
+navFind.addEventListener('touchstart', () => {
+  findPressed = false;
+  window.clearTimeout(findPressTimer);
+  findPressTimer = window.setTimeout(findMenu, 500);
+}, { passive: true });
+for (const type of ['touchend', 'touchmove', 'touchcancel']) navFind.addEventListener(type, () => window.clearTimeout(findPressTimer), { passive: true });
+navFind.addEventListener('contextmenu', (event) => { event.preventDefault(); if (!findPressed) findMenu(); });
+navFind.addEventListener('click', () => {
+  if (findPressed) { findPressed = false; return; }
+  find(false);
 });
 
 // ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
 const rightPanel = document.querySelector<HTMLElement>('#right-panel')!;
 const noteTopSpacing = (): number => parseFloat(getComputedStyle(editor.view.contentDOM).paddingTop) || 60;
-function allNotes(): { base: string; text: string }[] {
-  const notes = [{ base: fileBase, text: editor.getValue() }];
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i)!;
-    if (!key.startsWith('satr:') || !key.endsWith('.md') || key.startsWith('satr:view:')) continue;
-    const base = key.slice(5, -3);
-    if (base !== fileBase) notes.push({ base, text: localStorage.getItem(key) ?? '' });
+/** Notes to search: every note in the space (in All files, under the folder
+ *  being browsed); the open one with its live text. */
+async function allNotes(): Promise<{ path: string; text: string }[]> {
+  const scope = currentScope();
+  const root = scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
+  const notes = [{ path: filePath, text: editor.getValue() }];
+  for (const path of await walkNotes(root)) {
+    if (path === filePath) continue;
+    const text = await backend.read(path);
+    if (text !== null) notes.push({ path, text });
   }
   return notes;
 }
@@ -525,10 +705,11 @@ const sidebar = createRightSidebar(rightPanel, {
     }
   },
   notes: allNotes,
-  currentBase: () => fileBase,
-  onResult: (base, from, to) => {
+  currentPath: () => filePath,
+  currentText: () => editor.getValue(),
+  onResult: (path, from, to) => {
     toggleOutline(false);
-    openFile(base, () => {
+    void openFile(path, () => {
       if (mode !== 'edit') setMode('edit');
       ownScroll(400);
       editor.revealRange(from, to);
@@ -546,114 +727,13 @@ const refreshOutlineSoon = (): void => {
 };
 editor.view.dom.addEventListener('input', refreshOutlineSoon);
 
-// The right drawer slides in from the right edge and pushes the note aside,
-// mirroring the left one: follows the finger, and on release uses the same
-// fling projection (position + 1s of velocity past half the width).
-const RIGHT_SETTLE_MS = 200;
-const rightMovers = (): HTMLElement[] => [workspace, topbar, navWrap];
-const rightWidth = (): number => rightPanel.getBoundingClientRect().width || Math.min(window.innerWidth * 0.84, 420);
-function renderRight(shift: number): void {
-  const width = rightWidth();
-  const s = Math.max(0, Math.min(width, shift));
-  rightPanel.style.transition = 'none';
-  rightPanel.style.transform = `translate3d(${width - s}px,0,0)`;
-  rightPanel.style.visibility = 'visible';
-  for (const el of rightMovers()) { el.style.transition = 'none'; el.style.transform = `translate3d(${-s}px,0,0)`; }
-  backdrop.style.transition = 'none';
-  backdrop.style.display = s > 0 ? 'block' : 'none';
-  backdrop.style.opacity = String(s / width);
-}
-function settleRight(open: boolean, from: number): void {
-  const width = rightWidth();
-  const duration = Math.max(1, RIGHT_SETTLE_MS * Math.abs((open ? width : 0) - from) / width);
-  const all = [rightPanel, ...rightMovers(), backdrop];
-  for (const el of all) el.style.transition = `transform ${duration}ms ease-out, opacity ${duration}ms ease-out`;
-  window.requestAnimationFrame(() => {
-    rightPanel.style.transform = open ? 'translate3d(0,0,0)' : `translate3d(${width}px,0,0)`;
-    for (const el of rightMovers()) el.style.transform = open ? `translate3d(${-width}px,0,0)` : 'translate3d(0,0,0)';
-    backdrop.style.display = 'block';
-    backdrop.style.opacity = open ? '1' : '0';
-    window.setTimeout(() => {
-      document.body.classList.toggle('outline-open', open);
-      for (const el of all) { el.style.transition = ''; el.style.transform = ''; }
-      rightPanel.style.visibility = '';
-      backdrop.style.display = '';
-      backdrop.style.opacity = '';
-    }, duration + 20);
-  });
-}
-function toggleOutline(open = !outlineOpen()): void {
-  if (open === outlineOpen()) return;
-  if (open) {
-    closePopover();
-    restoreNavigation();
-    (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down
-    sidebar.refresh();
-  }
-  const width = rightWidth();
-  renderRight(open ? 0 : width);
-  settleRight(open, open ? 0 : width);
-}
 document.querySelector('#outline-toggle')!.addEventListener('click', () => toggleOutline());
-document.querySelector('#backdrop')!.addEventListener('click', () => toggleOutline(false));
-{
-  let startX = 0; let startY = 0; let startTime = 0; let lastX = 0; let lastTime = 0;
-  let velocity = 0; let engaged = false; let tracking = false; let startShift = 0;
-  document.addEventListener('touchstart', (event) => {
-    tracking = false;
-    if (event.touches.length !== 1 || document.body.classList.contains('files-open')) return;
-    for (let el = event.target as HTMLElement | null; el; el = el.parentElement) {
-      if (el.dataset && el.dataset.ignoreSwipe !== undefined && el !== rightPanel) return;
-    }
-    const touch = event.touches[0];
-    if (window.innerHeight - touch.clientY < bottomInset() + 4) return;
-    tracking = true; engaged = false;
-    startX = lastX = touch.clientX; startY = touch.clientY;
-    startTime = lastTime = performance.now(); velocity = 0;
-    startShift = outlineOpen() ? rightWidth() : 0;
-  }, { passive: true, capture: true });
-  document.addEventListener('touchmove', (event) => {
-    if (!tracking) return;
-    const touch = event.touches[0];
-    const now = performance.now();
-    const dx = touch.clientX - startX;
-    const dy = touch.clientY - startY;
-    velocity = 0.8 * velocity + 0.2 * ((touch.clientX - lastX) / Math.max(1, now - lastTime));
-    lastX = touch.clientX; lastTime = now;
-    if (!engaged) {
-      if (now - startTime > 200 || Math.abs(dy) > 80) { tracking = false; return; }
-      if (Math.abs(dx) <= Math.abs(dy)) return;
-      // Closed: a leftward drag opens it. Open: a rightward drag closes it.
-      if (!((dx < -4 && startShift === 0) || (dx > 4 && startShift > 0))) return;
-      for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
-        if (el.scrollWidth <= el.clientWidth || !['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
-        if ((dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1) || (dx > 0 && el.scrollLeft > 0)) { tracking = false; return; }
-      }
-      if (window.getSelection()?.toString()) { tracking = false; return; }
-      engaged = true;
-      if (startShift === 0) { closePopover(); restoreNavigation(); sidebar.refresh(); }
-    }
-    event.preventDefault();
-    renderRight(startShift - dx);
-  }, { passive: false, capture: true });
-  const finish = (event: TouchEvent): void => {
-    if (!tracking) return;
-    tracking = false;
-    if (!engaged) return;
-    const touch = event.changedTouches[0];
-    const dx = touch ? touch.clientX - startX : 0;
-    const shift = Math.max(0, Math.min(rightWidth(), startShift - dx));
-    const projected = shift - velocity * 1000;
-    const open = projected > rightWidth() / 2;
-    if (open) (document.activeElement as HTMLElement | null)?.blur?.();
-    settleRight(open, shift);
-  };
-  document.addEventListener('touchend', finish, { passive: true, capture: true });
-  document.addEventListener('touchcancel', finish, { passive: true, capture: true });
-}
 
-// Theme switch in the drawer: Auto (follows the system) → Light → Dark.
-const themeButton = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
+// Theme switch in the drawer header: Auto (follows the system) → Light → Dark.
+const themeButton = document.createElement('button');
+themeButton.type = 'button';
+themeButton.className = 'clickable-icon workspace-drawer-header-icon';
+themeButton.id = 'theme-toggle';
 const THEME_LABEL: Record<ThemeChoice, string> = { auto: 'Theme: Auto', light: 'Theme: Light', dark: 'Theme: Dark' };
 const THEME_ICON: Record<ThemeChoice, string> = {
   auto: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor" stroke="none"/></svg>',
@@ -661,11 +741,50 @@ const THEME_ICON: Record<ThemeChoice, string> = {
   dark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.6 6.6 0 0 0 10.7 10.7z"/></svg>',
 };
 function renderThemeButton(choice: ThemeChoice): void {
-  themeButton.innerHTML = `${THEME_ICON[choice]}<span>${THEME_LABEL[choice]}</span>`;
+  themeButton.innerHTML = THEME_ICON[choice];
+  themeButton.setAttribute('aria-label', THEME_LABEL[choice]);
+  themeButton.title = THEME_LABEL[choice];
 }
 renderThemeButton(themeChoice());
 onThemeChange(renderThemeButton);
 themeButton.addEventListener('click', () => cycleTheme());
+
+// Left sidebar: spaces and the file explorer (src/leftSidebar.ts).
+const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
+  currentPath: () => filePath,
+  open: (path) => { toggleFiles(false); void openFile(path); },
+  createNote: (dir) => void newFile(dir),
+  openInNewTab: (path) => { toggleFiles(false); void openInNewTab(path); },
+  renamed: pathMoved,
+  deleted: pathDeleted,
+  scopeChanged: () => {
+    // A note outside the new space stays open (like switching vaults
+    // wouldn't); search follows the space.
+    sidebar.refresh();
+  },
+  closeDrawer: () => toggleFiles(false),
+  headerIcons: [themeButton],
+});
+async function boot(): Promise<void> {
+  let path = curTab().history[curTab().index] ?? filePath;
+  let text = path ? await backend.read(path) : null;
+  if (text === null) {
+    ({ path, text } = await firstNote());
+    // Very first start in a browser: the demo note.
+    if (backend.kind === 'web' && !text && !(await backend.stat(path))) {
+      path = joinPath(DEFAULT_FOLDER, 'Untitled.md');
+      text = starter;
+      await backend.write(path, text);
+    }
+  }
+  filePath = '';
+  if (curTab().history[curTab().index] !== path) {
+    curTab().history.splice(curTab().index + 1, Infinity, path);
+    curTab().index = curTab().history.length - 1;
+  }
+  showFile(path, text);
+  void leftSidebar.refresh();
+}
 
 // Preview links that stay inside the note: footnote references and back
 // references scroll within the preview pane (centred) and flash the target,
@@ -834,222 +953,18 @@ previewPane.addEventListener('dblclick', (event) => {
   editFromPreview();
 });
 
-// Drawer gesture, modeled on Obsidian's mobile drawer physics (measured in its
-// production bundle): EMA-smoothed velocity, fling projection on release
-// (position + 1s of velocity must cross half the width), a settle animation
-// whose duration scales with remaining distance (200ms for a full traversal),
-// and cancellation rules for scrollable content, selections and safe areas.
-const MOVE_DEADLINE_MS = 200;
-const SETTLE_MS = 200;
-const PROJECT_MS = 1000;
-const EMA_ALPHA = 0.2;
-const HIDE_FACTOR = 1.05;
-let gestureStartX = 0;
-let gestureStartY = 0;
-let gestureId = -1;
-let gestureStartTime = 0;
-let gestureLastX = 0;
-let gestureLastTime = 0;
-let gestureVelocity = 0;
-let gestureStartShift = 0;
-let gestureEngaged = false;
-let gestureWidth = 0;
-let resumeTarget: boolean | null = null;
-let settleTarget: boolean | null = null;
-let settleAnims: Animation[] = [];
-const panel = document.querySelector<HTMLElement>('.file-panel')!;
-const topbar = document.querySelector<HTMLElement>('.topbar')!;
-const navWrap = document.querySelector<HTMLElement>('#navbar-wrap')!;
-const workspace = document.querySelector<HTMLElement>('.workspace')!;
-const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
-const drawerWidth = (): number => Math.min(window.innerWidth * .84, 420);
-const insetProbe = document.createElement('div');
-insetProbe.setAttribute('aria-hidden', 'true');
-insetProbe.style.cssText = 'position:fixed;inset:auto 0 0;height:0;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px)';
-document.body.appendChild(insetProbe);
-const bottomInset = (): number => parseFloat(getComputedStyle(insetProbe).paddingBottom) || 0;
-const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-function drawerShiftOf(): number {
-  // Current visual open-amount of the drawer in px (0 = closed, width = open),
-  // measured from the panel's computed transform so re-grabbing mid-settle
-  // continues from exactly where the animation left off.
-  const width = drawerWidth();
-  const m = new DOMMatrixReadOnly(getComputedStyle(panel).transform);
-  return Math.max(0, Math.min(width, width + m.m41 / HIDE_FACTOR));
-}
-function renderDrawer(shift: number): void {
-  const width = gestureWidth || drawerWidth();
-  const s = Math.max(0, Math.min(width, shift));
-  for (const el of [panel, workspace, topbar, navWrap, backdrop]) el.style.transition = 'none';
-  panel.style.transform = `translate3d(${-HIDE_FACTOR * (width - s)}px,0,0)`;
-  workspace.style.transform = `translate3d(${s}px,0,0)`;
-  topbar.style.transform = `translate3d(${s}px,0,0)`;
-  navWrap.style.transform = `translate3d(${s}px,0,0)`;
-  // A fully closed drawer must not leave the (invisible) backdrop covering the
-  // editor, or it becomes the scroll target and vertical scrolling dies.
-  backdrop.style.display = s > 0 ? 'block' : 'none';
-  backdrop.style.opacity = String(s / width);
-}
-function clearDrawerDrag(): void {
-  // Restore steady state from the .files-open class; it equals the visual end
-  // state of the settle animation, so nothing visibly moves here.
-  for (const el of [panel, workspace, topbar, navWrap, backdrop]) el.style.transition = '';
-  panel.style.transform = '';
-  workspace.style.transform = '';
-  topbar.style.transform = '';
-  navWrap.style.transform = '';
-  backdrop.style.display = '';
-  backdrop.style.opacity = '';
-}
-function cancelSettle(): void {
-  if (settleTarget === null && settleAnims.length === 0) return;
-  const shift = drawerShiftOf();
-  for (const anim of settleAnims) anim.cancel();
-  settleAnims = [];
-  settleTarget = null;
-  gestureWidth = drawerWidth();
-  renderDrawer(shift);
-}
-function freezeDrawer(): number {
-  // Pin every drawer element to its computed (true visual) state with
-  // transitions off. Covers any animation source — a WAAPI settle AND the
-  // steady-state CSS class transition from button/backdrop toggles — so a
-  // re-grab mid-animation starts from where the drawer actually is instead
-  // of snapping back to a stale touchstart measurement.
-  gestureWidth = drawerWidth();
-  const shift = drawerShiftOf();
-  // At rest there is nothing in flight to pin; leave the DOM untouched so a
-  // plain scroll/tap never pays for inline styles or a shown backdrop.
-  const open = document.body.classList.contains('files-open');
-  if ((!open && shift <= 0) || (open && shift >= gestureWidth)) return shift;
-  renderDrawer(shift);
-  return shift;
-}
-function settleDrawer(open: boolean): void {
-  const width = gestureWidth || drawerWidth();
-  const from = drawerShiftOf();
-  const end = open ? width : 0;
-  const duration = reducedMotion() ? 0 : Math.max(SETTLE_MS * (width ? Math.abs(end - from) / width : 1), 1);
-  const easing = 'ease-out';
-  settleTarget = open;
-  settleAnims = [
-    panel.animate([
-      { transform: `translate3d(${-HIDE_FACTOR * (width - from)}px,0,0)` },
-      { transform: open ? 'translate3d(0px,0,0)' : `translate3d(${-HIDE_FACTOR * width}px,0,0)` },
-    ], { duration, easing, fill: 'forwards' }),
-    workspace.animate(
-      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
-      { duration, easing, fill: 'forwards' }),
-    topbar.animate(
-      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
-      { duration, easing, fill: 'forwards' }),
-    navWrap.animate(
-      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
-      { duration, easing, fill: 'forwards' }),
-    backdrop.animate(
-      [{ opacity: width ? from / width : 0 }, { opacity: open ? 1 : 0 }],
-      { duration, easing, fill: 'forwards' }),
-  ];
-  for (const el of [panel, workspace, topbar, navWrap, backdrop]) el.style.transition = 'none';
-  settleAnims[0].onfinish = () => {
-    document.body.classList.toggle('files-open', open);
-    clearDrawerDrag();
-    for (const anim of settleAnims) anim.cancel();
-    settleAnims = [];
-    settleTarget = null;
-  };
-}
-document.addEventListener('touchstart', (event) => {
-  if (gestureId !== -1 || event.touches.length !== 1) return;
-  if (document.body.classList.contains('outline-open')) return;
-  const touch = event.touches[0] as Touch & { touchType?: string };
-  if (touch.touchType === 'stylus') return;
-  for (let el = event.target as HTMLElement | null; el; el = el.parentElement) {
-    if (el.dataset && el.dataset.ignoreSwipe !== undefined) return;
-  }
-  // Ignore touches in the bottom gesture-navigation zone.
-  if (window.innerHeight - touch.clientY < bottomInset() + 4) return;
-  resumeTarget = settleTarget;
-  cancelSettle();
-  const frozenShift = freezeDrawer();
-  gestureId = touch.identifier;
-  gestureStartX = touch.clientX;
-  gestureStartY = touch.clientY;
-  gestureStartTime = performance.now();
-  gestureLastX = touch.clientX;
-  gestureLastTime = gestureStartTime;
-  gestureVelocity = 0;
-  gestureStartShift = frozenShift;
-  gestureEngaged = false;
-}, { passive: true, capture: true });
-function abortGesture(): void {
-  // Not a drawer swipe. If the drag already engaged, settle back to the state
-  // the drawer came from; if we only froze a settle on touchstart, resume it.
-  // Either way the drawer can never be left hanging mid-position.
-  if (gestureEngaged) {
-    settleDrawer(resumeTarget ?? document.body.classList.contains('files-open'));
-  } else if (resumeTarget !== null) {
-    settleDrawer(resumeTarget);
-  } else {
-    clearDrawerDrag(); // release the touchstart freeze; a class transition resumes
-  }
-  resumeTarget = null;
-  gestureEngaged = false;
-  gestureId = -1;
-}
-document.addEventListener('touchmove', (event) => {
-  if (gestureId === -1) return;
-  if (event.touches.length !== 1) { abortGesture(); return; }
-  const touch = [...event.touches].find((item) => item.identifier === gestureId);
-  if (!touch) return;
-  const now = performance.now();
-  const dx = touch.clientX - gestureStartX;
-  const dy = touch.clientY - gestureStartY;
-  gestureVelocity = (1 - EMA_ALPHA) * gestureVelocity + EMA_ALPHA * ((touch.clientX - gestureLastX) / Math.max(1, now - gestureLastTime));
-  gestureLastX = touch.clientX;
-  gestureLastTime = now;
-  if (!gestureEngaged) {
-    // Not ours: held still too long, moved vertically, or overshot vertically.
-    if (now - gestureStartTime > MOVE_DEADLINE_MS || Math.abs(dy) > 80) { abortGesture(); return; }
-    if (Math.abs(dx) <= Math.abs(dy)) return;
-    // Only a horizontal drag away from the settled edge counts.
-    if (!((dx > 4 && gestureStartShift < gestureWidth) || (dx < -4 && gestureStartShift > 0))) return;
-    // Horizontally scrollable content under the finger wins.
-    for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
-      if (el.scrollWidth <= el.clientWidth) continue;
-      if (!['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
-      if ((dx > 0 && el.scrollLeft > 0) || (dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1)) {
-        abortGesture(); return;
-      }
-    }
-    // An active text selection takes priority over the drawer.
-    if (window.getSelection()?.toString()) { abortGesture(); return; }
-    gestureEngaged = true;
-  }
-  event.preventDefault();
-  renderDrawer(gestureStartShift + dx);
-}, { passive: false, capture: true });
-const finishGesture = (event: TouchEvent, cancelled = false): void => {
-  if (gestureId === -1) return;
-  if (gestureEngaged) {
-    const touch = [...event.changedTouches].find((item) => item.identifier === gestureId);
-    const dx = touch ? touch.clientX - gestureStartX : 0;
-    const dy = touch ? Math.abs(touch.clientY - gestureStartY) : 999;
-    if (cancelled) {
-      settleDrawer(resumeTarget ?? document.body.classList.contains('files-open'));
-    } else {
-      // Fling projection: where the drawer would land after 1s of coasting.
-      const projected = gestureStartShift + dx + gestureVelocity * PROJECT_MS;
-      settleDrawer(projected > gestureWidth / 2 && dy < 80 && Math.abs(dx) > dy);
-    }
-  } else if (resumeTarget !== null) {
-    settleDrawer(resumeTarget);
-  } else {
-    clearDrawerDrag(); // plain tap: release the touchstart freeze
-  }
-  resumeTarget = null;
-  gestureEngaged = false;
-  gestureId = -1;
-};
-document.addEventListener('touchend', finishGesture, { passive: true, capture: true });
-document.addEventListener('touchcancel', (event) => finishGesture(event, true), { passive: true, capture: true });
+// Both drawers (src/drawers.ts): the same physics on both sides.
+const drawers = initDrawers({
+  panels: { left: document.querySelector<HTMLElement>('#file-panel')!, right: rightPanel },
+  movers: [document.querySelector<HTMLElement>('.workspace')!, document.querySelector<HTMLElement>('.topbar')!, document.querySelector<HTMLElement>('#navbar-wrap')!],
+  backdrop: document.querySelector<HTMLElement>('#backdrop')!,
+  classes: { left: 'files-open', right: 'outline-open' },
+  onOpening: (side) => {
+    closePopover();
+    restoreNavigation();
+    (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down
+    if (side === 'right') sidebar.refresh();
+    else window.requestAnimationFrame(() => leftSidebar.scrollToActive());
+  },
+});
+void boot();
