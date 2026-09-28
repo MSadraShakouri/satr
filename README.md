@@ -21,9 +21,10 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - `![[name.png]]` finds the image anywhere in your folders.
 - **PDF export** through Android's print dialog, as Markor does:
   - Vazirmatn font, A4
-  - one or two columns, selected when exporting and remembered per file on this device
+  - one or two columns, set in Settings → PDF export and remembered per file on this device
   - automatic column order from the majority of prose letters (math and code ignored), or explicit LTR / RTL
   - centred display equations by default, or aligned to the reading edge; equations themselves always stay LTR
+  - export starts directly with the saved options—no configuration popup
   - headings kept with following content, including at column boundaries
   - footnotes at the foot of each page (each column in two-column mode), numbered across the whole sheet
   - page numbers in Persian digits

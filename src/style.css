@@ -3213,19 +3213,3 @@ textarea,
   pointer-events: none;
   background: var(--background-primary);
 }
-
-/* Per-file PDF options; native <dialog> supplies focus trapping and Escape. */
-.pdf-options {
-  width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 48px);
-  box-sizing: border-box; overflow-y: auto; padding: 24px;
-  color: var(--text-normal); background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border); border-radius: 12px;
-  font: inherit;
-}
-.pdf-options::backdrop { background: rgba(0, 0, 0, 0.45); }
-.pdf-options h2 { font-size: 1.2em; margin: 0 0 12px; }
-.pdf-options p { color: var(--text-muted); font-size: 0.85em; line-height: 1.6; }
-.pdf-options label { display: flex; flex-direction: column; gap: 8px; margin-block: 16px; }
-.pdf-options select { width: 100%; }
-.pdf-options-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
-.pdf-options-actions button { padding: 8px 18px; min-height: 40px; }

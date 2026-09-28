@@ -19,7 +19,7 @@ import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
-import { choosePrintOptions, closePrintOptions, printOptionsKey } from './printOptions';
+import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots } from './snapshot';
@@ -1264,8 +1264,7 @@ async function exportCurrentPdf(): Promise<void> {
   const path = filePath;
   const name = displayNameForPath(path) || 'Note';
   const markdown = editor.getValue();
-  const options = await choosePrintOptions(path);
-  if (!options) return;
+  const options = loadPrintOptions(path);
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
     await exportPdf(name, markdown, isExternalPath(path) ? '' : path, options);
@@ -1436,6 +1435,8 @@ settingsButton.addEventListener('click', () => showSettings());
 function showSettings(): void {
   toggleFiles(false);
   openSettings({
+    notePath: hasNote() ? filePath : undefined,
+    noteName: hasNote() ? displayNameForPath(filePath) : undefined,
     apply: applySettings,
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });
@@ -1467,8 +1468,7 @@ let exitArmedAt = 0;
 let exitNotice: NoticeHandle | null = null;
 /** Returns true when the press should leave the app. */
 function handleBack(): boolean {
-  if (closePrintOptions()) { /* The export dialog consumed the back press. */ }
-  else if (isMenuOpen()) closeMenu();
+  if (isMenuOpen()) closeMenu();
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
   else if (isSettingsOpen()) closeSettings();

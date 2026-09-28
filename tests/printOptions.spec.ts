@@ -1,41 +1,81 @@
 import { expect, test, type Page } from '@playwright/test';
-import type { PrintOptions } from '../src/printOptions';
 
-declare global { interface Window { chosenPrintOptions?: PrintOptions | null } }
-async function open(page: Page, path: string) {
-  await page.evaluate(async (path) => {
-    window.chosenPrintOptions = undefined;
-    const module = '/src/printOptions.ts';
-    const { choosePrintOptions } = await import(module);
-    void choosePrintOptions(path).then((options) => { window.chosenPrintOptions = options; });
-  }, path);
-  await expect(page.getByRole('dialog')).toBeVisible();
+async function open(page: Page, notePath?: string) {
+  await page.evaluate(async (notePath) => {
+    const path = '/src/settings.ts';
+    const { openSettings } = await import(path);
+    openSettings({ notePath, apply: () => {}, tools: () => [] });
+  }, notePath);
+  await expect(page.locator('.settings-screen')).toBeVisible();
+}
+async function close(page: Page) {
+  await page.locator('.settings-back').click();
+  await expect(page.locator('.settings-screen')).toHaveCount(0);
 }
 
-test('PDF options are per file; cancel and Escape do not overwrite them', async ({ page }) => {
+test('PDF controls sit with the other PDF settings and preserve per-file choices', async ({ page }) => {
   await page.goto('/');
+  // Preferences saved by the old popup must remain available after the move.
+  await page.evaluate(() => localStorage.setItem('satr:pdf:first.md', JSON.stringify({ columns: 2, direction: 'rtl', mathAlign: 'start' })));
   await open(page, 'first.md');
-  await page.getByLabel('Layout').selectOption('2');
-  await page.getByLabel('Reading order').selectOption('rtl');
-  await page.getByLabel('Display equations').selectOption('start');
-  await page.getByRole('button', { name: 'Export', exact: true }).click();
-  await expect(page.locator('dialog.pdf-options')).toHaveCount(0);
-  expect(await page.evaluate(() => window.chosenPrintOptions)).toEqual({ columns: 2, direction: 'rtl', mathAlign: 'start' });
+  const group = page.locator('.setting-group').filter({ has: page.getByLabel('Layout', { exact: true }) });
+  await expect(group.getByRole('radiogroup', { name: 'Page numbers' })).toBeVisible();
+  await expect(group.locator('[data-text="pdfCss"]')).toHaveCount(1);
+  await expect(page.getByLabel('Layout', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Reading order')).toHaveValue('rtl');
+  await expect(page.getByLabel('Display equations')).toHaveValue('start');
+  await page.getByLabel('Layout', { exact: true }).selectOption('1');
+  await page.getByLabel('Reading order').selectOption('ltr');
+  await page.getByLabel('Display equations').selectOption('center');
+  await close(page);
   await open(page, 'second.md');
-  await expect(page.getByLabel('Layout')).toHaveValue('1');
+  await expect(page.getByLabel('Layout', { exact: true })).toHaveValue('1');
   await expect(page.getByLabel('Reading order')).toHaveValue('auto');
+  await close(page);
+  await open(page, 'first.md');
+  await expect(page.getByLabel('Layout', { exact: true })).toHaveValue('1');
+  await expect(page.getByLabel('Reading order')).toHaveValue('ltr');
   await expect(page.getByLabel('Display equations')).toHaveValue('center');
-  await page.keyboard.press('Escape');
-  await expect(page.locator('dialog.pdf-options')).toHaveCount(0);
-  expect(await page.evaluate(() => window.chosenPrintOptions)).toBeNull();
-  await open(page, 'first.md');
-  await expect(page.getByLabel('Layout')).toHaveValue('2');
-  await page.getByLabel('Layout').selectOption('1');
-  await page.getByRole('button', { name: 'Cancel' }).click();
-  await expect(page.locator('dialog.pdf-options')).toHaveCount(0);
-  await open(page, 'first.md');
-  await expect(page.getByLabel('Layout')).toHaveValue('2');
+  await expect(page.locator('dialog')).toHaveCount(0);
 });
+
+test('without an open file only file-specific PDF controls are disabled', async ({ page }) => {
+  await page.goto('/');
+  await open(page);
+  for (const name of ['Layout', 'Reading order', 'Display equations']) await expect(page.getByLabel(name, { exact: true })).toBeDisabled();
+  await expect(page.getByText('Open a file to change its PDF layout.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'None', exact: true })).toBeEnabled();
+  await expect(page.locator('[data-text="pdfCss"]')).toBeEditable();
+});
+
+for (const quickAction of ['', 'pdf']) {
+  test(`export starts without a popup via ${quickAction ? 'quick action' : 'menu'}`, async ({ page }) => {
+    await page.addInitScript((quickAction) => {
+      window.print = () => { window.parent.__printedHtml = document.documentElement.outerHTML; };
+      if (window !== window.top) return;
+      localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/Layout.md': 1 }, folders: ['Notes'] }));
+      localStorage.setItem('satr:fs:file:Notes/Layout.md', '# Layout test\n\n$$x+y$$');
+      localStorage.setItem('satr:current', 'Notes/Layout.md');
+      localStorage.setItem('satr:settings', JSON.stringify({ version: 3, quickAction }));
+      localStorage.setItem('satr:pdf:Notes/Layout.md', JSON.stringify({ columns: 2, direction: 'rtl', mathAlign: 'start' }));
+    }, quickAction);
+    await page.goto('/');
+    await expect(page.locator('.cm-file-name')).toHaveText('Layout');
+    await page.locator('#nav-menu').click();
+    if (!quickAction) await page.getByRole('menuitem', { name: 'Export to PDF', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => Boolean(window.__printedHtml)), { timeout: 15_000 }).toBe(true);
+    await expect(page.locator('dialog')).toHaveCount(0);
+    const result = await page.evaluate(() => {
+      const doc = new DOMParser().parseFromString(window.__printedHtml!, 'text/html');
+      return {
+        columns: Boolean(doc.querySelector('.satr-print-sheet')),
+        direction: doc.querySelector('.satr-print-sheet')?.getAttribute('data-direction'),
+        source: localStorage.getItem('satr:fs:file:Notes/Layout.md'),
+      };
+    });
+    expect(result).toEqual({ columns: true, direction: 'rtl', source: '# Layout test\n\n$$x+y$$' });
+  });
+}
 
 test('auto direction counts prose, ignoring math, code and an English title', async ({ page }) => {
   await page.goto('/');

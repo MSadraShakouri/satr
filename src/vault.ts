@@ -218,7 +218,8 @@ class WebBackend implements Backend {
     const old: string[] = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i)!;
-      if (key.startsWith('satr:') && key.endsWith('.md') && !key.startsWith('satr:view:') && !key.startsWith('satr:fs:')) old.push(key);
+      // Per-file PDF preferences also end in .md; they are not legacy notes.
+      if (key.startsWith('satr:') && key.endsWith('.md') && !key.startsWith('satr:view:') && !key.startsWith('satr:fs:') && !key.startsWith('satr:pdf:')) old.push(key);
     }
     const openName = localStorage.getItem('satr:file-name');
     if (!old.length && openName === null) return null;
