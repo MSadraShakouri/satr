@@ -2,18 +2,70 @@
 
 A to-do roadmap for the complete Satr editor. The original product decisions and phased work are retained below, with actionable items expressed as task checkboxes. Mermaid is postponed until the core editor and preview are stable.
 
-## Current status
+## Current status (September 2026)
 
-- [x] Vanilla TypeScript/Vite editor shell
-- [x] CodeMirror editor with bidi handling, line numbers, wrapping, and list continuation
-- [x] Live sanitized Markdown preview with KaTeX and code highlighting
-- [x] Source-defined Persian/English ordered-list display
-- [x] Preview-only pipe tables with alignment support
-- [x] Scroll-linked editor and preview without cursor mapping
-- [x] Edge-swipe drawer with live content movement
-- [x] Floating circular controls and light visual theme
-- [x] Demo Markdown file covering current features
-- [ ] Stabilize the remaining filename, table layout, drawer, and mode-transition polish
+Satr runs as a web app (Vite + TypeScript + CodeMirror 6) with notes kept in
+the browser's localStorage. The Android APK (Capacitor 7) comes after the UI
+and the logic below are finished. The `android/` project hasn't been created yet.
+
+### Done
+
+Editor
+- [x] CodeMirror editor: per-line RTL/LTR, line numbers, soft wrap, list continuation (Persian digits too)
+- [x] Live preview in the editor (Obsidian rule: syntax shows when the caret enters it): headings, emphasis, lists with a space rule, tasks, quotes, footnotes, links
+- [x] Inline file title that renames the note
+- [x] Tight character-level selection highlight
+- [x] Keyboard toolbar pill 8px above the keyboard (undo/redo, heading, lists, to-do cycle, footnote, delete line, math, move line)
+- [x] Brackets and `$` pair up; no suggestions or autocorrect inside code and math
+- [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
+- [x] Footnotes: insert at the caret, write the note in a popover at the reference
+- [x] Heading folding in the editor and the preview (chevron at the end of the heading line), fold/unfold all, remembered per note
+- [x] Find and replace in the note (count, previous/next, replace, replace all, match case, whole word, regex)
+- [x] Keeps the caret clear of the keyboard without jumping or locking the scroll
+
+Preview
+- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking, code highlighting and copy, tables, footnotes in popovers, title on top
+- [x] Edit/preview switch keeps the position; double-tap the preview to edit
+- [x] Rendered only when visible (about 14x faster typing on long notes)
+
+Chrome
+- [x] Obsidian themes: exact neutral colours, light/dark/auto
+- [x] Floating top buttons and bottom bar (back, forward, new note, find, fold all); they hide while scrolling down, with Obsidian's fade masks
+- [x] Left drawer with Obsidian's release physics (currently a single "Recent" row)
+- [x] Right drawer: outline (filter, current heading, tap to jump) and search (this note / all notes, match case, regex, grouped results)
+- [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward
+
+### Remaining before the APK: UI
+
+- [ ] Left sidebar, Obsidian-style file tree for a space: folders expand in place, files sorted, the open note highlighted, create/rename/delete/move via long-press menu
+- [ ] "All files" browser (Markor-style): only the current folder is listed, with a ".." row to go up; tap a folder to enter it; shows every folder on the device
+- [ ] Space switcher at the top of the left sidebar (Obsidian's vault switcher): the spaces, "All files", add or remove a space
+- [ ] Search scoped to the current space (the "All notes" scope becomes "This space")
+- [ ] Settings screen: font size, line height, line numbers, theme, keyboard toolbar items
+- [ ] Empty states and first run: no space yet leads to picking a folder
+- [ ] Wiki links `[[...]]`: rendering, tap to open, and a popup while typing `[[`
+- [ ] Images as tappable links
+- [ ] Persian UI strings (later)
+
+### Remaining before the APK: logic
+
+- [ ] Storage layer behind one interface: a web backend (localStorage, as now, for development) and a native backend (device files)
+- [ ] Spaces: a space is just a folder path saved in the app's own settings. Nothing is ever written into the folder (no `.obsidian`-style config). "All files" is the storage root.
+- [ ] Rename, move and delete on real files; keep view memory keyed by path
+- [ ] Autosave to the file (debounced, flushed on background or file switch); check the modification time on resume and before saving, and offer reload or keep if the file changed outside Satr
+- [ ] Reopen the last file on launch; if it's gone, fall back to the file browser
+- [ ] Search index per space (read files lazily, cache the text, refresh on modification time)
+
+### APK phase
+
+- [ ] `npx cap add android`, app id com.msadrashakouri.satr
+- [ ] All-files permission (MANAGE_EXTERNAL_STORAGE) flow on first run; sideload only
+- [ ] Filesystem plugin (list, read, write, stat, rename, delete, mkdir)
+- [ ] Status bar hide/show wired to auto-hide (the JS side is done)
+- [ ] Code keyboard: a small WebView subclass that overrides `onCreateInputConnection` and, while the caret is in code or math, requests `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | TYPE_TEXT_FLAG_NO_SUGGESTIONS` (Termux's trick: Gboard shows the number row and no suggestions), switched from JS through a bridge call plus `InputMethodManager.restartInput`
+- [ ] On-device IME check: Persian and Arabic composition, caret placement, selection handles
+- [ ] Share intent (open .md from other apps)
+- [ ] Print / PDF (Phase 3 below)
 
 ## Original product decisions and phased to-do
 

@@ -8,6 +8,7 @@ import { layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, openPopover } from './popover';
+import { createRightSidebar } from './rightSidebar';
 
 type Mode = 'edit' | 'preview';
 const starter = `# Satr demo
@@ -64,6 +65,7 @@ app.innerHTML = `
     <div class="topbar">
       <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="15" height="16" rx="2"/><path d="M8 7v10"/></svg></button>
       <div class="topbar-actions">
+        <button class="floating-button" id="outline-toggle" aria-label="Outline and search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 6H8M21 12H11M21 18H11M3 6h1M6 12h1M6 18h1"/></svg></button>
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
     </div>
@@ -74,6 +76,7 @@ app.innerHTML = `
       <button class="file-row active" id="file-current">untitled.md</button>
       <button class="theme-row" id="theme-toggle" type="button"></button>
     </aside>
+    <aside class="right-panel workspace-drawer mod-right" id="right-panel" aria-label="Outline and search"></aside>
     <div class="backdrop" id="backdrop"></div>
     <main class="workspace">
       <section class="editor-pane" id="editor-pane" aria-label="Editor"><div id="editor"></div></section>
@@ -100,6 +103,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Forward"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-fold" aria-label="Collapse all headings"></button></div>
         </div>
       </nav>
@@ -353,7 +357,7 @@ function rememberViewSoon(): void {
   window.clearTimeout(viewTimer);
   viewTimer = window.setTimeout(rememberView, 400);
 }
-function restoreView(base: string): void {
+function restoreView(base: string, after?: () => void): void {
   const view = readView(base);
   restoringView = true;
   // The caret comes back where it was — without focus, so no keyboard and no
@@ -379,6 +383,7 @@ function restoreView(base: string): void {
   const settle = (): void => {
     apply();
     restoringView = false;
+    after?.();
   };
   if (document.fonts?.ready) void document.fonts.ready.then(() => window.requestAnimationFrame(settle));
   else window.requestAnimationFrame(settle);
@@ -408,7 +413,7 @@ function leaveCurrent(): void {
   saveNow();
   rememberView();
 }
-function showFile(base: string, content: string): void {
+function showFile(base: string, content: string, after?: () => void): void {
   fileBase = base;
   localStorage.setItem(NAME_KEY, base);
   fileRow.textContent = `${base}.md`;
@@ -419,15 +424,16 @@ function showFile(base: string, content: string): void {
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  restoreView(base);
+  restoreView(base, after);
   renderNavButtons();
+  sidebar.refresh();
 }
-function openFile(base: string): void {
-  if (base === fileBase) return;
+function openFile(base: string, after?: () => void): void {
+  if (base === fileBase) { after?.(); return; }
   leaveCurrent();
   fileHistory.splice(historyIndex + 1, Infinity, base);
   historyIndex = fileHistory.length - 1;
-  showFile(base, localStorage.getItem(storageKey(base)) ?? '');
+  showFile(base, localStorage.getItem(storageKey(base)) ?? '', after);
 }
 function goHistory(step: number): void {
   let index = historyIndex + step;
@@ -488,6 +494,163 @@ navFold.addEventListener('click', () => {
 // The bar never takes focus from the note (no keyboard flicker).
 document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
 renderNavButtons();
+document.querySelector('#nav-find')!.addEventListener('click', () => {
+  if (mode !== 'edit') setMode('edit');
+  editor.openFind();
+});
+
+// ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
+const rightPanel = document.querySelector<HTMLElement>('#right-panel')!;
+const noteTopSpacing = (): number => parseFloat(getComputedStyle(editor.view.contentDOM).paddingTop) || 60;
+function allNotes(): { base: string; text: string }[] {
+  const notes = [{ base: fileBase, text: editor.getValue() }];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i)!;
+    if (!key.startsWith('satr:') || !key.endsWith('.md') || key.startsWith('satr:view:')) continue;
+    const base = key.slice(5, -3);
+    if (base !== fileBase) notes.push({ base, text: localStorage.getItem(key) ?? '' });
+  }
+  return notes;
+}
+const sidebar = createRightSidebar(rightPanel, {
+  headings: () => editor.headings(),
+  currentLine: () => (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view)),
+  onHeading: (line) => {
+    toggleOutline(false);
+    ownScroll(400);
+    editor.revealLine(line, noteTopSpacing()); // also unfolds a folded parent
+    if (mode === 'preview') {
+      const section = preview.querySelector<HTMLElement>(`:scope > .md-section[data-line="${line}"]`);
+      if (section) previewPane.scrollTop += section.getBoundingClientRect().top - previewPane.getBoundingClientRect().top - noteTopSpacing();
+    }
+  },
+  notes: allNotes,
+  currentBase: () => fileBase,
+  onResult: (base, from, to) => {
+    toggleOutline(false);
+    openFile(base, () => {
+      if (mode !== 'edit') setMode('edit');
+      ownScroll(400);
+      editor.revealRange(from, to);
+    });
+  },
+});
+let outlineTimer: number | undefined;
+function outlineOpen(): boolean { return document.body.classList.contains('outline-open'); }
+editor.view.scrollDOM.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });
+previewPane.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });
+const refreshOutlineSoon = (): void => {
+  if (!outlineOpen()) return;
+  window.clearTimeout(outlineTimer);
+  outlineTimer = window.setTimeout(() => sidebar.refresh(), 400);
+};
+editor.view.dom.addEventListener('input', refreshOutlineSoon);
+
+// The right drawer slides in from the right edge and pushes the note aside,
+// mirroring the left one: follows the finger, and on release uses the same
+// fling projection (position + 1s of velocity past half the width).
+const RIGHT_SETTLE_MS = 200;
+const rightMovers = (): HTMLElement[] => [workspace, topbar, navWrap];
+const rightWidth = (): number => rightPanel.getBoundingClientRect().width || Math.min(window.innerWidth * 0.84, 420);
+function renderRight(shift: number): void {
+  const width = rightWidth();
+  const s = Math.max(0, Math.min(width, shift));
+  rightPanel.style.transition = 'none';
+  rightPanel.style.transform = `translate3d(${width - s}px,0,0)`;
+  rightPanel.style.visibility = 'visible';
+  for (const el of rightMovers()) { el.style.transition = 'none'; el.style.transform = `translate3d(${-s}px,0,0)`; }
+  backdrop.style.transition = 'none';
+  backdrop.style.display = s > 0 ? 'block' : 'none';
+  backdrop.style.opacity = String(s / width);
+}
+function settleRight(open: boolean, from: number): void {
+  const width = rightWidth();
+  const duration = Math.max(1, RIGHT_SETTLE_MS * Math.abs((open ? width : 0) - from) / width);
+  const all = [rightPanel, ...rightMovers(), backdrop];
+  for (const el of all) el.style.transition = `transform ${duration}ms ease-out, opacity ${duration}ms ease-out`;
+  window.requestAnimationFrame(() => {
+    rightPanel.style.transform = open ? 'translate3d(0,0,0)' : `translate3d(${width}px,0,0)`;
+    for (const el of rightMovers()) el.style.transform = open ? `translate3d(${-width}px,0,0)` : 'translate3d(0,0,0)';
+    backdrop.style.display = 'block';
+    backdrop.style.opacity = open ? '1' : '0';
+    window.setTimeout(() => {
+      document.body.classList.toggle('outline-open', open);
+      for (const el of all) { el.style.transition = ''; el.style.transform = ''; }
+      rightPanel.style.visibility = '';
+      backdrop.style.display = '';
+      backdrop.style.opacity = '';
+    }, duration + 20);
+  });
+}
+function toggleOutline(open = !outlineOpen()): void {
+  if (open === outlineOpen()) return;
+  if (open) {
+    closePopover();
+    restoreNavigation();
+    (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down
+    sidebar.refresh();
+  }
+  const width = rightWidth();
+  renderRight(open ? 0 : width);
+  settleRight(open, open ? 0 : width);
+}
+document.querySelector('#outline-toggle')!.addEventListener('click', () => toggleOutline());
+document.querySelector('#backdrop')!.addEventListener('click', () => toggleOutline(false));
+{
+  let startX = 0; let startY = 0; let startTime = 0; let lastX = 0; let lastTime = 0;
+  let velocity = 0; let engaged = false; let tracking = false; let startShift = 0;
+  document.addEventListener('touchstart', (event) => {
+    tracking = false;
+    if (event.touches.length !== 1 || document.body.classList.contains('files-open')) return;
+    for (let el = event.target as HTMLElement | null; el; el = el.parentElement) {
+      if (el.dataset && el.dataset.ignoreSwipe !== undefined && el !== rightPanel) return;
+    }
+    const touch = event.touches[0];
+    if (window.innerHeight - touch.clientY < bottomInset() + 4) return;
+    tracking = true; engaged = false;
+    startX = lastX = touch.clientX; startY = touch.clientY;
+    startTime = lastTime = performance.now(); velocity = 0;
+    startShift = outlineOpen() ? rightWidth() : 0;
+  }, { passive: true, capture: true });
+  document.addEventListener('touchmove', (event) => {
+    if (!tracking) return;
+    const touch = event.touches[0];
+    const now = performance.now();
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    velocity = 0.8 * velocity + 0.2 * ((touch.clientX - lastX) / Math.max(1, now - lastTime));
+    lastX = touch.clientX; lastTime = now;
+    if (!engaged) {
+      if (now - startTime > 200 || Math.abs(dy) > 80) { tracking = false; return; }
+      if (Math.abs(dx) <= Math.abs(dy)) return;
+      // Closed: a leftward drag opens it. Open: a rightward drag closes it.
+      if (!((dx < -4 && startShift === 0) || (dx > 4 && startShift > 0))) return;
+      for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
+        if (el.scrollWidth <= el.clientWidth || !['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
+        if ((dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1) || (dx > 0 && el.scrollLeft > 0)) { tracking = false; return; }
+      }
+      if (window.getSelection()?.toString()) { tracking = false; return; }
+      engaged = true;
+      if (startShift === 0) { closePopover(); restoreNavigation(); sidebar.refresh(); }
+    }
+    event.preventDefault();
+    renderRight(startShift - dx);
+  }, { passive: false, capture: true });
+  const finish = (event: TouchEvent): void => {
+    if (!tracking) return;
+    tracking = false;
+    if (!engaged) return;
+    const touch = event.changedTouches[0];
+    const dx = touch ? touch.clientX - startX : 0;
+    const shift = Math.max(0, Math.min(rightWidth(), startShift - dx));
+    const projected = shift - velocity * 1000;
+    const open = projected > rightWidth() / 2;
+    if (open) (document.activeElement as HTMLElement | null)?.blur?.();
+    settleRight(open, shift);
+  };
+  document.addEventListener('touchend', finish, { passive: true, capture: true });
+  document.addEventListener('touchcancel', finish, { passive: true, capture: true });
+}
 
 // Theme switch in the drawer: Auto (follows the system) → Light → Dark.
 const themeButton = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
@@ -591,6 +754,8 @@ function layoutToolbar(): void {
   const keyboardUp = fullHeight - height > 120;
   const show = keyboardUp && editor.hasFocus && mode === 'edit';
   document.body.classList.toggle('keyboard-open', show);
+  // Any field with the keyboard up (find bar, sidebar search): no bottom bar.
+  document.body.classList.toggle('keyboard-up', keyboardUp);
   // Placed from the top, like Obsidian's .mobile-toolbar
   // (top: 100vh - keyboard height - toolbar height): a 52px strip whose 44px
   // pill sits 8px above the keyboard. Anchoring to the bottom instead put it
@@ -796,6 +961,7 @@ function settleDrawer(open: boolean): void {
 }
 document.addEventListener('touchstart', (event) => {
   if (gestureId !== -1 || event.touches.length !== 1) return;
+  if (document.body.classList.contains('outline-open')) return;
   const touch = event.touches[0] as Touch & { touchType?: string };
   if (touch.touchType === 'stylus') return;
   for (let el = event.target as HTMLElement | null; el; el = el.parentElement) {

@@ -2,7 +2,9 @@ import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { search, SearchQuery, setSearchQuery, findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
+import { findNext, findPrevious, replaceAll, replaceNext } from '@codemirror/search';
+import { findBar, openFind } from './findBar';
+import { collectHeadings, type Heading } from './outline';
 import { EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type ViewUpdate } from '@codemirror/view';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
@@ -11,7 +13,7 @@ import { deleteDollarPair, inCode, inMath, mathSource } from './mathSource';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
-import { foldEffect, unfoldEffect } from '@codemirror/language';
+import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
@@ -421,7 +423,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, history(), search(),
+      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, history(), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -454,7 +456,8 @@ export class SatrEditor {
       EditorView.contentAttributes.of({ dir: 'auto' }),
       keymap.of([
         { key: 'Mod-s', run: () => { onChange(); return true; } },
-        { key: 'Mod-f', run: (target) => { target.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) }); return true; } },
+        { key: 'Mod-f', run: (target) => { openFind(target); return true; } },
+        { key: 'Mod-h', run: (target) => { openFind(target, true); return true; } },
         { key: 'Mod-/', run: toggleComment },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
@@ -491,20 +494,50 @@ export class SatrEditor {
       window.clearTimeout(revealTimer);
       revealTimer = window.setTimeout(() => window.requestAnimationFrame(revealCaret), delay);
     };
+    // Only after something that moved the caret or opened the keyboard —
+    // never after a scroll. (Revealing on every finger lift, and on every
+    // viewport resize, pulled the view back to the caret each time you tried
+    // to scroll away from it; Chrome's address bar resizes the viewport as
+    // you scroll.)
     this.view.contentDOM.addEventListener('focus', () => revealSoon(160));
     let touchTimer: number | undefined;
-    this.view.contentDOM.addEventListener('touchstart', () => {
+    let touchSelection: [number, number] = [0, 0];
+    let touchMoved = false;
+    let touchStartY = 0;
+    this.view.contentDOM.addEventListener('touchstart', (event) => {
       window.clearTimeout(touchTimer);
       touching = true;
+      touchMoved = false;
+      touchStartY = event.touches[0]?.clientY ?? 0;
+      const { anchor, head } = this.view.state.selection.main;
+      touchSelection = [anchor, head];
+    }, { passive: true });
+    this.view.contentDOM.addEventListener('touchmove', (event) => {
+      if (Math.abs((event.touches[0]?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
     }, { passive: true });
     const release = (): void => {
       window.clearTimeout(touchTimer);
       // Native selection handles keep adjusting for a moment after the lift.
-      touchTimer = window.setTimeout(() => { touching = false; revealSoon(0); }, 350);
+      touchTimer = window.setTimeout(() => {
+        touching = false;
+        const { anchor, head } = this.view.state.selection.main;
+        const selectionChanged = anchor !== touchSelection[0] || head !== touchSelection[1];
+        // A scroll gesture leaves the caret alone; a tap or a handle drag
+        // that moved the selection gets it revealed.
+        if (selectionChanged && (!touchMoved || anchor !== head)) revealSoon(0);
+      }, 350);
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
     this.view.contentDOM.addEventListener('touchcancel', release, { passive: true });
-    window.visualViewport?.addEventListener('resize', () => revealSoon(160));
+    // The keyboard opening shrinks the viewport by far more than an address
+    // bar does; only that counts.
+    let viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    window.visualViewport?.addEventListener('resize', () => {
+      const height = window.visualViewport!.height;
+      const shrunk = viewportHeight - height;
+      viewportHeight = height;
+      if (shrunk > 120) revealSoon(160);
+    });
   }
   getValue(): string { return this.view.state.doc.toString(); }
   setTitle(base: string): void { this.view.dispatch({ effects: setTitleEffect.of(base) }); }
@@ -528,6 +561,28 @@ export class SatrEditor {
     this.view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } });
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
+  openFind(replace = false): void { openFind(this.view, replace); }
+  headings(): Heading[] { return collectHeadings(this.view.state); }
+  /** Unfold whatever hides this position, so it can be shown. */
+  private unfoldAround(pos: number): void {
+    const effects: ReturnType<typeof unfoldEffect.of>[] = [];
+    foldedRanges(this.view.state).between(pos, pos, (from, to) => { if (from < pos && to >= pos) effects.push(unfoldEffect.of({ from, to })); });
+    if (effects.length) this.view.dispatch({ effects });
+  }
+  /** Scroll a 0-based line to the top of the note area, without a caret. */
+  revealLine(line: number, topOffset: number): void {
+    const { doc } = this.view.state;
+    const pos = doc.line(Math.min(doc.lines, Math.max(1, line + 1))).from;
+    this.unfoldAround(pos);
+    this.view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: topOffset }) });
+  }
+  /** Select a range and centre it (search results); no focus, so no keyboard. */
+  revealRange(from: number, to: number): void {
+    const max = this.view.state.doc.length;
+    from = Math.min(from, max); to = Math.min(to, max);
+    this.unfoldAround(from);
+    this.view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) });
+  }
   /** Fold / unfold the heading on this 0-based line. */
   toggleFold(line: number): boolean { return toggleHeadingFold(this.view, line); }
   foldAll(): void { foldAllHeadings(this.view); }

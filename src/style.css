@@ -706,7 +706,8 @@ body {
   opacity: 0;
   transition: opacity ease-out 0.2s;
 }
-.files-open .backdrop {
+.files-open .backdrop,
+.outline-open .backdrop {
   display: block;
   opacity: 1;
 }
@@ -1181,10 +1182,10 @@ body {
   display: flex;
   width: fit-content;
   max-width: 316px;
-  height: 52px;
+  height: 44px;
   margin: 0 auto max(env(safe-area-inset-bottom, 0px), 12px);
-  padding: 0 8px;
-  border-radius: 52px;
+  padding: 0 6px;
+  border-radius: 44px;
   background: var(--raised-background);
   backdrop-filter: var(--raised-blur);
   -webkit-backdrop-filter: var(--raised-blur);
@@ -1196,8 +1197,10 @@ body {
 }
 .is-hidden-nav .mobile-navbar,
 .keyboard-open .mobile-navbar,
-.files-open .mobile-navbar {
-  transform: translateY(calc(52px + max(env(safe-area-inset-bottom, 0px), 12px)));
+.keyboard-up .mobile-navbar,
+.files-open .mobile-navbar,
+.outline-open .mobile-navbar {
+  transform: translateY(calc(44px + max(env(safe-area-inset-bottom, 0px), 12px)));
   opacity: 0;
   pointer-events: none;
 }
@@ -1209,7 +1212,7 @@ body {
 }
 .mobile-navbar-action {
   flex-grow: 1;
-  width: 52px;
+  width: 44px;
   height: 100%;
 }
 .mobile-navbar-action button {
@@ -1219,7 +1222,7 @@ body {
   width: 100%;
   height: 100%;
   padding: 0;
-  border-radius: 52px;
+  border-radius: 44px;
   background: transparent;
   color: var(--text-normal);
   -webkit-tap-highlight-color: transparent;
@@ -1233,8 +1236,8 @@ body {
   cursor: default;
 }
 .mobile-navbar-action svg {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;
@@ -1375,4 +1378,388 @@ body {
   letter-spacing: -0.03em;
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
+}
+
+/* ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
+   Obsidian's right drawer on a phone: 84vw (at most 420px here, like the
+   left one), page-coloured, pushing the note aside; a row of view tabs on
+   top; nav rows in 16px text with 8px 8px 8px 24px padding; 44px inputs;
+   search results as bordered cards with the match highlighted. */
+.right-panel {
+  position: fixed;
+  z-index: 10;
+  inset: 0 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: min(84vw, 420px);
+  padding: max(12px, env(safe-area-inset-top)) 0 env(safe-area-inset-bottom, 0px);
+  background: var(--background-secondary);
+  border-inline-start: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.11);
+  transform: translate3d(105%, 0, 0);
+  visibility: hidden;
+  touch-action: pan-y;
+  color: var(--text-normal);
+  font-size: 15px;
+}
+.outline-open .right-panel {
+  transform: translate3d(0, 0, 0);
+  visibility: visible;
+}
+.outline-open .workspace,
+.outline-open .topbar,
+.outline-open .navbar-wrap {
+  transform: translate3d(calc(-1 * min(84vw, 420px)), 0, 0);
+}
+.outline-open.is-hidden-nav .topbar {
+  opacity: 1;
+}
+.workspace-drawer-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+}
+.workspace-drawer-tab {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 40px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.workspace-drawer-tab.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.workspace-drawer-tab svg,
+.search-input-container svg,
+.tree-item-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.drawer-view {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.drawer-view.is-active {
+  display: flex;
+}
+.drawer-view-title {
+  padding: 4px 16px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.search-input-container {
+  position: relative;
+  margin: 0 12px 8px;
+}
+.search-input-container svg {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 12px;
+  width: 18px;
+  height: 18px;
+  color: var(--text-faint);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.search-input-container input,
+.document-search-container input {
+  display: block;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  padding-inline-start: 38px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  outline: none;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 16px; /* no zoom-on-focus on phones */
+  unicode-bidi: plaintext;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-input-container input:focus,
+.document-search-container input:focus {
+  border-color: var(--interactive-accent);
+}
+input.mod-no-match {
+  background: rgba(233, 49, 71, 0.12) !important;
+}
+.outline-tree,
+.search-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 24px;
+  overscroll-behavior: contain;
+}
+.pane-empty {
+  padding: 16px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.tree-item-self {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  padding: 8px 8px 8px 24px;
+  padding-inline: 24px 8px;
+  border-radius: 8px;
+  color: var(--text-normal);
+  font-size: 16px;
+  line-height: 1.3;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tree-item-self:active {
+  background: var(--background-modifier-hover);
+}
+.tree-item-self.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+.tree-item-inner {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tree-item-icon {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 2px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 32px;
+  color: var(--text-faint);
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+}
+.is-collapsed > .tree-item-self > .tree-item-icon {
+  transform: translateY(-50%) rotate(-90deg);
+}
+.right-panel[dir="rtl"] .is-collapsed > .tree-item-self > .tree-item-icon {
+  transform: translateY(-50%) rotate(90deg);
+}
+.tree-item-children {
+  margin-inline-start: 12px;
+  padding-inline-start: 4px;
+  border-inline-start: 1px solid var(--background-modifier-border);
+}
+.tree-item.is-collapsed > .tree-item-children,
+.search-result.is-collapsed > .search-result-file-matches {
+  display: none;
+}
+.tree-item-flair {
+  margin-inline-start: 8px;
+  color: var(--text-faint);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+/* Search view */
+.search-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 12px 8px;
+}
+.search-scope {
+  display: flex;
+  gap: 6px;
+  margin-inline-end: auto;
+}
+.search-chip {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.search-chip[aria-checked="true"],
+.search-chip[aria-pressed="true"] {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.search-toggle {
+  font-family: var(--font-monospace);
+}
+.search-summary {
+  padding: 0 16px 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.search-summary:empty {
+  display: none;
+}
+.search-result-file-title {
+  font-weight: 500;
+}
+.search-result-file-matches {
+  margin: 4px 0 8px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--background-primary);
+  box-shadow: 0 0 0 1px var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.3;
+}
+.search-result-file-match {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  cursor: pointer;
+}
+.search-result-file-match:last-child {
+  border-bottom: 0;
+}
+.search-result-file-match:active {
+  background: var(--background-modifier-hover);
+}
+.search-result-file-matched-text {
+  border-radius: 2px;
+  background: var(--text-highlight-bg);
+  color: var(--text-normal);
+}
+
+/* ---- Find and replace in the note (src/findBar.ts) ----
+   Obsidian's mobile .document-search-container: across the top of the note
+   under the floating buttons (top padding = --view-top-spacing-markdown),
+   12px side padding, a bottom border; the note below starts 12px under it.
+   Match count inside the field's end; icon buttons; replace row on demand. */
+.cm-panels.cm-panels-top {
+  border-bottom: 0;
+  background: transparent;
+}
+.document-search-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--view-top-spacing-markdown) 12px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+}
+.cm-editor:has(.document-search-container) .cm-content {
+  padding-top: 12px !important;
+}
+.document-search,
+.document-replace {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 72ch;
+  margin: 0 auto;
+}
+.document-replace {
+  display: none;
+}
+.mod-replace-mode .document-replace {
+  display: flex;
+}
+.search-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.document-search-container input {
+  padding-inline-start: 12px;
+  padding-inline-end: 64px;
+  height: 40px;
+}
+.document-replace input {
+  flex: 1;
+  min-width: 0;
+  padding-inline-end: 12px;
+}
+.document-search-count {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.document-search-buttons,
+.document-replace-buttons {
+  display: flex;
+  gap: 2px;
+}
+.document-search-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 40px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.document-search-icon.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+.document-search-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.document-search-button {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font-size: 13px;
+}
+.document-search-options {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 72ch;
+  margin: 0 auto;
+}
+.search-option {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: 12px;
+}
+.search-option[aria-pressed="true"] {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.cm-editor .cm-searchMatch {
+  border-radius: 2px;
+  background: var(--text-highlight-bg);
+  outline: 0;
+}
+.cm-editor .cm-searchMatch.cm-searchMatch-selected {
+  background: rgba(255, 150, 0, 0.55);
 }
