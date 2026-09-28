@@ -197,6 +197,8 @@ const render = (tex: string, displayMode = false): string =>
   katex.renderToString(tex, { displayMode, throwOnError: false });
 
 export function renderMath(raw: string, display: boolean): string {
+  // Empty display math is still a blank display line, not zero-height KaTeX.
+  if (display && !raw.trim()) return '<div class="math-display"><br></div>';
   const marked = markMathSpaces(raw);
   const tex = marked.split(SPACE).join('\\ ');
   const styleMatch = STYLE_PREFIX.exec(tex);

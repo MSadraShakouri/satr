@@ -4,14 +4,13 @@
 // editor.ts switches the on-screen keyboard to its no-suggestions mode while
 // the caret is inside. Typing "$" pairs up the way Obsidian does.
 import { syntaxTree } from '@codemirror/language';
-import { EditorSelection, StateField, type EditorState, type Range } from '@codemirror/state';
+import { StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 
 interface Span { from: number; to: number }
 
-// $$ blocks for the whole note. A line with an odd number of "$$" opens or
-// closes a block; fenced code is skipped. Rescanned on edits: one pass over
-// the text, far cheaper than the rendering it replaces.
+// Multiline display math. Count only unescaped delimiters outside code;
+// same-line pairs are decorated separately. Rescanned on edits.
 function scanBlocks(state: EditorState): Span[] {
   const blocks: Span[] = [];
   let open = -1;
@@ -26,10 +25,16 @@ function scanBlocks(state: EditorState): Span[] {
       continue;
     }
     if (fence !== null || !text.includes('$$')) continue;
-    const count = text.split('$$').length - 1;
-    if (count % 2 === 0) continue;
-    if (open < 0) open = line.from;
-    else { blocks.push({ from: open, to: line.to }); open = -1; }
+    for (const match of text.matchAll(/\$\$/g)) {
+      let slashes = 0;
+      for (let i = match.index! - 1; i >= 0 && text[i] === '\\'; i -= 1) slashes += 1;
+      if (slashes % 2 || (open < 0 && isCode(state, line.from + match.index!))) continue;
+      if (open < 0) open = line.from;
+      else {
+        if (open < line.from) blocks.push({ from: open, to: line.to });
+        open = -1;
+      }
+    }
   }
   if (open >= 0) blocks.push({ from: open, to: state.doc.length });
   return blocks;
@@ -40,13 +45,16 @@ export const mathBlocks = StateField.define<Span[]>({
   update: (value, tr) => (tr.docChanged ? scanBlocks(tr.state) : value),
 });
 
-// Inline math on one line: "$$…$$", or "$…$" with no space just inside the
-// dollars and no digit right after the closing one ("$5 and $6" isn't math).
-const INLINE = /\$\$(.+?)\$\$|(?<![\\$])\$(?=[^\s$])((?:\\.|[^$\\])*?[^\s\\])\$(?![\d$])/g;
+// Inline math on one line, including single-character and spaced formulas.
+// No digit right after the closing dollar ("$5 and $6" isn't math).
+const INLINE = /(?<!\$)\$\$(.*?)\$\$|(?<!\$)\$([^$\n]+?)\$(?![\d$])/g;
 
 function isCode(state: EditorState, pos: number): boolean {
   for (let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
-    if (/^(InlineCode|FencedCode|CodeBlock)$/.test(node.name)) return true;
+    if (!/^(InlineCode|FencedCode|CodeBlock)$/.test(node.name)) continue;
+    if (node.name === 'InlineCode') return pos > node.from && pos < node.to;
+    const closedFence = node.name === 'FencedCode' && node.lastChild?.name === 'CodeMark' && node.lastChild.from > node.from;
+    return pos > node.from && (pos < node.to || (pos === node.to && !closedFence));
   }
   return false;
 }
@@ -54,8 +62,11 @@ function isCode(state: EditorState, pos: number): boolean {
 function inlineSpans(state: EditorState, lineFrom: number, text: string): { from: number; to: number; open: number; close: number }[] {
   if (!text.includes('$')) return [];
   const spans = [];
+  // Mask escaped dollars without shifting offsets; an even run of slashes
+  // leaves the dollar active, exactly as the typing handler does.
+  const unescaped = text.replace(/\\+\$/g, (run) => (run.length - 1) % 2 ? run.slice(0, -1) + '\0' : run);
   INLINE.lastIndex = 0;
-  for (let m = INLINE.exec(text); m; m = INLINE.exec(text)) {
+  for (let m = INLINE.exec(unescaped); m; m = INLINE.exec(unescaped)) {
     const from = lineFrom + m.index;
     if (isCode(state, from)) continue;
     const open = m[1] !== undefined ? 2 : 1;
@@ -65,7 +76,7 @@ function inlineSpans(state: EditorState, lineFrom: number, text: string): { from
 }
 
 function blockAt(state: EditorState, pos: number): Span | null {
-  for (const block of state.field(mathBlocks)) {
+  for (const block of (state.field(mathBlocks, false) ?? [])) {
     if (pos < block.from) return null;
     if (pos <= block.to) return block;
   }
@@ -81,7 +92,7 @@ export function inMath(state: EditorState, pos: number): boolean {
 
 /** Is the caret inside code (inline, fenced or indented)? */
 export function inCode(state: EditorState, pos: number): boolean {
-  return isCode(state, pos) || (pos > 0 && isCode(state, pos - 1) && !/\s/.test(state.sliceDoc(pos - 1, pos)));
+  return isCode(state, pos);
 }
 
 const mathLine = Decoration.line({ class: 'cm-math-line' });
@@ -111,7 +122,7 @@ function build(view: EditorView): DecorationSet {
       }
       for (const s of inlineSpans(state, line.from, line.text)) {
         out.push(mathDelim.range(s.from, s.from + s.open));
-        out.push(mathText.range(s.from + s.open, s.to - s.close));
+        if (s.from + s.open < s.to - s.close) out.push(mathText.range(s.from + s.open, s.to - s.close));
         out.push(mathDelim.range(s.to - s.close, s.to));
       }
     }
@@ -127,77 +138,18 @@ const mathDecorations = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-// "$" pairing, as in Obsidian: "$" → "$|$"; "$" again in an empty pair →
-// "$$|$$" (a block); "$" in front of a closing "$" steps over it; with a
-// selection, wraps it. Backspace in an empty pair removes both.
-let opened: { pos: number; at: number; extra: number } | null = null;
-const dollarInput = EditorView.inputHandler.of((view, from, to, text) => {
-  if (text !== '$' || view.composing || isCode(view.state, from)) return false;
-  const { state } = view;
-  const before = state.sliceDoc(from - 1, from);
-  const after = state.sliceDoc(to, to + 1);
-  // "$$$$" alone on its line (typed as "$" "$", which pairs to "$$|$$", or as
-  // four dollars) opens a block with the caret on the empty line inside:
-  //   $$
-  //   |
-  //   $$
-  if (from === to) {
-    const line = state.doc.lineAt(from);
-    const head = state.sliceDoc(line.from, from);
-    const tail = state.sliceDoc(to, line.to);
-    const indent = /^\s*/.exec(head)![0];
-    const lead = head.slice(indent.length);
-    const rest = tail.trim();
-    // "$|$" (pairs to "$$|$$"), "$$$|" and "$$$|$" (steps over the last one)
-    const four = (lead === '$' && rest === '$') || (lead === '$$$' && (rest === '' || rest === '$'));
-    // Typing on after the block opened ("$$$$" typed in full): the third and
-    // fourth "$" land on the empty line inside; they're taken as the closing
-    // pair that already exists.
-    if (opened && opened.pos === from && performance.now() - opened.at < 1500 && !head.trim() && !tail.trim() && opened.extra < 2) {
-      opened.extra += 1;
-      return true;
-    }
-    {
-      if (four && !(line.from > 0 && blockAt(state, line.from - 1))) {
-        opened = { pos: line.from + indent.length * 2 + 3, at: performance.now(), extra: 0 };
-        view.dispatch({
-          changes: { from: line.from, to: line.to, insert: `${indent}$$\n${indent}\n${indent}$$` },
-          selection: { anchor: line.from + indent.length * 2 + 3 },
-          userEvent: 'input.type', scrollIntoView: true,
-        });
-        return true;
-      }
-    }
-  }
-  if (from !== to) {
-    view.dispatch(state.changeByRange((range) => ({
-      changes: [{ from: range.from, insert: '$' }, { from: range.to, insert: '$' }],
-      range: EditorSelection.range(range.from + 1, range.to + 1),
-    })), { userEvent: 'input.type' });
-    return true;
-  }
-  if (after === '$' && before === '$' && state.sliceDoc(from - 2, from - 1) !== '$') {
-    view.dispatch({ changes: { from, insert: '$$' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });
-    return true;
-  }
-  if (after === '$') {
-    view.dispatch({ selection: { anchor: from + 1 }, userEvent: 'select' });
-    return true;
-  }
-  if (after && !/[\s)\]}.,;:!?،؛»]/.test(after)) return false; // mid-word: a plain "$"
-  if (before === '\\') return false;
-  view.dispatch({ changes: { from, insert: '$$' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });
-  return true;
-});
+// Pairing lives in delimiterInput.ts so keyboard and toolbar use one policy.
+export const mathSource = [mathBlocks, mathDecorations];
 
-export function deleteDollarPair(view: EditorView): boolean {
-  const { state } = view;
-  const range = state.selection.main;
-  if (!range.empty || state.selection.ranges.length > 1) return false;
-  const pos = range.head;
-  if (state.sliceDoc(pos - 1, pos + 1) !== '$$' || isCode(state, pos)) return false;
-  view.dispatch({ changes: { from: pos - 1, to: pos + 1 }, userEvent: 'delete.backward' });
-  return true;
+/** Closing dollars, not an opening pair that merely happens to be next. */
+export function closingMathDelimiter(state: EditorState, pos: number): number {
+  const line = state.doc.lineAt(pos);
+  const inline = inlineSpans(state, line.from, line.text).find((s) => pos >= s.to - s.close && pos < s.to);
+  if (inline) return inline.to;
+  const block = blockAt(state, pos);
+  if (block && block.to === line.to && line.from > block.from) {
+    const start = line.from + line.text.lastIndexOf('$$');
+    if (start >= line.from && pos >= start && pos < start + 2) return start + 2;
+  }
+  return -1;
 }
-
-export const mathSource = [mathBlocks, mathDecorations, dollarInput];

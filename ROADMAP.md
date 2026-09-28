@@ -15,9 +15,9 @@ Editor
 - [x] CodeMirror editor: per-line RTL/LTR, line numbers, soft wrap, list continuation (Persian digits too)
 - [x] Live preview in the editor (Obsidian rule: syntax shows when the caret enters it): headings, emphasis, lists with a space rule, tasks, quotes, footnotes, links
 - [x] Inline file title that renames the note
-- [x] Tight character-level selection highlight
+- [x] Tight character-level selection highlight, clipped between rows so neighbouring highlights never overlap; roomier 1.85 default line spacing
 - [x] Keyboard toolbar 8px above the keyboard, scrolling like Obsidian's (undo/redo, heading, lists, to-do cycle, footnote, math, delete line, new line below, move line), and a round hide-keyboard button beside it
-- [x] Obsidian's pairs: brackets, quotes, backticks, `$`, `*`, `_`, `=`, `~` close themselves, wrap a selection, and are stepped over when typed again; `$$` then `$$` makes a math block with the caret inside
+- [x] Context-aware pairs: brackets, quotes, backticks, `$`, `*`, `_`, `=`, `~`, `%`; code, math, escapes and existing closers are distinguished. Keyboard and math toolbar share the same policy. `$$` on an empty line opens a math block; only tracked empty pairs are deleted together.
 - [x] No spell check, autocorrect or suggestions anywhere in the note (Obsidian's editor attributes)
 - [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
@@ -102,7 +102,7 @@ Chrome
 
 ### Obsidian's sizes (done, September 2026)
 
-Measured side by side against Obsidian 1.12.7 mobile at 390×844 and matched: editor (16px / 1.5, 60px top spacing, 24px side margins, 700px line width, line-level headings with Obsidian's sizes, weights, line heights and letter spacing, list and checkbox geometry, 14px code), reading view (heading, paragraph, list, blockquote, code and table spacing), bottom bar (52px pill), header (44px buttons), left drawer (space switcher at the bottom where Obsidian has its vault profile, "N files, M folders"), Settings (cards, rows, dropdowns, toggles) and the ≡ menu sheet. The theme button left the drawer; the theme is chosen in Settings only. Saved settings from before are migrated once to the new line spacing (1.5).
+Measured side by side against Obsidian 1.12.7 mobile at 390×844 and matched: editor (16px / 1.5, 60px top spacing, 24px side margins, 700px line width, line-level headings with Obsidian's sizes, weights, line heights and letter spacing, list and checkbox geometry, 14px code), reading view (heading, paragraph, list, blockquote, code and table spacing), bottom bar (52px pill), header (44px buttons), left drawer (space switcher at the bottom where Obsidian has its vault profile, "N files, M folders"), Settings (cards, rows, dropdowns, toggles) and the ≡ menu sheet. The theme button left the drawer; the theme is chosen in Settings only. That historical 1.5 spacing was subsequently relaxed to 1.85 for readability and selection clearance; the old default is migrated, while other chosen values remain unchanged.
 
 ## Original product decisions and phased to-do
 

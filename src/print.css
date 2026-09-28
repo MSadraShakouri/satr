@@ -16,6 +16,10 @@ html {
   font-size: 15px;
   font-weight: 400;
   line-height: 1.8;
+  /* Inherited by ALL text blocks, including tight list items (no <p>),
+     blockquotes, captions and code. Paragraph-only rules missed these. */
+  orphans: 3;
+  widows: 3;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }

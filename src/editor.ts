@@ -4,13 +4,14 @@ import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/lang
 import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
-import { Compartment, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
 import { Highlight, highlightTag } from './highlightSyntax';
-import { deleteDollarPair, mathSource } from './mathSource';
+import { inCode, inMath, mathSource } from './mathSource';
+import { deleteDelimiterPair, delimiterInput, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
@@ -417,33 +418,15 @@ const keyboardAttributes = EditorView.contentAttributes.of({
   spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off', writingsuggestions: 'false',
 });
 
-// Pairs, as Obsidian's "Auto pair brackets" and "Auto pair Markdown syntax":
-// ( [ { ' " and * _ ` ``` close themselves as you type ("$" has its own
-// rules in mathSource.ts), « too for Persian. Quote-like marks (' " * _ `)
-// don't pair after a letter, so "don't" and snake_case stay as typed.
-const pairs = EditorState.languageData.of(() => [{
-  closeBrackets: { brackets: ['(', '[', '{', "'", '"', '*', '_', '`', '```', '«'], before: ')]}:;>.,!?»،؛$`"\'*_' },
+// Brackets and quotes use CodeMirror's tracker. Markdown punctuation uses
+// delimiterInput, which also understands existing math, code and escapes.
+const pairs = EditorState.languageData.of((state, pos) => [{
+  closeBrackets: {
+    brackets: inMath(state, pos) ? ['(', '[', '{']
+      : inCode(state, pos) ? ['(', '[', '{', '`', '```'] : ['(', '[', '{', "'", '"', '`', '```', '«'],
+    before: ')]}:;>.,!?»،؛$`"\'*_',
+  },
 }]);
-// With text selected, = ~ % wrap it (as in Obsidian: ==highlight==,
-// ~~strike~~, %%comment%% by typing the mark twice).
-const wrapSelection = EditorView.inputHandler.of((view, from, to, text) => {
-  if (view.composing || !['=', '~', '%'].includes(text) || view.state.selection.ranges.every((r) => r.empty)) return false;
-  view.dispatch(view.state.changeByRange((range) => (range.empty
-    ? { changes: { from: range.from, insert: text }, range: EditorSelection.cursor(range.from + 1) }
-    : { changes: [{ from: range.from, insert: text }, { from: range.to, insert: text }], range: EditorSelection.range(range.anchor + 1, range.head + 1) })),
-  { userEvent: 'input.type', scrollIntoView: true });
-  return true;
-});
-// "* " or "_ " typed in an empty pair: a list bullet (or just a space) was
-// meant, so the closing mark goes: "*|*" + space → "* |".
-const spaceInEmptyPair = EditorView.inputHandler.of((view, from, to, text) => {
-  if (text !== ' ' || from !== to || view.composing) return false;
-  const around = view.state.sliceDoc(from - 1, from + 1);
-  if (around !== '**' && around !== '__') return false;
-  if (view.state.sliceDoc(from - 2, from - 1) === around[0]) return false; // "**|**" is bold
-  view.dispatch({ changes: { from, to: from + 1, insert: ' ' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });
-  return true;
-});
 
 // A finger is on the note text (see scrollMargins and revealCaret below).
 let touching = false;
@@ -494,7 +477,7 @@ export class SatrEditor {
       ])),
       titleField,
       rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
-      keyboardAttributes, closeBrackets(), pairs, wrapSelection, spaceInEmptyPair,
+      keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:
       // selecting near the bottom then made CodeMirror jump the page at once,
@@ -513,10 +496,11 @@ export class SatrEditor {
         { key: 'Escape', run: (target) => { if (!isFindOpen(target.state)) return false; closeFind(target); return true; } },
         { key: 'F3', run: (target) => { findNext(target); return true; }, shift: (target) => { findPrevious(target); return true; } },
         { key: 'Mod-/', run: toggleComment },
+        { key: 'Enter', run: enterDisplayMath },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
         { key: 'Tab', run: indentMore, shift: outdentLess },
-        { key: 'Backspace', run: deleteDollarPair },
+        { key: 'Backspace', run: deleteDelimiterPair },
         ...closeBracketsKeymap,
         ...defaultKeymap, ...historyKeymap,
       ]),

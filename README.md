@@ -53,14 +53,15 @@ npm run dev          # the web app at http://localhost:5173 (notes live in the b
 npm run build        # type-check and build to dist/
 ```
 
-PDF regression tests run the real browser pagination and print renderer:
+Browser regression tests cover editor input, selection geometry, pagination and PDF rendering:
 
 ```sh
 npx playwright install chromium   # once; use --with-deps on Linux if needed
-npm run test:pdf
+npm test                         # all browser regressions
+npm run test:pdf                  # PDF-only regressions
 ```
 
-Or set `CHROMIUM_EXECUTABLE_PATH` to an installed Chromium. These tests cover the math-heavy Homework 12.2 document, preserving every exercise and formula across page breaks at several font sizes; they do not test Android's print dialog.
+Or set `CHROMIUM_EXECUTABLE_PATH` to an installed Chromium. These tests cover context-aware delimiters, non-overlapping selections, three-line widow/orphan protection, and the math-heavy Homework 12.2 document. They do not test Android's IME or native print dialog.
 
 To build the Android app (JDK 21 and the Android SDK are needed):
 

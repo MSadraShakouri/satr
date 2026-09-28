@@ -52,10 +52,10 @@ function glyphRows(view: EditorView, from: number, to: number): Row[] {
 }
 
 function markers(view: EditorView): RectangleMarker[] {
-  const out: RectangleMarker[] = [];
+  const boxes: Row[] = [];
   const origin = base(view);
   const push = (left: number, top: number, width: number, height: number): void => {
-    out.push(new RectangleMarker(MARK, left - origin.left, top - PAD_Y - origin.top, width, height + 2 * PAD_Y));
+    boxes.push({ left, right: left + width, top, bottom: top + height });
   };
   const { doc } = view.state;
   for (const range of view.state.selection.ranges) {
@@ -93,7 +93,18 @@ function markers(view: EditorView): RectangleMarker[] {
       for (const row of rows) push(row.left, row.top, row.right - row.left, row.bottom - row.top);
     }
   }
-  return out;
+  // Font ascent/descent rectangles can exceed the CSS line pitch (especially
+  // Vazirmatn, headings and Android text zoom). Padding those independently
+  // painted neighbouring rows twice. Clamp each box at the midpoint between
+  // row centres, leaving a 1px gap even at a deliberately tight line spacing.
+  const centres = [...new Set(boxes.map((b) => (b.top + b.bottom) / 2))].sort((a, b) => a - b);
+  return boxes.map((box) => {
+    const centre = (box.top + box.bottom) / 2;
+    const i = centres.indexOf(centre);
+    const top = Math.max(box.top - PAD_Y, i > 0 ? (centres[i - 1] + centre) / 2 + 0.5 : -Infinity);
+    const bottom = Math.min(box.bottom + PAD_Y, i + 1 < centres.length ? (centre + centres[i + 1]) / 2 - 0.5 : Infinity);
+    return new RectangleMarker(MARK, box.left - origin.left, top - origin.top, box.right - box.left, Math.max(0, bottom - top));
+  });
 }
 
 export const tightSelection = [
@@ -101,7 +112,7 @@ export const tightSelection = [
     above: false,
     class: 'cm-satr-selectionLayer',
     markers,
-    update: (update) => update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged,
+    update: (update) => update.docChanged || update.selectionSet || update.geometryChanged || update.focusChanged,
   }),
   EditorView.theme({
     // Hide CodeMirror's block-style selection; ours replaces it.

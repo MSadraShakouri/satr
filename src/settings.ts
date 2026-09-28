@@ -17,7 +17,7 @@ export interface Settings {
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
   pdfCss: string;
-  /** Settings format; 2 = Obsidian's text sizes. */
+  /** Settings format; 3 = roomier default line spacing. */
   version?: number;
 }
 export type QuickAction = '' | 'fold' | 'view' | 'pdf' | 'rename' | 'delete' | 'settings';
@@ -30,8 +30,8 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
   settings: 'Settings',
 };
 const KEY = 'satr:settings';
-const SETTINGS_VERSION = 2;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.5, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', pdfPageNumbers: 'persian', pdfCss: '' };
+const SETTINGS_VERSION = 3;
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', pdfPageNumbers: 'persian', pdfCss: '' };
 
 export function loadSettings(): Settings {
   try {
@@ -40,6 +40,8 @@ export function loadSettings(): Settings {
     // Version 2 moved the text to Obsidian's sizes (line height 1.5 instead
     // of 1.85); earlier text settings are reset to the new defaults once.
     if ((Number(saved.version) || 1) < 2) { s.fontSize = DEFAULTS.fontSize; s.lineHeight = DEFAULTS.lineHeight; }
+    // Migrate only the old default; keep deliberately chosen spacing.
+    if ((Number(saved.version) || 1) < 3 && s.lineHeight === 1.5) s.lineHeight = DEFAULTS.lineHeight;
     s.version = SETTINGS_VERSION;
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
     s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));

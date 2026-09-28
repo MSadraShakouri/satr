@@ -1,8 +1,8 @@
 name: Build Android APK
 
 # A tag v* (its version becomes the app's version) builds the debug APK and
-# publishes a release with it; this fix branch and "Run workflow" build one
-# to download from the run's artifacts. Same recipe as piecework, lyric-sync and insight,
+# publishes a release with it; "Run workflow" builds one to download from
+# the run's artifacts. Same recipe as piecework, lyric-sync and insight,
 # except android/ is committed (Satr has its own native code), so it's
 # synced rather than generated.
 #
@@ -12,8 +12,6 @@ name: Build Android APK
 
 on:
   push:
-    branches:
-      - 'arena/01a0e8d7-satr'
     tags:
       - 'v*'
   workflow_dispatch:

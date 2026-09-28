@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test:pdf": "playwright test tests/exportPdf.spec.ts",
+    "test": "playwright test",
+    "test:pdf": "playwright test tests/exportPdf.spec.ts tests/printBreaks.spec.ts",
     "preview": "vite preview",
     "android:add": "cap add android",
     "android:sync": "npm run build && cap sync android",
