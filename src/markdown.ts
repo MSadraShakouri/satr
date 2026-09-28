@@ -1,3 +1,5 @@
+import { MATH_OR_CODE } from './markdownSyntax';
+import { applyReadingDirections } from './direction';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { renderMath } from './math';
@@ -188,7 +190,6 @@ const newlines = (text: string): number => text.split('\n').length - 1;
 // A fenced code block (to its closing fence, or the end of the note), a
 // code span (backtick runs of the same length, within one paragraph), or
 // math: $$display$$ or $inline$.
-const MATH_OR_CODE = /^( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n {0,3}\2[`~]*[ \t]*(?=\n|$)|(?![\s\S]))|(`+)(?!`)(?:(?!\n[ \t]*\n)[\s\S])*?[^`]\3(?!`)|\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/gm;
 export function renderMarkdown(source: string): string {
   const normalized = source.replace(/\r\n?/g, '\n');
   // Front matter becomes blank lines, so line numbers don't shift.
@@ -208,9 +209,10 @@ export function renderMarkdown(source: string): string {
   // fenced block or in `code` are text, not math.
   const withMathPlaceholders = normalizedTables.replace(MATH_OR_CODE, (full: string, _i: string, _f: string, _t: string, display: string | undefined, inline: string | undefined) => {
     if (display === undefined && inline === undefined) return full;
-    const id = math.push(renderMath(display ?? inline ?? '', Boolean(display))) - 1;
+    const isDisplay = display !== undefined;
+    const id = math.push(renderMath(display ?? inline ?? '', isDisplay)) - 1;
     // Keep the newlines the formula spanned, so later lines keep their numbers.
-    return display ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(full))}` : `<span data-satr-math="${id}"></span>`;
+    return isDisplay ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(full))}` : `<span data-satr-math="${id}"></span>`;
   });
 
   footnotes = { defs: collectFootnotes(withMathPlaceholders), order: [], uses: new Map(), inline: 0 };
@@ -260,16 +262,6 @@ export function renderMarkdown(source: string): string {
       tag(element, section.start, section.end);
     }
   });
-  document.querySelectorAll('p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th').forEach((element) => element.setAttribute('dir', 'auto'));
-  // dir=auto ignores descendants that carry their own dir (the <p>s inside),
-  // so a quote, or a list item of a loose list (items wrapped in <p>, as
-  // when the list has a blank line in it), would always resolve to LTR;
-  // give it the direction of its first strong character instead, which puts
-  // the quote's rule and the item's number or bullet on the right side.
-  document.querySelectorAll('blockquote, li').forEach((quote) => {
-    const strong = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]|[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.exec(quote.textContent ?? '');
-    quote.setAttribute('dir', strong && /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(strong[0]) ? 'rtl' : 'ltr');
-  });
   document.querySelectorAll('ol').forEach((list, index) => {
     if (orderedStyles[index] !== 'persian') return;
     list.classList.add('persian-ordered');
@@ -283,6 +275,17 @@ export function renderMarkdown(source: string): string {
       if (alignments[cellIndex]) cell.setAttribute('data-table-align', alignments[cellIndex]);
     }));
   });
+  // Marked can leave bare prose beside a display formula. Give these
+  // fragments their own direction just like an ordinary paragraph.
+  document.querySelectorAll('.md-section').forEach((section) => {
+    for (const child of [...section.childNodes]) {
+      if (child.nodeType !== Node.TEXT_NODE || !child.textContent?.trim()) continue;
+      const span = document.createElement('span');
+      span.className = 'md-prose-fragment';
+      child.replaceWith(span); span.append(child);
+    }
+  });
+  applyReadingDirections(document.body);
   return document.body.innerHTML;
 }
 

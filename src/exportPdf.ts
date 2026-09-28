@@ -230,18 +230,19 @@ function printableBody(html: string): HTMLElement {
   }
   root.querySelectorAll('input[type="checkbox"]').forEach((box) => box.setAttribute('disabled', ''));
 
-  const notes = new Map<string, string>();
+  const notes = new Map<string, { html: string; dir: string }>();
   root.querySelectorAll<HTMLElement>('section.footnotes li[data-footnote-id]').forEach((item) => {
     const content = item.querySelector(':scope > p') ?? item;
-    notes.set(item.dataset.footnoteId!, content.innerHTML.trim());
+    notes.set(item.dataset.footnoteId!, { html: content.innerHTML.trim(), dir: content.getAttribute('dir') ?? item.dir });
   });
   root.querySelectorAll('section.footnotes').forEach((el) => el.remove());
   root.querySelectorAll<HTMLElement>('sup.footnote-ref').forEach((ref) => {
     const id = ref.querySelector('a')?.getAttribute('href')?.slice(1) ?? '';
     const note = document.createElement('span');
     note.className = 'footnote';
-    note.innerHTML = notes.get(id) ?? '';
-    note.setAttribute('dir', isRtlText(note.textContent ?? '') ? 'rtl' : 'ltr');
+    const saved = notes.get(id);
+    note.innerHTML = saved?.html ?? '';
+    note.setAttribute('dir', saved?.dir || 'ltr');
     ref.replaceWith(note);
   });
   return root;

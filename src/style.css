@@ -411,11 +411,11 @@ body {
     summary,
     caption
   ) {
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
   text-align: start;
 }
 .preview-pane li {
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
 }
 .preview-pane :where(pre, code, .katex, .katex-display) {
   direction: ltr;
@@ -3213,3 +3213,6 @@ textarea,
   pointer-events: none;
   background: var(--background-primary);
 }
+
+/* Contextual numeric lines must honour their inferred paragraph base. */
+.cm-editor .cm-line[dir] { unicode-bidi: isolate; }

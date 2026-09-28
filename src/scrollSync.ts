@@ -29,13 +29,14 @@ export function editorScroll(view: EditorView): number {
   return first + (last - first + 1) * into;
 }
 
-export function applyEditorScroll(view: EditorView, position: number): void {
+export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true): void {
   const { doc } = view.state;
   if (!(position > 0)) { scrollInstantly(view.scrollDOM, 0); return; }
   const index = Math.min(doc.lines - 1, Math.floor(position));
   const fraction = Math.min(0.999, position - index);
   const line = doc.line(index + 1);
   const place = (): void => {
+    if (!view.dom.isConnected || view.state.doc !== doc || !isCurrent()) return;
     const block = textBlock(view.lineBlockAt(line.from));
     const target = view.documentTop + block.top + fraction * block.height;
     const top = view.scrollDOM.getBoundingClientRect().top;

@@ -1,4 +1,5 @@
-import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
+import { sourceDirections } from './direction';
+import { defaultKeymap, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
@@ -113,42 +114,21 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-// Line direction, as Obsidian's editor does it: each line gets an explicit
-// dir from its first strong letter (list, quote and task markers skipped), and
-// a line with no letters — an empty line, a line of digits — keeps the
-// direction of the line above. So the caret on a fresh line after Persian
-// text sits on the right, ready to continue in Persian.
-const RTL_OR_LTR = /([\u200F\p{sc=Arabic}\p{sc=Hebrew}\p{sc=Syriac}\p{sc=Thaana}])|([\u200E\p{L}])/u;
-const LINE_PREFIX = /^([>\s]*)(([*+-] |(\d+|[۰-۹٠-٩]+)([.)] ))(?:\[(.)\] )?)?/;
-type Dir = 'rtl' | 'ltr' | 'auto';
-function lineDirection(text: string): Dir {
-  const prefix = LINE_PREFIX.exec(text);
-  const match = RTL_OR_LTR.exec(prefix?.[0] ? text.slice(prefix[0].length) : text);
-  return match ? (match[1] ? 'rtl' : 'ltr') : 'auto';
-}
+// Cache whole-document context; viewport changes only rebuild decorations.
+const directionsField = StateField.define({
+  create: (state) => sourceDirections(state.doc.toString()),
+  update: (value, tr) => tr.docChanged ? sourceDirections(tr.newDoc.toString()) : value,
+});
 const dirDecorations = {
   rtl: Decoration.line({ attributes: { dir: 'rtl' } }),
   ltr: Decoration.line({ attributes: { dir: 'ltr' } }),
-  auto: Decoration.line({ attributes: { dir: 'auto' } }),
 };
 function buildDirections(view: EditorView) {
-  const { doc } = view.state;
   const builder = new RangeSetBuilder<Decoration>();
-  let inherited: Dir = 'auto';
-  const blocks = view.viewportLineBlocks;
-  // Seed from the nearest line with letters above the viewport.
-  if (blocks.length) {
-    for (let n = doc.lineAt(blocks[0].from).number - 1, steps = 0; n >= 1 && steps < 200; n -= 1, steps += 1) {
-      const dir = lineDirection(doc.line(n).text);
-      if (dir !== 'auto') { inherited = dir; break; }
-    }
-  }
-  for (const block of blocks) {
-    const line = doc.lineAt(block.from);
-    let dir = lineDirection(line.text);
-    if (dir === 'auto') dir = inherited;
-    builder.add(line.from, line.from, dirDecorations[dir]);
-    inherited = dir;
+  const directions = view.state.field(directionsField);
+  for (const block of view.viewportLineBlocks) {
+    const line = view.state.doc.lineAt(block.from);
+    builder.add(line.from, line.from, dirDecorations[directions[line.number - 1]]);
   }
   return builder.finish();
 }
@@ -433,8 +413,8 @@ let touching = false;
 
 const lineNumberSlot = new Compartment();
 const readOnlySlot = new Compartment();
-// Undo history, reset whenever another note is loaded: undoing right after
-// opening a note must never bring back the previous note's text.
+// New tabs start clean; living tabs reattach their complete EditorState.
+// Histories never cross files and are never serialized to disk.
 const historySlot = new Compartment();
 
 export class SatrEditor {
@@ -476,7 +456,7 @@ export class SatrEditor {
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
       ])),
       titleField,
-      rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:
@@ -610,6 +590,13 @@ export class SatrEditor {
   setValue(value: string): void {
     this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value }, effects: historySlot.reconfigure([]) });
     this.view.dispatch({ effects: historySlot.reconfigure(history()) });
+  }
+  /** Reattach a living tab, including both undo AND redo branches. */
+  restoreSession(state: EditorState): void { this.view.setState(state); }
+  /** External reloads remain undoable within the same tab session. */
+  replaceValue(value: string): void {
+    if (value === this.getValue()) return;
+    this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value }, annotations: isolateHistory.of('full') });
   }
   focus(): void { this.view.focus(); }
   /** Caret / selection as [anchor, head], for remembering between sessions. */

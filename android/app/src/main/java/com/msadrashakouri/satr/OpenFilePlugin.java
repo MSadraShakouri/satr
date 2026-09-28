@@ -258,6 +258,10 @@ public class OpenFilePlugin extends Plugin {
         long size = fileSize(uri);
         JSObject result = new JSObject();
         result.put("id", id);
+        // Grant/session ids are intentionally ephemeral. A bookmark instead
+        // follows the source URI when the user opens it again after restart.
+        // This does not retain a grant or reopen a file without permission.
+        result.put("viewId", UUID.nameUUIDFromBytes(uri.toString().getBytes(StandardCharsets.UTF_8)).toString());
         result.put("name", name);
         result.put("mimeType", mime);
         result.put("size", Math.max(0, size));

@@ -5,6 +5,8 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 
 export interface IncomingOpenFile {
   id: string;
+  /** Stable, opaque source identity for reading-position preferences only. */
+  viewId?: string;
   name: string;
   mimeType: string;
   size: number;

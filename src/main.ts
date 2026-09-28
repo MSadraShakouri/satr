@@ -1,3 +1,5 @@
+import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
+import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
 import 'katex/dist/katex.min.css';
 import './style.css';
@@ -117,6 +119,7 @@ let mode: Mode = 'edit';
 let lossyNoticed = '';
 let saveTimer: number | undefined;
 let viewTimer: number | undefined;
+let viewGeneration = 0;
 let restoringView = true; // until the saved position has been applied
 const bookIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg>';
 const penIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.2 18.8 1.1-4.4L16.7 3a2.1 2.1 0 0 1 3 3L8.3 17.7z"/><path d="M11 18.8h8.5"/></svg>';
@@ -146,11 +149,12 @@ let syncingScroll = false;
 let holdUntil = 0;
 let holdLine = 0;
 function follow(from: 'editor' | 'preview'): void {
-  if (syncingScroll || !splitView.matches) return;
+  if (syncingScroll || restoringView || !splitView.matches) return;
+  const generation = viewGeneration;
   syncingScroll = true;
   if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view));
-  else applyEditorScroll(editor.view, previewScroll(previewPane, preview));
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+  else applyEditorScroll(editor.view, previewScroll(previewPane, preview), () => generation === viewGeneration);
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
 }
 
 // Notes are files in folders (src/vault.ts: localStorage in the browser,
@@ -175,25 +179,18 @@ const nameTaken = (base: string): boolean => base.toLowerCase() !== fileBase.toL
 // Per-file view memory, kept across sessions and app restarts: the mode and
 // the scroll position (as a fractional source line, the same measure the
 // edit/preview toggle uses), under satr:view:<path>.
-const viewKey = (path: string): string => `satr:view:${path}`;
-interface SavedView { mode: Mode; line: number; cursor?: [number, number]; folds?: number[] }
-function readView(base: string): SavedView | null {
-  try {
-    const value = JSON.parse(localStorage.getItem(viewKey(base)) ?? 'null') as Partial<SavedView> | null;
-    if (!value || (value.mode !== 'edit' && value.mode !== 'preview') || !Number.isFinite(value.line)) return null;
-    const cursor = Array.isArray(value.cursor) && value.cursor.length === 2 && value.cursor.every(Number.isInteger)
-      ? value.cursor as [number, number] : undefined;
-    const folds = Array.isArray(value.folds) ? value.folds.filter((n) => Number.isInteger(n) && n >= 0) : undefined;
-    return { mode: value.mode, line: Math.max(0, value.line as number), cursor, folds };
-  } catch {
-    return null;
-  }
+function viewIdentity(path: string): ViewIdentity {
+  const sourceId = externalFilesByPath.get(path)?.viewId;
+  return { path, sourceId, temporary: isExternalPath(path) && !sourceId };
 }
+const viewKey = (path: string): string => viewMemoryKey(viewIdentity(path));
+const readView = (path: string): SavedView | null => readViewMemory(viewIdentity(path));
 
 // The preview is rendered only when it can be seen. Rendering the whole note
 // (markdown, highlight.js, KaTeX) on every keystroke into a hidden pane was
 // most of the typing cost on long notes. In split view it follows typing
 // after a short pause; switching to preview renders it at once if stale.
+let previewReady: Promise<unknown> = Promise.resolve();
 let previewDirty = true;
 let renderTimer: number | undefined;
 const previewVisible = (): boolean => mode === 'preview' || splitView.matches;
@@ -217,7 +214,7 @@ function renderPreview(): void {
   scheduleMathLayout(preview);
   markBrokenLinks();
   const path = filePath;
-  void loadImages(preview, path).then(() => { if (path === filePath) scheduleMathLayout(preview); });
+  previewReady = loadImages(preview, path).then(() => { if (path === filePath) layoutMath(preview); });
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -306,7 +303,7 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   const wasRestoring = restoringView;
   restoringView = true;
-  editor.setValue(text);
+  editor.replaceValue(text);
   const length = editor.view.state.doc.length;
   editor.view.dispatch({ selection: {
     anchor: Math.min(selection.anchor, length),
@@ -463,10 +460,12 @@ function update(): void {
   saveTimer = window.setTimeout(saveNow, 700);
 }
 splitView.addEventListener('change', () => { if (splitView.matches && previewDirty) renderPreview(); });
-function setMode(next: Mode): void {
+function setMode(next: Mode, restoredLine?: number): void {
+  if (restoredLine === undefined) releaseHold();
+  const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
   // pane reports scrollTop 0, which is what used to send preview to the top.
-  const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view));
   mode = next;
   document.body.dataset.mode = mode;
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
@@ -478,10 +477,10 @@ function setMode(next: Mode): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     applyPreviewScroll(previewPane, preview, position);
   } else {
-    applyEditorScroll(editor.view, position);
+    applyEditorScroll(editor.view, position, () => generation === viewGeneration);
     holdEditorPosition(position);
   }
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
   rememberViewSoon();
 }
 function toggleFiles(open?: boolean): void { drawers.toggle('left', open); }
@@ -591,15 +590,22 @@ function holdEditorPosition(line: number): void {
   holdLine = line;
   holdUntil = performance.now() + 1200;
 }
-const releaseHold = (): void => { holdUntil = 0; };
+const releaseHold = (): void => {
+  holdUntil = 0;
+  ++viewGeneration; // user intent cancels every outstanding restore/correction
+  restoringView = false;
+  syncingScroll = false;
+};
 for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
   editor.view.dom.addEventListener(type, releaseHold, { passive: true, capture: true });
+  previewPane.addEventListener(type, releaseHold, { passive: true, capture: true });
 }
 editor.view.scrollDOM.addEventListener('scroll', () => {
   if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view) - holdLine) > 0.5) {
+    const generation = viewGeneration;
     syncingScroll = true;
-    applyEditorScroll(editor.view, holdLine);
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
     return;
   }
   onNavScroll(editor.view.scrollDOM);
@@ -615,46 +621,54 @@ function rememberView(): void {
   if (restoringView) return;
   const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   const folds = editor.foldedLines();
-  if (!filePath || isExternalPath(filePath)) return;
-  localStorage.setItem(viewKey(filePath), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) }));
+  if (!filePath) return;
+  const saved: SavedView = { mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) };
+  writeViewMemory(viewIdentity(filePath), saved);
 }
 function rememberViewSoon(): void {
   window.clearTimeout(viewTimer);
+  if (restoringView) return;
   viewTimer = window.setTimeout(rememberView, 400);
 }
 function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit'): void {
+  window.clearTimeout(viewTimer);
+  const generation = ++viewGeneration;
+  const current = () => generation === viewGeneration && path === filePath;
   const view = readView(path);
+  const line = view?.line ?? 0;
   restoringView = true;
-  // The caret comes back where it was — without focus, so no keyboard and no
-  // scroll. Otherwise it sat at the top of the note, and the first tap on a
-  // toolbar command or the keyboard opening jumped the view back up there.
   if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
   if (view?.folds?.length) editor.restoreFolds(view.folds);
-  setMode(view?.mode ?? unvisited);
-  // Positions depend on fonts, KaTeX and math line breaks: apply once now,
-  // and again when those have settled.
-  // A note opened for the first time starts at the top (not wherever the
-  // previous note was scrolled to).
-  const line = view?.line ?? 0;
+  // Never sample the previous file's pane while installing the new file.
+  setMode(view?.mode ?? unvisited, line);
   const apply = (): void => {
+    if (!current()) return;
+    ownScroll();
     syncingScroll = true;
     if (mode === 'preview') {
       layoutMath(preview);
       applyPreviewScroll(previewPane, preview, line);
     } else {
-      applyEditorScroll(editor.view, line);
+      applyEditorScroll(editor.view, line, current);
       holdEditorPosition(line);
     }
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (current()) syncingScroll = false;
+    }));
   };
   apply();
-  const settle = (): void => {
+  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(() => {
+    if (!current()) return;
     apply();
-    restoringView = false;
-    after?.();
-  };
-  if (document.fonts?.ready) void document.fonts.ready.then(() => window.requestAnimationFrame(settle));
-  else window.requestAnimationFrame(settle);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (!current()) return;
+      restoringView = false;
+      after?.();
+    }));
+  }));
+  // Images can settle after fonts. Correct only if this is still the same
+  // reading session and the reader has not touched/scrolled/jumped since.
+  if (previewVisible()) void previewReady.then(() => window.requestAnimationFrame(apply));
 }
 // Leaving the app (switching away, closing, the OS killing it later): write
 // the note and the view out now instead of waiting for the debounce timers.
@@ -674,17 +688,18 @@ document.querySelector('#files')!.addEventListener('click', () => toggleFiles())
 // switches to its tab), and the bottom bar's arrows step to the previous /
 // next tab. Tabs can be reordered in the switcher. Each note comes back
 // with its own mode, position, caret and folds. Kept under satr:tabs.
-interface Tab { path: string } // '' is an empty tab ("No file is open")
+interface Tab { path: string; session?: EditorState } // '' is an empty tab ("No file is open")
 const TABS_KEY = 'satr:tabs';
 let tabs: Tab[] = [{ path: '' }];
 let activeTab = 0;
+let displayedTab: Tab | null = null;
 const curTab = (): Tab => tabs[activeTab];
 function saveTabs(): void {
   const safeTabs = tabs.filter((tab) => !isExternalPath(tab.path));
   if (!safeTabs.length) safeTabs.push({ path: '' });
   const active = safeTabs.findIndex((tab) => tab === curTab());
   const savedActive = active >= 0 ? active : Math.min(Math.max(0, activeTab - 1), safeTabs.length - 1);
-  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: safeTabs, active: savedActive }));
+  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: safeTabs.map(({ path }) => ({ path })), active: savedActive }));
 }
 function loadTabs(): void {
   try {
@@ -719,11 +734,16 @@ function setRecent(list: string[]): void { localStorage.setItem(RECENT_KEY, JSON
 async function leaveCurrent(): Promise<boolean> {
   closePopover();
   editor.closeFind();
+  const leaving = displayedTab;
   const saved = !filePath || await saveNow();
-  if (saved) rememberView();
+  if (saved && leaving === displayedTab) { rememberView(); if (leaving) leaving.session = editor.view.state; }
   return saved;
 }
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  ++viewGeneration;
+  window.clearTimeout(viewTimer);
+  window.clearTimeout(renderTimer);
+  holdUntil = 0;
   const incoming = externalFilesByPath.get(path);
   // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
   // never saved back over the original.
@@ -735,6 +755,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // at its remembered place, unfocused, until you tap into it.
   editor.view.contentDOM.blur();
   curTab().path = path;
+  displayedTab = curTab();
   filePath = path;
   fileBase = displayNameForPath(path);
   // A picture is worth showing: the reading view gets it (a data: URL from
@@ -765,7 +786,11 @@ function showFile(path: string, content: string, after?: () => void, options?: {
     });
   }
   restoringView = true;
-  editor.setValue(content);
+  const session = curTab().session;
+  if (session) { editor.restoreSession(session); editor.replaceValue(content); }
+  else editor.setValue(content);
+  // Inactive states may predate a global settings change.
+  editor.setLineNumbers(loadSettings().lineNumbers);
   editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
   // Say it once per file: the editor takes no writing because the bytes are
   // not text, and nobody should wonder why nothing happens.
@@ -905,6 +930,11 @@ async function newFile(dir = notesHome()): Promise<void> {
 }
 
 function showIncomingScreen(path: string, file: IncomingOpenFile): void {
+  ++viewGeneration;
+  window.clearTimeout(viewTimer);
+  holdUntil = 0;
+  restoringView = true; // there is no text viewport to bookmark on this screen
+  displayedTab = null;
   filePath = path;
   fileBase = file.name;
   diskBase = null;
@@ -1028,13 +1058,14 @@ async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
   if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
   const opened = await backend.readText(tab.path);
+  if (curTab() !== tab) return; // a newer tab activation won the read race
   if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
   if (opened.status === 'too-large') leftSidebar.hint(`“${fileName(tab.path)}” is too large to open here (${formatBytes(opened.size)}).`, true);
   if (tabs.length > 1) {
     const at = tabs.indexOf(tab);
     tabs.splice(at, 1);
     activeTab = Math.min(at, tabs.length - 1);
-  } else tab.path = '';
+  } else { tab.path = ''; tab.session = undefined; }
   await openTab(curTab(), after);
 }
 async function switchTab(index: number, after?: () => void): Promise<void> {
@@ -1056,7 +1087,7 @@ function newTab(): void {
 function closeTab(index: number): void {
   if (tabs.length < 2 || !tabs[index]) return;
   if (index !== activeTab) {
-    if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
+    if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
     if (index < activeTab) activeTab -= 1;
     renderNavButtons();
@@ -1064,7 +1095,7 @@ function closeTab(index: number): void {
   }
   void (async () => {
     if (!await leaveCurrent()) return;
-    if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
+    if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
     activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
     await openTab(curTab());
@@ -1137,6 +1168,10 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
+  displayedTab = curTab();
+  ++viewGeneration;
+  window.clearTimeout(viewTimer);
+  holdUntil = 0;
   closePopover();
   editor.closeFind();
   externalFileScreen.hidden = true;
@@ -1212,7 +1247,7 @@ function showTabs(): void {
       newTab,
       canReopen: () => closedTabs.length > 0,
       reopen: reopenClosedTab,
-      closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path)); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+      closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
       move: moveTab,
     });
   })();

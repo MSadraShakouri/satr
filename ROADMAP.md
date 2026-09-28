@@ -47,7 +47,9 @@ Chrome
 - [x] Settings page (gear in the left drawer): theme, font size, line spacing, line numbers, highlight every match, which toolbar buttons show
 - [x] Android back button, Obsidian's order: menus, popovers, the tab switcher, settings and the find bar close first, then the drawers; then "Press back again to exit." (a second press within 5s leaves the app). Works in the browser too, through the page history
 - [x] UI chrome can't be selected as text; only the note, footnotes and fields can
-- [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward. Switching notes, tabs or views comes back exactly there: the caret is never pulled into view on the way
+- [x] Per-file reading memory: mode, fractional source-line position, caret and folds survive tab closure/reopening and app restarts; late font/image/scroll callbacks are cancelled on navigation or reader intent. Incoming Android files use a stable URI bookmark identity, not their temporary grant ID.
+- [x] Session-only per-tab undo/redo: switching tabs or losing focus preserves both stacks; actual tab/app closure discards them. External text reloads remain undoable; no persistent revision manager.
+- [x] Shared contextual direction inference in editor, preview and PDF: first strong prose; unanimous preceding section before neighbours; preceding prose breaks a mixed tie; headings are boundaries. Digits are neutral, math/code never vote and remain LTR. Full-document editor context is cached independently of the viewport.
 - [x] Cold start: the last screen is painted from a copy before the app's code has loaded, then the real app takes over underneath
 - [x] Right drawer, All notes: only the current note starts open; each chevron has a wide tap area
 
