@@ -118,8 +118,20 @@ marked.use({
 // and embeds ![[Note]] (shown as a link). Rendered as <a class="internal-link"
 // data-href="Note" data-heading="Heading">; src/main.ts resolves them against
 // the space's notes, dims the broken ones and opens the rest on tap.
-// Images aren't shown inline: ![alt](src) becomes a tappable link.
+// Images: ![alt](src) and ![[name.png]] become centred pictures, loaded by
+// src/images.ts; "|300" or "|300x200" after the alt text or name sets the size.
 const WIKI = /^(!?)\[\[([^\[\]|#\n]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?\]\]/;
+// <img> for src/images.ts to fill in. "alt|300" / "alt|300x200" (or just
+// "300") sets the width (and height), as in Obsidian.
+function imageTag(src: string, label: string, wiki: boolean): string {
+  const size = /^(?:(.*)\|)?\s*(\d+)(?:x(\d+))?\s*$/.exec(label);
+  const alt = size ? (size[1] ?? '').trim() : label;
+  const width = size ? ` width="${size[2]}"` : '';
+  const height = size?.[3] ? ` height="${size[3]}"` : '';
+  let name = src.split(/[?#]/)[0].split('/').pop() || src;
+  try { name = decodeURIComponent(name); } catch { /* as written */ }
+  return `<img class="md-image" data-src="${escapeHtml(src)}"${wiki ? ' data-wiki="1"' : ''} alt="${escapeHtml(alt || name)}"${width}${height}>`;
+}
 const isImagePath = (path: string): boolean => /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic)$/i.test(path);
 marked.use({
   extensions: [{
@@ -133,19 +145,34 @@ marked.use({
     },
     renderer(token) {
       const { embed, target, heading, alias } = token as unknown as { embed: boolean; target: string; heading: string; alias: string };
-      if (embed && isImagePath(target)) {
-        return `<a class="image-link" data-src="${escapeHtml(target)}"><span>${escapeHtml(alias || target.split('/').pop() || target)}</span></a>`;
-      }
+      if (embed && isImagePath(target)) return imageTag(target, alias, true);
       const shown = alias || (heading ? (target ? `${target} › ${heading}` : heading) : target);
       return `<a class="internal-link${embed ? ' mod-embed' : ''}" data-href="${escapeHtml(target)}" data-heading="${escapeHtml(heading)}">${escapeHtml(shown)}</a>`;
     },
   }],
   renderer: {
     image({ href, text }: { href: string; text: string }): string {
-      const name = text || decodeURIComponent(href.split(/[?#]/)[0].split('/').pop() || href);
-      return `<a class="image-link" data-src="${escapeHtml(href)}"><span>${escapeHtml(name)}</span></a>`;
+      return imageTag(href, text, false);
     },
   },
+});
+
+// ==Highlight==, as Obsidian: a <mark>. The text right inside the marks
+// can't be a space, and "===" isn't one.
+marked.use({
+  extensions: [{
+    name: 'highlight',
+    level: 'inline',
+    start: (src: string) => { const at = src.indexOf('=='); return at < 0 ? undefined : at; },
+    tokenizer(src: string) {
+      const match = /^==(?!=)(?=\S)([\s\S]*?\S)==(?!=)/.exec(src);
+      if (!match) return undefined;
+      return { type: 'highlight', raw: match[0], text: match[1], tokens: this.lexer.inlineTokens(match[1]) };
+    },
+    renderer(token) {
+      return `<mark>${this.parser.parseInline((token as unknown as { tokens: Token[] }).tokens)}</mark>`;
+    },
+  }],
 });
 
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
@@ -158,6 +185,10 @@ const newlines = (text: string): number => text.split('\n').length - 1;
 // preview scroll positions are exchanged as a fractional source line (see
 // src/scrollSync.ts). Every transform before lexing keeps line numbers,
 // except table-separator insertion, which reports where its lines came from.
+// A fenced code block (to its closing fence, or the end of the note), a
+// code span (backtick runs of the same length, within one paragraph), or
+// math: $$display$$ or $inline$.
+const MATH_OR_CODE = /^( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n {0,3}\2[`~]*[ \t]*(?=\n|$)|(?![\s\S]))|(`+)(?!`)(?:(?!\n[ \t]*\n)[\s\S])*?[^`]\3(?!`)|\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/gm;
 export function renderMarkdown(source: string): string {
   const normalized = source.replace(/\r\n?/g, '\n');
   // Front matter becomes blank lines, so line numbers don't shift.
@@ -173,7 +204,10 @@ export function renderMarkdown(source: string): string {
   const { text: normalizedTables, origin } = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
   const math: string[] = [];
-  const withMathPlaceholders = normalizedTables.replace(/\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g, (full: string, display: string | undefined, inline: string | undefined) => {
+  // Code comes first in the pattern and is kept as it is: dollar signs in a
+  // fenced block or in `code` are text, not math.
+  const withMathPlaceholders = normalizedTables.replace(MATH_OR_CODE, (full: string, _i: string, _f: string, _t: string, display: string | undefined, inline: string | undefined) => {
+    if (display === undefined && inline === undefined) return full;
     const id = math.push(renderMath(display ?? inline ?? '', Boolean(display))) - 1;
     // Keep the newlines the formula spanned, so later lines keep their numbers.
     return display ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(full))}` : `<span data-satr-math="${id}"></span>`;
@@ -228,9 +262,11 @@ export function renderMarkdown(source: string): string {
   });
   document.querySelectorAll('p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th').forEach((element) => element.setAttribute('dir', 'auto'));
   // dir=auto ignores descendants that carry their own dir (the <p>s inside),
-  // so a quote would always resolve to LTR; give it the direction of its
-  // first strong character instead, which puts the rule on the right side.
-  document.querySelectorAll('blockquote').forEach((quote) => {
+  // so a quote, or a list item of a loose list (items wrapped in <p>, as
+  // when the list has a blank line in it), would always resolve to LTR;
+  // give it the direction of its first strong character instead, which puts
+  // the quote's rule and the item's number or bullet on the right side.
+  document.querySelectorAll('blockquote, li').forEach((quote) => {
     const strong = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]|[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.exec(quote.textContent ?? '');
     quote.setAttribute('dir', strong && /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(strong[0]) ? 'rtl' : 'ltr');
   });

@@ -5,6 +5,8 @@
 //    letters (Latin or Persian) that aren't the name of a command. Spaces
 //    next to symbols, digits or command arguments ("$ a = b $",
 //    "$ \frac13 b $") are dropped, and leading/trailing spaces are trimmed.
+//    A kept space outside braces is also a place the line may break
+//    ("hello" / "world"), and the space goes at the break; + and − never are.
 //
 // 2. Line breaking at relations. The formula is split at its top-level
 //    relations (=, ≡, ≈, ≤, arrows, ∴ ...), never at + or −, and never inside
@@ -19,7 +21,15 @@ import katex from 'katex';
 const LETTER = /[A-Za-z\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
 const LATIN = /[A-Za-z]/;
 
+// Kept spaces are marked with this character while the formula is split,
+// then written as "\ ".
+const SPACE = '\u0001';
+
 export function normalizeMathSpaces(tex: string): string {
+  return markMathSpaces(tex).split(SPACE).join('\\ ');
+}
+
+function markMathSpaces(tex: string): string {
   const source = tex.trim();
   return source.replace(/ +/g, (run: string, offset: number) => {
     const before = source[offset - 1] ?? '';
@@ -31,8 +41,35 @@ export function normalizeMathSpaces(tex: string): string {
       while (k >= 0 && LATIN.test(source[k])) k -= 1;
       if (source[k] === '\\') return ' ';
     }
-    return '\\ ';
+    return SPACE;
   });
+}
+
+// Splits a formula at its kept spaces outside braces, \left…\right and
+// environments. Spaces inside those stay spaces.
+function splitWords(tex: string): string[] {
+  const words: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < tex.length; i += 1) {
+    const c = tex[i];
+    if (c === '\\') {
+      const name = /^\\([A-Za-z]+)/.exec(tex.slice(i))?.[1];
+      if (name === 'left' || name === 'begin') depth += 1;
+      else if (name === 'right' || name === 'end') depth -= 1;
+      if (name) { i += name.length; continue; }
+      i += 1; // an escaped character
+      continue;
+    }
+    if (c === '{') depth += 1;
+    else if (c === '}') depth -= 1;
+    else if (c === SPACE && depth === 0) {
+      words.push(tex.slice(start, i));
+      start = i + 1;
+    }
+  }
+  words.push(tex.slice(start));
+  return words.map((word) => word.split(SPACE).join('\\ ')).filter((word) => word.length);
 }
 
 // Relations a line may break after. Vertical arrows are left out on purpose.
@@ -160,23 +197,41 @@ const render = (tex: string, displayMode = false): string =>
   katex.renderToString(tex, { displayMode, throwOnError: false });
 
 export function renderMath(raw: string, display: boolean): string {
-  const tex = normalizeMathSpaces(raw);
+  const marked = markMathSpaces(raw);
+  const tex = marked.split(SPACE).join('\\ ');
   const styleMatch = STYLE_PREFIX.exec(tex);
   const style = (display ? '\\displaystyle ' : '') + (styleMatch ? styleMatch[0] : '');
-  const body = styleMatch ? tex.slice(styleMatch[0].length) : tex;
-  const split = splitRelations(body);
+  const body = styleMatch ? marked.slice(styleMatch[0].length) : marked;
+  // Manual line breaks and alignment are the writer's own layout: left alone.
+  const manual = /\\\\|&/.test(body);
+  const split = splitRelations(body) ?? (manual ? null : { terms: [body], relations: [] });
   if (!split) {
     if (display) return `<div class="math-display">${render(tex, true)}</div>`;
     return `<span class="math-flow"><span class="math-unit">${render(tex)}</span></span>`;
   }
-  // unit i = term i + the relation after it (+ "{}" so it keeps its right
-  // spacing); the continuation form also starts with the relation before it.
-  const { terms, relations } = split;
-  const units = terms.map((term, index) => {
-    const after = index < relations.length ? ` ${relations[index]} {}` : '';
-    const plain = render(`${style}${term}${after}`);
+  // The pieces a line may break between: each term split at its word spaces.
+  // A piece after a relation repeats it when it starts a line; a piece after
+  // a space drops the space there.
+  const pieces: { tex: string; relation: string | null; spaced: boolean; after: string }[] = [];
+  split.terms.forEach((term, index) => {
+    const words = splitWords(term);
+    words.forEach((word, w) => pieces.push({
+      tex: word,
+      relation: w === 0 && index > 0 ? split.relations[index - 1] : null,
+      spaced: w > 0,
+      after: w === words.length - 1 && index < split.relations.length ? ` ${split.relations[index]} {}` : '',
+    }));
+  });
+  if (pieces.length < 2) {
+    if (display) return `<div class="math-display">${render(tex, true)}</div>`;
+    return `<span class="math-flow"><span class="math-unit">${render(tex)}</span></span>`;
+  }
+  // unit = the piece + the relation after it (+ "{}" so it keeps its right
+  // spacing); the continuation form is how it looks at the start of a line.
+  const units = pieces.map((piece, index) => {
+    const plain = render(`${style}${piece.spaced ? '\\ ' : ''}${piece.tex}${piece.after}`);
     if (index === 0) return `<span class="math-unit" data-first><span class="math-plain">${plain}</span></span>`;
-    const cont = render(`${style}${relations[index - 1]} ${term}${after}`);
+    const cont = render(`${style}${piece.relation ? `${piece.relation} ` : ''}${piece.tex}${piece.after}`);
     return `<span class="math-unit"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
   });
   const flow = `<span class="math-flow${display ? ' is-display' : ''}" data-units="${units.length}">${units.join('<wbr>')}</span>`;

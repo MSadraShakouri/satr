@@ -80,6 +80,9 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
   let scope: SearchScope = localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'note';
   const collapsed = new Set<string>(); // closed branches: "h:<line>" or "n:<path>"
+  // Notes the reader opened or closed by hand in the all-notes list; the
+  // rest follow the default (only the current note is open).
+  const touched = new Set<string>();
   let headings: Heading[] = [];
 
   function renderChrome(): void {
@@ -210,7 +213,13 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         + (children ? `<div class="tree-item-children">${children}</div>` : '') + '</div>';
     };
     if (!re) {
-      // No query: every note with its outline.
+      // No query: every note with its outline, closed except the current
+      // note's (as in a file tree: open where you are).
+      for (const note of notes) {
+        const key = `n:${note.path}`;
+        if (touched.has(key)) continue;
+        if (note.path === current) collapsed.delete(key); else collapsed.add(key);
+      }
       summary.textContent = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
       list.innerHTML = notes.map((note) => noteRow(note.path, '', headingTree(note.path, note.text, headingsOf(note), null, [], `${note.path}|`))).join('')
         || `<div class="pane-empty">No notes in ${escapeHtml(deps.scopeName())}</div>`;
@@ -218,6 +227,8 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       markCurrent();
       return;
     }
+    // Search results show open (unless closed by hand).
+    for (const note of notes) if (!touched.has(`n:${note.path}`)) collapsed.delete(`n:${note.path}`);
     let total = 0;
     let files = 0;
     let capped = false;
@@ -280,10 +291,18 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const target = event.target as HTMLElement;
     const match = target.closest<HTMLElement>('.search-result-file-match');
     if (match) { deps.onResult(match.dataset.path!, Number(match.dataset.from), Number(match.dataset.to)); return; }
-    const toggle = target.closest<HTMLElement>('[data-toggle]');
+    // The chevron's tap area is wider than the 16px icon: the whole row
+    // height and 14px either side of it, which covers the row's indent.
+    let toggle = target.closest<HTMLElement>('[data-toggle]');
+    if (!toggle) {
+      const icon = target.closest('.tree-item-self')?.querySelector<HTMLElement>(':scope > [data-toggle]');
+      const box = icon?.getBoundingClientRect();
+      if (icon && box && event.clientX >= box.left - 14 && event.clientX <= box.right + 14) toggle = icon;
+    }
     if (toggle) {
       const key = toggle.dataset.toggle!;
       if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+      if (key.startsWith('n:')) touched.add(key);
       toggle.closest('.tree-item')?.classList.toggle('is-collapsed', collapsed.has(key));
       renderChrome();
       return;
@@ -299,6 +318,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const any = items.some((el) => collapsed.has(el.dataset.key!));
     for (const el of items) {
       if (any) collapsed.delete(el.dataset.key!); else collapsed.add(el.dataset.key!);
+      if (el.dataset.key!.startsWith('n:')) touched.add(el.dataset.key!);
       el.classList.toggle('is-collapsed', !any);
     }
     renderChrome();

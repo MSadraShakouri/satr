@@ -144,6 +144,32 @@ img {
 }
 
 /* Code: a light grey box, monospace, always left to right, preview colours */
+/* Images: centred, at most the text width, never split across pages */
+img.md-image {
+  display: block;
+  max-width: 100%;
+  max-height: 22cm;
+  height: auto;
+  margin: 0.8em auto;
+  break-inside: avoid;
+  object-fit: contain;
+}
+p > img.md-image:only-child {
+  margin-block: 0;
+}
+.md-image-missing {
+  display: block;
+  text-align: center;
+  color: #888;
+  font-size: 0.85em;
+}
+/* ==Highlight==, Obsidian's colour */
+mark {
+  background-color: rgba(255, 208, 0, 0.4);
+  color: inherit;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
 code {
   padding: 0.1em 0.3em;
   border-radius: 4px;

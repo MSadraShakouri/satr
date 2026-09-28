@@ -17,18 +17,20 @@ Editor
 - [x] Inline file title that renames the note
 - [x] Tight character-level selection highlight
 - [x] Keyboard toolbar 8px above the keyboard, scrolling like Obsidian's (undo/redo, heading, lists, to-do cycle, footnote, math, delete line, new line below, move line), and a round hide-keyboard button beside it
-- [x] Brackets and `$` pair up; no suggestions or autocorrect inside code and math
+- [x] Obsidian's pairs: brackets, quotes, backticks, `$`, `*`, `_`, `=`, `~` close themselves, wrap a selection, and are stepped over when typed again; `$$` then `$$` makes a math block with the caret inside
+- [x] No spell check, autocorrect or suggestions anywhere in the note (Obsidian's editor attributes)
 - [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
 - [x] Wiki links `[[Note]]`, `[[Note|text]]`, `[[Note#Heading]]`: styled in the editor, tap to open, a popup of notes while typing `[[`; broken links dimmed in the reading view
-- [x] Images shown as tappable links
+- [x] Images in the reading view and the PDF, centred and at most the text's width: `![alt](path)` relative to the note, `![[name.png]]` found anywhere by name (as Obsidian), optional size `|300` or `|300x200`; a dashed placeholder for a missing picture
+- [x] `==Highlight==` as in Obsidian (editor, reading view, PDF)
 - [x] Undo history per note (never undoes into the previous note)
 - [x] Heading folding in the editor and the preview (chevron at the end of the heading line), fold/unfold all, remembered per note
 - [x] Find and replace in one bar: regular expressions ignoring case (`$1` in replacements), from the caret, every match highlighted (a setting), a chevron drops down the replace row; the count sits where the query ends (on the left, in Persian digits, for a Persian query)
 - [x] Keeps the caret clear of the keyboard without jumping or locking the scroll
 
 Preview
-- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking, code highlighting and copy, tables, footnotes in popovers, title on top
+- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking (at relations, and at spaces typed between words; never at + or −), inline math kept left to right inside Persian text, dollar signs in code left alone, code highlighting and copy, tables, footnotes in popovers, title on top
 - [x] Edit/preview switch keeps the position; double-tap the preview to edit
 - [x] Rendered only when visible (about 14x faster typing on long notes)
 
@@ -45,7 +47,9 @@ Chrome
 - [x] Settings page (gear in the left drawer): theme, font size, line spacing, line numbers, highlight every match, which toolbar buttons show
 - [x] Android back button, Obsidian's order: menus, popovers, the tab switcher, settings and the find bar close first, then the drawers; then "Press back again to exit." (a second press within 5s leaves the app). Works in the browser too, through the page history
 - [x] UI chrome can't be selected as text; only the note, footnotes and fields can
-- [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward
+- [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward. Switching notes, tabs or views comes back exactly there: the caret is never pulled into view on the way
+- [x] Cold start: the last screen is painted from a copy before the app's code has loaded, then the real app takes over underneath
+- [x] Right drawer, All notes: only the current note starts open; each chevron has a wide tap area
 
 ### Remaining before the APK: UI
 
@@ -75,7 +79,7 @@ Chrome
 - [x] Page breaks: `\pagebreak`, `\newpage`, `\clearpage`, `<!-- pagebreak -->`, `<!-- newpage -->`, or any HTML with a page-break style (`page-break-before: always`, `break-after: page`…); hidden on screen, ignored inside code
 - [x] Custom CSS (Settings → PDF export), applied after Satr's own
 - [x] Fonts (Vazirmatn, Vazir Code, KaTeX) embedded as data URIs; Paged.js (≈500 KB) loads only when exporting
-- [ ] Images: once the reading view shows images, embed them as data URIs too
+- [x] Images embedded as data URIs, centred, never split across pages
 - [ ] On-device check of the print path (fonts, links, page size) with the first APK
 
 ### APK phase
@@ -144,7 +148,7 @@ Print
 - [x] ~~Your own page-setup dialog before handing off to Android's print~~ — decided against: straight to Android's dialog, as Markor
 - [x] Math: KaTeX output with fonts embedded as data URIs in the print HTML
 - [ ] Mermaid export support postponed with Mermaid itself
-- [ ] Images as data URIs
+- [x] Images as data URIs
 - [ ] No HTML export — print/PDF is the only export path
 
 App
@@ -226,7 +230,7 @@ Goal: the Obsidian-feel editing that's the whole point.
   - [ ] Headings
   - [ ] Blockquotes, HR
   - [ ] Links (hide syntax, make text tappable)
-  - [ ] Images as tappable links
+  - [x] Images (shown inline in the reading view instead)
   - [ ] Checkboxes (click to toggle)
   - [ ] Fenced code blocks
   - [ ] Math (inline and display)
@@ -248,7 +252,7 @@ Goal: your own print dialog, your own CSS, Android handles the final save.
 - [x] Print WebView attached to the window (full size, behind the app's WebView), removed when the job finishes
 - [x] Build self-contained print HTML from rendered markdown (laid out in the app by Paged.js, then handed over)
 - [x] Your custom CSS (page size and margins fixed: A4, 1in)
-- [ ] Images as data URIs
+- [x] Images as data URIs
 - [x] Math as KaTeX HTML with fonts embedded as data URIs (decided: KaTeX everywhere)
 - [ ] Mermaid export is postponed with Mermaid itself
 - [x] ~~Custom dialog~~ — decided against (see above)

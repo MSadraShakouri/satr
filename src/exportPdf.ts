@@ -15,6 +15,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import katexCss from 'katex/dist/katex.min.css?raw';
 import printCss from './print.css?raw';
+import { loadImages } from './images';
 import { renderMarkdown } from './markdown';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
@@ -38,7 +39,7 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({
 
 let busy = false;
 
-export async function exportPdf(name: string, markdown: string): Promise<void> {
+export async function exportPdf(name: string, markdown: string, notePath = ''): Promise<void> {
   if (busy) return;
   busy = true;
   const frame = document.createElement('iframe');
@@ -50,6 +51,7 @@ export async function exportPdf(name: string, markdown: string): Promise<void> {
       import('../node_modules/pagedjs/dist/paged.polyfill.min.js?raw').then((m) => m.default),
     ]);
     const body = printableBody(renderMarkdown(markdown));
+    await loadImages(body, notePath); // embedded as data: URLs before paging
     const dir = isRtlText(body.textContent ?? '') ? 'rtl' : 'ltr';
     const pageNumber = settings.pdfPageNumbers === 'none' ? ''
       : `@page { @bottom-center { content: counter(page${settings.pdfPageNumbers === 'persian' ? ', persian' : ''}); font-family: Vazirmatn, sans-serif; font-size: 12pt; color: #222; vertical-align: middle; } }`;
@@ -122,7 +124,7 @@ function printableBody(html: string): HTMLElement {
   const root = document.createElement('div');
   root.innerHTML = html;
   root.querySelectorAll('.copy-code-button, .heading-collapse-indicator, .footnote-backref').forEach((el) => el.remove());
-  root.querySelectorAll('a.internal-link, a.image-link').forEach((link) => {
+  root.querySelectorAll('a.internal-link').forEach((link) => {
     const span = document.createElement('span');
     span.textContent = link.textContent ?? '';
     link.replaceWith(span);

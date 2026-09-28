@@ -9,6 +9,41 @@
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      // Cold start: paint the last screen now, before the app's code loads
+      // (src/snapshot.ts keeps it; the app lifts it off once it's ready).
+      (function () {
+        try {
+          var s = JSON.parse(localStorage.getItem('satr:snapshot') || 'null');
+          if (!s || s.v !== 1 || s.w !== window.innerWidth || Math.abs(s.h - window.innerHeight) > 160) return;
+          var root = document.documentElement;
+          if (s.root) root.className = s.root;
+          if (s.style) root.setAttribute('style', s.style);
+          if (s.body) document.body.className = s.body;
+          var css = null;
+          if (s.css) {
+            css = document.createElement('style');
+            css.id = 'boot-snapshot-css';
+            css.textContent = s.css;
+            document.head.appendChild(css);
+          }
+          var cover = document.createElement('div');
+          cover.id = 'boot-snapshot';
+          cover.setAttribute('aria-hidden', 'true');
+          cover.setAttribute('inert', '');
+          cover.innerHTML = s.html;
+          document.body.appendChild(cover);
+          var all = cover.querySelectorAll('*');
+          for (var i = 0; i < s.scroll.length; i++) {
+            var el = all[s.scroll[i][0]];
+            if (el) el.scrollTop = s.scroll[i][1];
+          }
+          setTimeout(function () { cover.remove(); if (css) css.remove(); }, 6000);
+        } catch (e) {
+          localStorage.removeItem('satr:snapshot');
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

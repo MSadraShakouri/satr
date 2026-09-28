@@ -145,9 +145,10 @@ function build(view: EditorView): DecorationSet {
           }
           case 'Emphasis':
           case 'StrongEmphasis':
-          case 'Strikethrough': {
+          case 'Strikethrough':
+          case 'Highlight': {
             if (touches(node.from, node.to)) return;
-            const mark = node.name === 'Strikethrough' ? 'StrikethroughMark' : 'EmphasisMark';
+            const mark = node.name === 'Strikethrough' ? 'StrikethroughMark' : node.name === 'Highlight' ? 'HighlightMark' : 'EmphasisMark';
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
               if (child.name === mark) out.push(hidden.range(child.from, child.to));
             }

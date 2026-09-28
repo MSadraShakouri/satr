@@ -18,58 +18,16 @@ import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
+import demoNote from '../demo.md?raw';
+import { loadImages } from './images';
+import { dropSnapshot, keepSnapshots } from './snapshot';
 import { ensureFileAccess, setupSystemBars, systemBars } from './native';
 import { currentScope, scopeName, scopeRoot } from './spaces';
 import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within, writeNow } from './vault';
 
 type Mode = 'edit' | 'preview';
-const starter = `# Satr demo
-
-This file demonstrates the features currently available in Satr.
-
-## Text and direction
-
-English text and متن فارسی در یک سند.
-
-## Lists
-
-- [ ] A task
-- [x] A completed task
-
-1. English numbering
-2. Another item
-
-۱. شماره‌گذاری فارسی
-۲. مورد بعدی
-
-## Table
-
-| Name | Center | Right |
-| :--- | :---: | ---: |
-| Satr | aligned | 42 |
-| Demo | content | 100 |
-
-## Math
-
-Inline math: $a^2 + b^2 = c^2$.
-
-$$
-E = mc^2
-$$
-
-## Code
-
-~~~ts
-const message = 'Hello from Satr';
-console.log(message);
-~~~
-
-> A blockquote for preview testing.
-
-~~Strikethrough~~ and [a link](https://github.com/MSadraShakouri/satr).
-
-Mermaid diagrams are postponed for later.
-`;
+// The first note in a fresh browser: the demo (demo.md, at the top of the repo).
+const starter = demoNote;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -148,6 +106,9 @@ footnoteLayout.obscuredBottom = obscuredBottom;
 // every scroll event, which forced a layout per event.
 const splitView = window.matchMedia('(min-width: 761px)');
 let syncingScroll = false;
+// See holdEditorPosition().
+let holdUntil = 0;
+let holdLine = 0;
 function follow(from: 'editor' | 'preview'): void {
   if (syncingScroll || !splitView.matches) return;
   syncingScroll = true;
@@ -206,6 +167,8 @@ function renderPreview(): void {
   applyPreviewFolds();
   scheduleMathLayout(preview);
   markBrokenLinks();
+  const path = filePath;
+  void loadImages(preview, path).then(() => { if (path === filePath) scheduleMathLayout(preview); });
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -266,6 +229,7 @@ function setMode(next: Mode): void {
     applyPreviewScroll(previewPane, preview, position);
   } else {
     applyEditorScroll(editor.view, position);
+    holdEditorPosition(position);
   }
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
   rememberViewSoon();
@@ -349,7 +313,25 @@ function onNavScroll(el: HTMLElement): void {
 // mousedown, not pointerdown: on touch screens it only fires for taps, not
 // for the start of a scroll (same event Obsidian listens to).
 window.addEventListener('mousedown', restoreNavigation);
+// For a moment after a note or the editing view is shown, its place is held:
+// a scroll nobody asked for (the caret being pulled into view while the
+// keyboard or the system bars settle) is undone. Any touch, wheel or key
+// on the note ends the hold at once.
+function holdEditorPosition(line: number): void {
+  holdLine = line;
+  holdUntil = performance.now() + 1200;
+}
+const releaseHold = (): void => { holdUntil = 0; };
+for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
+  editor.view.dom.addEventListener(type, releaseHold, { passive: true, capture: true });
+}
 editor.view.scrollDOM.addEventListener('scroll', () => {
+  if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view) - holdLine) > 0.5) {
+    syncingScroll = true;
+    applyEditorScroll(editor.view, holdLine);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+    return;
+  }
   onNavScroll(editor.view.scrollDOM);
   follow('editor');
   rememberViewSoon();
@@ -381,14 +363,17 @@ function restoreView(path: string, after?: () => void): void {
   setMode(view?.mode ?? 'edit');
   // Positions depend on fonts, KaTeX and math line breaks: apply once now,
   // and again when those have settled.
+  // A note opened for the first time starts at the top (not wherever the
+  // previous note was scrolled to).
+  const line = view?.line ?? 0;
   const apply = (): void => {
-    if (!view) return;
     syncingScroll = true;
     if (mode === 'preview') {
       layoutMath(preview);
-      applyPreviewScroll(previewPane, preview, view.line);
+      applyPreviewScroll(previewPane, preview, line);
     } else {
-      applyEditorScroll(editor.view, view.line);
+      applyEditorScroll(editor.view, line);
+      holdEditorPosition(line);
     }
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
   };
@@ -678,6 +663,7 @@ function jumpToHeading(heading: string): void {
   const found = editor.headings().find((h) => h.text.toLocaleLowerCase() === want);
   if (!found) return;
   ownScroll(400);
+  releaseHold(); // a jump the reader asked for
   editor.revealLine(found.line, noteTopSpacing());
   if (mode === 'preview') {
     const section = preview.querySelector<HTMLElement>(`:scope > .md-section[data-line="${found.line}"]`);
@@ -690,11 +676,6 @@ function openLink(target: string, heading = ''): void {
   if (path === filePath) { if (heading) jumpToHeading(heading); return; }
   void openFile(path, heading ? () => jumpToHeading(heading) : undefined);
 }
-function openImage(src: string): void {
-  if (/^https?:\/\//i.test(src)) { window.open(src, '_blank', 'noopener'); return; }
-  leftSidebar.hint('Images in your folders open in the Android app.', false);
-}
-
 // The empty tab: Obsidian's "No file is open" page, with its actions and
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
@@ -809,7 +790,7 @@ const hasNote = (): boolean => !document.body.classList.contains('is-empty-tab')
 async function exportCurrentPdf(): Promise<void> {
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
-    await exportPdf(stem(filePath.split('/').pop() ?? 'Note') || 'Note', editor.getValue());
+    await exportPdf(stem(filePath.split('/').pop() ?? 'Note') || 'Note', editor.getValue(), filePath);
   } catch (error) {
     showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
   } finally {
@@ -896,6 +877,7 @@ async function allNotes(): Promise<{ path: string; text: string }[]> {
 }
 function sidebarGoToLine(line: number): void {
   ownScroll(400);
+  releaseHold(); // a jump the reader asked for
   editor.revealLine(line, noteTopSpacing()); // also unfolds a folded parent
   if (mode === 'preview') {
     const section = preview.querySelector<HTMLElement>(`:scope > .md-section[data-line="${line}"]`);
@@ -924,6 +906,7 @@ const sidebar = createRightSidebar(rightPanel, {
     void openFile(path, () => {
       if (mode !== 'edit') setMode('edit');
       ownScroll(400);
+      releaseHold(); // a jump the reader asked for
       editor.revealRange(from, to);
     });
   },
@@ -1051,6 +1034,14 @@ if (Capacitor.isNativePlatform()) {
 document.addEventListener('satr:back', () => { handleBack(); });
 
 async function boot(): Promise<void> {
+  keepSnapshots();
+  try {
+    await openFirstNote();
+  } finally {
+    dropSnapshot(); // the real note is on screen: lift the start-up copy
+  }
+}
+async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
@@ -1083,8 +1074,6 @@ preview.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const wiki = target.closest<HTMLElement>('a.internal-link');
   if (wiki) { event.preventDefault(); openLink(wiki.dataset.href ?? '', wiki.dataset.heading ?? ''); return; }
-  const image = target.closest<HTMLElement>('a.image-link');
-  if (image) { event.preventDefault(); openImage(image.dataset.src ?? ''); return; }
   const copy = target.closest<HTMLButtonElement>('.copy-code-button');
   if (copy) {
     event.preventDefault();

@@ -33,7 +33,15 @@ export interface Backend {
   rename(from: string, to: string): Promise<void>;
   remove(path: string): Promise<void>;
   stat(path: string): Promise<Entry | null>;
+  /** A file as a data: URL (images), or null. */
+  readDataUrl(path: string): Promise<string | null>;
 }
+
+const MIME: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif', heic: 'image/heic', heif: 'image/heif',
+};
+export const mimeType = (path: string): string => MIME[path.slice(path.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream';
 
 export const basename = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
 export const dirname = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
@@ -96,6 +104,11 @@ class WebBackend implements Backend {
   }
   async read(path: string): Promise<string | null> {
     return this.readSync(path);
+  }
+  /** The web version keeps text only; an image stored as a data: URL works. */
+  async readDataUrl(path: string): Promise<string | null> {
+    const value = this.readSync(path);
+    return value && value.startsWith('data:') ? value : null;
   }
   writeSync(path: string, text: string): void {
     localStorage.setItem(fileKey(path), text);
@@ -190,7 +203,7 @@ class WebBackend implements Backend {
 interface FsFileInfo { name: string; type: 'file' | 'directory'; mtime?: number; size?: number }
 interface FilesystemPlugin {
   readdir(o: { path: string; directory: string }): Promise<{ files: FsFileInfo[] }>;
-  readFile(o: { path: string; directory: string; encoding: string }): Promise<{ data: string }>;
+  readFile(o: { path: string; directory: string; encoding?: string }): Promise<{ data: string }>;
   writeFile(o: { path: string; directory: string; encoding: string; data: string; recursive: boolean }): Promise<unknown>;
   mkdir(o: { path: string; directory: string; recursive: boolean }): Promise<void>;
   rename(o: { from: string; to: string; directory: string; toDirectory: string }): Promise<void>;
@@ -216,6 +229,15 @@ class DeviceBackend implements Backend {
   async read(path: string): Promise<string | null> {
     try {
       return (await this.fs.readFile({ path, directory: EXTERNAL, encoding: 'utf8' })).data;
+    } catch {
+      return null;
+    }
+  }
+  async readDataUrl(path: string): Promise<string | null> {
+    try {
+      // Without an encoding the plugin returns the bytes as base64.
+      const { data } = await this.fs.readFile({ path, directory: EXTERNAL });
+      return `data:${mimeType(path)};base64,${data}`;
     } catch {
       return null;
     }
@@ -275,6 +297,25 @@ export async function walkNotes(dir: string, limit = 2000): Promise<string[]> {
     }
   }
   return out.slice(0, limit);
+}
+
+/** The first file named `name` (any case) under `dir`, breadth-first, as
+ *  Obsidian finds ![[embeds]] by name anywhere in the vault. */
+export async function findFileByName(name: string, dir = '', limit = 5000): Promise<string | null> {
+  const wanted = name.toLowerCase();
+  const queue = [dir];
+  let seen = 0;
+  while (queue.length && seen < limit) {
+    let entries: Entry[];
+    try { entries = await backend.list(queue.shift()!); } catch { continue; }
+    for (const entry of entries) {
+      seen += 1;
+      if (entry.name.startsWith('.') || entry.path === 'Android') continue;
+      if (entry.kind === 'folder') queue.push(entry.path);
+      else if (entry.name.toLowerCase() === wanted) return entry.path;
+    }
+  }
+  return null;
 }
 
 /** A name not taken in `dir`: "Untitled.md", "Untitled 1.md", … */

@@ -130,11 +130,45 @@ const mathDecorations = ViewPlugin.fromClass(class {
 // "$" pairing, as in Obsidian: "$" → "$|$"; "$" again in an empty pair →
 // "$$|$$" (a block); "$" in front of a closing "$" steps over it; with a
 // selection, wraps it. Backspace in an empty pair removes both.
+let opened: { pos: number; at: number; extra: number } | null = null;
 const dollarInput = EditorView.inputHandler.of((view, from, to, text) => {
   if (text !== '$' || view.composing || isCode(view.state, from)) return false;
   const { state } = view;
   const before = state.sliceDoc(from - 1, from);
   const after = state.sliceDoc(to, to + 1);
+  // "$$$$" alone on its line (typed as "$" "$", which pairs to "$$|$$", or as
+  // four dollars) opens a block with the caret on the empty line inside:
+  //   $$
+  //   |
+  //   $$
+  if (from === to) {
+    const line = state.doc.lineAt(from);
+    const head = state.sliceDoc(line.from, from);
+    const tail = state.sliceDoc(to, line.to);
+    const indent = /^\s*/.exec(head)![0];
+    const lead = head.slice(indent.length);
+    const rest = tail.trim();
+    // "$|$" (pairs to "$$|$$"), "$$$|" and "$$$|$" (steps over the last one)
+    const four = (lead === '$' && rest === '$') || (lead === '$$$' && (rest === '' || rest === '$'));
+    // Typing on after the block opened ("$$$$" typed in full): the third and
+    // fourth "$" land on the empty line inside; they're taken as the closing
+    // pair that already exists.
+    if (opened && opened.pos === from && performance.now() - opened.at < 1500 && !head.trim() && !tail.trim() && opened.extra < 2) {
+      opened.extra += 1;
+      return true;
+    }
+    {
+      if (four && !(line.from > 0 && blockAt(state, line.from - 1))) {
+        opened = { pos: line.from + indent.length * 2 + 3, at: performance.now(), extra: 0 };
+        view.dispatch({
+          changes: { from: line.from, to: line.to, insert: `${indent}$$\n${indent}\n${indent}$$` },
+          selection: { anchor: line.from + indent.length * 2 + 3 },
+          userEvent: 'input.type', scrollIntoView: true,
+        });
+        return true;
+      }
+    }
+  }
   if (from !== to) {
     view.dispatch(state.changeByRange((range) => ({
       changes: [{ from: range.from, insert: '$' }, { from: range.to, insert: '$' }],
