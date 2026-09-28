@@ -11,6 +11,13 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PrintPlugin.class);
         registerPlugin(StoragePlugin.class);
         registerPlugin(SystemBarsPlugin.class);
+        registerPlugin(OpenFilePlugin.class);
         super.onCreate(savedInstanceState);
+    }
+
+    @Override
+    public void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
     }
 }

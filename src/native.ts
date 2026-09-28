@@ -17,7 +17,7 @@ interface SatrStoragePlugin {
 }
 const SatrStorage = registerPlugin<SatrStoragePlugin>('SatrStorage');
 
-interface Insets { top?: number; right?: number; bottom?: number; left?: number; keyboard?: number }
+interface Insets { top?: number; right?: number; bottom?: number; left?: number; keyboard?: number; fontScale?: number }
 interface SystemBarsPlugin {
   get(): Promise<Insets>;
   setStyle(options: { dark: boolean }): Promise<void>;
@@ -34,11 +34,29 @@ export function systemBars(): Pick<SystemBarsPlugin, 'hide' | 'show'> | undefine
   return isNative() ? SystemBars : undefined;
 }
 
+/** Android's current system font scale, used only to normalize PDF pagination. */
+export async function getSystemFontScale(): Promise<number> {
+  if (!isNative()) return 1;
+  try {
+    const scale = (await SystemBars.get()).fontScale;
+    return typeof scale === 'number' && Number.isFinite(scale) && scale > 0 ? scale : 1;
+  } catch {
+    return 1;
+  }
+}
+
+let lastSystemFontScale = 1;
 function applyInsets(insets: Insets): void {
   const root = document.documentElement.style;
   for (const side of ['top', 'right', 'bottom', 'left'] as const) {
     const value = insets[side];
     if (typeof value === 'number') root.setProperty(`--safe-area-inset-${side}`, `${Math.round(value * 10) / 10}px`);
+  }
+  if (typeof insets.fontScale === 'number' && Number.isFinite(insets.fontScale) && insets.fontScale > 0
+    && Math.abs(insets.fontScale - lastSystemFontScale) > 0.001) {
+    const previous = lastSystemFontScale;
+    lastSystemFontScale = insets.fontScale;
+    window.dispatchEvent(new CustomEvent('satr:font-scale-change', { detail: { scale: insets.fontScale, previous } }));
   }
 }
 

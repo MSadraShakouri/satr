@@ -135,6 +135,7 @@ function go(view: EditorView, step: 1 | -1): void {
   view.dispatch({ effects: [setFind.of({ current: matches[index] }), ...scrollTo(view, matches[index])] });
 }
 function replaceCurrent(view: EditorView, replacement: string): void {
+  if (view.state.readOnly) return;
   const s = view.state.field(findField);
   if (!s.current || !isMatch(view.state, s.query, s.current)) { go(view, 1); return; }
   const { from, to } = s.current;
@@ -144,6 +145,7 @@ function replaceCurrent(view: EditorView, replacement: string): void {
   view.dispatch({ effects: [setFind.of({ current: next }), ...scrollTo(view, next)] });
 }
 function replaceEvery(view: EditorView, replacement: string): void {
+  if (view.state.readOnly) return;
   const s = view.state.field(findField);
   const matches = matchesIn(view.state, s.query, Infinity);
   if (!matches.length) return;
@@ -288,6 +290,7 @@ export const findBar: Extension = [findField, findDecorations];
 
 /** Open the bar; with replace = true, with the replace row down. */
 export function openFind(view: EditorView, replace = false): void {
+  replace = replace && !view.state.readOnly;
   const s = view.state.field(findField);
   // Seed with the selected text (single line), as Obsidian does.
   const { from, to } = view.state.selection.main;

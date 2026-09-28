@@ -858,17 +858,16 @@ body {
   scrollbar-gutter: stable;
 }
 /* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
-   active-line highlight. The line-height equals the text's line box
-   (16px x 1.5), so each number is centred on its line instead of riding
-   high. Room for three digits is reserved so the text doesn't jump at
-   line 10 or 100. */
+   active-line highlight. Their line boxes use unitless multipliers: Android
+   WebView text zoom scales text, but not a px line-height. Room for three
+   digits is reserved so the text doesn't jump at line 10 or 100. */
 .cm-gutters {
   background: transparent !important;
   border: 0 !important;
   color: var(--text-faint);
   font-size: 0.8em;
   font-variant-numeric: tabular-nums;
-  line-height: calc(var(--note-font-size) * var(--note-line-height));
+  line-height: calc(var(--note-line-height) * 1.25);
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement {
   min-width: calc(3ch + 18px);
@@ -880,12 +879,12 @@ body {
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement[class*="cm-ln-h"] {
   padding-top: var(--p-spacing);
 }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h1 { line-height: calc(var(--note-font-size) * 1.618 * 1.2); }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h2 { line-height: calc(var(--note-font-size) * 1.462 * 1.2); }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h3 { line-height: calc(var(--note-font-size) * 1.318 * 1.3); }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h4 { line-height: calc(var(--note-font-size) * 1.188 * 1.4); }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h5 { line-height: calc(var(--note-font-size) * 1.076 * 1.5); }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h6 { line-height: calc(var(--note-font-size) * 1 * 1.5); }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h1 { line-height: 2.427; }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h2 { line-height: 2.193; }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h3 { line-height: 2.14175; }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h4 { line-height: 2.079; }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h5 { line-height: 2.0175; }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h6 { line-height: 1.875; }
 /* Heading lines, as Obsidian's .cm-line.HyperMD-header-N (src/editor.ts). */
 .cm-editor .cm-line.cm-h {
   padding-top: var(--p-spacing);
@@ -1118,7 +1117,7 @@ body {
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-code,
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-footnote {
-  line-height: calc(var(--note-font-size) * 0.875 * var(--note-line-height));
+  line-height: calc(var(--note-line-height) * 1.09375);
 }
 /* ---- Keyboard toolbar ----
    After Obsidian 1.12 mobile (.mobile-toolbar with floating navigation): a
@@ -1292,7 +1291,7 @@ body {
 .cm-editor .cm-line.cm-math-line {
   /* $$ blocks: 16px x 0.875, on the same line pitch as the text */
   font-size: var(--code-size);
-  line-height: calc(var(--note-line-height) * 1em / 0.875);
+  line-height: calc(var(--note-line-height) * 1.1428571429);
   text-align: left;
 }
 
@@ -1543,8 +1542,9 @@ body {
 .search-input-container input {
   display: block;
   width: 100%;
-  height: 40px;
-  padding: 0 16px;
+  min-height: 40px;
+  height: auto;
+  padding: 8px 16px;
   padding-inline-start: 40px;
   border: 0;
   border-radius: var(--input-radius); /* pill, as Obsidian mobile */
@@ -1647,7 +1647,8 @@ input.mod-no-match {
   grid-auto-columns: 1fr;
   grid-auto-flow: column;
   flex-shrink: 0;
-  height: 36px;
+  min-height: 36px;
+  height: auto;
   margin: 0 12px 8px;
   padding: 3px;
   border-radius: 18px;
@@ -1674,12 +1675,14 @@ input.mod-no-match {
 .segmented-control-option {
   position: relative;
   z-index: 1;
-  padding: 0 8px;
+  min-height: 30px;
+  padding: 4px 8px;
   border-radius: 15px;
   background: transparent;
   color: var(--text-muted);
   font-size: 14px;
   font-weight: 500;
+  line-height: 1.25;
   transition: color 150ms;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1818,8 +1821,9 @@ input.mod-no-match {
 .document-search-container input {
   display: block;
   width: 100%;
-  height: 40px;
-  padding: 0 16px;
+  min-height: 40px;
+  height: auto;
+  padding: 8px 16px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--input-radius);
   outline: none;
@@ -2133,13 +2137,13 @@ input.mod-no-match {
   align-self: center;
   flex: none;
   margin-inline-start: auto;
-  padding: 0 4px;
+  padding: 2px 4px;
   border-radius: 4px;
   background: var(--background-modifier-hover);
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 0.65em;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 1.2;
   text-transform: uppercase;
 }
 .tree-item-self.has-active-menu,

@@ -449,12 +449,14 @@ const spaceInEmptyPair = EditorView.inputHandler.of((view, from, to, text) => {
 let touching = false;
 
 const lineNumberSlot = new Compartment();
+const readOnlySlot = new Compartment();
 // Undo history, reset whenever another note is loaded: undoing right after
 // opening a note must never bring back the previous note's text.
 const historySlot = new Compartment();
 
 export class SatrEditor {
   readonly view: EditorView;
+  private isReadOnly = false;
   constructor(parent: HTMLElement, onChange: () => void, options?: {
     title?: string;
     onRename?: (base: string) => string | null;
@@ -474,7 +476,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, historySlot.of(history()), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -593,6 +595,20 @@ export class SatrEditor {
   }
   getValue(): string { return this.view.state.doc.toString(); }
   setTitle(base: string): void { this.view.dispatch({ effects: setTitleEffect.of(base) }); }
+  setReadOnly(on: boolean): void {
+    if (on) this.closeFind();
+    this.isReadOnly = on;
+    this.view.dispatch({ effects: readOnlySlot.reconfigure(on
+      ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+      : [EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
+  }
+  setTitleEditable(on: boolean): void {
+    const title = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
+    if (!title) return;
+    title.contentEditable = String(on);
+    title.setAttribute('aria-readonly', String(!on));
+    if (!on) title.blur();
+  }
   focusTitle(): void {
     const el = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
     if (!el) return;
@@ -623,7 +639,7 @@ export class SatrEditor {
     this.view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } });
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
-  openFind(replace = false): void { openFind(this.view, replace); }
+  openFind(replace = false): void { openFind(this.view, replace && !this.isReadOnly); }
   closeFind(): void { closeFind(this.view); }
   get findOpen(): boolean { return isFindOpen(this.view.state); }
   headings(): Heading[] { return collectHeadings(this.view.state); }
@@ -656,12 +672,13 @@ export class SatrEditor {
   restoreFolds(lines: number[]): void { restoreHeadingFolds(this.view, lines); }
   /** Run a keyboard-toolbar command by name. */
   run(command: string): boolean {
+    if (this.isReadOnly) return false;
     const fn = toolbarCommands[command];
     return fn ? fn(this.view) : false;
   }
   findNext(): void { findNext(this.view); }
   findPrevious(): void { findPrevious(this.view); }
-  undo(): void { undo(this.view); }
-  redo(): void { redo(this.view); }
+  undo(): void { if (!this.isReadOnly) undo(this.view); }
+  redo(): void { if (!this.isReadOnly) redo(this.view); }
   destroy(): void { this.view.destroy(); }
 }

@@ -19,6 +19,7 @@ import { loadImages } from './images';
 import { renderMarkdown } from './markdown';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
+import { getSystemFontScale } from './native';
 
 interface SatrPrintPlugin {
   print(options: { html: string; name: string }): Promise<void>;
@@ -43,13 +44,16 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
   if (busy) return;
   busy = true;
   const frame = document.createElement('iframe');
+  let scaleCorrection: HTMLStyleElement | null = null;
   try {
     const settings = loadSettings();
     const hasMath = /\$/.test(markdown);
-    const [fonts, pagedJs] = await Promise.all([
+    const [fonts, pagedJs, systemScale] = await Promise.all([
       embeddedFonts(hasMath),
       import('../node_modules/pagedjs/dist/paged.polyfill.min.js?raw').then((m) => m.default),
+      Capacitor.isNativePlatform() ? getSystemFontScale() : Promise.resolve(1),
     ]);
+    const printScale = Math.min(3, Math.max(0.5, systemScale));
     const body = printableBody(renderMarkdown(markdown));
     await loadImages(body, notePath); // embedded as data: URLs before paging
     const dir = isRtlText(body.textContent ?? '') ? 'rtl' : 'ltr';
@@ -81,6 +85,19 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     if (!win || !doc) throw new Error('No print frame');
     await doc.fonts.ready;
 
+    // Paged.js measures in this app WebView before the fixed-scale native
+    // print WebView receives the pages. Android's default text zoom follows
+    // Configuration.fontScale, so temporarily divide every absolute font
+    // size by that scale while measuring. Remove this override before
+    // serializing: the final HTML then contains the original 100% CSS and
+    // PrintPlugin renders it with setTextZoom(100).
+    if (Capacitor.isNativePlatform() && Math.abs(printScale - 1) > 0.001) {
+      scaleCorrection = doc.createElement('style');
+      scaleCorrection.textContent = fontScaleCorrectionCss(printScale, settings.pdfCss);
+      doc.head.appendChild(scaleCorrection);
+      await doc.fonts.ready;
+    }
+
     // Wrap long formulas at the page's width, as on screen.
     if (hasMath) {
       doc.body.style.width = `${CONTENT_WIDTH}px`;
@@ -96,6 +113,10 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     if (!win.PagedPolyfill) throw new Error('Paged.js did not load');
     await win.PagedPolyfill.preview();
     numberFootnotes(doc);
+    // The native print WebView is pinned at 100%; send it the unscaled source
+    // CSS rather than the temporary, inverse-fontScale layout override.
+    scaleCorrection?.remove();
+    scaleCorrection = null;
     script.remove();
 
     if (Capacitor.isNativePlatform()) {
@@ -115,6 +136,22 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     // copies the HTML, so the frame can go either way.
     setTimeout(() => frame.remove(), 1000);
   }
+}
+
+/** Temporary CSS for layout in the text-scaled app WebView. The matching
+ * unscaled CSS stays in the document and is restored before serialization. */
+function fontScaleCorrectionCss(scale: number, customCss: string): string {
+  const adjustedCustomCss = customCss.replace(/(font-size\s*:\s*)([^;{}]+)(;?)/gi, (_all, prefix: string, value: string, end: string) => {
+    const adjusted = value.replace(/(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(px|pt|pc|in|cm|mm|q)\b/gi,
+      (_unit, amount: string, unit: string) => `${Number(amount) / scale}${unit}`);
+    return `${prefix}${adjusted}${end}`;
+  });
+  return `
+    html { font-size: ${15 / scale}px !important; }
+    @page { @bottom-center { font-size: ${12 / scale}pt !important; } }
+    .pagedjs_margin-bottom-center { font-size: ${12 / scale}pt !important; }
+    ${adjustedCustomCss}
+  `;
 }
 
 // The reading view's HTML, readied for paper: no copy buttons, wiki links as

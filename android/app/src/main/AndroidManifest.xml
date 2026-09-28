@@ -25,6 +25,35 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Match Markor's file-opening entry points, intentionally broad:
+                 every MIME type can offer Satr in the file manager's Open with
+                 chooser. Satr edits safe UTF-8 text and shows binary files
+                 read-only; it never turns arbitrary binary data into text. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <!-- File managers sometimes omit a MIME type for unknown
+                 extensions. Match those content/file URIs too; the MIME
+                 filter above handles typed intents. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
         </activity>
 
         <provider

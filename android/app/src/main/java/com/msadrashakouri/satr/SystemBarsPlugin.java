@@ -35,8 +35,10 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * instead, and the bottom inset is 0 while it's up (the keyboard covers the
  * navigation bar).
  *
- * The WebView's text zoom is fixed at 100%, as in Obsidian: the phone's font
- * size setting doesn't enlarge the app.
+ * Leave the app WebView's text zoom at its Android default. Like Obsidian,
+ * Satr lets Android apply the system font scale to the app's text. The scale
+ * is also reported to the PDF exporter so its temporary Paged.js layout can
+ * cancel it before the separate, fixed-scale print WebView receives the pages.
  */
 @CapacitorPlugin(name = "SatrSystemBars")
 public class SystemBarsPlugin extends Plugin {
@@ -64,7 +66,8 @@ public class SystemBarsPlugin extends Plugin {
             controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
 
             WebView webView = getBridge().getWebView();
-            webView.getSettings().setTextZoom(100);
+            // Do not call setTextZoom(100) here: Android's default WebView
+            // zoom follows Configuration.fontScale, as Obsidian does.
             ViewCompat.setOnApplyWindowInsetsListener(webView, (view, insets) -> {
                 int types = WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout();
                 Insets bars = insets.getInsetsIgnoringVisibility(types);
@@ -84,6 +87,7 @@ public class SystemBarsPlugin extends Plugin {
                 data.put("bottom", keyboard ? 0 : bars.bottom / density);
                 data.put("left", bars.left / density);
                 data.put("keyboard", keyboardHeight / density);
+                data.put("fontScale", getActivity().getResources().getConfiguration().fontScale);
                 if (last == null || !last.toString().equals(data.toString())) {
                     last = data;
                     notifyListeners("insets", data, true);
@@ -97,11 +101,9 @@ public class SystemBarsPlugin extends Plugin {
     /** The latest insets, for the page to start with. */
     @PluginMethod
     public void get(PluginCall call) {
-        if (last == null) {
-            call.resolve(new JSObject());
-        } else {
-            call.resolve(last);
-        }
+        if (last == null) last = new JSObject();
+        last.put("fontScale", getActivity().getResources().getConfiguration().fontScale);
+        call.resolve(last);
     }
 
     /** Bar icons for the theme: dark = light icons on the dark page. */

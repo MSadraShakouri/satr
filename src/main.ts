@@ -1,6 +1,7 @@
 import '@codemirror/view';
 import 'katex/dist/katex.min.css';
 import './style.css';
+import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
@@ -22,8 +23,9 @@ import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots } from './snapshot';
 import { ensureFileAccess, setupSystemBars, systemBars } from './native';
+import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot } from './spaces';
-import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within, writeNow } from './vault';
+import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within } from './vault';
 
 type Mode = 'edit' | 'preview';
 // The first note in a fresh browser: the demo (demo.md, at the top of the repo).
@@ -75,9 +77,20 @@ app.innerHTML = `
         </div>
       </nav>
     </div>
+    <section class="external-file-screen" id="external-file-screen" hidden></section>
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
+const externalFileScreen = document.querySelector<HTMLElement>('#external-file-screen')!;
+const EXTERNAL_PATH_PREFIX = 'satr-open://';
+const externalFilesByPath = new Map<string, IncomingOpenFile>();
+const handledIncomingIds = new Set<string>();
+const isExternalPath = (path: string): boolean => path.startsWith(EXTERNAL_PATH_PREFIX);
+const externalPath = (id: string, name: string): string => `${EXTERNAL_PATH_PREFIX}${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
+const displayNameForPath = (path: string): string => {
+  const external = externalFilesByPath.get(path);
+  return external ? (external.name.replace(/\.[^.]+$/, '') || external.name) : stem(path);
+};
 let mode: Mode = 'edit';
 let saveTimer: number | undefined;
 let viewTimer: number | undefined;
@@ -123,10 +136,15 @@ function follow(from: 'editor' | 'preview'): void {
 // into the "Notes" folder once.
 const CURRENT_KEY = 'satr:current';
 let filePath = migrateOldNotes() ?? localStorage.getItem(CURRENT_KEY) ?? '';
+if (isExternalPath(filePath)) { filePath = ''; localStorage.removeItem(CURRENT_KEY); }
 let fileBase = stem(filePath);
+interface FileVersion { text: string; mtime: number }
+let diskBase: { path: string; text: string; mtime: number } | null = null;
+let activeSave: Promise<boolean> | null = null;
 /** Names in the open note's folder (lower case), for checking a new title as you type. */
 let siblingNames = new Set<string>();
 async function loadSiblings(): Promise<void> {
+  if (isExternalPath(filePath)) { siblingNames = new Set(); return; }
   const dir = dirname(filePath);
   siblingNames = new Set((await backend.list(dir).catch(() => [])).map((e) => e.name.toLowerCase()));
 }
@@ -200,10 +218,205 @@ function applyPreviewFolds(): void {
     if (isFolded) hideBelow = level;
   }
 }
-function saveNow(): void {
+interface SaveConflict {
+  path: string;
+  remoteText: string | null;
+  localText: string;
+  mtime: number;
+}
+
+function setDiskBaseIfCurrent(path: string, version: FileVersion): void {
+  if (filePath === path) diskBase = { path, ...version };
+}
+
+function closeSaveConflict(): void {
+  document.querySelector('#save-conflict-dialog')?.remove();
+}
+
+function offerSaveConflict(conflict: SaveConflict): void {
+  editor.view.contentDOM.blur(); // keep the choices above the keyboard on a phone
+  document.querySelector('#save-conflict-dialog')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'save-conflict-overlay';
+  overlay.id = 'save-conflict-dialog';
+  overlay.innerHTML = `
+    <section class="save-conflict-card" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title" aria-describedby="save-conflict-message">
+      <h2 id="save-conflict-title">${conflict.remoteText === null ? 'File missing' : 'File changed elsewhere'}</h2>
+      <p id="save-conflict-message">${conflict.remoteText === null
+        ? `“${escapeText(displayNameForPath(conflict.path))}” was removed or is no longer accessible. Re-create it with your edits, or keep editing without saving.`
+        : `“${escapeText(displayNameForPath(conflict.path))}” has a newer version on disk. Choose which version to keep.`}</p>
+      <div class="save-conflict-actions">
+        ${conflict.remoteText !== null ? '<button type="button" data-conflict="reload">Reload disk version</button>' : ''}
+        <button type="button" class="mod-warning" data-conflict="overwrite">${conflict.remoteText === null ? 'Save my version' : 'Overwrite with mine'}</button>
+        <button type="button" data-conflict="cancel">Cancel</button>
+      </div>
+    </section>`;
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) closeSaveConflict();
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-conflict="reload"]')?.addEventListener('click', () => {
+    if (conflict.remoteText !== null) {
+      closeSaveConflict();
+      reloadOpenText(conflict.path, conflict.remoteText, conflict.mtime);
+    }
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-conflict="overwrite"]')?.addEventListener('click', () => {
+    closeSaveConflict();
+    void overwriteConflict(conflict);
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-conflict="cancel"]')?.addEventListener('click', closeSaveConflict);
+  document.body.appendChild(overlay);
+  overlay.querySelector<HTMLButtonElement>('[data-conflict="reload"], [data-conflict="overwrite"], [data-conflict="cancel"]')?.focus();
+}
+
+function reloadOpenText(path: string, text: string, mtime: number): void {
+  if (path !== filePath) return;
+  const selection = editor.view.state.selection.main;
+  const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const wasRestoring = restoringView;
+  restoringView = true;
+  editor.setValue(text);
+  const length = editor.view.state.doc.length;
+  editor.view.dispatch({ selection: {
+    anchor: Math.min(selection.anchor, length),
+    head: Math.min(selection.head, length),
+  } });
+  diskBase = { path, text, mtime };
   window.clearTimeout(saveTimer);
   saveTimer = undefined;
-  if (filePath) writeNow(filePath, editor.getValue());
+  previewDirty = true;
+  if (previewVisible()) renderPreview();
+  if (mode === 'preview') applyPreviewScroll(previewPane, preview, position);
+  else applyEditorScroll(editor.view, position);
+  restoringView = wasRestoring;
+  ownScroll(250);
+  void showNotice('Updated from the version on disk.', 2500);
+}
+
+async function readDiskVersion(path: string): Promise<FileVersion | null> {
+  if (isExternalPath(path)) {
+    const incoming = externalFilesByPath.get(path);
+    if (!incoming) throw new Error('The incoming file is no longer available');
+    const current = await readIncomingText(incoming.id);
+    return { text: current.text, mtime: current.modified };
+  }
+  const [text, entry] = await Promise.all([backend.read(path), backend.stat(path)]);
+  if (text === null && entry) throw new Error('The file exists but could not be read');
+  return text === null ? null : { text, mtime: entry?.mtime ?? 0 };
+}
+
+let refreshingOnResume = false;
+let lastResumeRefresh = 0;
+async function refreshOnResume(): Promise<void> {
+  const now = Date.now();
+  if (refreshingOnResume || now - lastResumeRefresh < 800) return;
+  refreshingOnResume = true;
+  lastResumeRefresh = now;
+  try {
+    await Promise.allSettled([leftSidebar.refresh(), sidebar.refresh()]);
+    editor.remeasure(); // font scale or WebView size may have changed while paused
+    if (previewVisible()) scheduleMathLayout(preview);
+    void refreshLinkIndex();
+    const path = filePath;
+    const baseline = diskBase?.path === path ? diskBase : null;
+    if (!path || !baseline || (isExternalPath(path) && externalFilesByPath.get(path)?.kind !== 'text')) return;
+    const disk = await readDiskVersion(path);
+    if (filePath !== path || !disk) {
+      if (filePath === path && !disk) offerSaveConflict({ path, remoteText: null, localText: editor.getValue(), mtime: 0 });
+      return;
+    }
+    if (disk.text === baseline.text) {
+      diskBase = { path, ...disk };
+      return;
+    }
+    const localText = editor.getValue();
+    if (localText === baseline.text) reloadOpenText(path, disk.text, disk.mtime);
+    else offerSaveConflict({ path, remoteText: disk.text, localText, mtime: disk.mtime });
+  } catch (error) {
+    showNotice(`Couldn't refresh: ${error instanceof Error ? error.message : String(error)}`, 4000);
+  } finally {
+    refreshingOnResume = false;
+  }
+}
+
+async function performSave(path: string, text: string, authorization?: SaveConflict): Promise<boolean> {
+  const disk = await readDiskVersion(path);
+  const baseline = diskBase?.path === path ? diskBase : null;
+  if (disk?.text === text) {
+    setDiskBaseIfCurrent(path, disk);
+    return true;
+  }
+  const externalChange = baseline ? (!disk || disk.text !== baseline.text) : disk !== null;
+  const authorized = Boolean(authorization && authorization.path === path
+    && authorization.remoteText === (disk?.text ?? null));
+
+  if (externalChange && !authorized) {
+    // The note has no local edits: follow the external write automatically.
+    if (baseline && text === baseline.text && disk) {
+      reloadOpenText(path, disk.text, disk.mtime);
+      return true;
+    }
+    offerSaveConflict({ path, remoteText: disk?.text ?? null, localText: text, mtime: disk?.mtime ?? 0 });
+    return false;
+  }
+
+  if (isExternalPath(path)) {
+    const incoming = externalFilesByPath.get(path);
+    if (!incoming || incoming.readOnly) return false;
+    await writeIncomingText(incoming.id, text);
+    const updated = await readIncomingText(incoming.id);
+    setDiskBaseIfCurrent(path, { text: updated.text, mtime: updated.modified });
+  } else {
+    await backend.write(path, text);
+    const entry = await backend.stat(path);
+    setDiskBaseIfCurrent(path, { text, mtime: entry?.mtime ?? Date.now() });
+  }
+  return true;
+}
+
+async function overwriteConflict(conflict: SaveConflict): Promise<void> {
+  const text = filePath === conflict.path ? editor.getValue() : conflict.localText;
+  try {
+    if (!await performSave(conflict.path, text, conflict)) {
+      showNotice('The file changed again. Review the newer conflict before saving.', 5000);
+    }
+  } catch (error) {
+    showNotice(`Couldn’t overwrite: ${error instanceof Error ? error.message : String(error)}`, 5000);
+  }
+}
+
+async function saveNow(): Promise<boolean> {
+  window.clearTimeout(saveTimer);
+  saveTimer = undefined;
+  const path = filePath;
+  if (!path) return false;
+  if (isExternalPath(path)) {
+    const incoming = externalFilesByPath.get(path);
+    if (!incoming || (incoming.kind !== 'text' && incoming.kind !== 'shared-text') || incoming.readOnly || incoming.kind === 'shared-text') return true;
+  }
+  if (activeSave) {
+    const pending = activeSave;
+    let previousSave = false;
+    try { previousSave = await pending; } catch { /* the owner already reported its error */ }
+    if (!previousSave || filePath !== path) return false;
+    const current = editor.getValue();
+    if (diskBase?.path !== path || current !== diskBase.text) return saveNow();
+    return true;
+  }
+  const text = editor.getValue();
+  const task = performSave(path, text);
+  activeSave = task;
+  let saved = false;
+  try {
+    saved = await task;
+  } catch (error) {
+    showNotice(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`, 5000);
+    return false;
+  } finally {
+    if (activeSave === task) activeSave = null;
+  }
+  if (saved && filePath === path && editor.getValue() !== diskBase?.text) return saveNow();
+  return saved;
 }
 function update(): void {
   previewDirty = true;
@@ -246,22 +459,42 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
   obscuredBottom: () => obscuredBottom(),
   checkName: (base) => (nameTaken(base) ? 'There is already a file with that name' : null),
   onRename: (base) => {
+    if (isExternalPath(filePath)) return 'Files opened from another app cannot be renamed in Satr';
     if (nameTaken(base)) return 'There is already a file with that name';
     const from = filePath;
+    const oldBase = fileBase;
     const to = joinPath(dirname(from), `${base}.md`);
-    // Write the text out first, then move it (a note that was never saved
-    // is simply written under the new name).
-    saveNow();
-    void backend.stat(from).then((exists) => (exists ? backend.rename(from, to) : backend.write(to, editor.getValue())))
-      .then(() => { pathMoved(from, to); void loadSiblings(); })
-      .catch((error: unknown) => {
-        editor.setTitle(fileBase);
+    editor.setReadOnly(true); // avoid edits racing the path move
+    void (async () => {
+      try {
+        if (!await saveNow()) { fileBase = oldBase; editor.setTitle(oldBase); setPreviewTitle(); return; }
+        const exists = await backend.stat(from);
+        if (exists) await backend.rename(from, to);
+        else {
+          if (await backend.stat(to)) throw new Error('Something with that name already exists');
+          await backend.write(to, editor.getValue());
+        }
+        pathMoved(from, to);
+        const [text, entry] = await Promise.all([backend.read(to), backend.stat(to)]);
+        diskBase = { path: to, text: text ?? editor.getValue(), mtime: entry?.mtime ?? 0 };
+        void loadSiblings();
+      } catch (error) {
+        fileBase = oldBase;
+        editor.setTitle(oldBase);
+        setPreviewTitle();
         leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
-      });
+      } finally {
+        editor.setReadOnly(false);
+      }
+    })();
     fileBase = base;
     setPreviewTitle();
     return null;
   },
+});
+window.addEventListener('satr:font-scale-change', () => {
+  editor.remeasure();
+  if (previewVisible()) { layoutMath(preview); scheduleMathLayout(preview); }
 });
 // Auto-hide navigation, as Obsidian's "auto full screen" (MobileNavbar.
 // onScroll, read in its app.js): scrolling down hides the header buttons,
@@ -345,7 +578,7 @@ function rememberView(): void {
   if (restoringView) return;
   const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   const folds = editor.foldedLines();
-  if (!filePath) return;
+  if (!filePath || isExternalPath(filePath)) return;
   localStorage.setItem(viewKey(filePath), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) }));
 }
 function rememberViewSoon(): void {
@@ -395,6 +628,7 @@ const flush = (): void => {
 window.addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flush();
+  else if (document.visibilityState === 'visible') void refreshOnResume();
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
@@ -409,7 +643,11 @@ let tabs: Tab[] = [{ path: '' }];
 let activeTab = 0;
 const curTab = (): Tab => tabs[activeTab];
 function saveTabs(): void {
-  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs, active: activeTab }));
+  const safeTabs = tabs.filter((tab) => !isExternalPath(tab.path));
+  if (!safeTabs.length) safeTabs.push({ path: '' });
+  const active = safeTabs.findIndex((tab) => tab === curTab());
+  const savedActive = active >= 0 ? active : Math.min(Math.max(0, activeTab - 1), safeTabs.length - 1);
+  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: safeTabs, active: savedActive }));
 }
 function loadTabs(): void {
   try {
@@ -427,7 +665,8 @@ function loadTabs(): void {
     // One tab per note.
     const seen = new Set<string>();
     const active = list[Math.min(Math.max(0, saved.active | 0), list.length - 1)];
-    tabs = (list as Tab[]).filter((t) => !t.path || (seen.has(t.path) ? false : (seen.add(t.path), true)));
+    tabs = (list as Tab[]).filter((t) => !isExternalPath(t.path) && (!t.path || (seen.has(t.path) ? false : (seen.add(t.path), true))));
+    if (!tabs.length) tabs = [{ path: '' }];
     activeTab = Math.max(0, tabs.findIndex((t) => t === active || (t.path && t.path === active?.path)));
   } catch { /* keep the default */ }
 }
@@ -437,38 +676,58 @@ const closedTabs: Tab[] = [];
 // Recently opened notes, newest first (the empty tab lists them).
 const RECENT_KEY = 'satr:recent';
 function recentNotes(): string[] {
-  try { const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); return Array.isArray(list) ? list.filter((p) => typeof p === 'string') : []; } catch { return []; }
+  try { const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); return Array.isArray(list) ? list.filter((p) => typeof p === 'string' && !isExternalPath(p)) : []; } catch { return []; }
 }
-function setRecent(list: string[]): void { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 12))); }
-function leaveCurrent(): void {
+function setRecent(list: string[]): void { localStorage.setItem(RECENT_KEY, JSON.stringify(list.filter((p) => !isExternalPath(p)).slice(0, 12))); }
+async function leaveCurrent(): Promise<boolean> {
   closePopover();
   editor.closeFind();
-  saveNow();
-  rememberView();
+  const saved = !filePath || await saveNow();
+  if (saved) rememberView();
+  return saved;
 }
 function showFile(path: string, content: string, after?: () => void): void {
-  document.body.classList.remove('is-empty-tab');
+  const incoming = externalFilesByPath.get(path);
+  externalFileScreen.hidden = true;
+  document.body.classList.remove('external-file-active', 'is-empty-tab');
   renderMenuButton();
   // Another note never opens the keyboard or shows the caret: it comes back
   // at its remembered place, unfocused, until you tap into it.
   editor.view.contentDOM.blur();
   curTab().path = path;
-  setRecent([path, ...recentNotes().filter((p) => p !== path)]);
   filePath = path;
-  fileBase = stem(path);
-  localStorage.setItem(CURRENT_KEY, path);
+  fileBase = displayNameForPath(path);
+  if (incoming) {
+    diskBase = { path, text: content, mtime: incoming.modified ?? 0 };
+    localStorage.removeItem(CURRENT_KEY); // incoming URI ids only last for this app session
+  } else {
+    diskBase = { path, text: content, mtime: 0 };
+    localStorage.setItem(CURRENT_KEY, path);
+    setRecent([path, ...recentNotes().filter((p) => p !== path)]);
+    void backend.stat(path).then((entry) => {
+      if (filePath !== path || diskBase?.path !== path || diskBase.text !== content) return;
+      if (entry) diskBase.mtime = entry.mtime;
+      else diskBase = null; // firstNote() can return an as-yet-unsaved new note
+    });
+  }
   restoringView = true;
   editor.setValue(content);
+  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text'));
   editor.setTitle(fileBase);
+  editor.setTitleEditable(!incoming);
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
   restoreView(path, after);
   renderNavButtons();
-  sidebar.refresh();
-  leftSidebar.reveal(path);
-  void loadSiblings();
+  if (incoming) {
+    sidebar.refresh();
+  } else {
+    sidebar.refresh();
+    leftSidebar.reveal(path);
+    void loadSiblings();
+  }
 }
 /** Open a note: its tab if it has one, else a new tab after this one (or
  *  this tab, when it's empty). */
@@ -478,7 +737,7 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   if (existing >= 0) { await switchTab(existing, after); return; }
   const text = await backend.read(path);
   if (text === null) { leftSidebar.hint('That note no longer exists.', true); void leftSidebar.refresh(); return; }
-  leaveCurrent();
+  if (!await leaveCurrent()) return;
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   showFile(path, text, after);
 }
@@ -562,10 +821,10 @@ async function openFallback(): Promise<void> {
   showFile(path, text);
 }
 async function newFile(dir = notesHome()): Promise<void> {
+  if (!await leaveCurrent()) return;
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
   try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
-  leaveCurrent();
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   localStorage.removeItem(viewKey(path));
   showFile(path, '');
@@ -575,10 +834,125 @@ async function newFile(dir = notesHome()): Promise<void> {
   editor.focusTitle();
 }
 
+function showIncomingScreen(path: string, file: IncomingOpenFile): void {
+  filePath = path;
+  fileBase = file.name;
+  diskBase = null;
+  curTab().path = path;
+  window.clearTimeout(saveTimer);
+  saveTimer = undefined;
+  editor.view.contentDOM.blur();
+  editor.setReadOnly(true);
+  editor.setTitle(file.name);
+  editor.setTitleEditable(false);
+  externalFileScreen.hidden = false;
+  document.body.classList.remove('is-empty-tab');
+  document.body.classList.add('external-file-active');
+  const description = file.kind === 'too-large'
+    ? 'This file is too large for a safe in-app preview. It will not be partially decoded or modified.'
+    : 'Satr keeps unsupported and binary formats read-only. Open it in another app to view or edit it.';
+  externalFileScreen.innerHTML = `
+    <div class="external-file-card">
+      <button type="button" class="external-file-back" data-external-act="back" aria-label="Back">‹</button>
+      <div class="external-file-icon" aria-hidden="true">${file.kind === 'too-large' ? '…' : '↗'}</div>
+      <h1 dir="auto">${escapeText(file.name)}</h1>
+      <p class="external-file-meta">${escapeText(file.mimeType || 'Unknown file type')}${file.size > 0 ? ` · ${formatBytes(file.size)}` : ''}</p>
+      <div class="external-file-preview" id="external-file-preview"></div>
+      <p class="external-file-description">${description}</p>
+      <div class="external-file-actions">
+        <button type="button" class="external-file-primary" data-external-act="other">Open in another app</button>
+        <button type="button" data-external-act="back">Back to Satr</button>
+      </div>
+    </div>`;
+  const previewEl = externalFileScreen.querySelector<HTMLElement>('#external-file-preview');
+  if (file.dataUrl?.startsWith('data:image/') && previewEl) {
+    const image = document.createElement('img');
+    image.alt = file.name;
+    image.src = file.dataUrl;
+    previewEl.appendChild(image);
+  }
+  externalFileScreen.querySelectorAll<HTMLButtonElement>('[data-external-act="back"]').forEach((button) => {
+    button.addEventListener('click', returnFromIncomingFile);
+  });
+  externalFileScreen.querySelector<HTMLButtonElement>('[data-external-act="other"]')?.addEventListener('click', () => {
+    void openIncomingInOtherApp(file.id).catch((error: unknown) => {
+      showNotice(error instanceof Error ? error.message : String(error), 5000);
+    });
+  });
+  renderNavButtons();
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = size / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+function returnFromIncomingFile(): void {
+  if (tabs.length > 1) closeTab(activeTab);
+  else {
+    tabs[0] = { path: '' };
+    activeTab = 0;
+    showEmptyTab();
+  }
+}
+
+async function openIncomingPath(path: string, after?: () => void): Promise<void> {
+  const existing = externalFilesByPath.get(path);
+  if (!existing) { showNotice('This incoming file is no longer available. Open it from the file manager again.', 5000); return; }
+  if (existing.kind === 'text' || existing.kind === 'shared-text') {
+    try {
+      const current = await readIncomingText(existing.id);
+      const updated = { ...existing, text: current.text, modified: current.modified };
+      externalFilesByPath.set(path, updated);
+      if (curTab().path === path) showFile(path, current.text, after);
+    } catch (error) {
+      const unavailable: IncomingOpenFile = { ...existing, kind: 'binary', readOnly: true, text: undefined, dataUrl: undefined };
+      externalFilesByPath.set(path, unavailable);
+      if (curTab().path === path) showIncomingScreen(path, unavailable);
+      showNotice(error instanceof Error ? error.message : String(error), 5000);
+    }
+  } else if (curTab().path === path) showIncomingScreen(path, existing);
+}
+
+async function handleIncomingId(id: string): Promise<void> {
+  if (!id || handledIncomingIds.has(id)) return;
+  handledIncomingIds.add(id);
+  try {
+    const file = await openIncomingFile(id);
+    closeMenu();
+    closeTabSwitcher();
+    closeSettings();
+    const path = externalPath(file.id, file.name);
+    externalFilesByPath.set(path, file);
+    const existingTab = tabs.findIndex((tab) => tab.path === path);
+    if (existingTab >= 0) {
+      await switchTab(existingTab);
+    } else {
+      if (!await leaveCurrent()) return;
+      if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
+      else curTab().path = path;
+      await openIncomingPath(path);
+      if ((file.kind === 'text' || file.kind === 'shared-text') && (file.readOnly || file.kind === 'shared-text')) {
+        showNotice('Opened as read-only; the original file will not be changed.', 4500);
+      }
+    }
+    toggleFiles(false);
+    renderNavButtons();
+  } catch (error) {
+    handledIncomingIds.delete(id);
+    showNotice(error instanceof Error ? error.message : String(error), 5000);
+  }
+}
+
 /** Show a tab's note, or the empty-tab page. A note that's gone closes
  *  its tab. */
 async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
+  if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
   const text = await backend.read(tab.path);
   if (text !== null) { showFile(tab.path, text, after); return; }
   if (tabs.length > 1) {
@@ -591,30 +965,35 @@ async function openTab(tab: Tab, after?: () => void): Promise<void> {
 async function switchTab(index: number, after?: () => void): Promise<void> {
   if (!tabs[index]) return;
   if (index === activeTab) { after?.(); return; }
-  leaveCurrent();
+  if (!await leaveCurrent()) return;
   activeTab = index;
   await openTab(curTab(), after);
 }
 function newTab(): void {
-  leaveCurrent();
-  const empty = tabs.findIndex((t) => !t.path);
-  if (empty >= 0) activeTab = empty;
-  else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
-  showEmptyTab();
+  void (async () => {
+    if (!await leaveCurrent()) return;
+    const empty = tabs.findIndex((t) => !t.path);
+    if (empty >= 0) activeTab = empty;
+    else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
+    showEmptyTab();
+  })();
 }
 function closeTab(index: number): void {
   if (tabs.length < 2 || !tabs[index]) return;
-  if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
   if (index !== activeTab) {
+    if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
     if (index < activeTab) activeTab -= 1;
     renderNavButtons();
     return;
   }
-  leaveCurrent();
-  tabs.splice(index, 1);
-  activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
-  void openTab(curTab());
+  void (async () => {
+    if (!await leaveCurrent()) return;
+    if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
+    tabs.splice(index, 1);
+    activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
+    await openTab(curTab());
+  })();
 }
 function reopenClosedTab(): void {
   const tab = closedTabs.pop();
@@ -682,8 +1061,13 @@ const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
   closePopover();
   editor.closeFind();
+  externalFileScreen.hidden = true;
+  document.body.classList.remove('external-file-active');
   filePath = '';
   fileBase = '';
+  diskBase = null;
+  editor.setReadOnly(false);
+  editor.setTitleEditable(true);
   restoringView = true;
   editor.setValue('');
   editor.setTitle('');
@@ -726,23 +1110,29 @@ emptyTab.addEventListener('click', (event) => {
 });
 
 function showTabs(): void {
-  leaveCurrent(); // the previews read the saved text
-  openTabSwitcher({
-    tabs: () => tabs.map((t, i) => ({ title: t.path ? stem(t.path) : 'New tab', active: i === activeTab })),
-    preview: async (i) => {
-      const path = tabs[i].path;
-      if (!path) return '';
-      const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
-      return `<div class="inline-title" dir="auto">${escapeText(stem(path))}</div>${renderMarkdown(text.slice(0, 1500))}`;
-    },
-    select: (i) => void switchTab(i),
-    close: closeTab,
-    newTab,
-    canReopen: () => closedTabs.length > 0,
-    reopen: reopenClosedTab,
-    closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path)); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
-    move: moveTab,
-  });
+  void (async () => {
+    if (!await leaveCurrent()) return;
+    openTabSwitcher({
+      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab })),
+      preview: async (i) => {
+        const path = tabs[i].path;
+        if (!path) return '';
+        if (isExternalPath(path)) {
+          const file = externalFilesByPath.get(path);
+          return `<div class="inline-title" dir="auto">${escapeText(file?.name ?? 'Incoming file')}</div><p>${escapeText(file?.mimeType ?? 'External file')}</p>`;
+        }
+        const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
+        return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${renderMarkdown(text.slice(0, 1500))}`;
+      },
+      select: (i) => void switchTab(i),
+      close: closeTab,
+      newTab,
+      canReopen: () => closedTabs.length > 0,
+      reopen: reopenClosedTab,
+      closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path)); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+      move: moveTab,
+    });
+  })();
 }
 
 // Bottom bar (no keyboard), in Obsidian's order: previous / next tab, find,
@@ -781,8 +1171,8 @@ function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
       run: () => { setMode(mode === 'edit' ? 'preview' : 'edit'); renderMenuButton(); },
     };
     case 'pdf': return { title: 'Export to PDF', icon: MENU_ICONS.pdf, needsNote: true, run: () => void exportCurrentPdf() };
-    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } };
-    case 'delete': return { title: 'Delete note', icon: MENU_ICONS.trash, needsNote: true, warning: true, run: () => { if (filePath) leftSidebar.deleteFile(filePath); } };
+    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (!isExternalPath(filePath)) { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } } };
+    case 'delete': return { title: 'Delete note', icon: MENU_ICONS.trash, needsNote: true, warning: true, run: () => { if (filePath && !isExternalPath(filePath)) leftSidebar.deleteFile(filePath); } };
     case 'settings': return { title: 'Settings', icon: MENU_ICONS.settings, needsNote: false, run: showSettings };
   }
 }
@@ -790,7 +1180,7 @@ const hasNote = (): boolean => !document.body.classList.contains('is-empty-tab')
 async function exportCurrentPdf(): Promise<void> {
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
-    await exportPdf(stem(filePath.split('/').pop() ?? 'Note') || 'Note', editor.getValue(), filePath);
+    await exportPdf(displayNameForPath(filePath) || 'Note', editor.getValue(), isExternalPath(filePath) ? '' : filePath);
   } catch (error) {
     showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
   } finally {
@@ -800,7 +1190,8 @@ async function exportCurrentPdf(): Promise<void> {
 function showNoteMenu(): void {
   const item = (key: Exclude<QuickAction, ''>): MenuEntry => {
     const a = noteAction(key);
-    return { title: a.title, icon: a.icon, warning: a.warning, disabled: a.needsNote && !hasNote(), action: a.run };
+    const externalRestriction = isExternalPath(filePath) && (key === 'rename' || key === 'delete');
+    return { title: a.title, icon: a.icon, warning: a.warning, disabled: (a.needsNote && !hasNote()) || externalRestriction, action: a.run };
   };
   openMenu([item('fold'), item('view'), 'separator', item('pdf'), 'separator', item('rename'), item('delete'), 'separator', item('settings')]);
 }
@@ -815,7 +1206,7 @@ function renderMenuButton(): void {
   const a = noteAction(quick);
   navMenu.innerHTML = a.icon + FLAIR;
   navMenu.setAttribute('aria-label', `${a.title} (hold for the menu)`);
-  navMenu.disabled = a.needsNote && !hasNote();
+  navMenu.disabled = (a.needsNote && !hasNote()) || (isExternalPath(filePath) && (quick === 'rename' || quick === 'delete'));
 }
 // A tap runs the quick action (or opens the menu); holding opens the menu.
 let menuPress: { timer: number; long: boolean } | null = null;
@@ -992,6 +1383,8 @@ function handleBack(): boolean {
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
   else if (isSettingsOpen()) closeSettings();
+  else if (document.querySelector('#save-conflict-dialog')) closeSaveConflict();
+  else if (document.body.classList.contains('external-file-active')) returnFromIncomingFile();
   else if (editor.findOpen) editor.closeFind();
   else if (document.body.classList.contains('files-open')) toggleFiles(false);
   else if (document.body.classList.contains('outline-open')) toggleOutline(false);
@@ -1015,6 +1408,9 @@ function handleBack(): boolean {
 }
 if (Capacitor.isNativePlatform()) {
   void CapacitorApp.addListener('backButton', () => { handleBack(); });
+  void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+    if (isActive) void refreshOnResume();
+  });
 } else {
   // The guard entry: back pops it (popstate), we handle the press and put it
   // back. On the exit press it stays popped and we step back once more,
@@ -1033,11 +1429,28 @@ if (Capacitor.isNativePlatform()) {
 }
 document.addEventListener('satr:back', () => { handleBack(); });
 
+let bootReady = false;
+let queuedIncomingId = '';
 async function boot(): Promise<void> {
   keepSnapshots();
   try {
+    if (supportsIncomingFiles()) {
+      await onIncomingFile((id) => {
+        if (!bootReady) queuedIncomingId = id;
+        else void handleIncomingId(id);
+      });
+    }
     await openFirstNote();
+    bootReady = true;
+    if (supportsIncomingFiles()) {
+      const pending = await pendingIncomingFile().catch(() => null);
+      if (pending) await handleIncomingId(pending);
+      const queued = queuedIncomingId;
+      queuedIncomingId = '';
+      if (queued && queued !== pending) await handleIncomingId(queued);
+    }
   } finally {
+    bootReady = true;
     dropSnapshot(); // the real note is on screen: lift the start-up copy
   }
 }
