@@ -145,6 +145,17 @@ export function insertMath(view: EditorView): boolean {
   return true;
 }
 
+/** Markor's "new line below": an empty line after the caret's line, and the
+ *  caret on it. The current line isn't split and no list marker follows. */
+export function insertLineBelow(view: EditorView): boolean {
+  const state = view.state;
+  view.dispatch(state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.head);
+    return { changes: { from: line.to, insert: state.lineBreak }, range: EditorSelection.cursor(line.to + state.lineBreak.length) };
+  }), { userEvent: 'input', scrollIntoView: true });
+  return true;
+}
+
 export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
   undo, redo,
   heading: cycleHeading,
@@ -154,6 +165,7 @@ export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
   footnote: insertFootnote,
   deleteLine,
   math: insertMath,
+  lineBelow: insertLineBelow,
   lineUp: moveLineUp,
   lineDown: moveLineDown,
 };

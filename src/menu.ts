@@ -17,6 +17,7 @@ export type MenuEntry = MenuItem | 'separator';
 const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 let current: { close(): void } | null = null;
+export const isMenuOpen = (): boolean => current !== null;
 
 export function closeMenu(): void {
   current?.close();

@@ -21,7 +21,6 @@ export interface LeftSidebarDeps {
   /** Open a note (the sidebar closes the drawer itself). */
   open(path: string): void;
   /** Open a note in a new tab. */
-  openInNewTab(path: string): void;
   /** Create a note in a folder and open it. */
   createNote(dir: string): void;
   /** A file or folder was renamed or moved. */
@@ -61,6 +60,7 @@ const ICONS = {
   plus: icon('<path d="M5 12h14M12 5v14"/>'),
   newTab: icon('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/>'),
   x: icon('<path d="M18 6 6 18M6 6l12 12"/>'),
+  search: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
 };
 
 export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
@@ -76,6 +76,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
         </div>
         <div class="workspace-drawer-header-icons"></div>
       </div>
+      <div class="search-input-container nav-filter">${ICONS.search}<input type="search" class="nav-filter-input" dir="auto" placeholder="Filter by name" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
       <div class="nav-files-container" role="tree"></div>
       <div class="nav-buttons-container">
         <button type="button" class="clickable-icon nav-action-button" data-act="new-note" aria-label="New note">${ICONS.newNote}</button>
@@ -89,6 +90,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   const nameEl = root.querySelector<HTMLElement>('.workspace-drawer-vault-name')!;
   const infoEl = root.querySelector<HTMLElement>('.workspace-drawer-header-info')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
+  const filterInput = root.querySelector<HTMLInputElement>('.nav-filter-input')!;
+  const filterQuery = (): string => filterInput.value.trim().toLocaleLowerCase();
 
   let scope: Scope = currentScope();
   let sort: Sort = (localStorage.getItem(SORT_KEY) as Sort | null) ?? 'name';
@@ -155,7 +158,12 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     collapseButton.innerHTML = walking ? ICONS.up : (expanded.size ? ICONS.collapseAll : ICONS.expandAll);
     collapseButton.setAttribute('aria-label', walking ? 'Up one folder' : expanded.size ? 'Collapse all' : 'Expand all');
     let html: string;
-    if (walking) {
+    root.classList.toggle('mod-filtering', Boolean(filterQuery()));
+    if (filterQuery()) {
+      html = await filterHtml(walking ? walkDir() : (scope as Extract<Scope, { kind: 'space' }>).space.path, token);
+      if (token !== renderToken) return;
+      if (!walking) infoEl.textContent = (scope as Extract<Scope, { kind: 'space' }>).space.path === scopeName(scope) ? '' : (scope as Extract<Scope, { kind: 'space' }>).space.path;
+    } else if (walking) {
       const dir = walkDir();
       collapseButton.disabled = !dir;
       infoEl.textContent = dir ? `/${dir}` : backend.kind === 'web' ? 'Browser storage' : 'Internal storage';
@@ -176,6 +184,38 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     list.innerHTML = html;
     if (renaming) startRename(renaming);
   }
+  // Filter by name: files and folders anywhere under the space (or the
+  // walker's folder) whose name has every word typed, as a flat list with
+  // the folder they're in; the matched text highlighted.
+  async function filterHtml(dir: string, token: number): Promise<string> {
+    const words = filterQuery().split(/\s+/).filter(Boolean);
+    const found: Entry[] = [];
+    const queue = [dir];
+    while (queue.length && found.length < 300) {
+      const entries = await list$(queue.shift()!);
+      if (token !== renderToken) return '';
+      for (const entry of entries) {
+        if (entry.kind === 'folder') queue.push(entry.path);
+        const name = entry.name.toLocaleLowerCase();
+        if (words.every((w) => name.includes(w))) found.push(entry);
+      }
+    }
+    if (!found.length) return '<div class="pane-empty">No files or folders found</div>';
+    const pattern = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+    return found.map((entry) => {
+      const parent = dirname(entry.path);
+      const shownParent = parent === dir ? '' : (dir ? parent.slice(dir.length + 1) : parent);
+      const row = rowHtml(entry, { walker: true }).replace(/(<div class="tree-item-inner[^>]*>)([^<]*)(<\/div>)/, (_, open: string, text: string, close: string) =>
+        `${open}<span class="nav-filter-name">${text.replace(pattern, (m) => `<span class="search-result-file-matched-text">${m}</span>`)}</span>${shownParent ? `<span class="nav-filter-path">${escapeHtml(shownParent)}</span>` : ''}${close}`);
+      return `<div class="tree-item ${entry.kind === 'folder' ? 'nav-folder' : 'nav-file'} mod-found">${row}</div>`;
+    }).join('');
+  }
+  let filterTimer: number | undefined;
+  filterInput.addEventListener('input', () => { window.clearTimeout(filterTimer); filterTimer = window.setTimeout(() => void render(), 120); });
+  filterInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); filterInput.blur(); }
+    if (event.key === 'Escape' && filterInput.value) { event.preventDefault(); filterInput.value = ''; void render(); }
+  });
   const rowOf = (path: string): HTMLElement | null => list.querySelector<HTMLElement>(`.tree-item-self[data-path="${CSS.escape(path)}"]`);
 
   /** Folder new things go into: the space root, or the walker's folder. */
@@ -294,7 +334,6 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       );
     }
     if (!isFolder && isNote(basename(path))) {
-      entries.push({ title: 'Open in new tab', icon: ICONS.newTab, action: () => deps.openInNewTab(path) }, 'separator');
     }
     entries.push(
       { title: 'Rename…', icon: ICONS.pencil, action: () => startRename(path) },
@@ -398,6 +437,17 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     if (!row || row.classList.contains('is-being-renamed')) return;
     const path = row.dataset.path!;
     const kind = row.dataset.kind;
+    if (filterQuery() && kind === 'folder') {
+      // A found folder: back to the tree, opened at it.
+      filterInput.value = '';
+      if (scope.kind === 'all') setWalkDir(path);
+      else {
+        for (let dir = path; dir && within(dir, scope.space.path) && dir !== scope.space.path; dir = dirname(dir)) expanded.add(dir);
+        saveExpanded();
+      }
+      void render().then(() => rowOf(path)?.scrollIntoView({ block: 'center' }));
+      return;
+    }
     if (kind === 'parent' || (kind === 'folder' && scope.kind === 'all')) {
       setWalkDir(path);
       void render().then(() => { list.scrollTop = 0; });

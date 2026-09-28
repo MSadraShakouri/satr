@@ -7,13 +7,18 @@ import { renderMarkdown } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
 import { footnoteLayout } from './footnoteDialog';
-import { closePopover, openPopover } from './popover';
+import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
-import { openMenu } from './menu';
-import { openTabSwitcher } from './tabs';
-import { currentScope, scopeRoot } from './spaces';
+import { closeMenu, isMenuOpen, openMenu } from './menu';
+import { showNotice, type NoticeHandle } from './notice';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
+import { closeSettings, isSettingsOpen, loadSettings, openSettings, type Settings } from './settings';
+import { setHighlightAll } from './findBar';
+import { currentScope, scopeName, scopeRoot } from './spaces';
 import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within, writeNow } from './vault';
 
 type Mode = 'edit' | 'preview';
@@ -71,7 +76,6 @@ app.innerHTML = `
     <div class="topbar">
       <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="15" height="16" rx="2"/><path d="M8 7v10"/></svg></button>
       <div class="topbar-actions">
-        <button class="floating-button" id="outline-toggle" aria-label="Outline and search"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 6H8M21 12H11M21 18H11M3 6h1M6 12h1M6 18h1"/></svg></button>
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
     </div>
@@ -80,29 +84,32 @@ app.innerHTML = `
     <div class="backdrop" id="backdrop"></div>
     <main class="workspace">
       <section class="editor-pane" id="editor-pane" aria-label="Editor"><div id="editor"></div></section>
+      <section class="empty-state" id="empty-tab" aria-label="New tab"></section>
       <section class="preview-pane" id="preview-pane" aria-label="Preview"><article id="preview"></article></section>
     </main>
     <div class="edit-toolbar" id="edit-toolbar" role="toolbar" aria-label="Formatting" data-ignore-swipe>
-      <div class="edit-toolbar-list" id="edit-toolbar-list">
+      <div class="edit-toolbar-list-container"><div class="edit-toolbar-list" id="edit-toolbar-list">
         <button tabindex="-1" data-command="undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
         <button tabindex="-1" data-command="redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
-        <button tabindex="-1" data-command="heading" aria-label="Heading">#</button>
-        <button tabindex="-1" data-command="bullet" aria-label="Bulleted list"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".6"/><circle cx="4.5" cy="12" r=".6"/><circle cx="4.5" cy="18" r=".6"/></svg></button>
-        <button tabindex="-1" data-command="ordered" aria-label="Numbered list">1.</button>
-        <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="m8 12.5 3 3 5-6"/></svg></button>
+        <button tabindex="-1" data-command="heading" aria-label="Heading"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg></button>
+        <button tabindex="-1" data-command="bullet" aria-label="Bulleted list"><svg viewBox="0 0 24 24"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></svg></button>
+        <button tabindex="-1" data-command="ordered" aria-label="Numbered list"><svg viewBox="0 0 24 24"><path d="M10 12h11M10 18h11M10 6h11M4 10h2M4 6h1v4M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
+        <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg></button>
         <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
-        <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
-        <button tabindex="-1" data-command="math" aria-label="Math">$</button>
-        <button tabindex="-1" data-command="lineUp" aria-label="Move line up"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
-        <button tabindex="-1" data-command="lineDown" aria-label="Move line down"><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
-      </div>
+        <button tabindex="-1" data-command="math" aria-label="Math"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></button>
+        <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M10 11v6M14 11v6M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        <button tabindex="-1" data-command="lineBelow" aria-label="New line below"><svg viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/></svg></button>
+        <button tabindex="-1" data-command="lineUp" aria-label="Move line up"><svg viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
+        <button tabindex="-1" data-command="lineDown" aria-label="Move line down"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+      </div></div>
+      <div class="edit-toolbar-floating"><button tabindex="-1" data-act="hide-keyboard" aria-label="Hide keyboard"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></div>
     </div>
     <div class="navbar-wrap" id="navbar-wrap">
       <nav class="mobile-navbar" id="navbar" aria-label="Navigation" data-ignore-swipe>
         <div class="mobile-navbar-actions">
-          <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Forward"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Previous tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-fold" aria-label="Collapse all headings"></button></div>
@@ -197,6 +204,7 @@ function renderPreview(): void {
   preview.innerHTML = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>${renderMarkdown(editor.getValue())}`;
   applyPreviewFolds();
   scheduleMathLayout(preview);
+  markBrokenLinks();
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -268,6 +276,8 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   onSelection: () => rememberViewSoon(),
   onFold: () => { applyPreviewFolds(); renderFoldButton(); rememberViewSoon(); },
+  linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
+  openLink: (target, heading) => openLink(target, heading),
   obscuredBottom: () => obscuredBottom(),
   checkName: (base) => (nameTaken(base) ? 'There is already a file with that name' : null),
   onRename: (base) => {
@@ -406,13 +416,13 @@ document.addEventListener('visibilitychange', () => {
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
 document.querySelector('#files')!.addEventListener('click', () => toggleFiles());
-// Opening notes, with back/forward history like Obsidian's navbar arrows.
-// Each note comes back with its own mode, position, caret and folds.
-// Tabs, as Obsidian's: each has its own back/forward history. Kept across
-// restarts under satr:tabs.
-interface Tab { history: string[]; index: number }
+// Tabs: every note opens in its own tab (a note that's already open just
+// switches to its tab), and the bottom bar's arrows step to the previous /
+// next tab. Tabs can be reordered in the switcher. Each note comes back
+// with its own mode, position, caret and folds. Kept under satr:tabs.
+interface Tab { path: string } // '' is an empty tab ("No file is open")
 const TABS_KEY = 'satr:tabs';
-let tabs: Tab[] = [{ history: [], index: -1 }];
+let tabs: Tab[] = [{ path: '' }];
 let activeTab = 0;
 const curTab = (): Tab => tabs[activeTab];
 function saveTabs(): void {
@@ -420,15 +430,33 @@ function saveTabs(): void {
 }
 function loadTabs(): void {
   try {
-    const saved = JSON.parse(localStorage.getItem(TABS_KEY) ?? 'null') as { tabs: Tab[]; active: number } | null;
-    const valid = saved && Array.isArray(saved.tabs) && saved.tabs.length > 0 && saved.tabs.every((t) =>
-      Array.isArray(t.history) && t.history.every((p) => typeof p === 'string') && Number.isInteger(t.index) && t.index >= 0 && t.index < t.history.length);
-    if (!valid) return;
-    tabs = saved.tabs;
-    activeTab = Math.min(Math.max(0, saved.active | 0), tabs.length - 1);
+    const saved = JSON.parse(localStorage.getItem(TABS_KEY) ?? 'null') as { tabs: unknown[]; active: number } | null;
+    if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) return;
+    // Also reads the older format, {history, index} per tab.
+    const read = (t: unknown): Tab | null => {
+      const o = t as { path?: unknown; history?: unknown; index?: unknown };
+      if (typeof o?.path === 'string') return { path: o.path };
+      if (Array.isArray(o?.history) && typeof o.index === 'number') { const p = o.history[o.index]; return { path: typeof p === 'string' ? p : '' }; }
+      return null;
+    };
+    const list = saved.tabs.map(read);
+    if (list.some((t) => !t)) return;
+    // One tab per note.
+    const seen = new Set<string>();
+    const active = list[Math.min(Math.max(0, saved.active | 0), list.length - 1)];
+    tabs = (list as Tab[]).filter((t) => !t.path || (seen.has(t.path) ? false : (seen.add(t.path), true)));
+    activeTab = Math.max(0, tabs.findIndex((t) => t === active || (t.path && t.path === active?.path)));
   } catch { /* keep the default */ }
 }
 loadTabs(); // before anything renders (and so saves) the navbar
+/** Closed tabs, most recent last, for "Reopen closed tab". */
+const closedTabs: Tab[] = [];
+// Recently opened notes, newest first (the empty tab lists them).
+const RECENT_KEY = 'satr:recent';
+function recentNotes(): string[] {
+  try { const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); return Array.isArray(list) ? list.filter((p) => typeof p === 'string') : []; } catch { return []; }
+}
+function setRecent(list: string[]): void { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 12))); }
 function leaveCurrent(): void {
   closePopover();
   editor.closeFind();
@@ -436,6 +464,12 @@ function leaveCurrent(): void {
   rememberView();
 }
 function showFile(path: string, content: string, after?: () => void): void {
+  document.body.classList.remove('is-empty-tab');
+  // Another note never opens the keyboard or shows the caret: it comes back
+  // at its remembered place, unfocused, until you tap into it.
+  editor.view.contentDOM.blur();
+  curTab().path = path;
+  setRecent([path, ...recentNotes().filter((p) => p !== path)]);
   filePath = path;
   fileBase = stem(path);
   localStorage.setItem(CURRENT_KEY, path);
@@ -452,37 +486,28 @@ function showFile(path: string, content: string, after?: () => void): void {
   leftSidebar.reveal(path);
   void loadSiblings();
 }
+/** Open a note: its tab if it has one, else a new tab after this one (or
+ *  this tab, when it's empty). */
 async function openFile(path: string, after?: () => void): Promise<void> {
   if (path === filePath) { after?.(); return; }
+  const existing = tabs.findIndex((t) => t.path === path);
+  if (existing >= 0) { await switchTab(existing, after); return; }
   const text = await backend.read(path);
   if (text === null) { leftSidebar.hint('That note no longer exists.', true); void leftSidebar.refresh(); return; }
   leaveCurrent();
-  curTab().history.splice(curTab().index + 1, Infinity, path);
-  curTab().index = curTab().history.length - 1;
+  if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   showFile(path, text, after);
 }
-async function goHistory(step: number): Promise<void> {
-  let index = curTab().index + step;
-  // Skip notes that no longer exist.
-  while (index >= 0 && index < curTab().history.length) {
-    const text = curTab().history[index] === filePath ? '' : await backend.read(curTab().history[index]);
-    if (text !== null) {
-      if (curTab().history[index] === filePath) break;
-      leaveCurrent();
-      curTab().index = index;
-      showFile(curTab().history[index], text);
-      return;
-    }
-    curTab().history.splice(index, 1);
-    if (index < curTab().index) curTab().index -= 1;
-    if (step < 0) index -= 1;
-  }
-  renderNavButtons();
+/** The bottom bar's arrows: the previous / next tab. */
+async function stepTab(step: number): Promise<void> {
+  await switchTab(activeTab + step);
 }
 /** A file or folder moved (renamed): the open note, history and view memory follow. */
 function pathMoved(from: string, to: string): void {
+  linkIndexAt = 0; // the notes changed: rebuild the link index next time
   const move = (p: string): string => (within(p, from) ? to + p.slice(from.length) : p);
-  for (const tab of tabs) tab.history = tab.history.map(move);
+  for (const tab of [...tabs, ...closedTabs]) tab.path = tab.path && move(tab.path);
+  setRecent(recentNotes().map(move));
   saveTabs();
   const keys: string[] = [];
   for (let i = 0; i < localStorage.length; i += 1) {
@@ -506,23 +531,25 @@ function pathMoved(from: string, to: string): void {
 }
 /** A file or folder was deleted: forget it; if the open note went, open another. */
 function pathDeleted(path: string): void {
-  for (const tab of tabs) {
-    for (let i = tab.history.length - 1; i >= 0; i -= 1) {
-      if (!within(tab.history[i], path)) continue;
-      tab.history.splice(i, 1);
-      if (i <= tab.index) tab.index -= 1;
-    }
-    tab.index = Math.max(tab.index, tab.history.length ? 0 : -1);
-  }
-  // Other tabs left with nothing close.
+  linkIndexAt = 0; // the notes changed: rebuild the link index next time
+  setRecent(recentNotes().filter((p) => !within(p, path)));
+  for (let i = closedTabs.length - 1; i >= 0; i -= 1) if (within(closedTabs[i].path, path)) closedTabs.splice(i, 1);
+  // Tabs of deleted notes close; the open one hands over to its neighbour.
   const active = curTab();
-  tabs = tabs.filter((t) => t === active || t.history.length);
-  activeTab = tabs.indexOf(active);
-  if (within(filePath, path)) {
+  const activeGone = Boolean(active.path) && within(active.path, path);
+  const kept = tabs.filter((t) => !t.path || !within(t.path, path));
+  if (activeGone) {
     window.clearTimeout(saveTimer);
     saveTimer = undefined;
     filePath = '';
-    void openFallback();
+    const at = tabs.indexOf(active);
+    const next = tabs.slice(at + 1).find((t) => kept.includes(t)) ?? tabs.slice(0, at).reverse().find((t) => kept.includes(t));
+    tabs = kept.length ? kept : [{ path: '' }];
+    activeTab = next ? tabs.indexOf(next) : 0;
+    void openTab(curTab());
+  } else {
+    tabs = kept;
+    activeTab = tabs.indexOf(active);
   }
   renderNavButtons();
 }
@@ -541,18 +568,15 @@ async function firstNote(): Promise<{ path: string; text: string }> {
 async function openFallback(): Promise<void> {
   const { path, text } = await firstNote();
   filePath = '';
-  curTab().history.splice(curTab().index + 1, Infinity, path);
-  curTab().index = curTab().history.length - 1;
   showFile(path, text);
 }
-async function newFile(dir = scopeRoot(currentScope()), inNewTab = false): Promise<void> {
+async function newFile(dir = scopeRoot(currentScope())): Promise<void> {
+  linkIndexAt = 0; // the notes changed: rebuild the link index next time
   const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
   try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
   leaveCurrent();
-  if (inNewTab) { tabs.splice(activeTab + 1, 0, { history: [], index: -1 }); activeTab += 1; }
+  if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   localStorage.removeItem(viewKey(path));
-  curTab().history.splice(curTab().index + 1, Infinity, path);
-  curTab().index = curTab().history.length - 1;
   showFile(path, '');
   setMode('edit');
   toggleFiles(false);
@@ -560,26 +584,36 @@ async function newFile(dir = scopeRoot(currentScope()), inNewTab = false): Promi
   editor.focusTitle();
 }
 
-async function openInNewTab(path: string): Promise<void> {
-  const text = await backend.read(path);
-  if (text === null) { leftSidebar.hint('That note no longer exists.', true); return; }
-  leaveCurrent();
-  tabs.splice(activeTab + 1, 0, { history: [path], index: 0 });
-  activeTab += 1;
-  showFile(path, text);
+/** Show a tab's note, or the empty-tab page. A note that's gone closes
+ *  its tab. */
+async function openTab(tab: Tab, after?: () => void): Promise<void> {
+  if (!tab.path) { showEmptyTab(); return; }
+  const text = await backend.read(tab.path);
+  if (text !== null) { showFile(tab.path, text, after); return; }
+  if (tabs.length > 1) {
+    const at = tabs.indexOf(tab);
+    tabs.splice(at, 1);
+    activeTab = Math.min(at, tabs.length - 1);
+  } else tab.path = '';
+  await openTab(curTab(), after);
 }
-async function switchTab(index: number): Promise<void> {
-  if (index === activeTab || !tabs[index]) return;
+async function switchTab(index: number, after?: () => void): Promise<void> {
+  if (!tabs[index]) return;
+  if (index === activeTab) { after?.(); return; }
   leaveCurrent();
   activeTab = index;
-  const tab = curTab();
-  const path = tab.history[tab.index];
-  const text = path ? await backend.read(path) : null;
-  if (path && text !== null) showFile(path, text);
-  else { filePath = ''; await openFallback(); }
+  await openTab(curTab(), after);
+}
+function newTab(): void {
+  leaveCurrent();
+  const empty = tabs.findIndex((t) => !t.path);
+  if (empty >= 0) activeTab = empty;
+  else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
+  showEmptyTab();
 }
 function closeTab(index: number): void {
   if (tabs.length < 2 || !tabs[index]) return;
+  if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
   if (index !== activeTab) {
     tabs.splice(index, 1);
     if (index < activeTab) activeTab -= 1;
@@ -589,29 +623,141 @@ function closeTab(index: number): void {
   leaveCurrent();
   tabs.splice(index, 1);
   activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
-  const tab = curTab();
-  void backend.read(tab.history[tab.index]).then((text) => {
-    if (text !== null) showFile(tab.history[tab.index], text);
-    else { filePath = ''; void openFallback(); }
-  });
+  void openTab(curTab());
 }
+function reopenClosedTab(): void {
+  const tab = closedTabs.pop();
+  if (tab) void openFile(tab.path);
+}
+/** Drag to reorder in the switcher; the open tab stays the open tab. */
+function moveTab(from: number, to: number): void {
+  if (!tabs[from] || to < 0 || to >= tabs.length || from === to) return;
+  const active = curTab();
+  const [tab] = tabs.splice(from, 1);
+  tabs.splice(to, 0, tab);
+  activeTab = tabs.indexOf(active);
+  renderNavButtons();
+}
+
+// Wiki links: [[Note]] resolves by name within the space (a note in the same
+// folder first, then the shortest path); [[Folder/Note]] by path; [[#Heading]]
+// within the note. The index is rebuilt when notes come and go.
+let linkIndex: string[] = [];
+let linkIndexAt = 0;
+async function refreshLinkIndex(): Promise<void> {
+  linkIndexAt = Date.now();
+  linkIndex = await walkNotes(scopeRoot(currentScope())).catch(() => []);
+  markBrokenLinks();
+}
+const noteNames = (): string[] => [...new Set(linkIndex.map((p) => stem(p)))].sort((a, b) => a.localeCompare(b));
+function resolveLink(target: string): string | null {
+  if (!target) return filePath || null;
+  const want = target.replace(/\.(md|markdown)$/i, '').toLocaleLowerCase();
+  const candidates = linkIndex.filter((p) => {
+    const bare = p.replace(/\.(md|markdown|txt)$/i, '').toLocaleLowerCase();
+    return want.includes('/') ? bare === want || bare.endsWith(`/${want}`) : stem(p).toLocaleLowerCase() === want;
+  });
+  if (!candidates.length) return null;
+  const here = dirname(filePath);
+  return candidates.find((p) => dirname(p) === here) ?? candidates.sort((a, b) => a.length - b.length)[0];
+}
+function markBrokenLinks(): void {
+  if (Date.now() - linkIndexAt > 30000) { void refreshLinkIndex(); return; }
+  for (const a of preview.querySelectorAll<HTMLElement>('a.internal-link')) {
+    a.classList.toggle('is-unresolved', resolveLink(a.dataset.href ?? '') === null);
+  }
+}
+function jumpToHeading(heading: string): void {
+  const want = heading.trim().toLocaleLowerCase();
+  const found = editor.headings().find((h) => h.text.toLocaleLowerCase() === want);
+  if (!found) return;
+  ownScroll(400);
+  editor.revealLine(found.line, noteTopSpacing());
+  if (mode === 'preview') {
+    const section = preview.querySelector<HTMLElement>(`:scope > .md-section[data-line="${found.line}"]`);
+    if (section) previewPane.scrollTop += section.getBoundingClientRect().top - previewPane.getBoundingClientRect().top - noteTopSpacing();
+  }
+}
+function openLink(target: string, heading = ''): void {
+  const path = resolveLink(target);
+  if (!path) { leftSidebar.hint(`No note called "${target}" in this space.`, true); return; }
+  if (path === filePath) { if (heading) jumpToHeading(heading); return; }
+  void openFile(path, heading ? () => jumpToHeading(heading) : undefined);
+}
+function openImage(src: string): void {
+  if (/^https?:\/\//i.test(src)) { window.open(src, '_blank', 'noopener'); return; }
+  leftSidebar.hint('Images in your folders open in the Android app.', false);
+}
+
+// The empty tab: Obsidian's "No file is open" page, with its actions and
+// the recent notes.
+const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
+function showEmptyTab(): void {
+  closePopover();
+  editor.closeFind();
+  filePath = '';
+  fileBase = '';
+  restoringView = true;
+  editor.setValue('');
+  editor.setTitle('');
+  restoringView = false;
+  window.clearTimeout(saveTimer);
+  saveTimer = undefined;
+  editor.view.contentDOM.blur();
+  document.body.classList.add('is-empty-tab');
+  void renderEmptyTab();
+  renderNavButtons();
+  sidebar.refresh();
+}
+async function renderEmptyTab(): Promise<void> {
+  const recent: string[] = [];
+  for (const path of recentNotes()) {
+    if (recent.length >= 8) break;
+    if (await backend.stat(path)) recent.push(path);
+  }
+  emptyTab.innerHTML = `
+    <div class="empty-state-container">
+      <div class="empty-state-title">No file is open</div>
+      <div class="empty-state-action-list">
+        <button type="button" class="empty-state-action" data-act="new">Create new note</button>
+        <button type="button" class="empty-state-action" data-act="files">Go to file</button>
+        ${tabs.length > 1 ? '<button type="button" class="empty-state-action" data-act="close">Close</button>' : ''}
+      </div>
+      ${recent.length ? `<div class="empty-state-recent"><div class="empty-state-recent-title">Recent notes</div>${recent.map((p) =>
+        `<button type="button" class="empty-state-recent-item" data-path="${escapeText(p)}"><span class="empty-state-recent-name" dir="auto">${escapeText(stem(p))}</span><span class="empty-state-recent-dir" dir="auto">${escapeText(dirname(p))}</span></button>`).join('')}</div>` : ''}
+    </div>`;
+}
+emptyTab.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const recent = target.closest<HTMLElement>('[data-path]');
+  if (recent) { void openFile(recent.dataset.path!); return; }
+  const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
+  if (act === 'new') void newFile();
+  else if (act === 'files') toggleFiles(true);
+  else if (act === 'close') closeTab(activeTab);
+});
+
 function showTabs(): void {
   leaveCurrent(); // the previews read the saved text
   openTabSwitcher({
-    tabs: () => tabs.map((t, i) => ({ title: stem(t.history[t.index] ?? ''), active: i === activeTab })),
+    tabs: () => tabs.map((t, i) => ({ title: t.path ? stem(t.path) : 'New tab', active: i === activeTab })),
     preview: async (i) => {
-      const path = tabs[i].history[tabs[i].index];
-      const text = i === activeTab ? editor.getValue() : (path ? await backend.read(path) : '') ?? '';
-      return `<div class="inline-title" dir="auto">${escapeText(stem(path ?? ''))}</div>${renderMarkdown(text.slice(0, 1500))}`;
+      const path = tabs[i].path;
+      if (!path) return '';
+      const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
+      return `<div class="inline-title" dir="auto">${escapeText(stem(path))}</div>${renderMarkdown(text.slice(0, 1500))}`;
     },
     select: (i) => void switchTab(i),
     close: closeTab,
-    newTab: () => void newFile(scopeRoot(currentScope()), true),
-    closeOthers: () => { tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+    newTab,
+    canReopen: () => closedTabs.length > 0,
+    reopen: reopenClosedTab,
+    closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path)); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+    move: moveTab,
   });
 }
 
-// Bottom bar (no keyboard): back, forward, new note, and fold / unfold all
+// Bottom bar (no keyboard): previous / next tab, new note, tabs, find, and fold / unfold all
 // headings. Obsidian's floating navbar: a 52px pill, at most 316px wide,
 // max(safe area, 12px) from the bottom; hidden while typing and while
 // scrolling down, like the header buttons.
@@ -628,14 +774,14 @@ function renderFoldButton(): void {
   navFold.setAttribute('aria-label', anyFolded ? 'Expand all headings' : 'Collapse all headings');
 }
 function renderNavButtons(): void {
-  navBack.disabled = curTab().index <= 0;
-  navForward.disabled = curTab().index >= curTab().history.length - 1;
+  navBack.disabled = activeTab <= 0;
+  navForward.disabled = activeTab >= tabs.length - 1;
   navTabsCount.textContent = String(tabs.length);
   saveTabs();
   renderFoldButton();
 }
-navBack.addEventListener('click', () => void goHistory(-1));
-navForward.addEventListener('click', () => void goHistory(1));
+navBack.addEventListener('click', () => void stepTab(-1));
+navForward.addEventListener('click', () => void stepTab(1));
 document.querySelector('#nav-new')!.addEventListener('click', () => void newFile());
 navFold.addEventListener('click', () => {
   ownScroll();
@@ -645,36 +791,12 @@ navFold.addEventListener('click', () => {
 // The bar never takes focus from the note (no keyboard flicker).
 document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
 renderNavButtons();
-// Find: a tap opens "Find in note"; a long press offers find and replace too
-// (Obsidian's long-press menu on a navbar button; the small chevron shows it
-// has one).
-const navFind = document.querySelector<HTMLButtonElement>('#nav-find')!;
-navFind.insertAdjacentHTML('beforeend', '<svg class="mobile-navbar-action-flair" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>');
+// Find: one bar for find and replace (its chevron drops the replace row).
 function find(replace = false): void {
   if (mode !== 'edit') setMode('edit');
   editor.openFind(replace);
 }
-let findPressTimer: number | undefined;
-let findPressed = false;
-function findMenu(): void {
-  findPressed = true;
-  navigator.vibrate?.(10);
-  openMenu([
-    { title: 'Find in note', icon: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>', action: () => find(false) },
-    { title: 'Find and replace', icon: '<svg viewBox="0 0 24 24"><path d="M14 4a2 2 0 0 1 2-2M16 10a2 2 0 0 1-2-2M20 2a2 2 0 0 1 2 2M22 8a2 2 0 0 1-2 2M3 7l3 3 3-3M6 10V5a3 3 0 0 1 3-3h1"/><rect x="2" y="14" width="8" height="8" rx="2"/></svg>', action: () => find(true) },
-  ]);
-}
-navFind.addEventListener('touchstart', () => {
-  findPressed = false;
-  window.clearTimeout(findPressTimer);
-  findPressTimer = window.setTimeout(findMenu, 500);
-}, { passive: true });
-for (const type of ['touchend', 'touchmove', 'touchcancel']) navFind.addEventListener(type, () => window.clearTimeout(findPressTimer), { passive: true });
-navFind.addEventListener('contextmenu', (event) => { event.preventDefault(); if (!findPressed) findMenu(); });
-navFind.addEventListener('click', () => {
-  if (findPressed) { findPressed = false; return; }
-  find(false);
-});
+document.querySelector('#nav-find')!.addEventListener('click', () => find(false));
 
 // ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
 const rightPanel = document.querySelector<HTMLElement>('#right-panel')!;
@@ -707,6 +829,7 @@ const sidebar = createRightSidebar(rightPanel, {
   notes: allNotes,
   currentPath: () => filePath,
   currentText: () => editor.getValue(),
+  scopeName: () => scopeName(currentScope()),
   onResult: (path, from, to) => {
     toggleOutline(false);
     void openFile(path, () => {
@@ -718,6 +841,15 @@ const sidebar = createRightSidebar(rightPanel, {
 });
 let outlineTimer: number | undefined;
 function outlineOpen(): boolean { return document.body.classList.contains('outline-open'); }
+// The right drawer has no button on screen (as in Obsidian): swipe in from
+// the right edge, or Ctrl/Cmd+Shift+F to search.
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    toggleOutline(true);
+    sidebar.focusSearch();
+  }
+});
 editor.view.scrollDOM.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });
 previewPane.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });
 const refreshOutlineSoon = (): void => {
@@ -727,7 +859,6 @@ const refreshOutlineSoon = (): void => {
 };
 editor.view.dom.addEventListener('input', refreshOutlineSoon);
 
-document.querySelector('#outline-toggle')!.addEventListener('click', () => toggleOutline());
 
 // Theme switch in the drawer header: Auto (follows the system) → Light → Dark.
 const themeButton = document.createElement('button');
@@ -749,12 +880,37 @@ renderThemeButton(themeChoice());
 onThemeChange(renderThemeButton);
 themeButton.addEventListener('click', () => cycleTheme());
 
+// Settings (src/settings.ts): the gear next to the theme switch.
+function applySettings(settings: Settings): void {
+  const root = document.documentElement.style;
+  root.setProperty('--note-font-size', `${settings.fontSize}px`);
+  root.setProperty('--note-line-height', String(settings.lineHeight));
+  editor.setLineNumbers(settings.lineNumbers);
+  document.body.classList.toggle('no-line-numbers', !settings.lineNumbers);
+  editor.remeasure();
+  setHighlightAll(settings.highlightAll);
+  toolbar.querySelectorAll<HTMLElement>('button[data-command]').forEach((b) => { b.hidden = settings.hiddenTools.includes(b.dataset.command!); });
+  updateToolbarFades();
+}
+const settingsButton = document.createElement('button');
+settingsButton.type = 'button';
+settingsButton.className = 'clickable-icon workspace-drawer-header-icon';
+settingsButton.id = 'settings-button';
+settingsButton.setAttribute('aria-label', 'Settings');
+settingsButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>'; // lucide settings
+settingsButton.addEventListener('click', () => {
+  toggleFiles(false);
+  openSettings({
+    apply: applySettings,
+    tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
+  });
+});
+
 // Left sidebar: spaces and the file explorer (src/leftSidebar.ts).
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
   currentPath: () => filePath,
   open: (path) => { toggleFiles(false); void openFile(path); },
   createNote: (dir) => void newFile(dir),
-  openInNewTab: (path) => { toggleFiles(false); void openInNewTab(path); },
   renamed: pathMoved,
   deleted: pathDeleted,
   scopeChanged: () => {
@@ -763,10 +919,46 @@ const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file
     sidebar.refresh();
   },
   closeDrawer: () => toggleFiles(false),
-  headerIcons: [themeButton],
+  headerIcons: [themeButton, settingsButton],
 });
+// The Android back button, in Obsidian's order: close whatever is on top
+// (menu, popover, tab switcher, settings, the find bar), then the left
+// drawer, then the right one. With nothing left to close, the first press
+// shows "Press back again to exit." for five seconds and a second press
+// within them leaves the app (minimised, as Obsidian does, so it comes back
+// as it was). The web build hears the same on a "satr:back" event.
+let exitArmedAt = 0;
+let exitNotice: NoticeHandle | null = null;
+function handleBack(): void {
+  if (isMenuOpen()) closeMenu();
+  else if (isPopoverOpen()) closePopover();
+  else if (isTabSwitcherOpen()) closeTabSwitcher();
+  else if (isSettingsOpen()) closeSettings();
+  else if (editor.findOpen) editor.closeFind();
+  else if (document.body.classList.contains('files-open')) toggleFiles(false);
+  else if (document.body.classList.contains('outline-open')) toggleOutline(false);
+  else if (Date.now() - exitArmedAt < 5000) {
+    exitNotice?.hide();
+    exitNotice = null;
+    exitArmedAt = 0;
+    flush();
+    if (Capacitor.isNativePlatform()) void CapacitorApp.minimizeApp();
+  } else {
+    exitArmedAt = Date.now();
+    exitNotice = showNotice('Press back again to exit.', 5000);
+    return;
+  }
+  // Anything else closed: the next press starts over.
+  exitArmedAt = 0;
+  exitNotice?.hide();
+  exitNotice = null;
+}
+if (Capacitor.isNativePlatform()) void CapacitorApp.addListener('backButton', handleBack);
+document.addEventListener('satr:back', handleBack);
+
 async function boot(): Promise<void> {
-  let path = curTab().history[curTab().index] ?? filePath;
+  if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
+  let path = curTab().path || filePath;
   let text = path ? await backend.read(path) : null;
   if (text === null) {
     ({ path, text } = await firstNote());
@@ -778,12 +970,9 @@ async function boot(): Promise<void> {
     }
   }
   filePath = '';
-  if (curTab().history[curTab().index] !== path) {
-    curTab().history.splice(curTab().index + 1, Infinity, path);
-    curTab().index = curTab().history.length - 1;
-  }
   showFile(path, text);
   void leftSidebar.refresh();
+  void refreshLinkIndex();
 }
 
 // Preview links that stay inside the note: footnote references and back
@@ -797,6 +986,10 @@ function flash(el: HTMLElement): void {
 }
 preview.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  const wiki = target.closest<HTMLElement>('a.internal-link');
+  if (wiki) { event.preventDefault(); openLink(wiki.dataset.href ?? '', wiki.dataset.heading ?? ''); return; }
+  const image = target.closest<HTMLElement>('a.image-link');
+  if (image) { event.preventDefault(); openImage(image.dataset.src ?? ''); return; }
   const copy = target.closest<HTMLButtonElement>('.copy-code-button');
   if (copy) {
     event.preventDefault();
@@ -892,6 +1085,7 @@ document.addEventListener('focusout', () => window.setTimeout(layoutToolbar, 50)
 toolbar.addEventListener('pointerdown', (event) => event.preventDefault());
 toolbar.addEventListener('mousedown', (event) => event.preventDefault());
 toolbar.addEventListener('click', (event) => {
+  if ((event.target as HTMLElement).closest('[data-act="hide-keyboard"]')) { editor.view.contentDOM.blur(); return; }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-command]');
   if (!button) return;
   editor.run(button.dataset.command!);
@@ -967,4 +1161,5 @@ const drawers = initDrawers({
     else window.requestAnimationFrame(() => leftSidebar.scrollToActive());
   },
 });
+applySettings(loadSettings());
 void boot();

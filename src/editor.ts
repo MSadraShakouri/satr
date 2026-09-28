@@ -4,9 +4,10 @@ import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/lang
 import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
-import { EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type ViewUpdate } from '@codemirror/view';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
 import { deleteDollarPair, inCode, inMath, mathSource } from './mathSource';
 import { tightSelection } from './selection';
@@ -15,8 +16,8 @@ import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFold
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 
 const rtlLineDirection = EditorView.theme({
-  '&': { height: '100%', fontSize: '16px' },
-  '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: '1.85' },
+  '&': { height: '100%', fontSize: 'var(--note-font-size)' },
+  '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: 'var(--note-line-height)' },
   '.cm-content': { padding: 'var(--view-top-spacing-markdown, 5.5rem) max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
@@ -406,6 +407,11 @@ const pairs = EditorState.languageData.of(() => [{
 // A finger is on the note text (see scrollMargins and revealCaret below).
 let touching = false;
 
+const lineNumberSlot = new Compartment();
+// Undo history, reset whenever another note is loaded: undoing right after
+// opening a note must never bring back the previous note's text.
+const historySlot = new Compartment();
+
 export class SatrEditor {
   readonly view: EditorView;
   constructor(parent: HTMLElement, onChange: () => void, options?: {
@@ -417,12 +423,17 @@ export class SatrEditor {
     obscuredBottom?: () => number;
     /** A heading was folded or unfolded. */
     onFold?: () => void;
+    /** Wiki links: note names for the [[ popup, and opening a link. */
+    linkNames?: () => string[];
+    openLink?: (target: string, heading: string) => void;
   }) {
+    if (options?.linkNames) wikiRuntime.names = options.linkNames;
+    if (options?.openLink) wikiRuntime.open = options.openLink;
     initialTitle = options?.title ?? 'untitled';
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumbers({ formatNumber: (n) => String(n) }), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, history(), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, historySlot.of(history()), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -450,6 +461,7 @@ export class SatrEditor {
       // hidden. The caret is brought up gently afterwards instead (below).
       EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
       headingFolding,
+      wikiLinks,
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ dir: 'auto' }),
@@ -549,7 +561,17 @@ export class SatrEditor {
     const selection = window.getSelection();
     selection?.selectAllChildren(el);
   }
-  setValue(value: string): void { this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value } }); }
+  /** Settings: line numbers on or off. */
+  setLineNumbers(on: boolean): void {
+    this.view.dispatch({ effects: lineNumberSlot.reconfigure(on ? lineNumbers({ formatNumber: (n) => String(n) }) : []) });
+  }
+  /** Settings: the note's font size or line height changed (CSS variables). */
+  remeasure(): void { this.view.requestMeasure(); }
+  /** Load another note's text, with a fresh undo history. */
+  setValue(value: string): void {
+    this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value }, effects: historySlot.reconfigure([]) });
+    this.view.dispatch({ effects: historySlot.reconfigure(history()) });
+  }
   focus(): void { this.view.focus(); }
   /** Caret / selection as [anchor, head], for remembering between sessions. */
   getSelection(): [number, number] {

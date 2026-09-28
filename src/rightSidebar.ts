@@ -1,19 +1,22 @@
-// Right sidebar: outline and search, laid out exactly like the left one
-// (src/leftSidebar.ts) so both drawers read as one design:
-// - Header: the view's name in the drawer-title style with a chevron (tap:
-//   choose the view, like the space switcher), the note's name under it,
-//   and a 44px icon on the side that jumps to the other view.
-// - A pill search field, then the list with the file tree's spacing and
-//   rows (16px, 8px 8px 8px 24px, indentation guides, collapsible branches).
-// - The same floating row of buttons at the bottom (collapse / expand all).
-// Outline: the note's headings; the filter keeps matches and their parents;
-// the heading you are reading is highlighted; tap to go there.
-// Search: the note or the whole space, plain text ignoring case with * and
-// ? wildcards (src/glob.ts); results grouped by note with the match in a
-// line of context; tap to open the note there.
-import { globRegExp } from './glob';
-import { openMenu } from './menu';
-import type { Heading } from './outline';
+// Right sidebar: outline and search in one view, laid out like the left
+// sidebar (src/leftSidebar.ts) so both drawers read as one design:
+// - Header: "Outline" (this note) or "Search" (all notes) in the drawer-title
+//   style, the note's or space's name under it.
+// - A pill search field and, under it, a two-option pill (This note /
+//   All notes), switched by tapping; no swipe, which would fight the
+//   drawer's own gesture.
+// - This note: an empty field shows the outline (the heading you're reading
+//   highlighted, tap to go there). Typing keeps the headings that match or
+//   whose section has matches, with each match listed under its heading.
+// - All notes: results grouped by note, each note's matches under its
+//   headings the same way.
+// - Every match shows its line number and up to seven lines of context.
+// - The file tree's rows and spacing (16px, 8px 8px 8px 24px, guides,
+//   collapsible branches) and the same floating button at the bottom
+//   (collapse / expand all).
+// Queries are regular expressions, ignoring case (src/searchRegex.ts).
+import { headingsOfText, type Heading } from './outline';
+import { isInvalidSearch, searchRegExp } from './searchRegex';
 import { stem } from './vault';
 
 export interface SidebarDeps {
@@ -25,168 +28,180 @@ export interface SidebarDeps {
   notes(): Promise<{ path: string; text: string }[]>;
   currentPath(): string;
   currentText(): string;
+  /** Name of the space (or "All files"), for the header. */
+  scopeName(): string;
   onResult(path: string, from: number, to: number): void;
 }
-type View = 'outline' | 'search';
+export type SearchScope = 'note' | 'all';
 
 const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 const icon = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 const ICONS = {
-  outline: icon('<path d="M21 6H8M21 12H11M21 18H11M3 6h1M6 12h1M6 18h1"/>'),
   search: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
   chevron: icon('<path d="m6 9 6 6 6-6"/>'),
   collapseAll: icon('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
   expandAll: icon('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'),
 };
-const TITLES: Record<View, string> = { outline: 'Outline', search: 'Search' };
+const SCOPE_KEY = 'satr:search-scope';
 const MAX_PER_NOTE = 100;
 const MAX_TOTAL = 1000;
+
+interface Hit { from: number; to: number }
 
 export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   root.innerHTML = `
     <div class="workspace-drawer-inner">
       <div class="workspace-drawer-header">
         <div class="workspace-drawer-header-left">
-          <button type="button" class="workspace-drawer-vault-switcher" aria-haspopup="menu">
-            <span class="workspace-drawer-vault-name drawer-view-name"></span>
-            <span class="workspace-drawer-vault-switcher-icon">${ICONS.chevron}</span>
-          </button>
+          <div class="workspace-drawer-vault-switcher"><span class="workspace-drawer-vault-name drawer-view-name"></span></div>
           <div class="workspace-drawer-header-info drawer-note-name" dir="auto"></div>
         </div>
-        <div class="workspace-drawer-header-icons">
-          <button type="button" class="clickable-icon workspace-drawer-header-icon drawer-other-view"></button>
-        </div>
       </div>
-      <section class="drawer-view is-active" data-view="outline">
-        <div class="search-input-container">${ICONS.search}<input type="search" class="outline-filter" dir="auto" placeholder="Filter headings" autocomplete="off" autocorrect="off" spellcheck="false"></div>
-        <div class="nav-files-container outline-tree" role="tree"></div>
-      </section>
-      <section class="drawer-view" data-view="search">
-        <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" spellcheck="false"></div>
-        <div class="search-options">
-          <div class="search-scope" role="radiogroup" aria-label="Search in">
-            <button type="button" class="search-chip" data-scope="note" role="radio" aria-checked="false">This note</button>
-            <button type="button" class="search-chip" data-scope="all" role="radio" aria-checked="true">This space</button>
-          </div>
-          <div class="search-summary"></div>
-        </div>
-        <div class="nav-files-container search-results"></div>
-      </section>
+      <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="segmented-control search-scope" role="radiogroup" aria-label="Search in">
+        <div class="segmented-control-thumb"></div>
+        <button type="button" class="segmented-control-option" data-scope="note" role="radio">This note</button>
+        <button type="button" class="segmented-control-option" data-scope="all" role="radio">All notes</button>
+      </div>
+      <div class="search-summary"></div>
+      <div class="nav-files-container search-results outline-tree" role="tree"></div>
       <div class="nav-buttons-container">
         <button type="button" class="clickable-icon nav-action-button" data-act="collapse" aria-label="Collapse all">${ICONS.collapseAll}</button>
       </div>
     </div>`;
-  const outlineTree = root.querySelector<HTMLElement>('.outline-tree')!;
-  const filter = root.querySelector<HTMLInputElement>('.outline-filter')!;
-  const searchInput = root.querySelector<HTMLInputElement>('.vault-search')!;
+  const input = root.querySelector<HTMLInputElement>('.vault-search')!;
   const summary = root.querySelector<HTMLElement>('.search-summary')!;
-  const results = root.querySelector<HTMLElement>('.search-results')!;
+  const list = root.querySelector<HTMLElement>('.search-results')!;
   const viewName = root.querySelector<HTMLElement>('.drawer-view-name')!;
   const noteName = root.querySelector<HTMLElement>('.drawer-note-name')!;
-  const otherView = root.querySelector<HTMLButtonElement>('.drawer-other-view')!;
+  const segmented = root.querySelector<HTMLElement>('.search-scope')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
-  let scope: 'all' | 'note' = 'all';
-  let tab: View = 'outline';
-  const collapsed = new Set<number>(); // outline branches closed by the user (by line)
-  const collapsedNotes = new Set<string>();
+  let scope: SearchScope = localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'note';
+  const collapsed = new Set<string>(); // closed branches: "h:<line>" or "n:<path>"
+  let headings: Heading[] = [];
 
   function renderChrome(): void {
-    viewName.textContent = TITLES[tab];
-    noteName.textContent = stem(deps.currentPath());
-    const other: View = tab === 'outline' ? 'search' : 'outline';
-    otherView.innerHTML = ICONS[other];
-    otherView.dataset.tab = other;
-    otherView.setAttribute('aria-label', TITLES[other]);
-    const any = tab === 'outline' ? collapsed.size > 0 : collapsedNotes.size > 0;
+    viewName.textContent = scope === 'note' ? 'Outline' : 'Search';
+    noteName.textContent = scope === 'note' ? stem(deps.currentPath()) : deps.scopeName();
+    segmented.dataset.value = scope;
+    segmented.style.setProperty('--index', scope === 'all' ? '1' : '0');
+    segmented.querySelectorAll<HTMLElement>('[data-scope]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.scope === scope)));
+    input.placeholder = scope === 'note' ? 'Search this note' : 'Search all notes';
+    const any = [...list.querySelectorAll<HTMLElement>('.tree-item[data-key]')].some((el) => collapsed.has(el.dataset.key!));
     collapseButton.innerHTML = any ? ICONS.expandAll : ICONS.collapseAll;
     collapseButton.setAttribute('aria-label', any ? 'Expand all' : 'Collapse all');
+    collapseButton.hidden = !list.querySelector('.tree-item-children, .search-result-file-matches');
   }
 
-  // ---- Outline ----
-  let headings: Heading[] = [];
-  function renderOutline(): void {
-    headings = deps.headings();
-    const query = filter.value.trim().toLocaleLowerCase();
-    // Keep matching headings plus their ancestors.
-    const keep = new Array<boolean>(headings.length).fill(!query);
-    if (query) {
-      const stack: number[] = [];
-      headings.forEach((h, i) => {
-        while (stack.length && headings[stack[stack.length - 1]].level >= h.level) stack.pop();
-        if (h.text.toLocaleLowerCase().includes(query)) { keep[i] = true; for (const a of stack) keep[a] = true; }
-        stack.push(i);
-      });
-    }
-    renderChrome();
-    if (!headings.length) {
-      outlineTree.innerHTML = '<div class="pane-empty">No headings in this note</div>';
-      return;
-    }
-    let html = '';
-    const open: number[] = []; // levels of open .tree-item elements
-    headings.forEach((h, i) => {
-      if (!keep[i]) return;
-      while (open.length && open[open.length - 1] >= h.level) { html += '</div></div>'; open.pop(); }
-      const next = headings[i + 1];
-      const hasChildren = next !== undefined && next.level > h.level;
-      const isCollapsed = !query && collapsed.has(h.line);
-      html += `<div class="tree-item${isCollapsed ? ' is-collapsed' : ''}" data-line="${h.line}">`
-        + `<div class="tree-item-self is-clickable" data-line="${h.line}" dir="auto">`
-        + (hasChildren ? `<span class="tree-item-icon collapse-icon" data-toggle="${h.line}">${ICONS.chevron}</span>` : '')
-        + `<span class="tree-item-inner">${escapeHtml(h.text)}</span></div><div class="tree-item-children">`;
-      open.push(h.level);
-    });
-    while (open.pop() !== undefined) html += '</div></div>';
-    outlineTree.innerHTML = html || '<div class="pane-empty">No matching headings</div>';
-    markCurrent();
-  }
-  function markCurrent(): void {
-    if (tab !== 'outline' || !headings.length) return;
-    const line = deps.currentLine();
-    let current = -1;
-    for (const h of headings) { if (h.line <= line + 0.5) current = h.line; else break; }
-    for (const el of outlineTree.querySelectorAll<HTMLElement>('.tree-item-self')) {
-      el.classList.toggle('is-active', Number(el.dataset.line) === current);
-    }
-  }
-  filter.addEventListener('input', renderOutline);
-  outlineTree.addEventListener('click', (event) => {
-    const target = event.target as HTMLElement;
-    const toggle = target.closest<HTMLElement>('[data-toggle]');
-    if (toggle) {
-      const line = Number(toggle.dataset.toggle);
-      if (collapsed.has(line)) collapsed.delete(line); else collapsed.add(line);
-      toggle.closest('.tree-item')?.classList.toggle('is-collapsed', collapsed.has(line));
-      renderChrome();
-      return;
-    }
-    const item = target.closest<HTMLElement>('.tree-item-self');
-    if (item) deps.onHeading(Number(item.dataset.line));
-  });
-
-  // ---- Search ----
-  let searchTimer: number | undefined;
   function snippet(text: string, from: number, to: number): string {
     const lineStart = text.lastIndexOf('\n', from - 1) + 1;
     let lineEnd = text.indexOf('\n', to);
     if (lineEnd < 0) lineEnd = text.length;
-    const start = Math.max(lineStart, from - 40);
-    const end = Math.min(lineEnd, to + 80);
+    const start = Math.max(lineStart, from - 100);
+    const end = Math.min(lineEnd, to + 200);
     const cutStart = start > lineStart ? text.indexOf(' ', start) + 1 || start : start;
     return `${cutStart > lineStart ? '…' : ''}${escapeHtml(text.slice(cutStart, from).trimStart())}`
       + `<span class="search-result-file-matched-text">${escapeHtml(text.slice(from, to))}</span>`
       + `${escapeHtml(text.slice(to, end))}${end < lineEnd ? '…' : ''}`;
   }
-  let searchRun = 0;
-  async function runSearch(): Promise<void> {
-    window.clearTimeout(searchTimer);
-    const run = ++searchRun;
-    const re = globRegExp(searchInput.value);
-    if (!re) { summary.textContent = ''; results.innerHTML = ''; return; }
+  function findHits(re: RegExp, text: string, limit: number): Hit[] {
+    const hits: Hit[] = [];
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m && hits.length < limit; m = re.exec(text)) {
+      if (m[0].length === 0) { re.lastIndex += 1; continue; }
+      hits.push({ from: m.index, to: m.index + m[0].length });
+    }
+    return hits;
+  }
+  // 1-based line of each hit, counted in one pass over the text.
+  function lineNumbers(text: string, hits: Hit[]): number[] {
+    const out: number[] = [];
+    let line = 1;
+    let pos = 0;
+    for (const hit of hits) {
+      for (let i = text.indexOf('\n', pos); i >= 0 && i < hit.from; i = text.indexOf('\n', i + 1)) { line += 1; pos = i + 1; }
+      out.push(line);
+    }
+    return out;
+  }
+  const RTL_FIRST = /^[^A-Za-z\u00C0-\u024F\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]*[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+  function hitRows(path: string, text: string, hits: Hit[]): string {
+    if (!hits.length) return '';
+    const lines = lineNumbers(text, hits);
+    return `<div class="search-result-file-matches">${hits.map((h, i) => {
+      const lineStart = text.lastIndexOf('\n', h.from - 1) + 1;
+      const dir = RTL_FIRST.test(text.slice(lineStart, lineStart + 200)) ? 'rtl' : 'ltr';
+      return `<div class="search-result-file-match" data-path="${escapeHtml(path)}" data-from="${h.from}" data-to="${h.to}" dir="${dir}">`
+        + `<span class="search-result-line-number">${lines[i]}</span><span class="search-result-text">${snippet(text, h.from, h.to)}</span></div>`;
+    }).join('')}</div>`;
+  }
+
+  // ---- A note's headings as a tree, each hit under its section ----
+  // `prefix` keeps collapse keys apart between notes in the all-notes view.
+  function headingTree(path: string, text: string, headings: Heading[], re: RegExp | null, hits: Hit[], prefix: string): string {
+    // Each hit belongs to the section of the last heading before it.
+    const own: Hit[][] = headings.map(() => []);
+    const preface: Hit[] = [];
+    let h = -1;
+    for (const hit of hits) {
+      while (h + 1 < headings.length && headings[h + 1].from <= hit.from) h += 1;
+      (h < 0 ? preface : own[h]).push(hit);
+    }
+    // Keep matching headings, headings with matches, and their parents.
+    const keep = headings.map((heading, i) => !re || own[i].length > 0 || (re.lastIndex = 0, re.test(heading.text)));
+    if (re) {
+      const stack: number[] = [];
+      headings.forEach((heading, i) => {
+        while (stack.length && headings[stack[stack.length - 1]].level >= heading.level) stack.pop();
+        if (keep[i]) for (const a of stack) keep[a] = true;
+        stack.push(i);
+      });
+    }
+    let html = re ? hitRows(path, text, preface) : '';
+    const open: number[] = [];
+    headings.forEach((heading, i) => {
+      if (!keep[i]) return;
+      while (open.length && open[open.length - 1] >= heading.level) { html += '</div></div>'; open.pop(); }
+      let hasChildren = own[i].length > 0;
+      for (let j = i + 1; j < headings.length && headings[j].level > heading.level; j += 1) if (keep[j]) { hasChildren = true; break; }
+      const key = `${prefix}h:${heading.line}`;
+      let label = escapeHtml(heading.text);
+      if (re) label = label.replace(new RegExp(re.source, 'gi'), (m) => (m ? `<span class="search-result-file-matched-text">${m}</span>` : m));
+      html += `<div class="tree-item${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
+        + `<div class="tree-item-self is-clickable" data-path="${escapeHtml(path)}" data-line="${heading.line}" data-from="${heading.from}" dir="auto">`
+        + (hasChildren ? `<span class="tree-item-icon collapse-icon" data-toggle="${escapeHtml(key)}">${ICONS.chevron}</span>` : '')
+        + `<span class="tree-item-inner">${label}</span>`
+        + (own[i].length ? `<span class="tree-item-flair">${own[i].length}</span>` : '')
+        + `</div><div class="tree-item-children">${hitRows(path, text, own[i])}`;
+      open.push(heading.level);
+    });
+    while (open.pop() !== undefined) html += '</div></div>';
+    return html;
+  }
+
+  // ---- This note: the outline, filtered by the query ----
+  function renderNote(re: RegExp | null): void {
+    headings = deps.headings();
+    const hits = re ? findHits(re, deps.currentText(), MAX_TOTAL) : [];
+    let html = headingTree(deps.currentPath(), deps.currentText(), headings, re, hits, '');
+    if (!html) html = `<div class="pane-empty">${re ? 'No results' : 'No headings in this note'}</div>`;
+    list.innerHTML = html;
+    summary.textContent = re ? (hits.length ? `${hits.length}${hits.length >= MAX_TOTAL ? '+' : ''} result${hits.length === 1 ? '' : 's'}` : '') : '';
+    markCurrent();
+  }
+
+  // ---- All notes ----
+  let run = 0;
+  async function renderAll(re: RegExp | null): Promise<void> {
+    const mine = ++run;
+    if (!re) {
+      summary.textContent = '';
+      list.innerHTML = `<div class="pane-empty">Search every note in ${escapeHtml(deps.scopeName())}</div>`;
+      return;
+    }
     const current = deps.currentPath();
-    const notes = scope === 'all' ? await deps.notes() : [{ path: current, text: deps.currentText() }];
-    if (run !== searchRun) return; // a newer search started meanwhile
-    // The open note first, then by name.
+    const notes = await deps.notes();
+    if (mine !== run) return; // a newer search started meanwhile
     notes.sort((a, b) => (a.path === current ? -1 : b.path === current ? 1 : stem(a.path).localeCompare(stem(b.path))));
     let total = 0;
     let files = 0;
@@ -194,86 +209,95 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     let html = '';
     for (const note of notes) {
       if (total >= MAX_TOTAL) break;
-      const matches: string[] = [];
-      re.lastIndex = 0;
-      for (let m = re.exec(note.text); m; m = re.exec(note.text)) {
-        if (m[0].length === 0) { re.lastIndex += 1; continue; }
-        matches.push(`<div class="search-result-file-match" data-path="${escapeHtml(note.path)}" data-from="${m.index}" data-to="${m.index + m[0].length}" dir="auto">${snippet(note.text, m.index, m.index + m[0].length)}</div>`);
-        if (matches.length >= MAX_PER_NOTE || total + matches.length >= MAX_TOTAL) break;
-      }
-      if (!matches.length) continue;
-      if (matches.length >= MAX_PER_NOTE || total + matches.length >= MAX_TOTAL) capped = true;
+      const hits = findHits(re, note.text, Math.min(MAX_PER_NOTE, MAX_TOTAL - total));
+      if (!hits.length) continue;
+      if (hits.length >= MAX_PER_NOTE || total + hits.length >= MAX_TOTAL) capped = true;
       files += 1;
-      total += matches.length;
-      const isCollapsed = collapsedNotes.has(note.path);
-      html += `<div class="tree-item search-result${isCollapsed ? ' is-collapsed' : ''}">`
-        + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(note.path)}">`
+      total += hits.length;
+      const key = `n:${note.path}`;
+      html += `<div class="tree-item search-result${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
+        + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(note.path)}" data-toggle="${escapeHtml(key)}">`
         + `<span class="tree-item-icon collapse-icon">${ICONS.chevron}</span>`
-        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(note.path))}</span><span class="tree-item-flair">${matches.length}${matches.length >= MAX_PER_NOTE ? '+' : ''}</span></div>`
-        + `<div class="search-result-file-matches">${matches.join('')}</div></div>`;
+        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(note.path))}</span><span class="tree-item-flair">${hits.length}${hits.length >= MAX_PER_NOTE ? '+' : ''}</span></div>`
+        + `<div class="tree-item-children">${headingTree(note.path, note.text, note.path === current ? deps.headings() : headingsOfText(note.text), re, hits, `${note.path}|`)}</div></div>`;
     }
-    summary.textContent = total ? `${total}${capped ? '+' : ''} result${total === 1 ? '' : 's'}${scope === 'all' ? ` in ${files} note${files === 1 ? '' : 's'}` : ''}` : 'No results';
-    results.innerHTML = html;
-    searchInput.classList.toggle('mod-no-match', !total);
+    summary.textContent = total ? `${total}${capped ? '+' : ''} result${total === 1 ? '' : 's'} in ${files} note${files === 1 ? '' : 's'}` : '';
+    list.innerHTML = html || '<div class="pane-empty">No results</div>';
+    renderChrome();
   }
-  const searchSoon = (): void => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => void runSearch(), 180); };
-  searchInput.addEventListener('input', searchSoon);
-  searchInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); void runSearch(); searchInput.blur(); } });
-  root.querySelector('.search-scope')!.addEventListener('click', (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-scope]');
-    if (!button) return;
-    scope = button.dataset.scope as 'all' | 'note';
-    root.querySelectorAll<HTMLElement>('[data-scope]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.scope === scope)));
-    void runSearch();
+
+  function render(): void {
+    const query = input.value;
+    const re = searchRegExp(query);
+    const invalid = isInvalidSearch(query);
+    input.classList.toggle('mod-no-match', invalid);
+    renderChrome();
+    if (invalid) {
+      run += 1;
+      summary.textContent = 'Invalid regular expression';
+      list.innerHTML = '';
+    } else if (scope === 'note') { run += 1; renderNote(re); }
+    else void renderAll(re);
+    renderChrome();
+  }
+  function markCurrent(): void {
+    if (scope !== 'note' || !headings.length) return;
+    const line = deps.currentLine();
+    let current = -1;
+    for (const h of headings) { if (h.line <= line + 0.5) current = h.line; else break; }
+    for (const el of list.querySelectorAll<HTMLElement>('.tree-item-self[data-line]')) {
+      el.classList.toggle('is-active', Number(el.dataset.line) === current);
+    }
+  }
+  function setScope(next: SearchScope): void {
+    if (next === scope) return;
+    scope = next;
+    localStorage.setItem(SCOPE_KEY, scope);
+    render();
+  }
+
+  let timer: number | undefined;
+  input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(render, scope === 'note' ? 60 : 180); });
+  input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); window.clearTimeout(timer); render(); input.blur(); } });
+  segmented.addEventListener('click', (event) => {
+    const option = (event.target as HTMLElement).closest<HTMLElement>('[data-scope]');
+    if (option) setScope(option.dataset.scope as SearchScope);
   });
-  results.addEventListener('click', (event) => {
+  list.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
-    const title = target.closest<HTMLElement>('.search-result-file-title');
-    if (title) {
-      const path = title.dataset.note!;
-      if (collapsedNotes.has(path)) collapsedNotes.delete(path); else collapsedNotes.add(path);
-      title.parentElement!.classList.toggle('is-collapsed', collapsedNotes.has(path));
+    const match = target.closest<HTMLElement>('.search-result-file-match');
+    if (match) { deps.onResult(match.dataset.path!, Number(match.dataset.from), Number(match.dataset.to)); return; }
+    const toggle = target.closest<HTMLElement>('[data-toggle]');
+    if (toggle) {
+      const key = toggle.dataset.toggle!;
+      if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+      toggle.closest('.tree-item')?.classList.toggle('is-collapsed', collapsed.has(key));
       renderChrome();
       return;
     }
-    const match = target.closest<HTMLElement>('.search-result-file-match');
-    if (match) deps.onResult(match.dataset.path!, Number(match.dataset.from), Number(match.dataset.to));
-  });
-
-  // ---- Views, header, buttons ----
-  function setTab(next: View): void {
-    tab = next;
-    root.querySelectorAll<HTMLElement>('[data-view]').forEach((v) => v.classList.toggle('is-active', v.dataset.view === next));
-    renderChrome();
-    if (next === 'outline') renderOutline(); else if (searchInput.value) void runSearch();
-  }
-  otherView.addEventListener('click', () => setTab(tab === 'outline' ? 'search' : 'outline'));
-  root.querySelector('.workspace-drawer-vault-switcher')!.addEventListener('click', () => {
-    openMenu((['outline', 'search'] as View[]).map((view) => ({
-      title: TITLES[view], icon: ICONS[view], checked: view === tab, action: () => setTab(view),
-    })), { title: 'Views' });
+    const item = target.closest<HTMLElement>('.tree-item-self[data-line]');
+    if (!item) return;
+    if (item.dataset.path === deps.currentPath()) deps.onHeading(Number(item.dataset.line));
+    else deps.onResult(item.dataset.path!, Number(item.dataset.from), Number(item.dataset.from));
   });
   collapseButton.addEventListener('click', () => {
-    if (tab === 'outline') {
-      if (collapsed.size) collapsed.clear();
-      else for (let i = 0; i < headings.length - 1; i += 1) if (headings[i + 1].level > headings[i].level) collapsed.add(headings[i].line);
-      renderOutline();
-    } else {
-      const titles = [...results.querySelectorAll<HTMLElement>('.search-result-file-title')];
-      if (collapsedNotes.size) collapsedNotes.clear();
-      else for (const t of titles) collapsedNotes.add(t.dataset.note!);
-      for (const t of titles) t.parentElement!.classList.toggle('is-collapsed', collapsedNotes.has(t.dataset.note!));
-      renderChrome();
+    const items = [...list.querySelectorAll<HTMLElement>('.tree-item[data-key]')]
+      .filter((el) => el.querySelector(':scope > .tree-item-children > *, :scope > .search-result-file-matches'));
+    const any = items.some((el) => collapsed.has(el.dataset.key!));
+    for (const el of items) {
+      if (any) collapsed.delete(el.dataset.key!); else collapsed.add(el.dataset.key!);
+      el.classList.toggle('is-collapsed', !any);
     }
+    renderChrome();
   });
-  renderChrome();
+  render();
 
   return {
-    /** Refresh for the current note (on open). */
-    refresh(): void { if (tab === 'outline') renderOutline(); else { renderChrome(); if (searchInput.value) void runSearch(); } },
+    /** Refresh for the current note (on open, after edits). */
+    refresh(): void { if (scope === 'note' || input.value) render(); else renderChrome(); },
     markCurrent,
-    setTab,
-    focusSearch(): void { setTab('search'); searchInput.focus(); searchInput.select(); },
-    get tab() { return tab; },
+    setScope,
+    focusSearch(next: SearchScope = scope): void { setScope(next); input.focus(); input.select(); },
+    get scope() { return scope; },
   };
 }

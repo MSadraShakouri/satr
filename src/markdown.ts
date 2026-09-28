@@ -114,6 +114,40 @@ marked.use({
   ],
 });
 
+// Wiki links, as Obsidian's: [[Note]], [[Note|shown text]], [[Note#Heading]]
+// and embeds ![[Note]] (shown as a link). Rendered as <a class="internal-link"
+// data-href="Note" data-heading="Heading">; src/main.ts resolves them against
+// the space's notes, dims the broken ones and opens the rest on tap.
+// Images aren't shown inline: ![alt](src) becomes a tappable link.
+const WIKI = /^(!?)\[\[([^\[\]|#\n]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?\]\]/;
+const isImagePath = (path: string): boolean => /\.(png|jpe?g|gif|webp|svg|bmp|avif|heic)$/i.test(path);
+marked.use({
+  extensions: [{
+    name: 'wikiLink',
+    level: 'inline',
+    start: (src: string) => { const at = src.search(/!?\[\[/); return at < 0 ? undefined : at; },
+    tokenizer(src: string) {
+      const match = WIKI.exec(src);
+      if (!match || !(match[2] || match[3])) return undefined;
+      return { type: 'wikiLink', raw: match[0], embed: match[1] === '!', target: match[2].trim(), heading: (match[3] ?? '').trim(), alias: match[4]?.trim() ?? '' };
+    },
+    renderer(token) {
+      const { embed, target, heading, alias } = token as unknown as { embed: boolean; target: string; heading: string; alias: string };
+      if (embed && isImagePath(target)) {
+        return `<a class="image-link" data-src="${escapeHtml(target)}"><span>${escapeHtml(alias || target.split('/').pop() || target)}</span></a>`;
+      }
+      const shown = alias || (heading ? (target ? `${target} › ${heading}` : heading) : target);
+      return `<a class="internal-link${embed ? ' mod-embed' : ''}" data-href="${escapeHtml(target)}" data-heading="${escapeHtml(heading)}">${escapeHtml(shown)}</a>`;
+    },
+  }],
+  renderer: {
+    image({ href, text }: { href: string; text: string }): string {
+      const name = text || decodeURIComponent(href.split(/[?#]/)[0].split('/').pop() || href);
+      return `<a class="image-link" data-src="${escapeHtml(href)}"><span>${escapeHtml(name)}</span></a>`;
+    },
+  },
+});
+
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
 
 const newlines = (text: string): number => text.split('\n').length - 1;
@@ -161,7 +195,7 @@ export function renderMarkdown(source: string): string {
     + footnotesSectionHtml();
 
   let safe = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true }, ADD_ATTR: ['data-satr-math', 'data-sec'],
+    USE_PROFILES: { html: true }, ADD_ATTR: ['data-satr-math', 'data-sec', 'data-href', 'data-heading', 'data-src'],
     FORBID_TAGS: ['style', 'script', 'iframe', 'svg', 'math'],
     FORBID_ATTR: ['style', 'onerror', 'onclick', 'onload'],
   });

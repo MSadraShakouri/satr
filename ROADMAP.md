@@ -16,12 +16,15 @@ Editor
 - [x] Live preview in the editor (Obsidian rule: syntax shows when the caret enters it): headings, emphasis, lists with a space rule, tasks, quotes, footnotes, links
 - [x] Inline file title that renames the note
 - [x] Tight character-level selection highlight
-- [x] Keyboard toolbar pill 8px above the keyboard (undo/redo, heading, lists, to-do cycle, footnote, delete line, math, move line)
+- [x] Keyboard toolbar 8px above the keyboard, scrolling like Obsidian's (undo/redo, heading, lists, to-do cycle, footnote, math, delete line, new line below, move line), and a round hide-keyboard button beside it
 - [x] Brackets and `$` pair up; no suggestions or autocorrect inside code and math
 - [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
+- [x] Wiki links `[[Note]]`, `[[Note|text]]`, `[[Note#Heading]]`: styled in the editor, tap to open, a popup of notes while typing `[[`; broken links dimmed in the reading view
+- [x] Images shown as tappable links
+- [x] Undo history per note (never undoes into the previous note)
 - [x] Heading folding in the editor and the preview (chevron at the end of the heading line), fold/unfold all, remembered per note
-- [x] Find and replace in the note, as Obsidian's: plain text ignoring case, `*` and `?` wildcards (`\*` for a literal), from the caret, only the current match highlighted, find all, replace row on demand (long-press the find button)
+- [x] Find and replace in one bar: regular expressions ignoring case (`$1` in replacements), from the caret, every match highlighted (a setting), a chevron drops down the replace row; the count sits where the query ends (on the left, in Persian digits, for a Persian query)
 - [x] Keeps the caret clear of the keyboard without jumping or locking the scroll
 
 Preview
@@ -31,25 +34,25 @@ Preview
 
 Chrome
 - [x] Obsidian themes: exact neutral colours, light/dark/auto
-- [x] Floating top buttons and bottom bar (back, forward, new note, find, fold all); they hide while scrolling down, with Obsidian's fade masks
+- [x] Floating top buttons and bottom bar with Obsidian's icons (previous / next tab, new note, tabs, find, fold all); they hide while scrolling down, with Obsidian's fade masks. The right drawer has no button, as in Obsidian (swipe from the right edge, or Ctrl/Cmd+Shift+F)
 - [x] Both drawers share one implementation of Obsidian's release physics (drag, fling, re-grab mid-animation, same look)
-- [x] Right drawer built like the left one: the view name in the header (tap for Outline / Search), the note under it, pill filter field, collapse/expand all; outline (current heading, tap to jump) and search (this note / this space, `*` `?` wildcards, grouped results)
-- [x] Tabs, as Obsidian's mobile ones: each with its own back/forward history, a tab button with the count in the bottom bar, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done), "Open in new tab" on long-press, kept across restarts
-- [x] Left sidebar: Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons
+- [x] Right drawer: outline and search in one view, built like the left drawer. A two-option pill (tap only) picks This note / All notes. This note: the outline, and while searching the matching headings with each match under its heading. All notes: the same heading tree under each note. Each match shows its line number and up to seven lines of context. Regular expressions
+- [x] Tabs: every note opens in its own tab (an open note just switches to its tab); the bottom bar's arrows step through the tabs; switching never opens the keyboard and comes back where you were. A tab button with the count, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done, press and hold a card to drag it to a new place), an empty tab page ("No file is open" with recent notes), swipe a card away to close, reopen closed tab, kept across restarts
+- [x] Left sidebar: filter by name (found files and folders, flat, with their folder); Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons
 - [x] "All files" walker (Markor-style): only the current folder, ".." to go up
 - [x] Space switcher (vault-switcher style): spaces are shortcuts to folders; their notes are ordinary files, edited in place. "All files", add or remove a space
 - [x] Bottom-sheet menus in Obsidian's phone style
+- [x] Settings page (gear in the left drawer): theme, font size, line spacing, line numbers, highlight every match, which toolbar buttons show
+- [x] Android back button, Obsidian's order: menus, popovers, the tab switcher, settings and the find bar close first, then the drawers; then "Press back again to exit." (a second press within 5s leaves the app)
+- [x] UI chrome can't be selected as text; only the note, footnotes and fields can
 - [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward
 
 ### Remaining before the APK: UI
 
-- [ ] Left sidebar search, Obsidian's way: a filter field above the tree that shows matching files and folders (by name) as you type
-- [ ] Gesture audit: every swipe and slide (drawer edges, swipe from over the toolbar, find bar, tab switcher, bottom sheets, text selection near the edges) checked on a phone
-- [ ] Tabs, the rest: undo close tab, reorder by dragging, swipe a card away to close
-- [ ] Settings screen: font size, line height, line numbers, theme, keyboard toolbar items
-- [ ] Empty states and first run: no space yet leads to picking a folder
-- [ ] Wiki links `[[...]]`: rendering, tap to open, and a popup while typing `[[`
-- [ ] Images as tappable links
+- [ ] Gesture audit on a phone: every swipe and slide (drawer edges, swipe from over the toolbar, find bar, tab switcher and card swipes, bottom sheets, the scope pill, text selection near the edges)
+- [ ] Keyboard toolbar: reorder buttons in Settings (show/hide is done)
+- [ ] Wiki links: hide the brackets in live preview when the caret is elsewhere (Obsidian does; needs care so typing never lands in a hidden range)
+- [ ] First run on the device: no space yet leads to picking a folder (needs the APK's storage)
 - [ ] Persian UI strings (later)
 
 ### Remaining before the APK: logic

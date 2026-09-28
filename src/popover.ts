@@ -13,6 +13,7 @@ export interface PopoverHandle {
 }
 
 let current: PopoverHandle | null = null;
+export const isPopoverOpen = (): boolean => current !== null;
 
 export function closePopover(): void {
   current?.close();

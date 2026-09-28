@@ -26,3 +26,24 @@ export function collectHeadings(state: EditorState): Heading[] {
   });
   return out;
 }
+
+/** Headings of a note that isn't open (for search results): ATX headings
+ *  outside fenced code, found with a line scan instead of a parse. */
+export function headingsOfText(text: string): Heading[] {
+  const out: Heading[] = [];
+  let fence: string | null = null;
+  let from = 0;
+  const lines = text.split('\n');
+  lines.forEach((line, index) => {
+    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1][0];
+      else if (fenceMatch[1][0] === fence) fence = null;
+    } else if (!fence) {
+      const m = /^\s{0,3}(#{1,6})(?:\s+(.*?))?(?:\s+#+)?\s*$/.exec(line);
+      if (m) out.push({ level: m[1].length, text: (m[2] ?? '').trim() || '(untitled heading)', line: index, from });
+    }
+    from += line.length + 1;
+  });
+  return out;
+}

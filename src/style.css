@@ -11,6 +11,9 @@
   font-display: swap;
 }
 :root {
+  /* Note text, from Settings (src/settings.ts). */
+  --note-font-size: 16px;
+  --note-line-height: 1.85;
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 /* ---- Theme ----
@@ -42,6 +45,7 @@
   --background-modifier-cover: rgba(0, 0, 0, 0.15);
   --mobile-sidebar-background: var(--background-primary);
   --interactive-normal: var(--background-secondary); /* .is-mobile */
+  --segment-thumb: var(--background-primary);
   --interactive-hover: var(--background-modifier-border);
   --highlight-mix-blend-mode: darken;
   /* --code-background (= base-10) as a tint, so the selection layer under
@@ -82,6 +86,7 @@
   --background-modifier-cover: rgba(0, 0, 0, 0.35);
   --mobile-sidebar-background: var(--background-secondary);
   --interactive-normal: var(--background-modifier-border);
+  --segment-thumb: #555; /* base-40 */
   --interactive-hover: var(--background-modifier-border-hover);
   --highlight-mix-blend-mode: lighten;
   --code-background-tint: rgba(255, 255, 255, 0.0667); /* #111 over #000 */
@@ -336,7 +341,8 @@ body {
   max-width: 72ch;
   margin: auto;
   padding: var(--view-top-spacing-markdown) 22px 50vh;
-  line-height: 1.75;
+  font-size: var(--note-font-size);
+  line-height: calc(var(--note-line-height) - 0.1);
   direction: ltr;
 }
 .preview-pane
@@ -676,6 +682,10 @@ body {
   user-select: text;
   cursor: text;
 }
+.no-line-numbers .cm-file-name {
+  width: 100%;
+  margin-inline: 0;
+}
 .cm-file-name:focus {
   color: var(--text-normal);
 }
@@ -715,7 +725,7 @@ body {
   color: var(--text-faint);
   font-size: 0.8em;
   font-variant-numeric: tabular-nums;
-  line-height: calc(16px * 1.85);
+  line-height: calc(var(--note-font-size) * var(--note-line-height));
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement {
   min-width: calc(3ch + 18px);
@@ -723,13 +733,13 @@ body {
   text-align: right;
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h1 {
-  line-height: calc(16px * 1.45 * 1.85);
+  line-height: calc(var(--note-font-size) * 1.45 * var(--note-line-height));
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h2 {
-  line-height: calc(16px * 1.25 * 1.85);
+  line-height: calc(var(--note-font-size) * 1.25 * var(--note-line-height));
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h3 {
-  line-height: calc(16px * 1.1 * 1.85);
+  line-height: calc(var(--note-font-size) * 1.1 * var(--note-line-height));
 }
 .cm-activeLineGutter {
   background: transparent !important;
@@ -909,7 +919,7 @@ body {
 }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-code,
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-footnote {
-  line-height: calc(16px * 0.875 * 1.85);
+  line-height: calc(var(--note-font-size) * 0.875 * var(--note-line-height));
 }
 /* ---- Keyboard toolbar ----
    After Obsidian 1.12 mobile (.mobile-toolbar with floating navigation): a
@@ -925,28 +935,43 @@ body {
   left: 8px;
   right: 8px;
   display: none;
+  gap: 8px;
   height: 44px;
-  border-radius: 44px;
-  overflow: hidden;
-  background: var(--raised-background);
-  backdrop-filter: var(--raised-blur);
-  -webkit-backdrop-filter: var(--raised-blur);
-  box-shadow: var(--shadow-xs), var(--raised-edge);
   user-select: none;
   -webkit-user-select: none;
 }
 .keyboard-open .edit-toolbar {
-  display: block;
+  display: flex;
 }
+/* The pill with the options, and Obsidian's separate round button beside it
+   (.mobile-toolbar-floating-options; here: hide the keyboard). */
+.edit-toolbar-list-container,
+.edit-toolbar-floating {
+  overflow: hidden;
+  border-radius: 44px;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
+}
+.edit-toolbar-list-container {
+  flex: 1;
+  min-width: 0;
+}
+.edit-toolbar-floating {
+  display: flex;
+  flex: 0 0 44px;
+  justify-content: center;
+}
+/* Obsidian's .mobile-toolbar-options-list: a plain horizontal scroller —
+   no snapping, no scroll containment, options that keep their 40px. */
 .edit-toolbar-list {
   display: flex;
   height: 100%;
   padding: 0 4px;
   overflow-x: auto;
   overflow-y: hidden;
-  overscroll-behavior-x: contain;
   scrollbar-width: none;
-  touch-action: pan-x;
 }
 .edit-toolbar-list::-webkit-scrollbar {
   width: 0;
@@ -967,7 +992,7 @@ body {
   mask-image: linear-gradient(to right, transparent, #000 30px, #000 calc(100% - 30px), transparent);
 }
 .edit-toolbar button {
-  flex: 1 0 40px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1067,7 +1092,7 @@ body {
 .cm-editor .cm-line.cm-math-line {
   /* $$ blocks: 16px x 0.875, on the same line pitch as the text */
   font-size: var(--code-size);
-  line-height: calc(1.85em / 0.875);
+  line-height: calc(var(--note-line-height) * 1em / 0.875);
   text-align: left;
 }
 
@@ -1185,10 +1210,10 @@ body {
 }
 /* Editor heading lines keep the 16px line font; the heading size lives on
    the text inside, so the chevron's line box is sized per level. */
-.cm-heading-fold { --fold-line: 1.85em; }
-.cm-heading-fold-h1 { --fold-line: calc(1.85em * 1.45); }
-.cm-heading-fold-h2 { --fold-line: calc(1.85em * 1.25); }
-.cm-heading-fold-h3 { --fold-line: calc(1.85em * 1.1); }
+.cm-heading-fold { --fold-line: calc(var(--note-line-height) * 1em); }
+.cm-heading-fold-h1 { --fold-line: calc(var(--note-line-height) * 1.45em); }
+.cm-heading-fold-h2 { --fold-line: calc(var(--note-line-height) * 1.25em); }
+.cm-heading-fold-h3 { --fold-line: calc(var(--note-line-height) * 1.1em); }
 .cm-heading-fold.is-folded::after,
 .preview-pane .md-section > .has-fold.is-folded::after {
   background: var(--text-muted);
@@ -1299,16 +1324,6 @@ body {
   stroke-width: 1.75;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-.drawer-view {
-  display: none;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-}
-.drawer-view.is-active {
-  display: flex;
 }
 .search-input-container {
   position: relative;
@@ -1423,40 +1438,65 @@ input.mod-no-match {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-/* Search view */
-.search-options {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 12px 4px;
-  padding-inline: 4px;
+/* Search scope: a two-option sliding pill (This note / All notes). The
+   thumb slides under the chosen option; a sideways swipe flips it too. */
+.segmented-control {
+  position: relative;
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  flex-shrink: 0;
+  height: 36px;
+  margin: 0 12px 8px;
+  padding: 3px;
+  border-radius: 18px;
+  background: var(--interactive-normal);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
 }
-.search-scope {
-  display: flex;
-  gap: 6px;
-  margin-inline-end: auto;
+.segmented-control-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  inset-inline-start: 3px;
+  width: calc((100% - 6px) / var(--count, 2));
+  border-radius: 15px;
+  background: var(--segment-thumb);
+  transform: translateX(calc(var(--index, 0) * 100%));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.search-chip {
-  height: 30px;
-  padding: 0 12px;
+[dir="rtl"] .segmented-control-thumb {
+  transform: translateX(calc(var(--index, 0) * -100%));
+}
+.segmented-control-option {
+  position: relative;
+  z-index: 1;
+  padding: 0 8px;
   border-radius: 15px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
+  transition: color 150ms;
+  -webkit-tap-highlight-color: transparent;
 }
-.search-chip[aria-checked="true"] {
-  background: var(--background-modifier-hover);
+.segmented-control-option[aria-checked="true"] {
   color: var(--text-normal);
 }
 .search-summary {
-  margin-inline-start: auto;
+  flex-shrink: 0;
+  padding: 0 20px 4px;
   color: var(--text-faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .search-summary:empty {
   display: none;
+}
+.search-input-container input.mod-no-match {
+  box-shadow: 0 0 0 2px rgba(233, 49, 71, 0.35);
 }
 .search-result-file-title {
   font-weight: 500;
@@ -1472,12 +1512,34 @@ input.mod-no-match {
   line-height: 1.3;
 }
 .search-result-file-match {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
   padding: 8px 12px;
   border-bottom: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+}
+/* The match's line, in the gutter's style, on the side the line starts. */
+.search-result-line-number {
+  flex: none;
+  min-width: 2ch;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+/* Up to seven lines of context, then an ellipsis. */
+.search-result-text {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 7;
+  line-clamp: 7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
-  cursor: pointer;
 }
 .search-result-file-match:last-child {
   border-bottom: 0;
@@ -1528,6 +1590,23 @@ input.mod-no-match {
 }
 .mod-replace-mode .document-replace {
   display: flex;
+  animation: replace-drop 150ms ease-out;
+}
+/* The replace row lines up under the find field, past the chevron. */
+.document-replace {
+  padding-inline-start: 44px;
+}
+@keyframes replace-drop {
+  from { opacity: 0; transform: translateY(-8px); }
+}
+.document-replace-toggle svg {
+  transition: transform 150ms ease-out;
+}
+.document-replace-toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+[dir="rtl"] .document-replace-toggle[aria-expanded="false"] svg {
+  transform: scaleX(-1);
 }
 .document-search-container .search-input-container {
   position: relative;
@@ -1573,6 +1652,23 @@ input.mod-no-match {
   font-variant-numeric: tabular-nums;
   transform: translateY(-50%);
   pointer-events: none;
+}
+.document-search-count {
+  right: 14px;
+  left: auto;
+}
+.document-search-input input {
+  padding-right: 72px;
+  padding-left: 16px;
+}
+/* A Persian query ends on the left, so the count moves there. */
+.mod-rtl-query .document-search-count {
+  right: auto;
+  left: 14px;
+}
+.mod-rtl-query .document-search-input input {
+  padding-right: 16px;
+  padding-left: 72px;
 }
 .document-search-buttons,
 .document-replace-buttons {
@@ -2232,4 +2328,477 @@ input.mod-no-match {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ---- UI chrome isn't text ----
+   Nothing on screen can be selected or long-pressed into a text selection
+   except the note itself (editor and reading view), footnote text and the
+   fields you type in. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.cm-content,
+#preview,
+.footnote-embed,
+.popover .markdown-rendered,
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable="plaintext-only"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+#preview .copy-code-button,
+#preview .heading-collapse-indicator,
+#preview .footnote-backref,
+.cm-content [contenteditable="false"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ---- Empty tab: Obsidian's "No file is open" (.empty-state) ---- */
+.empty-state {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 60px 0 100px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+.is-empty-tab .empty-state {
+  display: flex;
+}
+.is-empty-tab .editor-pane,
+.is-empty-tab .preview-pane,
+.is-empty-tab #preview-toggle,
+.is-empty-tab #nav-find,
+.is-empty-tab #nav-fold {
+  visibility: hidden;
+}
+.empty-state-container {
+  width: min(480px, calc(100% - 40px));
+  margin: 20px;
+  text-align: center;
+}
+.empty-state-title {
+  margin: 20px 0;
+  font-size: 1.6em; /* --h2-size */
+  font-weight: 700;
+  line-height: 1.3;
+}
+.empty-state-action-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 40px;
+}
+.empty-state-action {
+  min-width: 200px;
+  margin: 12px 0 0;
+  padding: 6px 30px;
+  border-radius: var(--button-radius, 8px);
+  background: var(--background-primary-alt);
+  color: var(--text-accent);
+  font-size: 16px;
+  line-height: 36px;
+  -webkit-tap-highlight-color: transparent;
+}
+.empty-state-action:active {
+  color: var(--text-accent-hover, var(--text-accent));
+  background: var(--background-modifier-hover);
+}
+.empty-state-recent {
+  margin-top: 40px;
+  text-align: start;
+}
+.empty-state-recent-title {
+  padding: 0 12px 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.empty-state-recent-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: transparent;
+  text-align: start;
+  -webkit-tap-highlight-color: transparent;
+}
+.empty-state-recent-item:active {
+  background: var(--background-modifier-hover);
+}
+.empty-state-recent-name {
+  color: var(--text-normal);
+  font-size: 16px;
+  unicode-bidi: plaintext;
+}
+.empty-state-recent-dir {
+  color: var(--text-faint);
+  font-size: 12px;
+  unicode-bidi: plaintext;
+}
+.empty-state-recent-dir:empty {
+  display: none;
+}
+.mobile-tab-preview-empty {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: var(--background-primary);
+  box-shadow: 0 0 0 1px rgba(var(--mono-rgb-100), 0.05);
+  color: var(--text-faint);
+}
+.mobile-tab.is-empty .mobile-tab-preview-empty {
+  display: flex;
+}
+.mobile-tab.is-empty.is-active .mobile-tab-preview-empty {
+  box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+.mobile-tab-preview-empty svg {
+  width: 32px;
+  height: 32px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mobile-tab {
+  touch-action: pan-y;
+}
+
+/* ---- Settings (src/settings.ts): Obsidian's mobile settings page ---- */
+.settings-screen {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+.settings-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  margin-top: env(safe-area-inset-top, 0px);
+  padding: 0 8px;
+}
+.settings-header .clickable-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  background: transparent;
+  color: var(--text-normal);
+}
+.settings-header svg,
+.setting-item-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.settings-title {
+  font-size: calc(16px * 1.2);
+  font-weight: 600;
+}
+.settings-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+}
+.setting-group-title {
+  margin: 16px 16px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.setting-group {
+  overflow: hidden;
+  border-radius: 24px;
+  background: var(--background-primary);
+}
+.theme-dark .setting-group {
+  background: var(--background-primary-alt, #1e1e1e);
+}
+.setting-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.setting-group > :first-child {
+  border-top: 0;
+}
+.setting-item.mod-column {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.setting-item.mod-column .segmented-control {
+  margin: 0;
+}
+.setting-item-row {
+  display: flex;
+  justify-content: space-between;
+}
+.setting-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.setting-item-name {
+  font-size: 16px;
+}
+.setting-item-description {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.setting-item-value {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.setting-item-icon {
+  display: flex;
+  color: var(--text-muted);
+}
+.setting-item-preview {
+  padding: 12px 16px;
+  border-top: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  unicode-bidi: plaintext;
+}
+.setting-group-footer {
+  margin: 16px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.slider {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--interactive-accent);
+}
+/* Obsidian's toggle (.checkbox-container), mobile size */
+.checkbox-container {
+  position: relative;
+  flex-shrink: 0;
+  width: 50px;
+  height: 30px;
+  border-radius: 15px;
+  background: var(--background-modifier-border-hover, var(--interactive-normal));
+  cursor: pointer;
+  transition: background 150ms ease-in-out;
+  -webkit-tap-highlight-color: transparent;
+}
+.theme-dark .checkbox-container:not(.is-enabled) {
+  background: #555;
+}
+.checkbox-container:not(.is-enabled) {
+  background: #d4d4d4;
+}
+.checkbox-container.is-enabled {
+  background: var(--interactive-accent);
+}
+.checkbox-container input {
+  display: none;
+}
+.checkbox-container::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  inset-inline-start: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 150ms ease-in-out;
+}
+.checkbox-container.is-enabled::after {
+  transform: translateX(20px);
+}
+[dir="rtl"] .checkbox-container.is-enabled::after {
+  transform: translateX(-20px);
+}
+.edit-toolbar button[hidden] {
+  display: none;
+}
+
+/* Left sidebar filter: found files and folders, flat, with their folder. */
+.nav-filter {
+  flex-shrink: 0;
+}
+.mod-filtering .nav-buttons-container [data-act="collapse"],
+.mod-filtering .nav-buttons-container [data-act="sort"] {
+  visibility: hidden;
+}
+.mod-found .tree-item-inner {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.nav-filter-name,
+.nav-filter-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+.nav-filter-path {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ---- Wiki links and image links ---- */
+.cm-editor .cm-wikilink {
+  color: var(--text-accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--accent-rgb), 0.35);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.cm-editor .cm-wikilink-bracket {
+  color: var(--text-faint);
+}
+#preview a.internal-link {
+  color: var(--text-accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--accent-rgb), 0.35);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+#preview a.internal-link.is-unresolved {
+  opacity: 0.6; /* Obsidian's --link-unresolved-opacity */
+  text-decoration-style: dotted;
+  cursor: default;
+}
+#preview a.image-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 10px 2px 8px;
+  border-radius: 8px;
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+  font-size: 0.9em;
+  text-decoration: none;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+#preview a.image-link::before {
+  content: "";
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='9' cy='9' r='2'/%3E%3Cpath d='m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='9' cy='9' r='2'/%3E%3Cpath d='m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+#preview a.image-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+/* The [[ popup, after Obsidian's suggestion list */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete {
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px;
+  background: var(--background-primary);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--background-modifier-border);
+  font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul {
+  min-width: 200px;
+  max-width: min(320px, 80vw);
+  max-height: 240px;
+  padding: 4px;
+  font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif !important;
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--text-normal);
+  font-size: 15px;
+  line-height: 1.3;
+  unicode-bidi: plaintext;
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.cm-tooltip-autocomplete .cm-completionMatchedText {
+  color: var(--text-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* Tab switcher: a card picked up to reorder (press and hold, then drag). */
+.mobile-tab.is-lifted {
+  position: relative;
+  z-index: 5;
+  transition: none;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  border-radius: 16px;
+  pointer-events: none;
+}
+.mobile-tab-switcher {
+  -webkit-touch-callout: none;
+}
+
+/* Notices (src/notice.ts), Obsidian's phone style: a banner at the top. */
+.notice-container {
+  position: fixed;
+  z-index: 60;
+  top: max(4px, env(safe-area-inset-top));
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+.notice {
+  width: 100%;
+  padding: 1em 1.5em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 24px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
 }
