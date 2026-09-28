@@ -109,8 +109,16 @@ jobs:
 
       - name: Check the APK's signature
         run: |
-          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
-          "$APKSIGNER" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | grep -E "Signer #1 certificate (DN|SHA-256)"
+          # keytool comes with the JDK set up above, so this doesn't depend on
+          # which build-tools the runner has. It reads the v1 (jar) signature,
+          # which the build adds because minSdk is below 24.
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          CERT="$(keytool -printcert -jarfile "$APK" 2>&1 || true)"
+          echo "$CERT"
+          if ! grep -q "Owner: .*CN=Satr" <<< "$CERT"; then
+            echo "::error::The APK isn't signed with the Satr key from ANDROID_KEYSTORE_BASE64 (alias satr, CN=Satr), so it won't install over earlier builds."
+            exit 1
+          fi
 
       - name: Rename APK
         run: cp android/app/build/outputs/apk/debug/app-debug.apk "satr-debug-${VERSION_NAME}.apk"
