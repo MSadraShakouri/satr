@@ -41,7 +41,7 @@ export function initDrawers(options: DrawerOptions) {
   const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const insetProbe = document.createElement('div');
   insetProbe.setAttribute('aria-hidden', 'true');
-  insetProbe.style.cssText = 'position:fixed;inset:auto 0 0;height:0;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px)';
+  insetProbe.style.cssText = 'position:fixed;inset:auto 0 0;height:0;visibility:hidden;pointer-events:none;padding-bottom:var(--safe-bottom)';
   document.body.appendChild(insetProbe);
   const bottomInset = (): number => parseFloat(getComputedStyle(insetProbe).paddingBottom) || 0;
 

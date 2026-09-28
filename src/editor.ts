@@ -5,7 +5,7 @@ import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
 import { Compartment, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type ViewUpdate } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
@@ -18,7 +18,7 @@ import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: 'var(--note-line-height)' },
-  '.cm-content': { padding: 'var(--view-top-spacing-markdown, 5.5rem) max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) 50vh', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });
@@ -29,7 +29,7 @@ const rtlLineDirection = EditorView.theme({
 class LineGutterClass extends GutterMarker {
   constructor(readonly elementClass: string) { super(); }
 }
-const headingGutterClasses = [1, 2, 3].map((level) => new LineGutterClass(`cm-ln-h${level}`));
+const headingGutterClasses = [1, 2, 3, 4, 5, 6].map((level) => new LineGutterClass(`cm-ln-h${level}`));
 const codeGutterClass = new LineGutterClass('cm-ln-code');
 const footnoteGutterClass = new LineGutterClass('cm-ln-footnote');
 // Only block containers are walked into; inline content is skipped, so this
@@ -40,7 +40,7 @@ function buildLineGutter(state: EditorState) {
   syntaxTree(state).iterate({
     enter: (node) => {
       if (BLOCK_CONTAINERS.has(node.name)) return true;
-      const heading = /^(?:ATX|Setext)Heading([1-3])$/.exec(node.name);
+      const heading = /^(?:ATX|Setext)Heading([1-6])$/.exec(node.name);
       if (heading) {
         builder.add(node.from, node.from, headingGutterClasses[Number(heading[1]) - 1]);
       } else if ((node.name === 'Paragraph' || node.name === 'LinkReference') && /^\[\^[^\]\s]+\]:/.test(state.sliceDoc(node.from, node.from + 64))) {
@@ -65,6 +65,29 @@ const lineGutterField = StateField.define({
   update: (markers, tr) =>
     tr.docChanged || syntaxTree(tr.startState).length !== syntaxTree(tr.state).length ? buildLineGutter(tr.state) : markers,
   provide: (field) => gutterLineClass.from(field),
+});
+
+// Heading lines carry the heading's size, as Obsidian's .HyperMD-header-N:
+// font size, line height, weight and the space above live on the line, so
+// the line box (and the line number beside it) is the heading's own.
+const headingLineClasses = [1, 2, 3, 4, 5, 6].map((level) => Decoration.line({ class: `cm-h cm-h${level}` }));
+function buildHeadingLines(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (BLOCK_CONTAINERS.has(node.name)) return true;
+      const heading = /^(?:ATX|Setext)Heading([1-6])$/.exec(node.name);
+      if (heading) builder.add(state.doc.lineAt(node.from).from, state.doc.lineAt(node.from).from, headingLineClasses[Number(heading[1]) - 1]);
+      return false;
+    },
+  });
+  return builder.finish();
+}
+const headingLineField = StateField.define<DecorationSet>({
+  create: buildHeadingLines,
+  update: (lines, tr) =>
+    tr.docChanged || syntaxTree(tr.startState).length !== syntaxTree(tr.state).length ? buildHeadingLines(tr.state) : lines,
+  provide: (field) => EditorView.decorations.from(field),
 });
 
 const persianListMarkerPlugin = ViewPlugin.fromClass(class {
@@ -441,9 +464,6 @@ export class SatrEditor {
       markdown({ base: markdownLanguage, addKeymap: false }),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
-        { tag: tags.heading1, fontWeight: '700', fontSize: '1.45em' },
-        { tag: tags.heading2, fontWeight: '700', fontSize: '1.25em' },
-        { tag: tags.heading3, fontWeight: '700', fontSize: '1.1em' },
         { tag: tags.strong, fontWeight: '700' },
         { tag: tags.emphasis, fontStyle: 'italic' },
         { tag: tags.strikethrough, textDecoration: 'line-through' },
@@ -452,7 +472,7 @@ export class SatrEditor {
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
       ])),
       titleField,
-      rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, livePreview, mathSource,
+      rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
       technicalContext, keyboardAttributes, closeBrackets(), pairs,
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:

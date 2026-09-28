@@ -169,7 +169,7 @@ export function renderMarkdown(source: string): string {
     if (marker && !previousWasOrdered) orderedStyles.push(/[۰-۹٠-٩]/.test(marker[1]) ? 'persian' : 'latin');
     previousWasOrdered = Boolean(marker);
   });
-  const normalizedLists = withoutFrontMatter.replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, _number: string, punctuation: string) => `${indent}1${punctuation} `);
+  const normalizedLists = markPageBreaks(withoutFrontMatter).replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, _number: string, punctuation: string) => `${indent}1${punctuation} `);
   const { text: normalizedTables, origin } = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
   const math: string[] = [];
@@ -248,6 +248,36 @@ export function renderMarkdown(source: string): string {
     }));
   });
   return document.body.innerHTML;
+}
+
+// Page breaks, for the PDF (hidden on screen). Any of these, on its own line
+// outside code: \pagebreak, \newpage, \clearpage, <!-- pagebreak -->,
+// <!-- newpage -->, or HTML whose style asks for one (page-break-before /
+// -after: always, break-before / -after: page), e.g.
+// <div style="page-break-before: always"></div>. Each becomes an empty
+// <div class="page-break">; HTML with content keeps its content, the break
+// going before or after it. One line in, one line out (line numbers hold).
+const PAGE_BREAK_LINE = /^\s{0,3}(?:\\(?:pagebreak|newpage|clearpage)|<!--\s*(?:page-?break|new-?page)\s*-->)\s*$/i;
+const PAGE_BREAK_STYLE = /(page-break-|break-)(before|after)\s*:\s*(always|page|left|right)/i;
+const PAGE_BREAK_DIV = '<div class="page-break"></div>';
+function markPageBreaks(source: string): string {
+  let fence: string | null = null;
+  return source.split('\n').map((line) => {
+    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1][0];
+      else if (fenceMatch[1][0] === fence) fence = null;
+      return line;
+    }
+    if (fence) return line;
+    if (PAGE_BREAK_LINE.test(line)) return PAGE_BREAK_DIV;
+    const style = /^\s{0,3}<[a-z][^>]*\bstyle\s*=\s*["']([^"']*)["'][^>]*>/i.exec(line);
+    const wants = style ? PAGE_BREAK_STYLE.exec(style[1]) : null;
+    if (!wants) return line;
+    // An empty element is just the break; one with content keeps it.
+    if (/^\s*<([a-z0-9]+)[^>]*>\s*(<\/\1>)?\s*$/i.test(line)) return PAGE_BREAK_DIV;
+    return wants[2].toLowerCase() === 'before' ? `${PAGE_BREAK_DIV}${line.trimStart()}` : `${line}${PAGE_BREAK_DIV}`;
+  }).join('\n');
 }
 
 function toPersian(number: number): string {

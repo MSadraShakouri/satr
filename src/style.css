@@ -13,8 +13,54 @@
 :root {
   /* Note text, from Settings (src/settings.ts). */
   --note-font-size: 16px;
-  --note-line-height: 1.85;
+  --note-line-height: 1.5;
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  /* Obsidian's typography (app.css :root / body), same names and values:
+     headings on the golden-ratio scale, 1rem between paragraphs, 2.5x that
+     above a heading, a hair between list items. */
+  --p-spacing: 1rem;
+  --heading-spacing: calc(var(--p-spacing) * 2.5);
+  --list-spacing: 0.075em;
+  --list-indent: 2.25em;
+  --file-line-width: 700px;
+  --file-margin-x: max(24px, calc((100% - var(--file-line-width)) / 2));
+  --h1-size: 1.618em;
+  --h2-size: 1.462em;
+  --h3-size: 1.318em;
+  --h4-size: 1.188em;
+  --h5-size: 1.076em;
+  --h6-size: 1em;
+  --h1-line-height: 1.2;
+  --h2-line-height: 1.2;
+  --h3-line-height: 1.3;
+  --h4-line-height: 1.4;
+  --h5-line-height: 1.5;
+  --h6-line-height: 1.5;
+  --h1-weight: 700;
+  --h2-weight: 680;
+  --h3-weight: 660;
+  --h4-weight: 640;
+  --h5-weight: 620;
+  --h6-weight: 600;
+  --h1-letter-spacing: -0.015em;
+  --h2-letter-spacing: -0.011em;
+  --h3-letter-spacing: -0.008em;
+  --h4-letter-spacing: -0.005em;
+  --h5-letter-spacing: -0.002em;
+  --h6-letter-spacing: 0em;
+  --inline-title-size: var(--h1-size);
+  --inline-title-line-height: var(--h1-line-height);
+  --inline-title-weight: var(--h1-weight);
+  --inline-title-margin-bottom: 0.5em;
+  --code-size: 0.875em;
+  --table-line-height: 1.3;
+  /* System bar insets. The Android app sets --safe-area-inset-* from the
+     real window insets (src/native.ts, SystemBarsPlugin.java); elsewhere
+     env() is used. */
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
 }
 /* ---- Theme ----
    Obsidian's exact neutral scale (app.css .theme-light / .theme-dark, with the
@@ -200,7 +246,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: max(12px, env(safe-area-inset-top)) 12px 0;
+  padding: max(12px, var(--safe-top)) 12px 0;
   background: transparent;
   pointer-events: none;
   transition:
@@ -212,7 +258,7 @@ button:focus-visible {
 }
 .is-hidden-nav .topbar {
   /* .is-hidden-nav .view-header: slide up by its own height and fade */
-  transform: translateY(calc(-44px - max(12px, env(safe-area-inset-top))));
+  transform: translateY(calc(-44px - max(12px, var(--safe-top))));
   opacity: 0;
 }
 .is-hidden-nav .topbar > * {
@@ -301,13 +347,14 @@ body {
    the buttons) and at the bottom edge (--view-bottom-fade-mask, 50%). With
    the bars hidden, the top fade shrinks to the status bar area. */
 :root {
-  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 calc(env(safe-area-inset-top, 0px) + 44px + 12px));
-  --view-bottom-fade-mask: linear-gradient(to top, rgba(0, 0, 0, 0.5) 0%, #000 calc(env(safe-area-inset-bottom, 0px) + 12px));
-  /* --view-top-spacing-markdown: note text starts 16px below the buttons */
-  --view-top-spacing-markdown: calc(max(12px, env(safe-area-inset-top, 0px)) + 44px + 16px);
+  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 calc(var(--safe-top) + 44px + 12px));
+  --view-bottom-fade-mask: linear-gradient(to top, rgba(0, 0, 0, 0.5) 0%, #000 calc(var(--safe-bottom) + 12px));
+  /* --view-top-spacing-markdown: Obsidian's safe area + 44px + 16px, so the
+     note starts just under the buttons */
+  --view-top-spacing-markdown: calc(var(--safe-top) + 44px + 16px);
 }
 .is-hidden-nav {
-  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 env(safe-area-inset-top, 0px));
+  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 var(--safe-top));
 }
 .editor-pane,
 .preview-pane {
@@ -338,11 +385,11 @@ body {
   border-inline-start: 1px solid var(--border);
 }
 .preview-pane article {
-  max-width: 72ch;
+  max-width: calc(var(--file-line-width) + 48px);
   margin: auto;
-  padding: var(--view-top-spacing-markdown) 22px 50vh;
+  padding: var(--view-top-spacing-markdown) 24px 50vh;
   font-size: var(--note-font-size);
-  line-height: calc(var(--note-line-height) - 0.1);
+  line-height: var(--note-line-height);
   direction: ltr;
 }
 .preview-pane
@@ -375,10 +422,90 @@ body {
   text-align: left;
   unicode-bidi: isolate;
 }
-.preview-pane h1,
+/* Obsidian's .markdown-rendered blocks: 1rem around paragraphs, lists,
+   quotes, code and tables; 2.5rem above a heading and 1rem below; lists
+   indented 3ch with a hair between items. */
+.preview-pane :where(p, ul, ol, blockquote, pre, table) {
+  margin-block: var(--p-spacing);
+}
+.preview-pane :where(h1, h2, h3, h4, h5, h6) {
+  margin-block: var(--heading-spacing) var(--p-spacing);
+}
+.preview-pane article > :first-child,
+.preview-pane .md-section:first-of-type > :first-child,
+.preview-pane .inline-title + * > :first-child,
+.preview-pane .inline-title + :where(h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table) {
+  margin-top: 0;
+}
+.preview-pane h1 {
+  font-size: var(--h1-size);
+  line-height: var(--h1-line-height);
+  font-weight: var(--h1-weight);
+  letter-spacing: var(--h1-letter-spacing);
+}
 .preview-pane h2 {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.25em;
+  font-size: var(--h2-size);
+  line-height: var(--h2-line-height);
+  font-weight: var(--h2-weight);
+  letter-spacing: var(--h2-letter-spacing);
+}
+.preview-pane h3 {
+  font-size: var(--h3-size);
+  line-height: var(--h3-line-height);
+  font-weight: var(--h3-weight);
+  letter-spacing: var(--h3-letter-spacing);
+}
+.preview-pane h4 {
+  font-size: var(--h4-size);
+  line-height: var(--h4-line-height);
+  font-weight: var(--h4-weight);
+  letter-spacing: var(--h4-letter-spacing);
+}
+.preview-pane h5 {
+  font-size: var(--h5-size);
+  line-height: var(--h5-line-height);
+  font-weight: var(--h5-weight);
+  letter-spacing: var(--h5-letter-spacing);
+}
+.preview-pane h6 {
+  font-size: var(--h6-size);
+  line-height: var(--h6-line-height);
+  font-weight: var(--h6-weight);
+  letter-spacing: var(--h6-letter-spacing);
+}
+.preview-pane :where(ul, ol) {
+  padding-inline-start: 0;
+}
+.preview-pane :where(ul, ol) > li {
+  margin-inline-start: 3ch;
+  padding-block: var(--list-spacing);
+}
+.preview-pane :where(ul, ol) :where(ul, ol) > li {
+  margin-inline-start: var(--list-indent);
+}
+.preview-pane :where(ul, ol) :where(ul, ol) {
+  margin-block: 0;
+}
+.preview-pane li > p {
+  margin-block: 0;
+}
+.preview-pane ul {
+  list-style-type: disc;
+}
+.preview-pane ul > li::marker {
+  color: var(--list-marker-color, var(--text-faint));
+}
+/* Obsidian's indentation guide beside a nested list */
+.preview-pane li > :is(ul, ol) {
+  position: relative;
+}
+.preview-pane li > :is(ul, ol)::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -0.85em;
+  border-inline-end: var(--indentation-guide-width, 0.5px) solid var(--indentation-guide-color, rgba(var(--mono-rgb-100), 0.12));
+  pointer-events: none;
 }
 /* ---- Math (src/math.ts + src/mathLayout.ts) ----
    A formula is a row of unbreakable units split at relations; lines break
@@ -623,7 +750,11 @@ body {
 .preview-pane th,
 .preview-pane td {
   border: 1px solid var(--border);
-  padding: 5px 9px;
+  padding: 4px 8px;
+  line-height: var(--table-line-height);
+}
+.preview-pane th {
+  font-weight: 600;
 }
 .preview-pane [data-table-align="left"] {
   text-align: left;
@@ -659,20 +790,22 @@ body {
 }
 .cm-file-name {
   display: block;
-  width: calc(100% + 2 * max(1.25rem, calc((100% - 72ch) / 2)));
-  margin-inline: calc(-1 * max(1.25rem, calc((100% - 72ch) / 2)));
-  margin-bottom: 0.5rem;
-  padding: 0;
+  width: calc(100% + 2 * var(--file-margin-x));
+  margin-inline: calc(-1 * var(--file-margin-x));
+  /* Obsidian's .inline-title on a phone: the h1 size, weight and line
+     height in the text colour, half an em above and below. */
+  margin-bottom: var(--inline-title-margin-bottom);
+  padding: 0.5em 0 0;
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--text-normal);
   font:
-    700 2.35rem/1.15 Vazirmatn,
+    var(--inline-title-weight) var(--inline-title-size) / var(--inline-title-line-height) Vazirmatn,
     "Segoe UI",
     system-ui,
     sans-serif;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.015em;
   box-shadow: none;
   pointer-events: auto;
   white-space: pre-wrap;
@@ -716,7 +849,7 @@ body {
 }
 /* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
    active-line highlight. The line-height equals the text's line box
-   (16px x 1.85), so each number is centred on its line instead of riding
+   (16px x 1.5), so each number is centred on its line instead of riding
    high. Room for three digits is reserved so the text doesn't jump at
    line 10 or 100. */
 .cm-gutters {
@@ -732,14 +865,62 @@ body {
   padding: 0 7px 0 11px;
   text-align: right;
 }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h1 {
-  line-height: calc(var(--note-font-size) * 1.45 * var(--note-line-height));
+/* A heading's number sits on the heading's first line: below the space
+   above the heading, in a line box as tall as the heading's. */
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement[class*="cm-ln-h"] {
+  padding-top: var(--p-spacing);
 }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h2 {
-  line-height: calc(var(--note-font-size) * 1.25 * var(--note-line-height));
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h1 { line-height: calc(var(--note-font-size) * 1.618 * 1.2); }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h2 { line-height: calc(var(--note-font-size) * 1.462 * 1.2); }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h3 { line-height: calc(var(--note-font-size) * 1.318 * 1.3); }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h4 { line-height: calc(var(--note-font-size) * 1.188 * 1.4); }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h5 { line-height: calc(var(--note-font-size) * 1.076 * 1.5); }
+.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h6 { line-height: calc(var(--note-font-size) * 1 * 1.5); }
+/* Heading lines, as Obsidian's .cm-line.HyperMD-header-N (src/editor.ts). */
+.cm-editor .cm-line.cm-h {
+  padding-top: var(--p-spacing);
 }
-.cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-ln-h3 {
-  line-height: calc(var(--note-font-size) * 1.1 * var(--note-line-height));
+/* CodeMirror's caret buffers beside the hidden "#" hang from the top of
+   the font's ascent, which in Vazirmatn at heading sizes reaches above the
+   line box and made heading lines ~5px taller than Obsidian's. */
+.cm-editor .cm-line.cm-h > .cm-widgetBuffer {
+  vertical-align: top;
+}
+.cm-editor .cm-line.cm-h1 {
+  font-size: var(--h1-size);
+  line-height: var(--h1-line-height);
+  font-weight: var(--h1-weight);
+  letter-spacing: var(--h1-letter-spacing);
+}
+.cm-editor .cm-line.cm-h2 {
+  font-size: var(--h2-size);
+  line-height: var(--h2-line-height);
+  font-weight: var(--h2-weight);
+  letter-spacing: var(--h2-letter-spacing);
+}
+.cm-editor .cm-line.cm-h3 {
+  font-size: var(--h3-size);
+  line-height: var(--h3-line-height);
+  font-weight: var(--h3-weight);
+  letter-spacing: var(--h3-letter-spacing);
+}
+.cm-editor .cm-line.cm-h4 {
+  font-size: var(--h4-size);
+  line-height: var(--h4-line-height);
+  font-weight: var(--h4-weight);
+  letter-spacing: var(--h4-letter-spacing);
+}
+.cm-editor .cm-line.cm-h5 {
+  font-size: var(--h5-size);
+  line-height: var(--h5-line-height);
+  font-weight: var(--h5-weight);
+  letter-spacing: var(--h5-letter-spacing);
+}
+.cm-editor .cm-line.cm-h6 {
+  font-size: var(--h6-size);
+  line-height: var(--h6-line-height);
+  font-weight: var(--h6-weight);
+  letter-spacing: var(--h6-letter-spacing);
 }
 .cm-activeLineGutter {
   background: transparent !important;
@@ -763,22 +944,30 @@ body {
 }
 /* ---- Live preview (src/livePreview.ts) ----
    Measurements and colours from Obsidian's editor CSS. */
+.cm-editor .cm-line.cm-lp-list-line {
+  padding-block: var(--list-spacing);
+}
 .cm-lp-bullet {
-  /* the "-" stays in the text, invisible; the dot is drawn on top */
+  /* the "-" stays in the text, invisible; the dot is drawn on top, 0.75em
+     in (Obsidian's --list-indent-editing) */
   position: relative;
+  padding-inline-start: 0.75em;
   color: transparent;
 }
 .cm-lp-bullet::after {
   content: "";
   position: absolute;
   top: 50%;
-  left: 50%;
+  left: calc(50% + 0.375em);
   width: 0.3em; /* --list-bullet-size */
   height: 0.3em;
   border-radius: 50%;
   background: var(--list-marker-color);
   transform: translate(-50%, -50%);
   pointer-events: none;
+}
+.cm-line[dir="rtl"] .cm-lp-bullet::after {
+  left: calc(50% - 0.375em);
 }
 .cm-lp-list-hidden {
   /* "- " in front of a checkbox: kept in the text, takes no space */
@@ -796,7 +985,7 @@ body {
   box-sizing: border-box;
   width: 17px;
   height: 17px;
-  margin-inline-end: 0.25em;
+  margin-inline: 7px 0.25em;
   vertical-align: -3px;
   border: 1px solid var(--checkbox-border-color);
   border-radius: 4px;
@@ -1112,10 +1301,11 @@ body {
   display: flex;
   width: fit-content;
   max-width: 316px;
-  height: 44px;
-  margin: 0 auto max(env(safe-area-inset-bottom, 0px), 12px);
-  padding: 0 6px;
-  border-radius: 44px;
+  height: 52px;
+  /* --navbar-bottom-offset minus 2px, as Obsidian's floating navbar */
+  margin: 0 auto calc(max(var(--safe-bottom), 12px) - 2px);
+  padding: 0 8px;
+  border-radius: 52px;
   background: var(--raised-background);
   backdrop-filter: var(--raised-blur);
   -webkit-backdrop-filter: var(--raised-blur);
@@ -1130,7 +1320,7 @@ body {
 .keyboard-up .mobile-navbar,
 .files-open .mobile-navbar,
 .outline-open .mobile-navbar {
-  transform: translateY(calc(44px + max(env(safe-area-inset-bottom, 0px), 12px)));
+  transform: translateY(calc(52px + max(var(--safe-bottom), 12px)));
   opacity: 0;
   pointer-events: none;
 }
@@ -1142,7 +1332,7 @@ body {
 }
 .mobile-navbar-action {
   flex-grow: 1;
-  width: 44px;
+  width: 52px;
   height: 100%;
 }
 .mobile-navbar-action button {
@@ -1152,7 +1342,7 @@ body {
   width: 100%;
   height: 100%;
   padding: 0;
-  border-radius: 44px;
+  border-radius: 52px;
   background: transparent;
   color: var(--text-normal);
   -webkit-tap-highlight-color: transparent;
@@ -1166,8 +1356,8 @@ body {
   cursor: default;
 }
 .mobile-navbar-action svg {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;
@@ -1208,12 +1398,11 @@ body {
   cursor: pointer;
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
-/* Editor heading lines keep the 16px line font; the heading size lives on
-   the text inside, so the chevron's line box is sized per level. */
-.cm-heading-fold { --fold-line: calc(var(--note-line-height) * 1em); }
-.cm-heading-fold-h1 { --fold-line: calc(var(--note-line-height) * 1.45em); }
-.cm-heading-fold-h2 { --fold-line: calc(var(--note-line-height) * 1.25em); }
-.cm-heading-fold-h3 { --fold-line: calc(var(--note-line-height) * 1.1em); }
+/* Editor heading lines have the space above the heading as padding; the
+   chevron sits below it, on the first line. */
+.cm-editor .cm-line.cm-heading-fold::after {
+  top: var(--p-spacing);
+}
 .cm-heading-fold.is-folded::after,
 .preview-pane .md-section > .has-fold.is-folded::after {
   background: var(--text-muted);
@@ -1298,14 +1487,15 @@ body {
    The note's name above the text, as Obsidian's .inline-title in reading
    view: same look as the editor's title, not editable here. */
 .preview-pane .inline-title {
-  margin: 0 0 0.5rem;
-  color: var(--muted);
+  margin: 0 0 var(--inline-title-margin-bottom);
+  padding-top: 0.5em;
+  color: var(--text-normal);
   font:
-    700 2.35rem/1.15 Vazirmatn,
+    var(--inline-title-weight) var(--inline-title-size) / var(--inline-title-line-height) Vazirmatn,
     "Segoe UI",
     system-ui,
     sans-serif;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.015em;
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }
@@ -1754,7 +1944,7 @@ input.mod-no-match {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  padding-top: max(8px, env(safe-area-inset-top, 0px));
+  padding-top: max(8px, var(--safe-top));
 }
 /* Header: the same spacing on both sides (padding-inline 32px / 16px). */
 .workspace-drawer-header {
@@ -1846,6 +2036,35 @@ input.mod-no-match {
   width: 44px;
   height: 44px;
   border-radius: 50%;
+}
+/* Left drawer, as Obsidian 1.12 on a phone: the tree fills the drawer with
+   its buttons floating at the bottom of it, and the space ("vault profile")
+   sits under it all: name and chevron in 19.2px semibold, the count below
+   in 12.8px, the gear a raised 44px button (--vault-profile-order: 2). */
+.workspace-drawer.mod-left .workspace-drawer-inner {
+  padding-bottom: max(var(--safe-bottom), 16px);
+}
+.workspace-drawer-tab-container {
+  position: relative;
+  display: flex;
+  flex: 1 0 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.workspace-drawer-header.mod-vault-profile {
+  align-items: center;
+  padding: 12px 16px 0 32px;
+  padding-inline: 32px 16px;
+}
+.workspace-drawer-header.mod-vault-profile .workspace-drawer-header-icons {
+  margin-top: 0;
+}
+.workspace-drawer-header-icon.mod-raised {
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
+  color: var(--text-normal);
 }
 /* File explorer */
 .nav-files-container {
@@ -1947,8 +2166,12 @@ input.mod-no-match {
   display: flex;
   justify-content: center;
   gap: 8px;
-  padding: 8px 16px max(12px, env(safe-area-inset-bottom, 0px));
+  padding: 4px 0 8px;
   pointer-events: none;
+}
+/* The right drawer has no profile row under its buttons. */
+.workspace-drawer.mod-right .nav-buttons-container {
+  padding: 8px 16px max(12px, var(--safe-bottom));
 }
 .nav-buttons-container::after {
   content: "";
@@ -1988,9 +2211,9 @@ input.mod-no-match {
 .menu.mod-bottom-sheet {
   position: fixed;
   z-index: 41;
-  right: env(safe-area-inset-right, 0px);
+  right: var(--safe-right);
   bottom: 0;
-  left: env(safe-area-inset-left, 0px);
+  left: var(--safe-left);
   max-width: 560px;
   margin: 0 auto;
   border-radius: 40px 40px 0 0;
@@ -2019,7 +2242,7 @@ input.mod-no-match {
 .menu-scroll {
   max-height: 60vh;
   overflow-y: auto;
-  padding: 8px 16px max(16px, env(safe-area-inset-bottom, 0px));
+  padding: 8px 16px max(16px, var(--safe-bottom));
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
@@ -2038,14 +2261,15 @@ input.mod-no-match {
   border-radius: 24px;
 }
 .menu-separator {
-  height: 0;
-  margin: 8px 0;
+  /* 16px between groups, as Obsidian's (its separators don't collapse) */
+  height: 16px;
+  margin: 0;
 }
 .menu-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 12px 16px;
   background: var(--background-primary);
   font-size: 16px;
@@ -2092,8 +2316,8 @@ input.mod-no-match {
   color: var(--text-accent);
 }
 .menu-item-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;
@@ -2137,7 +2361,7 @@ input.mod-no-match {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(22px * 0.55);
+  font-size: calc(26px * 0.55);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -2157,8 +2381,8 @@ input.mod-no-match {
   width: 100%;
   height: 100%;
   overflow-y: auto;
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+  padding-top: var(--safe-top);
+  padding-bottom: calc(48px + var(--safe-bottom));
   -webkit-mask: var(--view-bottom-fade-mask);
   mask: var(--view-bottom-fade-mask);
 }
@@ -2280,7 +2504,7 @@ input.mod-no-match {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px max(16px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  padding: 8px max(16px, var(--safe-right)) max(8px, var(--safe-bottom)) max(16px, var(--safe-left));
   background: linear-gradient(to top, var(--background-secondary), transparent);
   font-weight: 600;
 }
@@ -2379,8 +2603,7 @@ textarea,
 .is-empty-tab .editor-pane,
 .is-empty-tab .preview-pane,
 .is-empty-tab #preview-toggle,
-.is-empty-tab #nav-find,
-.is-empty-tab #nav-fold {
+.is-empty-tab #nav-find {
   visibility: hidden;
 }
 .empty-state-container {
@@ -2493,27 +2716,32 @@ textarea,
   color: var(--text-normal);
 }
 .settings-header {
-  display: flex;
+  /* Obsidian's settings header on a phone: raised 44px buttons at the
+     edges, the title centred in 16px semibold. */
+  display: grid;
   flex-shrink: 0;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
-  gap: 4px;
-  height: 52px;
-  margin-top: env(safe-area-inset-top, 0px);
-  padding: 0 8px;
+  height: 44px;
+  margin-top: max(12px, var(--safe-top));
+  padding: 0 16px;
 }
 .settings-header .clickable-icon {
   display: grid;
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 22px;
-  background: transparent;
+  border-radius: 44px;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
   color: var(--text-normal);
 }
 .settings-header svg,
 .setting-item-icon svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;
@@ -2521,23 +2749,34 @@ textarea,
   stroke-linejoin: round;
 }
 .settings-title {
-  font-size: calc(16px * 1.2);
+  grid-column: 2;
+  font-size: 16px;
   font-weight: 600;
+  text-align: center;
 }
 .settings-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+  padding: 20px 16px calc(100px + var(--safe-bottom));
 }
+/* Group heading: --font-ui-small (15px), medium, muted, 24px above and
+   16px below. */
 .setting-group-title {
-  margin: 16px 16px 8px;
+  margin: 24px 0 16px;
+  padding: 0 16px;
   color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 500;
 }
+.settings-scroll > .setting-group-title:first-child {
+  margin-top: 0;
+}
+/* Cards: 30px corners, 20px inside; rows 16px apart with a 1px line
+   between them inside the card's padding. */
 .setting-group {
   overflow: hidden;
-  border-radius: 24px;
+  padding: 20px;
+  border-radius: 30px;
   background: var(--background-primary);
 }
 .theme-dark .setting-group {
@@ -2546,18 +2785,21 @@ textarea,
 .setting-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 56px;
-  padding: 10px 16px;
+  gap: 16px;
+  padding: 16px 0;
   border-top: 1px solid var(--background-modifier-border);
 }
 .setting-group > :first-child {
+  padding-top: 0;
   border-top: 0;
+}
+.setting-group > :last-child {
+  padding-bottom: 0;
 }
 .setting-item.mod-column {
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
+  gap: 12px;
 }
 .setting-item.mod-column .segmented-control {
   margin: 0;
@@ -2572,15 +2814,18 @@ textarea,
 }
 .setting-item-name {
   font-size: 16px;
+  font-weight: 500;
+  line-height: 1.3;
 }
 .setting-item-description {
-  margin-top: 2px;
+  padding-top: 4px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12.8px;
+  line-height: 1.3;
 }
 .setting-item-value {
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
 .setting-item-icon {
@@ -2588,7 +2833,7 @@ textarea,
   color: var(--text-muted);
 }
 .setting-item-preview {
-  padding: 12px 16px;
+  padding: 16px 0;
   border-top: 1px solid var(--background-modifier-border);
   color: var(--text-normal);
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
@@ -2779,13 +3024,13 @@ textarea,
 .notice-container {
   position: fixed;
   z-index: 60;
-  top: max(4px, env(safe-area-inset-top));
+  top: max(4px, var(--safe-top));
   right: 0;
   left: 0;
   display: flex;
   flex-direction: column-reverse;
   gap: 8px;
-  padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
   pointer-events: none;
 }
 .notice {
@@ -2801,4 +3046,149 @@ textarea,
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Page breaks are for the PDF only (src/markdown.ts, src/exportPdf.ts). */
+.preview-pane .page-break {
+  display: none;
+}
+/* Settings: dropdowns and text boxes, as Obsidian's */
+/* A row with a dropdown stacks it under the text, full width: Obsidian's
+   44px pill on the secondary background, 15px medium text. */
+.settings-screen .setting-item:has(> .dropdown) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+.settings-screen .dropdown {
+  flex: none;
+  width: 100%;
+  height: 44px;
+  padding: 0 32px 0 16px;
+  border: 0;
+  border-radius: 44px;
+  background: var(--background-secondary) no-repeat right 14px center / 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.settings-screen .setting-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.settings-screen .setting-textarea:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+.settings-screen .setting-item-description code {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+}
+/* The ≡ button with a quick action: the action's icon and a small
+   chevrons-up-down flair (hold for the menu), as Obsidian's. */
+#nav-menu {
+  position: relative;
+}
+#nav-menu .mobile-navbar-action-flair {
+  position: absolute;
+  inset-inline-end: 3px;
+  bottom: 9px;
+  display: flex;
+  color: var(--text-faint);
+}
+#nav-menu .mobile-navbar-action-flair svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.5;
+}
+/* The app's first run: asking for file access (src/native.ts) */
+.file-access-screen {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: max(24px, var(--safe-top)) 24px max(24px, var(--safe-bottom));
+  background: var(--background-primary);
+  color: var(--text-normal);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.file-access-container {
+  width: min(420px, 100%);
+  text-align: center;
+}
+.file-access-icon {
+  display: inline-flex;
+  padding: 18px;
+  border-radius: 24px;
+  background: var(--background-secondary);
+  color: var(--interactive-accent);
+}
+.file-access-icon svg {
+  width: 36px;
+  height: 36px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.file-access-title {
+  margin: 20px 0 12px;
+  font-size: 1.6em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.file-access-text {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.file-access-text.mod-muted {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.file-access-button {
+  width: 100%;
+  height: 48px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 24px;
+  background: var(--interactive-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+}
+.file-access-button:active {
+  opacity: 0.8;
+}
+.file-access-hint {
+  min-height: 1.6em;
+  margin-top: 12px;
+  color: var(--text-error, #e93147);
+  font-size: 14px;
+}
+.theme-dark .settings-screen .dropdown {
+  background-color: var(--interactive-normal);
 }

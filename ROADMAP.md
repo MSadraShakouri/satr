@@ -7,7 +7,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6). Notes are files in
 folders behind one storage interface: a virtual file system in localStorage on
 the web, and a device backend (Capacitor Filesystem, untested until the APK). The Android APK (Capacitor 7) comes after the UI
-and the logic below are finished. The `android/` project hasn't been created yet.
+and the logic below are finished. The `android/` project exists (Capacitor 7, with Satr's own print and storage plugins), and GitHub Actions builds a signed debug APK for each `v*` tag; it hasn't run on a phone yet.
 
 ### Done
 
@@ -34,7 +34,7 @@ Preview
 
 Chrome
 - [x] Obsidian themes: exact neutral colours, light/dark/auto
-- [x] Floating top buttons and bottom bar with Obsidian's icons (previous / next tab, new note, tabs, find, fold all); they hide while scrolling down, with Obsidian's fade masks. The right drawer has no button, as in Obsidian (swipe from the right edge, or Ctrl/Cmd+Shift+F)
+- [x] Floating top buttons and bottom bar with Obsidian's icons (in Obsidian's order: previous / next tab, find, new note, tabs, and the ≡ menu); they hide while scrolling down, with Obsidian's fade masks. The right drawer has no button, as in Obsidian (swipe from the right edge, or Ctrl/Cmd+Shift+F)
 - [x] Both drawers share one implementation of Obsidian's release physics (drag, fling, re-grab mid-animation, same look)
 - [x] Right drawer: outline and search in one view, built like the left drawer. A two-option pill (tap only) picks This note / All notes. This note: the outline, and while searching the matching headings with each match under its heading. All notes: every note with its outline, even before you type; searching narrows it to the same heading tree under each note. Each match shows its line number and up to seven lines of context. Regular expressions
 - [x] Tabs: every note opens in its own tab (an open note just switches to its tab); the bottom bar's arrows step through the tabs; switching never opens the keyboard and comes back where you were. A tab button with the count, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done, press and hold a card to drag it to a new place), an empty tab page ("No file is open" with recent notes), swipe a card away to close, reopen closed tab, kept across restarts
@@ -64,16 +64,40 @@ Chrome
 - [x] Reopen the last tabs on launch; a note that's gone falls back to the first note in the space
 - [ ] Search index per space (read files lazily, cache the text, refresh on modification time)
 
+### PDF export (done, September 2026)
+
+- [x] ≡ menu in the bottom bar, as Obsidian's ribbon menu: collapse / expand all headings, reading / editing view, Export to PDF, rename, delete note, settings. Settings → Navigation bar → Menu button picks a quick action: a tap runs it (its icon, with a small chevrons-up-down flair), holding opens the menu
+- [x] Export to PDF straight to Android's print dialog (as Markor), where "Save as PDF" writes the file under the note's name; in the browser, the browser's print dialog
+- [x] The look: Vazirmatn 15px at 1.8, never justified, each paragraph in its own direction; headings 1.6 / 1.4 / 1.25 / 1.1× in bold with Markor's rule under h1 and h2, kept with what follows; tables centred as in the reading view; code in a light grey box with the preview's colours; blue underlined links (clickable in the PDF); wiki links as plain text; task boxes as in the reading view; no title on top
+- [x] A4, 1in margins; page numbers at the bottom centre, 12pt, in Persian digits (Settings: Persian / Latin / none)
+- [x] Footnotes at the foot of their page (Paged.js), numbered from 1 on every page, under a short Word-style rule on the start side; the call's digits follow its paragraph, the note's its own text
+- [x] Long formulas wrapped at the page's width by the same rules as on screen
+- [x] Page breaks: `\pagebreak`, `\newpage`, `\clearpage`, `<!-- pagebreak -->`, `<!-- newpage -->`, or any HTML with a page-break style (`page-break-before: always`, `break-after: page`…); hidden on screen, ignored inside code
+- [x] Custom CSS (Settings → PDF export), applied after Satr's own
+- [x] Fonts (Vazirmatn, Vazir Code, KaTeX) embedded as data URIs; Paged.js (≈500 KB) loads only when exporting
+- [ ] Images: once the reading view shows images, embed them as data URIs too
+- [ ] On-device check of the print path (fonts, links, page size) with the first APK
+
 ### APK phase
 
-- [ ] `npx cap add android`, app id com.msadrashakouri.satr
-- [ ] All-files permission (MANAGE_EXTERNAL_STORAGE) flow on first run; sideload only
-- [ ] Install `@capacitor/filesystem` natively (the JS backend in `src/vault.ts` is written against it) and test list, read, write, stat, rename, delete, mkdir on the device
-- [ ] Status bar hide/show wired to auto-hide (the JS side is done)
+- [x] `npx cap add android`, app id com.msadrashakouri.satr (committed; `MainActivity` registers `PrintPlugin`, `StoragePlugin` and `SystemBarsPlugin`)
+- [x] Debug APK from GitHub Actions (`.github/workflows/build-android.yml`, as piecework / lyric-sync / insight): a `v*` tag matching package.json builds `satr-debug-<version>.apk` and publishes a release; "Run workflow" builds one as an artifact. Signed with one fixed key from the `ANDROID_KEYSTORE_BASE64` secret (PKCS12, alias `satr`, password `android`), so each APK installs over the last. versionName from the tag, versionCode = commit count
+- [x] App icon (icons/*.svg → `npm run android:icons`): three right-aligned lines and a blue caret on Obsidian's dark grey; adaptive and themed (monochrome) icons; launch screen in the theme's background instead of Capacitor's logo
+- [ ] First CI build and install on the phone (a local Gradle build was tried in the dev sandbox but ran out of memory there)
+- [x] All-files access on first run (`StoragePlugin` + `src/native.ts`): a page explains and opens Android's "All files access" switch for Satr (Android 11+), or asks for the storage permission (10 and older); re-checks when you come back; sideload only
+- [x] `@capacitor/filesystem` installed natively (the backend in `src/vault.ts`); new notes with "All files" go to a Notes folder, not the top of the storage; the phone's Android/ folder is skipped when listing notes
+- [ ] Test list, read, write, stat, rename, delete, mkdir on the device
+- [x] System bars, edge to edge as Obsidian (`SystemBarsPlugin` "SatrSystemBars", replaces `@capacitor/status-bar`): the page draws behind transparent status and navigation bars, icons follow the theme, and the header / bottom bar keep clear of them through `--safe-area-inset-*` set from the real insets (Android's `env()` is unreliable in the WebView). No black band at the notch, no empty strip under the bottom bar. The keyboard gets a WebView bottom margin, since edge to edge disables adjustResize. The status bar still hides and shows on scroll
+- [x] Fixed text size: WebView text zoom pinned to 100% (app and print), so the phone's font-size setting enlarges neither the app nor the PDF
+- [ ] On-device check of the insets (notch, gesture and 3-button navigation, keyboard up / down, rotation)
 - [ ] Code keyboard: a small WebView subclass that overrides `onCreateInputConnection` and, while the caret is in code or math, requests `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | TYPE_TEXT_FLAG_NO_SUGGESTIONS` (Termux's trick: Gboard shows the number row and no suggestions), switched from JS through a bridge call plus `InputMethodManager.restartInput`
 - [ ] On-device IME check: Persian and Arabic composition, caret placement, selection handles
 - [ ] Share intent (open .md from other apps)
-- [ ] Print / PDF (Phase 3 below)
+- [x] Print / PDF: the Android side (see Print below); needs its on-device check with the first build
+
+### Obsidian's sizes (done, September 2026)
+
+Measured side by side against Obsidian 1.12.7 mobile at 390×844 and matched: editor (16px / 1.5, 60px top spacing, 24px side margins, 700px line width, line-level headings with Obsidian's sizes, weights, line heights and letter spacing, list and checkbox geometry, 14px code), reading view (heading, paragraph, list, blockquote, code and table spacing), bottom bar (52px pill), header (44px buttons), left drawer (space switcher at the bottom where Obsidian has its vault profile, "N files, M folders"), Settings (cards, rows, dropdowns, toggles) and the ≡ menu sheet. The theme button left the drawer; the theme is chosen in Settings only. Saved settings from before are migrated once to the new line spacing (1.5).
 
 ## Original product decisions and phased to-do
 
@@ -116,9 +140,9 @@ Files
 
 Print
 
-- [ ] Custom CSS you control in the print output
-- [ ] Your own page-setup dialog before handing off to Android's print
-- [ ] Math: KaTeX output with fonts embedded as data URIs in the print HTML
+- [x] Custom CSS you control in the print output
+- [x] ~~Your own page-setup dialog before handing off to Android's print~~ — decided against: straight to Android's dialog, as Markor
+- [x] Math: KaTeX output with fonts embedded as data URIs in the print HTML
 - [ ] Mermaid export support postponed with Mermaid itself
 - [ ] Images as data URIs
 - [ ] No HTML export — print/PDF is the only export path
@@ -220,17 +244,16 @@ Phase 3 — Print / PDF
 
 Goal: your own print dialog, your own CSS, Android handles the final save.
 
-- [ ] satr-print plugin skeleton
-- [ ] Offscreen WebView (attached to window, 1×1, invisible)
-- [ ] Build self-contained print HTML from rendered markdown
-- [ ] Your custom CSS: page size, margins, fonts, colors
+- [x] satr-print plugin (`android/…/PrintPlugin.java`, `SatrPrint` in JS)
+- [x] Print WebView attached to the window (full size, behind the app's WebView), removed when the job finishes
+- [x] Build self-contained print HTML from rendered markdown (laid out in the app by Paged.js, then handed over)
+- [x] Your custom CSS (page size and margins fixed: A4, 1in)
 - [ ] Images as data URIs
-- [ ] Math as KaTeX HTML with fonts embedded as data URIs (decided: KaTeX everywhere)
+- [x] Math as KaTeX HTML with fonts embedded as data URIs (decided: KaTeX everywhere)
 - [ ] Mermaid export is postponed with Mermaid itself
-- [ ] Custom dialog: paper size, orientation, margins, plus anything else you want
-- [ ] Map dialog choices onto the print HTML
-- [ ] Page-break CSS for tables and figures
-- [ ] Wait for real render completion, not just onPageFinished — math and mermaid signal done through a JS bridge into the WebView, not load events
+- [x] ~~Custom dialog~~ — decided against (see above)
+- [x] Page-break CSS for tables and figures (rows, formulas and images don't split; headings stay with the next paragraph)
+- [x] Wait for real render completion — the pages are fully laid out in the app before the hand-off, so the print WebView only shows static HTML (scripts off); a short delay after onPageFinished lets the embedded fonts decode
 
 Phase 4 — Polish
 
@@ -255,8 +278,9 @@ Phase 5 — Maybe
 Known traps (worth remembering)
 
 - [ ] Async widgets in CM6 aren't natural. Write the placeholder-then-update pattern once, reuse it for math and mermaid.
-- [ ] Offscreen WebView for printing must be attached to the window, or images and fonts render inconsistently.
-- [ ] onPageFinished doesn't mean "content is ready." Use an explicit signal.
+- [x] Offscreen WebView for printing must be attached to the window, or images and fonts render inconsistently.
+- [ ] onPageFinished doesn't mean "content is ready." Use an explicit signal. (Print sidesteps it: static, pre-laid-out HTML.)
+- [x] Paged.js in a right-to-left page silently drops text: it looks for overflow to the right, but RTL columns grow to the left. The print page stays LTR (each paragraph has its own direction), as the reading view's article does.
 - [ ] IME inside a WebView is a known weak spot. The typing recipe from markdown-editor is the mitigation; the Phase 1 on-device check is the verification.
 - [ ] The last-opened file can vanish between sessions — stat it on launch, fall back to the browser.
 - [ ] Autosave can clobber external edits — that's why mtime-on-resume exists.

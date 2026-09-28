@@ -66,7 +66,17 @@ const ICONS = {
 export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   root.innerHTML = `
     <div class="workspace-drawer-inner">
-      <div class="workspace-drawer-header">
+      <div class="search-input-container nav-filter">${ICONS.search}<input type="search" class="nav-filter-input" dir="auto" placeholder="Filter by name" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="workspace-drawer-tab-container">
+        <div class="nav-files-container" role="tree"></div>
+        <div class="nav-buttons-container">
+          <button type="button" class="clickable-icon nav-action-button" data-act="new-note" aria-label="New note">${ICONS.newNote}</button>
+          <button type="button" class="clickable-icon nav-action-button" data-act="new-folder" aria-label="New folder">${ICONS.newFolder}</button>
+          <button type="button" class="clickable-icon nav-action-button" data-act="sort" aria-label="Change sort order">${ICONS.sort}</button>
+          <button type="button" class="clickable-icon nav-action-button" data-act="collapse" aria-label="Collapse all">${ICONS.collapseAll}</button>
+        </div>
+      </div>
+      <div class="workspace-drawer-header mod-vault-profile">
         <div class="workspace-drawer-header-left">
           <button type="button" class="workspace-drawer-vault-switcher" aria-haspopup="menu">
             <span class="workspace-drawer-vault-name" dir="auto"></span>
@@ -75,14 +85,6 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
           <div class="workspace-drawer-header-info" dir="auto"></div>
         </div>
         <div class="workspace-drawer-header-icons"></div>
-      </div>
-      <div class="search-input-container nav-filter">${ICONS.search}<input type="search" class="nav-filter-input" dir="auto" placeholder="Filter by name" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
-      <div class="nav-files-container" role="tree"></div>
-      <div class="nav-buttons-container">
-        <button type="button" class="clickable-icon nav-action-button" data-act="new-note" aria-label="New note">${ICONS.newNote}</button>
-        <button type="button" class="clickable-icon nav-action-button" data-act="new-folder" aria-label="New folder">${ICONS.newFolder}</button>
-        <button type="button" class="clickable-icon nav-action-button" data-act="sort" aria-label="Change sort order">${ICONS.sort}</button>
-        <button type="button" class="clickable-icon nav-action-button" data-act="collapse" aria-label="Collapse all">${ICONS.collapseAll}</button>
       </div>
     </div>`;
   root.querySelector('.workspace-drawer-header-icons')!.append(...deps.headerIcons);
@@ -177,6 +179,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       collapseButton.disabled = false;
       const space = (scope as Extract<Scope, { kind: 'space' }>).space;
       infoEl.textContent = space.path === space.name ? '' : space.path;
+      void showCount(space.path, space.path === space.name ? '' : space.path, token);
       html = await treeHtml(space.path, token);
       if (token !== renderToken) return;
       if (!html) html = '<div class="pane-empty">No notes yet</div>';
@@ -187,6 +190,21 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   // Filter by name: files and folders anywhere under the space (or the
   // walker's folder) whose name has every word typed, as a flat list with
   // the folder they're in; the matched text highlighted.
+  // Under the space's name, as Obsidian under the vault's: "12 files, 3 folders".
+  async function showCount(dir: string, prefix: string, token: number): Promise<void> {
+    let files = 0;
+    let folders = 0;
+    const queue = [dir];
+    while (queue.length && files + folders < 5000) {
+      const entries = await list$(queue.shift()!);
+      if (token !== renderToken) return;
+      for (const entry of entries) {
+        if (entry.kind === 'folder') { folders += 1; queue.push(entry.path); } else files += 1;
+      }
+    }
+    const count = `${files} ${files === 1 ? 'file' : 'files'}, ${folders} ${folders === 1 ? 'folder' : 'folders'}`;
+    infoEl.textContent = prefix ? `${prefix} · ${count}` : count;
+  }
   async function filterHtml(dir: string, token: number): Promise<string> {
     const words = filterQuery().split(/\s+/).filter(Boolean);
     const found: Entry[] = [];
@@ -505,6 +523,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
 
   return {
     refresh: render,
+    /** Ask, then delete a note (the ≡ menu's Delete note). */
+    deleteFile: (path: string) => remove(path, false),
     /** Mark the open note, and open the folders above it (tree only). */
     reveal(path: string): void {
       if (scope.kind === 'space' && within(path, scope.space.path)) {

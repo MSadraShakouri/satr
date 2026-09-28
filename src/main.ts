@@ -1,5 +1,4 @@
 import '@codemirror/view';
-import { cycleTheme, onThemeChange, themeChoice, type ThemeChoice } from './theme';
 import 'katex/dist/katex.min.css';
 import './style.css';
 import { SatrEditor } from './editor';
@@ -11,13 +10,15 @@ import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
-import { closeMenu, isMenuOpen, openMenu } from './menu';
+import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { showNotice, type NoticeHandle } from './notice';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
-import { closeSettings, isSettingsOpen, loadSettings, openSettings, type Settings } from './settings';
+import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
+import { exportPdf } from './exportPdf';
+import { ensureFileAccess, setupSystemBars, systemBars } from './native';
 import { currentScope, scopeName, scopeRoot } from './spaces';
 import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within, writeNow } from './vault';
 
@@ -74,7 +75,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <div class="app-shell">
     <div class="topbar">
-      <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="15" height="16" rx="2"/><path d="M8 7v10"/></svg></button>
+      <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="2" width="22" height="20" rx="4"/><rect x="4" y="5" width="2" height="14" rx="2" fill="currentColor"/></svg></button>
       <div class="topbar-actions">
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
@@ -109,10 +110,10 @@ app.innerHTML = `
         <div class="mobile-navbar-actions">
           <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Previous tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-fold" aria-label="Collapse all headings"></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
       </nav>
     </div>
@@ -275,7 +276,7 @@ function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   onSelection: () => rememberViewSoon(),
-  onFold: () => { applyPreviewFolds(); renderFoldButton(); rememberViewSoon(); },
+  onFold: () => { applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
   linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
   openLink: (target, heading) => openLink(target, heading),
   obscuredBottom: () => obscuredBottom(),
@@ -309,23 +310,20 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
 //   in step, CodeMirror correcting its height estimates, a re-render — are
 //   ignored (Obsidian skips scrolls within 100ms of a render the same way).
 // Nothing hides while the keyboard is up.
-const LINE_PX = 16 * 1.85;
+const LINE_PX = 16 * 1.5;
 const NAV_THRESHOLD = 0.125 * LINE_PX;
-type StatusBarPlugin = { hide(options?: { animation?: string }): Promise<void>; show(options?: { animation?: string }): Promise<void> };
-const statusBar = (): StatusBarPlugin | undefined =>
-  (window as unknown as { Capacitor?: { Plugins?: { StatusBar?: StatusBarPlugin } } }).Capacitor?.Plugins?.StatusBar;
 let navHidden = false;
 function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
   document.body.classList.add('is-hidden-nav');
-  void statusBar()?.hide({ animation: 'FADE' }).catch(() => undefined);
+  void systemBars()?.hide().catch(() => undefined);
 }
 function restoreNavigation(): void {
   if (!navHidden) return;
   navHidden = false;
   document.body.classList.remove('is-hidden-nav');
-  void statusBar()?.show({ animation: 'FADE' }).catch(() => undefined);
+  void systemBars()?.show().catch(() => undefined);
 }
 const scrollAnchors = new WeakMap<Element, number>();
 let programmaticUntil = 0;
@@ -465,6 +463,7 @@ function leaveCurrent(): void {
 }
 function showFile(path: string, content: string, after?: () => void): void {
   document.body.classList.remove('is-empty-tab');
+  renderMenuButton();
   // Another note never opens the keyboard or shows the caret: it comes back
   // at its remembered place, unfocused, until you tap into it.
   editor.view.contentDOM.blur();
@@ -554,8 +553,15 @@ function pathDeleted(path: string): void {
   renderNavButtons();
 }
 /** The note to show when none is open: the first in the space, or a new one. */
+// Where new notes go: the space's folder; with "All files" in the app, a
+// Notes folder rather than the top of the phone's storage (it's created with
+// the first note written there).
+function notesHome(): string {
+  const scope = currentScope();
+  return scope.kind === 'all' && backend.kind === 'device' ? DEFAULT_FOLDER : scopeRoot(scope);
+}
 async function firstNote(): Promise<{ path: string; text: string }> {
-  const root = scopeRoot(currentScope());
+  const root = notesHome();
   const notes = (await backend.list(root).catch(() => [])).filter((e) => e.kind === 'file' && isNote(e.name))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   for (const note of notes) {
@@ -570,7 +576,7 @@ async function openFallback(): Promise<void> {
   filePath = '';
   showFile(path, text);
 }
-async function newFile(dir = scopeRoot(currentScope())): Promise<void> {
+async function newFile(dir = notesHome()): Promise<void> {
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
   try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
@@ -705,6 +711,7 @@ function showEmptyTab(): void {
   saveTimer = undefined;
   editor.view.contentDOM.blur();
   document.body.classList.add('is-empty-tab');
+  renderMenuButton();
   void renderEmptyTab();
   renderNavButtons();
   sidebar.refresh();
@@ -757,37 +764,110 @@ function showTabs(): void {
   });
 }
 
-// Bottom bar (no keyboard): previous / next tab, new note, tabs, find, and fold / unfold all
-// headings. Obsidian's floating navbar: a 52px pill, at most 316px wide,
-// max(safe area, 12px) from the bottom; hidden while typing and while
-// scrolling down, like the header buttons.
+// Bottom bar (no keyboard), in Obsidian's order: previous / next tab, find,
+// new note, tabs, and the ≡ menu. Obsidian's floating navbar: a 52px pill,
+// at most 316px wide, max(safe area, 12px) from the bottom; hidden while
+// typing and while scrolling down, like the header buttons.
 const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
 const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
-const navFold = document.querySelector<HTMLButtonElement>('#nav-fold')!;
+const navMenu = document.querySelector<HTMLButtonElement>('#nav-menu')!;
 const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-number')!;
 document.querySelector('#nav-tabs')!.addEventListener('click', showTabs);
-const FOLD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg>'; // chevrons-down-up
-const UNFOLD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>'; // chevrons-up-down
-function renderFoldButton(): void {
+const svg = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+const MENU_ICONS = {
+  menu: svg('<path d="M4 12h16"/><path d="M4 18h16"/><path d="M4 6h16"/>'),
+  collapse: svg('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'), // chevrons-down-up
+  expand: svg('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'), // chevrons-up-down
+  pdf: svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>'), // file-down
+  rename: svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'), // pencil
+  trash: svg('<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
+  settings: svg('<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>'),
+};
+const FLAIR = '<span class="mobile-navbar-action-flair"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';
+
+// The ≡ menu (Obsidian's ribbon menu, as a bottom sheet): each item knows
+// its current title and icon, so the quick action button can show them too.
+interface NoteAction { title: string; icon: string; needsNote: boolean; warning?: boolean; run(): void }
+function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
   const anyFolded = editor.foldedLines().length > 0;
-  navFold.innerHTML = anyFolded ? UNFOLD_ICON : FOLD_ICON;
-  navFold.setAttribute('aria-label', anyFolded ? 'Expand all headings' : 'Collapse all headings');
+  switch (key) {
+    case 'fold': return {
+      title: anyFolded ? 'Expand all headings' : 'Collapse all headings', icon: anyFolded ? MENU_ICONS.expand : MENU_ICONS.collapse, needsNote: true,
+      run: () => { ownScroll(); if (editor.foldedLines().length) editor.unfoldAll(); else editor.foldAll(); renderMenuButton(); },
+    };
+    case 'view': return {
+      title: mode === 'edit' ? 'Reading view' : 'Editing view', icon: mode === 'edit' ? bookIcon : penIcon, needsNote: true,
+      run: () => { setMode(mode === 'edit' ? 'preview' : 'edit'); renderMenuButton(); },
+    };
+    case 'pdf': return { title: 'Export to PDF', icon: MENU_ICONS.pdf, needsNote: true, run: () => void exportCurrentPdf() };
+    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } };
+    case 'delete': return { title: 'Delete note', icon: MENU_ICONS.trash, needsNote: true, warning: true, run: () => { if (filePath) leftSidebar.deleteFile(filePath); } };
+    case 'settings': return { title: 'Settings', icon: MENU_ICONS.settings, needsNote: false, run: showSettings };
+  }
 }
+const hasNote = (): boolean => !document.body.classList.contains('is-empty-tab');
+async function exportCurrentPdf(): Promise<void> {
+  const notice = showNotice('Preparing the PDF…', 60000);
+  try {
+    await exportPdf(stem(filePath.split('/').pop() ?? 'Note') || 'Note', editor.getValue());
+  } catch (error) {
+    showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
+  } finally {
+    notice.hide();
+  }
+}
+function showNoteMenu(): void {
+  const item = (key: Exclude<QuickAction, ''>): MenuEntry => {
+    const a = noteAction(key);
+    return { title: a.title, icon: a.icon, warning: a.warning, disabled: a.needsNote && !hasNote(), action: a.run };
+  };
+  openMenu([item('fold'), item('view'), 'separator', item('pdf'), 'separator', item('rename'), item('delete'), 'separator', item('settings')]);
+}
+function renderMenuButton(): void {
+  const quick = loadSettings().quickAction;
+  if (!quick) {
+    navMenu.innerHTML = MENU_ICONS.menu;
+    navMenu.setAttribute('aria-label', 'Menu');
+    navMenu.disabled = false;
+    return;
+  }
+  const a = noteAction(quick);
+  navMenu.innerHTML = a.icon + FLAIR;
+  navMenu.setAttribute('aria-label', `${a.title} (hold for the menu)`);
+  navMenu.disabled = a.needsNote && !hasNote();
+}
+// A tap runs the quick action (or opens the menu); holding opens the menu.
+let menuPress: { timer: number; long: boolean } | null = null;
+navMenu.addEventListener('pointerdown', () => {
+  if (menuPress) window.clearTimeout(menuPress.timer);
+  const press = { timer: 0, long: false };
+  press.timer = window.setTimeout(() => { press.long = true; showNoteMenu(); navigator.vibrate?.(10); }, 450);
+  menuPress = press;
+});
+const cancelMenuPress = (): void => { if (menuPress && !menuPress.long) window.clearTimeout(menuPress.timer); };
+navMenu.addEventListener('pointerup', cancelMenuPress);
+navMenu.addEventListener('pointercancel', cancelMenuPress);
+navMenu.addEventListener('pointerleave', cancelMenuPress);
+navMenu.addEventListener('contextmenu', (event) => event.preventDefault());
+navMenu.addEventListener('click', () => {
+  const press = menuPress;
+  menuPress = null;
+  if (press?.long) return;
+  if (press) window.clearTimeout(press.timer);
+  const quick = loadSettings().quickAction;
+  if (quick) noteAction(quick).run();
+  else showNoteMenu();
+});
 function renderNavButtons(): void {
   navBack.disabled = activeTab <= 0;
   navForward.disabled = activeTab >= tabs.length - 1;
   navTabsCount.textContent = String(tabs.length);
   saveTabs();
-  renderFoldButton();
+  renderMenuButton();
 }
 navBack.addEventListener('click', () => void stepTab(-1));
 navForward.addEventListener('click', () => void stepTab(1));
 document.querySelector('#nav-new')!.addEventListener('click', () => void newFile());
-navFold.addEventListener('click', () => {
-  ownScroll();
-  if (editor.foldedLines().length) editor.unfoldAll();
-  else editor.foldAll();
-});
 // The bar never takes focus from the note (no keyboard flicker).
 document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
 renderNavButtons();
@@ -869,27 +949,9 @@ const refreshOutlineSoon = (): void => {
 editor.view.dom.addEventListener('input', refreshOutlineSoon);
 
 
-// Theme switch in the drawer header: Auto (follows the system) → Light → Dark.
-const themeButton = document.createElement('button');
-themeButton.type = 'button';
-themeButton.className = 'clickable-icon workspace-drawer-header-icon';
-themeButton.id = 'theme-toggle';
-const THEME_LABEL: Record<ThemeChoice, string> = { auto: 'Theme: Auto', light: 'Theme: Light', dark: 'Theme: Dark' };
-const THEME_ICON: Record<ThemeChoice, string> = {
-  auto: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor" stroke="none"/></svg>',
-  light: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>',
-  dark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.6 6.6 0 0 0 10.7 10.7z"/></svg>',
-};
-function renderThemeButton(choice: ThemeChoice): void {
-  themeButton.innerHTML = THEME_ICON[choice];
-  themeButton.setAttribute('aria-label', THEME_LABEL[choice]);
-  themeButton.title = THEME_LABEL[choice];
-}
-renderThemeButton(themeChoice());
-onThemeChange(renderThemeButton);
-themeButton.addEventListener('click', () => cycleTheme());
 
-// Settings (src/settings.ts): the gear next to the theme switch.
+// Settings (src/settings.ts): the raised gear at the bottom of the left
+// drawer, as Obsidian's. The theme is chosen there.
 function applySettings(settings: Settings): void {
   const root = document.documentElement.style;
   root.setProperty('--note-font-size', `${settings.fontSize}px`);
@@ -900,20 +962,22 @@ function applySettings(settings: Settings): void {
   setHighlightAll(settings.highlightAll);
   toolbar.querySelectorAll<HTMLElement>('button[data-command]').forEach((b) => { b.hidden = settings.hiddenTools.includes(b.dataset.command!); });
   updateToolbarFades();
+  renderMenuButton();
 }
 const settingsButton = document.createElement('button');
 settingsButton.type = 'button';
-settingsButton.className = 'clickable-icon workspace-drawer-header-icon';
+settingsButton.className = 'clickable-icon workspace-drawer-header-icon mod-raised mod-settings';
 settingsButton.id = 'settings-button';
 settingsButton.setAttribute('aria-label', 'Settings');
 settingsButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>'; // lucide settings
-settingsButton.addEventListener('click', () => {
+settingsButton.addEventListener('click', () => showSettings());
+function showSettings(): void {
   toggleFiles(false);
   openSettings({
     apply: applySettings,
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });
-});
+}
 
 // Left sidebar: spaces and the file explorer (src/leftSidebar.ts).
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
@@ -928,7 +992,7 @@ const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file
     sidebar.refresh();
   },
   closeDrawer: () => toggleFiles(false),
-  headerIcons: [themeButton, settingsButton],
+  headerIcons: [settingsButton],
 });
 // The Android back button, in Obsidian's order: close whatever is on top
 // (menu, popover, tab switcher, settings, the find bar), then the left
@@ -987,6 +1051,7 @@ if (Capacitor.isNativePlatform()) {
 document.addEventListener('satr:back', () => { handleBack(); });
 
 async function boot(): Promise<void> {
+  await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
   let text = path ? await backend.read(path) : null;
@@ -1192,4 +1257,5 @@ const drawers = initDrawers({
   },
 });
 applySettings(loadSettings());
+setupSystemBars();
 void boot();

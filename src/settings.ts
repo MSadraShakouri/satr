@@ -11,16 +11,41 @@ export interface Settings {
   highlightAll: boolean;
   /** Keyboard toolbar buttons turned off, by command name. */
   hiddenTools: string[];
+  /** The ≡ button's quick action: a tap runs it, a long press opens the menu. '' = none. */
+  quickAction: QuickAction;
+  /** PDF page numbers, bottom centre. */
+  pdfPageNumbers: 'persian' | 'latin' | 'none';
+  /** Custom CSS for the PDF, applied after Satr's own. */
+  pdfCss: string;
+  /** Settings format; 2 = Obsidian's text sizes. */
+  version?: number;
 }
+export type QuickAction = '' | 'fold' | 'view' | 'pdf' | 'rename' | 'delete' | 'settings';
+export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
+  fold: 'Collapse / expand all headings',
+  view: 'Reading / editing view',
+  pdf: 'Export to PDF',
+  rename: 'Rename',
+  delete: 'Delete note',
+  settings: 'Settings',
+};
 const KEY = 'satr:settings';
-const DEFAULTS: Settings = { fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [] };
+const SETTINGS_VERSION = 2;
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.5, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', pdfPageNumbers: 'persian', pdfCss: '' };
 
 export function loadSettings(): Settings {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>;
     const s = { ...DEFAULTS, ...saved };
+    // Version 2 moved the text to Obsidian's sizes (line height 1.5 instead
+    // of 1.85); earlier text settings are reset to the new defaults once.
+    if ((Number(saved.version) || 1) < 2) { s.fontSize = DEFAULTS.fontSize; s.lineHeight = DEFAULTS.lineHeight; }
+    s.version = SETTINGS_VERSION;
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
-    s.lineHeight = Math.min(2.4, Math.max(1.3, Number(s.lineHeight) || DEFAULTS.lineHeight));
+    s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));
+    if (!(s.quickAction in QUICK_ACTIONS)) s.quickAction = '';
+    if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
+    if (typeof s.pdfCss !== 'string') s.pdfCss = '';
     s.hiddenTools = Array.isArray(s.hiddenTools) ? s.hiddenTools.filter((t) => typeof t === 'string') : [];
     return s;
   } catch { return { ...DEFAULTS }; }
@@ -52,6 +77,7 @@ export function openSettings(deps: SettingsDeps): void {
   const settings = loadSettings();
   const theme = themeChoice();
   const themes: ThemeChoice[] = ['auto', 'light', 'dark'];
+  const pageNumbers: Settings['pdfPageNumbers'][] = ['persian', 'latin', 'none'];
   const toggle = (name: string, on: boolean): string =>
     `<div class="checkbox-container${on ? ' is-enabled' : ''}" role="switch" aria-checked="${on}" data-toggle="${name}"><input type="checkbox" tabindex="-1"${on ? ' checked' : ''}></div>`;
   const el = document.createElement('div');
@@ -81,7 +107,7 @@ export function openSettings(deps: SettingsDeps): void {
         </div>
         <div class="setting-item mod-column">
           <div class="setting-item-row"><div class="setting-item-name">Line spacing</div><div class="setting-item-value" data-value="lineHeight"></div></div>
-          <input type="range" class="slider" data-range="lineHeight" min="1.3" max="2.4" step="0.05" value="${settings.lineHeight}">
+          <input type="range" class="slider" data-range="lineHeight" min="1.2" max="2.4" step="0.05" value="${settings.lineHeight}">
         </div>
         <div class="setting-item-preview" dir="auto">The quick brown fox jumps over the lazy dog.<br>نوشتن، ساده و روان.</div>
         <div class="setting-item">
@@ -91,6 +117,30 @@ export function openSettings(deps: SettingsDeps): void {
         <div class="setting-item">
           <div class="setting-item-info"><div class="setting-item-name">Highlight every match</div><div class="setting-item-description">In find, not only the current one</div></div>
           ${toggle('highlightAll', settings.highlightAll)}
+        </div>
+      </div>
+      <div class="setting-group-title">Navigation bar</div>
+      <div class="setting-group">
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Menu button</div><div class="setting-item-description">What tapping ≡ does. With a quick action, a long press still opens the menu.</div></div>
+          <select class="dropdown" data-select="quickAction">
+            <option value=""${settings.quickAction === '' ? ' selected' : ''}>Open the menu</option>
+            ${(Object.keys(QUICK_ACTIONS) as Array<keyof typeof QUICK_ACTIONS>).map((key) => `<option value="${key}"${settings.quickAction === key ? ' selected' : ''}>${escapeHtml(QUICK_ACTIONS[key])}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="setting-group-title">PDF export</div>
+      <div class="setting-group">
+        <div class="setting-item mod-column">
+          <div class="setting-item-name">Page numbers</div>
+          <div class="segmented-control" role="radiogroup" aria-label="Page numbers" style="--count: 3; --index: ${pageNumbers.indexOf(settings.pdfPageNumbers)}">
+            <div class="segmented-control-thumb"></div>
+            ${pageNumbers.map((p) => `<button type="button" class="segmented-control-option" role="radio" data-page-numbers="${p}" aria-checked="${p === settings.pdfPageNumbers}">${{ persian: '۱ ۲ ۳', latin: '1 2 3', none: 'None' }[p]}</button>`).join('')}
+          </div>
+        </div>
+        <div class="setting-item mod-column">
+          <div class="setting-item-info"><div class="setting-item-name">Custom CSS</div><div class="setting-item-description">Applied after Satr's own PDF style, so it wins. For example: <code>h1 { color: #1976d2; }</code></div></div>
+          <textarea class="setting-textarea" data-text="pdfCss" dir="ltr" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6" placeholder="p { text-align: justify; }">${escapeHtml(settings.pdfCss)}</textarea>
         </div>
       </div>
       <div class="setting-group-title">Keyboard toolbar</div>
@@ -116,10 +166,18 @@ export function openSettings(deps: SettingsDeps): void {
   renderValues();
 
   el.addEventListener('input', (event) => {
+    const text = (event.target as HTMLElement).closest<HTMLTextAreaElement>('[data-text="pdfCss"]');
+    if (text) { settings.pdfCss = text.value; save(settings); return; }
     const range = (event.target as HTMLElement).closest<HTMLInputElement>('[data-range]');
     if (!range) return;
     if (range.dataset.range === 'fontSize') settings.fontSize = Number(range.value);
     else settings.lineHeight = Math.round(Number(range.value) * 100) / 100;
+    commit();
+  });
+  el.addEventListener('change', (event) => {
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"]');
+    if (!select) return;
+    settings.quickAction = select.value as QuickAction;
     commit();
   });
   el.addEventListener('click', (event) => {
@@ -132,6 +190,15 @@ export function openSettings(deps: SettingsDeps): void {
       const control = themeButton.parentElement!;
       control.style.setProperty('--index', String(themes.indexOf(choice)));
       control.querySelectorAll<HTMLElement>('[data-theme]').forEach((b) => b.setAttribute('aria-checked', String(b === themeButton)));
+      return;
+    }
+    const pageButton = target.closest<HTMLElement>('[data-page-numbers]');
+    if (pageButton) {
+      settings.pdfPageNumbers = pageButton.dataset.pageNumbers as Settings['pdfPageNumbers'];
+      const control = pageButton.parentElement!;
+      control.style.setProperty('--index', String(pageNumbers.indexOf(settings.pdfPageNumbers)));
+      control.querySelectorAll<HTMLElement>('[data-page-numbers]').forEach((b) => b.setAttribute('aria-checked', String(b === pageButton)));
+      save(settings);
       return;
     }
     const sw = target.closest<HTMLElement>('[data-toggle]');

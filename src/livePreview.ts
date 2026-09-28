@@ -63,6 +63,26 @@ function quoteLine(indent: number): Decoration {
   }
   return deco;
 }
+// List lines, as Obsidian's .HyperMD-list-line: a hair of space above and
+// below, and a hanging indent the width of the drawn marker so wrapped lines
+// start under the text, not under the bullet.
+const listLines = new Map<number, Decoration>();
+function listLine(indent: number): Decoration {
+  const px = Math.round(indent * 10) / 10;
+  let deco = listLines.get(px);
+  if (!deco) {
+    deco = Decoration.line({
+      class: 'cm-lp-list-line',
+      attributes: px > 0 ? { style: `padding-inline-start:${px}px;text-indent:-${px}px` } : {},
+    });
+    listLines.set(px, deco);
+  }
+  return deco;
+}
+/** The bullet's padding before the dot (Obsidian's --list-indent-editing, 0.75em). */
+const BULLET_PAD_EM = 0.75;
+/** A checkbox's drawn width: 17px box, 7px before, 0.25em after. */
+const TASK_BOX_PX = 17 + 7;
 let measureContext: CanvasRenderingContext2D | null = null;
 const editorFonts = new WeakMap<EditorView, string>();
 function textWidth(view: EditorView, text: string): number {
@@ -178,6 +198,27 @@ function build(view: EditorView): DecorationSet {
             const spaced = (end: number): boolean => /^[ \t]/.test(state.sliceDoc(end, end + 1));
             const inside = (from: number, to: number): boolean => focused && ranges.some((r) => r.to > from && r.from <= to);
             const task = node.node.nextSibling?.name === 'Task' ? node.node.nextSibling.firstChild : null;
+            {
+              const line = state.doc.lineAt(node.from);
+              const before = line.text.slice(0, node.from - line.from);
+              if (!before.includes('>')) {
+                textWidth(view, ''); // fills the font cache
+                const em = parseFloat(editorFonts.get(view)?.split(' ')[2] ?? '') || 16;
+                const indentText = before.replace(/\t/g, '  ');
+                const isTask = task?.name === 'TaskMarker' && spaced(task.to);
+                const drawnTask = isTask && !inside(list?.name === 'BulletList' ? node.from : task!.from, task!.to);
+                let px = textWidth(view, indentText);
+                if (drawnTask) {
+                  if (list?.name !== 'BulletList') px += textWidth(view, state.sliceDoc(node.from, task!.from));
+                  px += TASK_BOX_PX + 0.25 * em + textWidth(view, ' ');
+                } else {
+                  const markEnd = isTask ? task!.to : node.to;
+                  px += textWidth(view, state.sliceDoc(node.from, markEnd) + ' ');
+                  if (list?.name === 'BulletList' && spaced(node.to) && !inside(node.from, node.to)) px += BULLET_PAD_EM * em;
+                }
+                out.push(listLine(px).range(line.from));
+              }
+            }
             if (task && task.name === 'TaskMarker') {
               const checked = /x/i.test(state.sliceDoc(task.from, task.to));
               const line = state.doc.lineAt(task.from);

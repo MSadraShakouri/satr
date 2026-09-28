@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Satr</string>
+    <string name="title_activity_main">Satr</string>
+    <string name="package_name">com.msadrashakouri.satr</string>
+    <string name="custom_url_scheme">com.msadrashakouri.satr</string>
+</resources>

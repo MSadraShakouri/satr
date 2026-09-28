@@ -1,0 +1,298 @@
+/* The PDF's look (src/exportPdf.ts): a blend of Satr's reading view, Markor
+   and md2docx. A4, 1in margins, Vazirmatn 15px at 1.8, never justified;
+   each paragraph takes its own direction. Page numbers (@page, bottom
+   centre) are added by src/exportPdf.ts from the setting, and the user's
+   custom CSS (Settings → PDF) comes after this file, so it wins. */
+
+@page {
+  size: A4;
+  margin: 1in;
+}
+
+html {
+  color: #222;
+  background: #fff;
+  font-family: Vazirmatn, sans-serif;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.8;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+body {
+  margin: 0;
+}
+
+/* Direction per paragraph, as in the reading view */
+:where(p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dt, dd, figcaption, caption) {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+p {
+  margin: 0 0 0.9em;
+  orphans: 3;
+  widows: 3;
+}
+
+/* Headings: scaled, bold, a Markor rule under h1 and h2; kept with what follows */
+h1, h2, h3, h4, h5, h6 {
+  margin: 1.2em 0 0.5em;
+  font-weight: 700;
+  line-height: 1.4;
+  break-after: avoid;
+  break-inside: avoid;
+}
+h1 { font-size: 1.6em; }
+h2 { font-size: 1.4em; }
+h3 { font-size: 1.25em; }
+h4 { font-size: 1.1em; }
+h5, h6 { font-size: 1em; }
+h1, h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 2px solid #ecf0f1;
+}
+body > :first-child,
+body > :first-child > :first-child {
+  margin-top: 0;
+}
+
+/* Links: blue and underlined (wiki links arrive as plain text) */
+a {
+  color: #1976d2;
+  text-decoration: underline;
+}
+
+/* Lists */
+ul, ol {
+  margin: 0 0 0.9em;
+  padding-inline-start: 1.8em;
+}
+li > ul, li > ol {
+  margin-bottom: 0;
+}
+li > p {
+  margin-bottom: 0.3em;
+}
+.persian-ordered {
+  list-style: none;
+  padding-inline-start: 0;
+}
+.persian-ordered > li {
+  position: relative;
+  padding-inline-start: 1.8em;
+}
+.persian-ordered > li::before {
+  content: attr(data-persian-number) ".";
+  position: absolute;
+  inset-inline-start: 0;
+}
+
+/* Task lists: boxes as in the reading view */
+li:has(> input[type="checkbox"]),
+li:has(> p > input[type="checkbox"]) {
+  list-style: none;
+}
+li > input[type="checkbox"],
+li > p > input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  top: 0.2em;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  margin-inline-start: -1.4em;
+  margin-inline-end: 0.5em;
+  border: 1px solid #ababab;
+  border-radius: 3px;
+  background: transparent center / 11px no-repeat;
+  vertical-align: baseline;
+}
+li > input[type="checkbox"]:checked,
+li > p > input[type="checkbox"]:checked {
+  border-color: #086ddd;
+  background-color: #086ddd;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+}
+li:has(> input[type="checkbox"]:checked),
+li:has(> p > input[type="checkbox"]:checked) {
+  color: #5c5c5c;
+  text-decoration: line-through;
+}
+
+/* Quotes */
+blockquote {
+  margin: 0 0 0.9em;
+  padding-inline-start: 1em;
+  border-inline-start: 3px solid #bdc3c7;
+  color: #555;
+}
+blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+hr {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 1px solid #e0e0e0;
+}
+
+img {
+  max-width: 100%;
+  break-inside: avoid;
+}
+
+/* Code: a light grey box, monospace, always left to right, preview colours */
+code {
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  background: #f4f4f4;
+  font-family: VazirCode, ui-monospace, monospace;
+  font-size: 0.85em;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+pre {
+  margin: 0 0 0.9em;
+  padding: 10px 14px;
+  border-radius: 4px;
+  background: #f4f4f4;
+  direction: ltr;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+pre code {
+  padding: 0;
+  background: none;
+  white-space: inherit;
+}
+.hljs-comment, .hljs-quote { color: #ababab; }
+.hljs-keyword, .hljs-selector-tag, .hljs-type { color: #d53984; }
+.hljs-string, .hljs-regexp, .hljs-addition { color: #08b94e; }
+.hljs-number, .hljs-literal, .hljs-symbol { color: #7852ee; }
+.hljs-title, .hljs-section { color: #e0ac00; }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-params { color: #00bfbc; }
+.hljs-tag, .hljs-name, .hljs-operator, .hljs-deletion { color: #e93147; }
+.hljs-meta, .hljs-built_in { color: #ec7500; }
+.hljs-punctuation { color: #5c5c5c; }
+
+/* Tables: centred, as in the reading view */
+table {
+  margin: 0 auto 0.9em;
+  border-collapse: collapse;
+  width: max-content;
+  max-width: 100%;
+}
+th, td {
+  padding: 4px 9px;
+  border: 1px solid #e0e0e0;
+}
+th {
+  font-weight: 700;
+}
+tr {
+  break-inside: avoid;
+}
+[data-table-align="left"] { text-align: left; }
+[data-table-align="center"] { text-align: center; }
+[data-table-align="right"] { text-align: right; }
+
+/* Math: always left to right; wrapped lines as on screen (src/mathLayout.ts) */
+.katex, .katex-display {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.math-unit {
+  display: inline-block;
+  white-space: nowrap;
+}
+.math-unit.is-overwide {
+  display: inline;
+  white-space: normal;
+}
+.math-cont,
+.math-unit.is-line-start > .math-plain {
+  display: none;
+}
+.math-unit.is-line-start > .math-cont,
+.math-flow.is-measuring .math-cont {
+  display: inline;
+}
+.math-flow.is-wrapped.is-display > .math-unit {
+  padding-block: 0.3em;
+}
+.math-flow.is-wrapped:not(.is-display) > .math-unit {
+  padding-block: 0.15em;
+}
+.math-display {
+  margin: 0.8em 0;
+  text-align: center;
+  direction: ltr;
+  line-height: 2.1;
+  break-inside: avoid;
+}
+.math-display > .katex-display {
+  margin: 0;
+}
+
+/* Page breaks (\pagebreak, <!-- pagebreak -->, page-break styles) */
+.page-break {
+  break-after: page;
+  height: 0;
+  margin: 0;
+}
+
+/* Footnotes: at the foot of their page, numbered from 1 on every page
+   (numbers are written by src/exportPdf.ts, in the digits of the text), under
+   a short Word-style rule on the page's start side. */
+.footnote {
+  float: footnote;
+}
+[data-footnote-call]::after {
+  content: attr(data-number) !important;
+  vertical-align: super !important;
+  font-size: 0.7em !important;
+  line-height: 0 !important;
+  font-variant-position: normal !important;
+}
+.pagedjs_footnote_area {
+  font-size: 0.8em;
+  line-height: 1.6;
+}
+.pagedjs_footnote_inner_content::before {
+  content: "";
+  display: block;
+  width: 33%;
+  margin-bottom: 0.4em;
+  border-top: 0.75pt solid #707070;
+}
+.doc-rtl .pagedjs_footnote_inner_content::before {
+  margin-left: auto;
+}
+.pagedjs_footnote_empty .pagedjs_footnote_inner_content::before,
+.pagedjs_footnote_empty::before {
+  display: none;
+}
+[data-footnote-marker] {
+  display: block !important;
+  list-style: none !important;
+  unicode-bidi: plaintext;
+  text-align: start;
+  margin: 0;
+}
+[data-footnote-marker]::marker {
+  content: none !important;
+}
+.footnote-number {
+  margin-inline-end: 0.35em;
+}
+
+/* Paged.js margin boxes: the page number */
+.pagedjs_margin-bottom-center {
+  font-family: Vazirmatn, sans-serif;
+  font-size: 12pt;
+  color: #222;
+}

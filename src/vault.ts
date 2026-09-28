@@ -269,6 +269,7 @@ export async function walkNotes(dir: string, limit = 2000): Promise<string[]> {
     try { entries = await backend.list(queue.shift()!); } catch { continue; }
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue;
+      if (entry.path === 'Android') continue; // the phone's app data, never notes
       if (entry.kind === 'folder') queue.push(entry.path);
       else if (isNote(entry.name)) out.push(entry.path);
     }
