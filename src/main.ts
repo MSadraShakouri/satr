@@ -814,17 +814,26 @@ async function allNotes(): Promise<{ path: string; text: string }[]> {
   }
   return notes;
 }
+function sidebarGoToLine(line: number): void {
+  ownScroll(400);
+  editor.revealLine(line, noteTopSpacing()); // also unfolds a folded parent
+  if (mode === 'preview') {
+    const section = preview.querySelector<HTMLElement>(`:scope > .md-section[data-line="${line}"]`);
+    if (section) previewPane.scrollTop += section.getBoundingClientRect().top - previewPane.getBoundingClientRect().top - noteTopSpacing();
+  }
+}
 const sidebar = createRightSidebar(rightPanel, {
   headings: () => editor.headings(),
   currentLine: () => (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view)),
-  onHeading: (line) => {
+  onHeading: (line, path) => {
     toggleOutline(false);
-    ownScroll(400);
-    editor.revealLine(line, noteTopSpacing()); // also unfolds a folded parent
-    if (mode === 'preview') {
-      const section = preview.querySelector<HTMLElement>(`:scope > .md-section[data-line="${line}"]`);
-      if (section) previewPane.scrollTop += section.getBoundingClientRect().top - previewPane.getBoundingClientRect().top - noteTopSpacing();
+    if (path && path !== filePath) {
+      // Another note: open it, then go to the heading (in whatever mode the
+      // note was left in).
+      void openFile(path, line < 0 ? undefined : () => sidebarGoToLine(line));
+      return;
     }
+    if (line >= 0) sidebarGoToLine(line);
   },
   notes: allNotes,
   currentPath: () => filePath,
@@ -926,10 +935,12 @@ const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file
 // drawer, then the right one. With nothing left to close, the first press
 // shows "Press back again to exit." for five seconds and a second press
 // within them leaves the app (minimised, as Obsidian does, so it comes back
-// as it was). The web build hears the same on a "satr:back" event.
+// as it was). In a browser the back button (or gesture) does the same,
+// through a guard entry in the page history; the exit press really leaves.
 let exitArmedAt = 0;
 let exitNotice: NoticeHandle | null = null;
-function handleBack(): void {
+/** Returns true when the press should leave the app. */
+function handleBack(): boolean {
   if (isMenuOpen()) closeMenu();
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
@@ -943,18 +954,37 @@ function handleBack(): void {
     exitArmedAt = 0;
     flush();
     if (Capacitor.isNativePlatform()) void CapacitorApp.minimizeApp();
+    return true;
   } else {
     exitArmedAt = Date.now();
     exitNotice = showNotice('Press back again to exit.', 5000);
-    return;
+    return false;
   }
   // Anything else closed: the next press starts over.
   exitArmedAt = 0;
   exitNotice?.hide();
   exitNotice = null;
+  return false;
 }
-if (Capacitor.isNativePlatform()) void CapacitorApp.addListener('backButton', handleBack);
-document.addEventListener('satr:back', handleBack);
+if (Capacitor.isNativePlatform()) {
+  void CapacitorApp.addListener('backButton', () => { handleBack(); });
+} else {
+  // The guard entry: back pops it (popstate), we handle the press and put it
+  // back. On the exit press it stays popped and we step back once more,
+  // off the app.
+  // Chrome skips entries pushed before the user has touched the page, so it
+  // goes in on the first tap or key press.
+  const GUARD = { satrBackGuard: true };
+  const addGuard = (): void => {
+    if (!(history.state as typeof GUARD | null)?.satrBackGuard) history.pushState(GUARD, '');
+  };
+  for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, addGuard, { capture: true, once: true });
+  window.addEventListener('popstate', () => {
+    if (handleBack()) history.back();
+    else history.pushState(GUARD, '');
+  });
+}
+document.addEventListener('satr:back', () => { handleBack(); });
 
 async function boot(): Promise<void> {
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }

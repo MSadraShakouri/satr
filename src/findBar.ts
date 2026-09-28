@@ -211,7 +211,16 @@ function createPanel(view: EditorView): Panel {
     view.dispatch({ effects: [setFind.of({ query, current: m }), ...scrollTo(view, m)] });
   };
   const flush = (): void => { if (timer !== undefined) search(); };
-  find.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(search, 150); });
+  find.addEventListener('input', () => {
+    // The count's side follows the typed text at once, not after the search:
+    // otherwise Persian text sat short of the right edge (where the count
+    // had been) for a moment before jumping over.
+    const rtl = RTL_QUERY.test(find.value);
+    dom.classList.toggle('mod-rtl-query', rtl);
+    count.dir = rtl ? 'rtl' : 'ltr';
+    window.clearTimeout(timer);
+    timer = window.setTimeout(search, 150);
+  });
   find.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') { event.preventDefault(); closeFind(view); return; }
     if (event.key === 'F3') { event.preventDefault(); flush(); go(view, event.shiftKey ? -1 : 1); return; }

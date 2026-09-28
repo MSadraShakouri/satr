@@ -8,8 +8,9 @@
 // - This note: an empty field shows the outline (the heading you're reading
 //   highlighted, tap to go there). Typing keeps the headings that match or
 //   whose section has matches, with each match listed under its heading.
-// - All notes: results grouped by note, each note's matches under its
-//   headings the same way.
+// - All notes: every note of the space with its headings (the outline of
+//   each, tap a heading to go there); typing narrows it the same way, each
+//   note's matches under its headings.
 // - Every match shows its line number and up to seven lines of context.
 // - The file tree's rows and spacing (16px, 8px 8px 8px 24px, guides,
 //   collapsible branches) and the same floating button at the bottom
@@ -23,7 +24,8 @@ export interface SidebarDeps {
   headings(): Heading[];
   /** Fractional source line at the top of the note area. */
   currentLine(): number;
-  onHeading(line: number): void;
+  /** Go to a heading; in another note, open it first. Line -1: just open it. */
+  onHeading(line: number, path?: string): void;
   /** All notes to search (the space); the open one with its live text. */
   notes(): Promise<{ path: string; text: string }[]>;
   currentPath(): string;
@@ -194,15 +196,28 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   let run = 0;
   async function renderAll(re: RegExp | null): Promise<void> {
     const mine = ++run;
-    if (!re) {
-      summary.textContent = '';
-      list.innerHTML = `<div class="pane-empty">Search every note in ${escapeHtml(deps.scopeName())}</div>`;
-      return;
-    }
     const current = deps.currentPath();
     const notes = await deps.notes();
     if (mine !== run) return; // a newer search started meanwhile
     notes.sort((a, b) => (a.path === current ? -1 : b.path === current ? 1 : stem(a.path).localeCompare(stem(b.path))));
+    const headingsOf = (note: { path: string; text: string }): Heading[] => (note.path === current ? deps.headings() : headingsOfText(note.text));
+    const noteRow = (path: string, flair: string, children: string): string => {
+      const key = `n:${path}`;
+      return `<div class="tree-item search-result${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
+        + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(path)}">`
+        + (children ? `<span class="tree-item-icon collapse-icon" data-toggle="${escapeHtml(key)}">${ICONS.chevron}</span>` : '')
+        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(path))}</span>${flair}</div>`
+        + (children ? `<div class="tree-item-children">${children}</div>` : '') + '</div>';
+    };
+    if (!re) {
+      // No query: every note with its outline.
+      summary.textContent = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
+      list.innerHTML = notes.map((note) => noteRow(note.path, '', headingTree(note.path, note.text, headingsOf(note), null, [], `${note.path}|`))).join('')
+        || `<div class="pane-empty">No notes in ${escapeHtml(deps.scopeName())}</div>`;
+      renderChrome();
+      markCurrent();
+      return;
+    }
     let total = 0;
     let files = 0;
     let capped = false;
@@ -214,16 +229,12 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       if (hits.length >= MAX_PER_NOTE || total + hits.length >= MAX_TOTAL) capped = true;
       files += 1;
       total += hits.length;
-      const key = `n:${note.path}`;
-      html += `<div class="tree-item search-result${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
-        + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(note.path)}" data-toggle="${escapeHtml(key)}">`
-        + `<span class="tree-item-icon collapse-icon">${ICONS.chevron}</span>`
-        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(note.path))}</span><span class="tree-item-flair">${hits.length}${hits.length >= MAX_PER_NOTE ? '+' : ''}</span></div>`
-        + `<div class="tree-item-children">${headingTree(note.path, note.text, note.path === current ? deps.headings() : headingsOfText(note.text), re, hits, `${note.path}|`)}</div></div>`;
+      html += noteRow(note.path, `<span class="tree-item-flair">${hits.length}${hits.length >= MAX_PER_NOTE ? '+' : ''}</span>`, headingTree(note.path, note.text, headingsOf(note), re, hits, `${note.path}|`));
     }
     summary.textContent = total ? `${total}${capped ? '+' : ''} result${total === 1 ? '' : 's'} in ${files} note${files === 1 ? '' : 's'}` : '';
     list.innerHTML = html || '<div class="pane-empty">No results</div>';
     renderChrome();
+    markCurrent();
   }
 
   function render(): void {
@@ -240,13 +251,15 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     else void renderAll(re);
     renderChrome();
   }
+  // The heading you're reading, highlighted (in the open note's tree).
   function markCurrent(): void {
-    if (scope !== 'note' || !headings.length) return;
+    const own = deps.headings();
     const line = deps.currentLine();
     let current = -1;
-    for (const h of headings) { if (h.line <= line + 0.5) current = h.line; else break; }
+    for (const h of own) { if (h.line <= line + 0.5) current = h.line; else break; }
+    const path = deps.currentPath();
     for (const el of list.querySelectorAll<HTMLElement>('.tree-item-self[data-line]')) {
-      el.classList.toggle('is-active', Number(el.dataset.line) === current);
+      el.classList.toggle('is-active', el.dataset.path === path && Number(el.dataset.line) === current);
     }
   }
   function setScope(next: SearchScope): void {
@@ -275,10 +288,10 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       renderChrome();
       return;
     }
+    const note = target.closest<HTMLElement>('.tree-item-self[data-note]');
+    if (note) { deps.onHeading(-1, note.dataset.note); return; }
     const item = target.closest<HTMLElement>('.tree-item-self[data-line]');
-    if (!item) return;
-    if (item.dataset.path === deps.currentPath()) deps.onHeading(Number(item.dataset.line));
-    else deps.onResult(item.dataset.path!, Number(item.dataset.from), Number(item.dataset.from));
+    if (item) deps.onHeading(Number(item.dataset.line), item.dataset.path);
   });
   collapseButton.addEventListener('click', () => {
     const items = [...list.querySelectorAll<HTMLElement>('.tree-item[data-key]')]
@@ -294,7 +307,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
 
   return {
     /** Refresh for the current note (on open, after edits). */
-    refresh(): void { if (scope === 'note' || input.value) render(); else renderChrome(); },
+    refresh(): void { render(); },
     markCurrent,
     setScope,
     focusSearch(next: SearchScope = scope): void { setScope(next); input.focus(); input.select(); },
