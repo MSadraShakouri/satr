@@ -8,7 +8,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
 
 - **Both directions in one note.** Every line takes its direction from its first letter, so there's nothing to set. Lists, quotes, tables, footnotes and the PDF all follow it. Inline math stays left to right inside Persian text.
 - **Live preview while editing**, with Obsidian's rule: the Markdown syntax shows only on the line you're editing. There's also a separate reading view (double-tap it to edit).
-- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, and repeat the relation on the next line. They can also wrap at spaces you typed between words. The source is never changed.
+- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, and repeat the relation on the next line. They can also wrap at spaces you typed between words. Overwide display formulas in print can also use KaTeX’s own operator breaks to fit the column. The source is never changed.
 - **Obsidian's Markdown:**
   - `[[wiki links]]`, with a picker while you type
   - `![[image embeds]]` with `|300` sizes
@@ -21,10 +21,14 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - `![[name.png]]` finds the image anywhere in your folders.
 - **PDF export** through Android's print dialog, as Markor does:
   - Vazirmatn font, A4
-  - footnotes at the foot of each page
+  - one or two columns, selected when exporting and remembered per file on this device
+  - automatic column order from the majority of prose letters (math and code ignored), or explicit LTR / RTL
+  - centred display equations by default, or aligned to the reading edge; equations themselves always stay LTR
+  - headings kept with following content, including at column boundaries
+  - footnotes at the foot of each page (each column in two-column mode), numbered across the whole sheet
   - page numbers in Persian digits
   - page breaks (`\pagebreak`)
-  - your own CSS
+  - your own CSS; two-column mode fixes A4 geometry, 1-inch outer margins and an 8 mm gap
 - **Your files, your folders.**
   - *Spaces* are shortcuts to folders; Satr never writes its own config into them.
   - *All files* walks the whole storage.
@@ -61,7 +65,7 @@ npm test                         # all browser regressions
 npm run test:pdf                  # PDF-only regressions
 ```
 
-Or set `CHROMIUM_EXECUTABLE_PATH` to an installed Chromium. These tests cover context-aware delimiters, non-overlapping selections, three-line widow/orphan protection, and the math-heavy Homework 12.2 document. They do not test Android's IME or native print dialog.
+Or set `CHROMIUM_EXECUTABLE_PATH` to an installed Chromium. These tests cover context-aware delimiters, non-overlapping selections, three-line widow/orphan protection, stranded headings, per-file PDF options, LTR/RTL columns and the math-heavy Homework 12.2 document (8 pages in one column, 4 in two, at the same font size). They do not test Android's IME or native print dialog.
 
 To build the Android app (JDK 21 and the Android SDK are needed):
 

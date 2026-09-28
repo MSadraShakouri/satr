@@ -20,6 +20,9 @@ import { renderMarkdown } from './markdown';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
 import { getSystemFontScale } from './native';
+import { keepHeadingWithContent } from './printHeadings';
+import { loadPrintOptions, printDirection, validPrintOptions, type PrintOptions } from './printOptions';
+import { assembleColumns, columnPageCss, COLUMN_WIDTH_PX } from './printColumns';
 
 interface SatrPrintPlugin {
   print(options: { html: string; name: string }): Promise<void>;
@@ -40,13 +43,14 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({
 
 let busy = false;
 
-export async function exportPdf(name: string, markdown: string, notePath = ''): Promise<void> {
+export async function exportPdf(name: string, markdown: string, notePath = '', options: PrintOptions = loadPrintOptions(notePath)): Promise<void> {
   if (busy) return;
   busy = true;
   const frame = document.createElement('iframe');
   let scaleCorrection: { remove(): void } | null = null;
   try {
     const settings = loadSettings();
+    options = validPrintOptions(options);
     const hasMath = /\$/.test(markdown);
     const [fonts, pagedJs, systemScale] = await Promise.all([
       embeddedFonts(hasMath),
@@ -56,7 +60,8 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     const printScale = Math.min(3, Math.max(0.5, systemScale));
     const body = printableBody(renderMarkdown(markdown));
     await loadImages(body, notePath); // embedded as data: URLs before paging
-    const dir = isRtlText(body.textContent ?? '') ? 'rtl' : 'ltr';
+    const dir = printDirection(body, options.direction);
+    const mathAlign = options.mathAlign === 'center' ? 'center' : dir === 'rtl' ? 'right' : 'left';
     const pageNumber = settings.pdfPageNumbers === 'none' ? ''
       : `@page { @bottom-center { content: counter(page${settings.pdfPageNumbers === 'persian' ? ', persian' : ''}); font-family: Vazirmatn, sans-serif; font-size: 12pt; color: #222; vertical-align: middle; } }`;
     const styles = [
@@ -65,6 +70,9 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
       printCss,
       pageNumber,
       settings.pdfCss,
+      `.math-display, .math-display .katex-display > .katex { text-align: ${mathAlign}; }
+       .math-display .katex-display > .katex { white-space: normal; }`,
+      options.columns === 2 ? columnPageCss : '',
     ].map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n');
 
     // Hidden but laid out (display: none would stop both layout and print).
@@ -80,7 +88,7 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     const loaded = new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
     document.body.appendChild(frame);
     await loaded;
-    const win = frame.contentWindow as (Window & { PagedConfig?: unknown; PagedPolyfill?: { preview(): Promise<unknown> } }) | null;
+    const win = frame.contentWindow as (Window & { PagedConfig?: unknown; PagedPolyfill?: { preview(): Promise<unknown>; chunker: { hooks: { onOverflow: { register(fn: typeof keepHeadingWithContent): void } } } } }) | null;
     const doc = frame.contentDocument;
     if (!win || !doc) throw new Error('No print frame');
     await doc.fonts.ready;
@@ -106,7 +114,7 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
 
     // Wrap long formulas at the page's width, as on screen.
     if (hasMath) {
-      doc.body.style.width = `${CONTENT_WIDTH}px`;
+      doc.body.style.width = `${options.columns === 2 ? COLUMN_WIDTH_PX : CONTENT_WIDTH}px`;
       layoutMath(doc.body);
       doc.body.style.width = '';
     }
@@ -117,7 +125,9 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     script.textContent = pagedJs;
     doc.head.appendChild(script);
     if (!win.PagedPolyfill) throw new Error('Paged.js did not load');
+    win.PagedPolyfill.chunker.hooks.onOverflow.register(keepHeadingWithContent);
     await win.PagedPolyfill.preview();
+    if (options.columns === 2) assembleColumns(doc, dir, settings.pdfPageNumbers);
     numberFootnotes(doc);
     // The native print WebView is pinned at 100%; send it the unscaled source
     // CSS rather than the temporary, inverse-fontScale layout override.
@@ -241,7 +251,7 @@ function printableBody(html: string): HTMLElement {
 // call's number. A call's digits follow its paragraph, a note's its own text.
 function numberFootnotes(doc: Document): void {
   const view = doc.defaultView!;
-  doc.querySelectorAll('.pagedjs_page').forEach((page) => {
+  doc.querySelectorAll(doc.querySelector('.satr-print-sheet') ? '.satr-print-sheet' : '.pagedjs_page').forEach((page) => {
     let count = 0;
     const numbers = new Map<string, number>();
     page.querySelectorAll<HTMLElement>('.pagedjs_page_content [data-footnote-call]').forEach((call) => {

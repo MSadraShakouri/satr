@@ -73,15 +73,17 @@ Chrome
 - [x] ≡ menu in the bottom bar, as Obsidian's ribbon menu: collapse / expand all headings, reading / editing view, Export to PDF, rename, delete note, settings. Settings → Navigation bar → Menu button picks a quick action: a tap runs it (its icon, with a small chevrons-up-down flair), holding opens the menu
 - [x] Export to PDF straight to Android's print dialog (as Markor), where "Save as PDF" writes the file under the note's name; in the browser, the browser's print dialog
 - [x] The look: Vazirmatn 15px at 1.8, never justified, each paragraph in its own direction; headings 1.6 / 1.4 / 1.25 / 1.1× in bold with Markor's rule under h1 and h2, kept with what follows; tables centred as in the reading view; code in a light grey box with the preview's colours; blue underlined links (clickable in the PDF); wiki links as plain text; task boxes as in the reading view; no title on top
+- [x] Per-file export options: one or two columns, centred or reading-edge display math, and automatic/prose-majority or explicit LTR/RTL reading order. Preferences stay in the app, follow file/folder renames and never rewrite Markdown. Two-column layout paginates at column width, then pairs columns onto A4 without scaling text.
+- [x] Stranded-heading protection at page/column boundaries (Paged.js overflow hook); consecutive headings travel with following content rather than being left alone at the bottom.
 - [x] A4, 1in margins; page numbers at the bottom centre, 12pt, in Persian digits (Settings: Persian / Latin / none)
 - [x] Footnotes at the foot of their page (Paged.js), numbered from 1 on every page, under a short Word-style rule on the start side; the call's digits follow its paragraph, the note's its own text
 - [x] Long formulas wrapped at the page's width by the same rules as on screen
 - [x] Page breaks: `\pagebreak`, `\newpage`, `\clearpage`, `<!-- pagebreak -->`, `<!-- newpage -->`, or any HTML with a page-break style (`page-break-before: always`, `break-after: page`…); hidden on screen, ignored inside code
-- [x] Custom CSS (Settings → PDF export), applied after Satr's own
+- [x] Custom CSS (Settings → PDF export), applied after Satr's own; per-file math alignment and fixed two-column page geometry take precedence
 - [x] Fonts (Vazirmatn, Vazir Code, KaTeX) embedded as data URIs; Paged.js (≈500 KB) loads only when exporting
 - [x] The font-scale override used while measuring is an adopted stylesheet, never a `<style>`: Paged.js takes every style element out of the document and copies its text into the stylesheet it prints with, which once divided every font size in the PDF by the phone's scale and made it tiny
 - [x] Images embedded as data URIs, centred, never split across pages
-- [ ] On-device check of the print path (fonts, links, page size) with the first APK
+- [ ] On-device check of the print path (fonts, links, page size), including the new two-column layout
 
 ### APK phase
 

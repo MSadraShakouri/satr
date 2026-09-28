@@ -19,6 +19,7 @@ import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
+import { choosePrintOptions, closePrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots } from './snapshot';
@@ -821,12 +822,14 @@ function pathMoved(from: string, to: string): void {
   const keys: string[] = [];
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i)!;
-    if (key.startsWith('satr:view:') && within(key.slice(10), from)) keys.push(key);
+    const prefix = ['satr:view:', 'satr:pdf:'].find((p) => key.startsWith(p));
+    if (prefix && within(key.slice(prefix.length), from)) keys.push(key);
   }
   for (const key of keys) {
     const value = localStorage.getItem(key);
     localStorage.removeItem(key);
-    if (value !== null) localStorage.setItem(viewKey(move(key.slice(10))), value);
+    const prefix = key.startsWith('satr:view:') ? 'satr:view:' : 'satr:pdf:';
+    if (value !== null) localStorage.setItem(prefix + move(key.slice(prefix.length)), value);
   }
   if (within(filePath, from)) {
     filePath = move(filePath);
@@ -893,6 +896,7 @@ async function newFile(dir = notesHome()): Promise<void> {
   try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   localStorage.removeItem(viewKey(path));
+  localStorage.removeItem(printOptionsKey(path));
   showFile(path, '');
   setMode('edit');
   toggleFiles(false);
@@ -1257,9 +1261,14 @@ function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
 }
 const hasNote = (): boolean => !document.body.classList.contains('is-empty-tab');
 async function exportCurrentPdf(): Promise<void> {
+  const path = filePath;
+  const name = displayNameForPath(path) || 'Note';
+  const markdown = editor.getValue();
+  const options = await choosePrintOptions(path);
+  if (!options) return;
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
-    await exportPdf(displayNameForPath(filePath) || 'Note', editor.getValue(), isExternalPath(filePath) ? '' : filePath);
+    await exportPdf(name, markdown, isExternalPath(path) ? '' : path, options);
   } catch (error) {
     showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
   } finally {
@@ -1458,7 +1467,8 @@ let exitArmedAt = 0;
 let exitNotice: NoticeHandle | null = null;
 /** Returns true when the press should leave the app. */
 function handleBack(): boolean {
-  if (isMenuOpen()) closeMenu();
+  if (closePrintOptions()) { /* The export dialog consumed the back press. */ }
+  else if (isMenuOpen()) closeMenu();
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
   else if (isSettingsOpen()) closeSettings();
