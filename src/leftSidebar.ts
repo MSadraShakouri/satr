@@ -107,6 +107,9 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   loadExpanded();
   let renderToken = 0;
   let renaming: string | null = null;
+  /** The note the drawn tree belongs to; compared with the open one when the
+   *  drawer comes back, so a highlight can never outlive the note it marks. */
+  let renderedPath = deps.currentPath();
 
   const sorted = (entries: Entry[]): Entry[] => entries
     .filter((e) => !e.name.startsWith('.'))
@@ -128,7 +131,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const note = isNote(entry.name);
     const title = note && (ext === 'md' || ext === 'markdown') ? entry.name.replace(/\.(md|markdown)$/i, '') : entry.name;
     const classes = ['tree-item-self', 'is-clickable', isFolder ? 'nav-folder-title' : 'nav-file-title',
-      isFolder && !opts.walker ? 'mod-collapsible' : '', entry.path === current ? 'is-active' : '', !isFolder && !note ? 'is-unsupported' : ''];
+      isFolder && !opts.walker ? 'mod-collapsible' : '', entry.path === current ? 'is-active' : '', !isFolder && !note ? 'is-plain-file' : ''];
     return `<div class="${classes.filter(Boolean).join(' ')}" data-path="${escapeHtml(entry.path)}" data-kind="${entry.kind}" role="treeitem"${isFolder && !opts.walker ? ` aria-expanded="${!opts.collapsed}"` : ''}>`
       + (isFolder && !opts.walker ? `<div class="tree-item-icon collapse-icon">${ICONS.chevronDown}</div>` : '')
       + (opts.walker ? `<div class="tree-item-icon nav-entry-icon">${isFolder ? ICONS.folder : ICONS.file}</div>` : '')
@@ -185,6 +188,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       if (!html) html = '<div class="pane-empty">No notes yet</div>';
     }
     list.innerHTML = html;
+    renderedPath = deps.currentPath();
     if (renaming) startRename(renaming);
   }
   // Filter by name: files and folders anywhere under the space (or the
@@ -351,8 +355,6 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
         'separator',
       );
     }
-    if (!isFolder && isNote(basename(path))) {
-    }
     entries.push(
       { title: 'Rename…', icon: ICONS.pencil, action: () => startRename(path) },
       { title: 'Move to…', icon: ICONS.move, action: () => { void moveTo(path, isFolder); } },
@@ -484,7 +486,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       }
       return;
     }
-    if (row.classList.contains('is-unsupported')) { showHint('Satr opens Markdown and text files only.'); return; }
+    // Everything opens: notes as notes, and anything else as the text its
+    // bytes decode to (read-only, so the original is never overwritten).
     deps.open(path);
   });
   // Long press (touch) / right-click (mouse): the item's actions.
@@ -521,6 +524,14 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     itemMenu(row.dataset.path!, row.dataset.kind!);
   });
 
+  function scrollActive(): void {
+    const row = list.querySelector<HTMLElement>('.tree-item-self.is-active');
+    if (!row) return;
+    const box = row.getBoundingClientRect();
+    const view = list.getBoundingClientRect();
+    if (box.top < view.top || box.bottom > view.bottom - 96) list.scrollTop += box.top - view.top - view.height / 3;
+  }
+
   return {
     refresh: render,
     /** Ask, then delete a note (the ≡ menu's Delete note). */
@@ -536,13 +547,14 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       }
       list.querySelectorAll('.tree-item-self.is-active').forEach((el) => el.classList.remove('is-active'));
       rowOf(path)?.classList.add('is-active');
+      renderedPath = deps.currentPath(); // drawn, marks and all
     },
+    /** Bring the open note into view, redrawing first when the tree is older
+     *  than the note it should mark (a tab closed, a file opened from another
+     *  app, a rename): a stale highlight should never be what you see. */
     scrollToActive(): void {
-      const row = list.querySelector<HTMLElement>('.tree-item-self.is-active');
-      if (!row) return;
-      const box = row.getBoundingClientRect();
-      const view = list.getBoundingClientRect();
-      if (box.top < view.top || box.bottom > view.bottom - 96) list.scrollTop += box.top - view.top - view.height / 3;
+      if (renderedPath !== deps.currentPath()) { void render().then(scrollActive); return; }
+      scrollActive();
     },
     scope: () => scope,
     /** The folder the walker is in (All files). */

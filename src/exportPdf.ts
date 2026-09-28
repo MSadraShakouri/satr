@@ -44,7 +44,7 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
   if (busy) return;
   busy = true;
   const frame = document.createElement('iframe');
-  let scaleCorrection: HTMLStyleElement | null = null;
+  let scaleCorrection: { remove(): void } | null = null;
   try {
     const settings = loadSettings();
     const hasMath = /\$/.test(markdown);
@@ -91,10 +91,16 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     // size by that scale while measuring. Remove this override before
     // serializing: the final HTML then contains the original 100% CSS and
     // PrintPlugin renders it with setTextZoom(100).
+    //
+    // The override must never reach the printed document: Paged.js's
+    // Previewer.removeStyles() takes every plain <style> out of the document
+    // and copies its text into a stylesheet of its own, so a plain <style>
+    // override could not be removed any more. That leak was the bug behind
+    // "the PDF is tiny now": the printed copy divided every font size by the
+    // phone's font scale, and PrintPlugin renders at setTextZoom(100).
+    // applyFontScaleCorrection() keeps the override out of the document.
     if (Capacitor.isNativePlatform() && Math.abs(printScale - 1) > 0.001) {
-      scaleCorrection = doc.createElement('style');
-      scaleCorrection.textContent = fontScaleCorrectionCss(printScale, settings.pdfCss);
-      doc.head.appendChild(scaleCorrection);
+      scaleCorrection = applyFontScaleCorrection(doc, fontScaleCorrectionCss(printScale, settings.pdfCss));
       await doc.fonts.ready;
     }
 
@@ -119,6 +125,13 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     scaleCorrection = null;
     script.remove();
 
+    // Last line of defence: if a copy of the override did land in the
+    // document after all (a browser without adoptedStyleSheets, a future
+    // Paged.js), it must not reach the print WebView at 100%.
+    doc.querySelectorAll('style').forEach((style) => {
+      if (style.textContent?.includes('--satr-font-scale-correction')) style.remove();
+    });
+
     if (Capacitor.isNativePlatform()) {
       doc.querySelectorAll('script').forEach((el) => el.remove());
       await SatrPrint.print({ html: `<!doctype html>\n${doc.documentElement.outerHTML}`, name });
@@ -139,7 +152,8 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
 }
 
 /** Temporary CSS for layout in the text-scaled app WebView. The matching
- * unscaled CSS stays in the document and is restored before serialization. */
+ * unscaled CSS stays in the document and is what gets printed. The custom
+ * property is a marker, in case a copy of this CSS is ever found somewhere. */
 function fontScaleCorrectionCss(scale: number, customCss: string): string {
   const adjustedCustomCss = customCss.replace(/(font-size\s*:\s*)([^;{}]+)(;?)/gi, (_all, prefix: string, value: string, end: string) => {
     const adjusted = value.replace(/(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(px|pt|pc|in|cm|mm|q)\b/gi,
@@ -147,11 +161,35 @@ function fontScaleCorrectionCss(scale: number, customCss: string): string {
     return `${prefix}${adjusted}${end}`;
   });
   return `
-    html { font-size: ${15 / scale}px !important; }
+    html { --satr-font-scale-correction: 1; font-size: ${15 / scale}px !important; }
     @page { @bottom-center { font-size: ${12 / scale}pt !important; } }
     .pagedjs_margin-bottom-center { font-size: ${12 / scale}pt !important; }
     ${adjustedCustomCss}
   `;
+}
+
+/** Applies the temporary override to the measuring frame, out of reach of the
+ *  page it will serialize. An adopted stylesheet is used where there is one:
+ *  it takes part in layout like any other, but it is not a <style> element,
+ *  so Paged.js's style collection doesn't copy it and it is never serialized.
+ *  Older WebViews (no adoptedStyleSheets) get a marked <style>, which
+ *  Paged.js leaves alone and remove() takes back out before printing. */
+function applyFontScaleCorrection(doc: Document, css: string): { remove(): void } {
+  const view = doc.defaultView as (Window & { CSSStyleSheet?: typeof CSSStyleSheet }) | null;
+  try {
+    const Sheet = view?.CSSStyleSheet;
+    if (Sheet && 'adoptedStyleSheets' in doc) {
+      const sheet = new Sheet();
+      sheet.replaceSync(css);
+      doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+      return { remove: () => { doc.adoptedStyleSheets = doc.adoptedStyleSheets.filter((s) => s !== sheet); } };
+    }
+  } catch { /* fall through to the marked style element */ }
+  const style = doc.createElement('style');
+  style.setAttribute('data-pagedjs-ignore', 'true');
+  style.textContent = css;
+  doc.head.appendChild(style);
+  return { remove: () => style.remove() };
 }
 
 // The reading view's HTML, readied for paper: no copy buttons, wiki links as
@@ -168,6 +206,18 @@ function printableBody(html: string): HTMLElement {
   });
   root.querySelectorAll('[data-line], [data-lines]').forEach((el) => { el.removeAttribute('data-line'); el.removeAttribute('data-lines'); });
   root.querySelectorAll<HTMLElement>('.md-section').forEach((section) => section.replaceWith(...section.childNodes));
+  // Display math inside prose (e.g. "sketch $$u+v$$, $$u-v$$") closes
+  // the paragraph during HTML parsing, leaving punctuation / trailing prose
+  // as bare text. Once sections are unwrapped, that text is at the page root.
+  // Paged.js 0.4 cannot map a break in root text back to its source element
+  // and throws "getAttribute is not a function". Give it an inline element
+  // to track without adding paragraph margins or changing the math layout.
+  for (const node of [...root.childNodes]) {
+    if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+    const span = document.createElement('span');
+    node.replaceWith(span);
+    span.appendChild(node);
+  }
   root.querySelectorAll('input[type="checkbox"]').forEach((box) => box.setAttribute('disabled', ''));
 
   const notes = new Map<string, string>();

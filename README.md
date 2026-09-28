@@ -29,6 +29,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - *Spaces* are shortcuts to folders; Satr never writes its own config into them.
   - *All files* walks the whole storage.
   - Notes open in tabs you can rearrange. Each note remembers its view, scroll position, caret and folds.
+- **Any file opens**, not just Markdown: a `.patch`, a `.json`, a script, a photo. Plain UTF-8 text is editable whatever its extension; anything else is shown as the bytes decode, read-only, so Satr can never write rubbish back over it. Photos open in the reading view as pictures. Only a file too large to load is turned away.
 - **Search and outline** in one drawer, for this note or all notes, with regular expressions. Find and replace in the note has one bar.
 - **Typing like Obsidian:**
   - Brackets, quotes, `$`, `*`, `_`, `=` and backticks pair up and wrap a selection.
@@ -51,6 +52,15 @@ npm install
 npm run dev          # the web app at http://localhost:5173 (notes live in the browser's storage)
 npm run build        # type-check and build to dist/
 ```
+
+PDF regression tests run the real browser pagination and print renderer:
+
+```sh
+npx playwright install chromium   # once; use --with-deps on Linux if needed
+npm run test:pdf
+```
+
+Or set `CHROMIUM_EXECUTABLE_PATH` to an installed Chromium. These tests cover the math-heavy Homework 12.2 document, preserving every exercise and formula across page breaks at several font sizes; they do not test Android's print dialog.
 
 To build the Android app (JDK 21 and the Android SDK are needed):
 

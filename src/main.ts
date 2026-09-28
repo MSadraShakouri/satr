@@ -25,7 +25,7 @@ import { dropSnapshot, keepSnapshots } from './snapshot';
 import { ensureFileAccess, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot } from './spaces';
-import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within } from './vault';
+import { backend, DEFAULT_FOLDER, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
 
 type Mode = 'edit' | 'preview';
 // The first note in a fresh browser: the demo (demo.md, at the top of the repo).
@@ -91,7 +91,29 @@ const displayNameForPath = (path: string): string => {
   const external = externalFilesByPath.get(path);
   return external ? (external.name.replace(/\.[^.]+$/, '') || external.name) : stem(path);
 };
+/** Any file opens: Satr shows what a picture or a binary contains as text if
+ *  it must (see looksBinary). Only a file too large to load is refused. */
+const isPicture = (path: string): boolean => {
+  const external = externalFilesByPath.get(path);
+  return (external ? external.mimeType : mimeType(path)).startsWith('image/');
+};
+/** The note's name, for the messages about files that wouldn't open. */
+const fileName = (path: string): string => externalFilesByPath.get(path)?.name ?? path.slice(path.lastIndexOf('/') + 1);
+/** Markdown and text notes can be renamed from the title; anything else is
+ *  opened raw, and its name is changed from the sidebar's long-press menu. */
+const canRenameInline = (path: string): boolean => !isExternalPath(path) && ['md', 'markdown'].includes(extension(path));
+/** A picture the reading view can show: the data: URL of the file open in the
+ *  tab (a photo from the file manager, or an image found in the folders). */
+const picture = { path: '', url: '' };
+function rememberPicture(path: string, url: string | null | undefined): boolean {
+  if (!url?.startsWith('data:image/')) return false;
+  picture.path = path;
+  picture.url = url;
+  return true;
+}
 let mode: Mode = 'edit';
+/** The last file the "not plain text" notice was shown for. */
+let lossyNoticed = '';
 let saveTimer: number | undefined;
 let viewTimer: number | undefined;
 let restoringView = true; // until the saved position has been applied
@@ -181,7 +203,15 @@ function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
   lastRender = Date.now();
-  preview.innerHTML = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>${renderMarkdown(editor.getValue())}`;
+  const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
+  // A picture Satr can't edit (a photo opened from the file manager, say):
+  // the reading view shows it as it is; the editor keeps the raw bytes.
+  if (picture.url && picture.path === filePath) {
+    preview.innerHTML = `${title}<p class="md-image-preview"><img class="md-image" src="${escapeText(picture.url)}" alt="${escapeText(fileName(filePath))}"></p>`;
+    applyPreviewFolds();
+    return;
+  }
+  preview.innerHTML = `${title}${renderMarkdown(editor.getValue())}`;
   applyPreviewFolds();
   scheduleMathLayout(preview);
   markBrokenLinks();
@@ -367,6 +397,12 @@ async function performSave(path: string, text: string, authorization?: SaveConfl
     const updated = await readIncomingText(incoming.id);
     setDiskBaseIfCurrent(path, { text: updated.text, mtime: updated.modified });
   } else {
+    // A file that isn't text was opened read-only, and it stays that way:
+    // writing the decoded text back would destroy the original bytes.
+    if (diskBase?.path === path && looksBinary(diskBase.text)) {
+      showNotice('This file isn’t plain text; Satr won’t write over it.', 5000);
+      return false;
+    }
     await backend.write(path, text);
     const entry = await backend.stat(path);
     setDiskBaseIfCurrent(path, { text, mtime: entry?.mtime ?? Date.now() });
@@ -585,7 +621,7 @@ function rememberViewSoon(): void {
   window.clearTimeout(viewTimer);
   viewTimer = window.setTimeout(rememberView, 400);
 }
-function restoreView(path: string, after?: () => void): void {
+function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit'): void {
   const view = readView(path);
   restoringView = true;
   // The caret comes back where it was — without focus, so no keyboard and no
@@ -593,7 +629,7 @@ function restoreView(path: string, after?: () => void): void {
   // toolbar command or the keyboard opening jumped the view back up there.
   if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
   if (view?.folds?.length) editor.restoreFolds(view.folds);
-  setMode(view?.mode ?? 'edit');
+  setMode(view?.mode ?? unvisited);
   // Positions depend on fonts, KaTeX and math line breaks: apply once now,
   // and again when those have settled.
   // A note opened for the first time starts at the top (not wherever the
@@ -686,8 +722,11 @@ async function leaveCurrent(): Promise<boolean> {
   if (saved) rememberView();
   return saved;
 }
-function showFile(path: string, content: string, after?: () => void): void {
+function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
   const incoming = externalFilesByPath.get(path);
+  // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
+  // never saved back over the original.
+  const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
   externalFileScreen.hidden = true;
   document.body.classList.remove('external-file-active', 'is-empty-tab');
   renderMenuButton();
@@ -697,6 +736,20 @@ function showFile(path: string, content: string, after?: () => void): void {
   curTab().path = path;
   filePath = path;
   fileBase = displayNameForPath(path);
+  // A picture is worth showing: the reading view gets it (a data: URL from
+  // the file manager, or read here), the editor the bytes as they decode.
+  picture.path = '';
+  picture.url = '';
+  let opening: Mode = 'edit';
+  if (isPicture(path)) {
+    if (incoming) { if (rememberPicture(path, incoming.dataUrl)) opening = 'preview'; }
+    else if (lossy) {
+      opening = 'preview'; // the picture is read below, a moment from now
+      void backend.readDataUrl(path).then((url) => {
+        if (filePath === path && rememberPicture(path, url) && mode === 'preview') renderPreview();
+      });
+    }
+  }
   if (incoming) {
     diskBase = { path, text: content, mtime: incoming.modified ?? 0 };
     localStorage.removeItem(CURRENT_KEY); // incoming URI ids only last for this app session
@@ -712,34 +765,47 @@ function showFile(path: string, content: string, after?: () => void): void {
   }
   restoringView = true;
   editor.setValue(content);
-  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text'));
+  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  // Say it once per file: the editor takes no writing because the bytes are
+  // not text, and nobody should wonder why nothing happens.
+  if (lossy && !incoming && !isPicture(path) && lossyNoticed !== path) {
+    lossyNoticed = path;
+    showNotice('Not plain text: shown read-only, exactly as it decodes.', 4500);
+  }
   editor.setTitle(fileBase);
-  editor.setTitleEditable(!incoming);
+  editor.setTitleEditable(canRenameInline(path));
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  restoreView(path, after);
+  // A picture opens in the reading view, unless this file has a remembered
+  // mode; anything else comes back where it was left.
+  restoreView(path, after, opening);
   renderNavButtons();
-  if (incoming) {
-    sidebar.refresh();
-  } else {
-    sidebar.refresh();
-    leftSidebar.reveal(path);
-    void loadSiblings();
-  }
+  sidebar.refresh();
+  // Mark the open note, and clear the mark when this file isn't in the tree
+  // (opened from another app, or read-only rubbish).
+  leftSidebar.reveal(path);
+  if (!incoming) void loadSiblings();
 }
-/** Open a note: its tab if it has one, else a new tab after this one (or
- *  this tab, when it's empty). */
+/** Open a file: its tab if it has one, else a new tab after this one (or
+ *  this tab, when it's empty). Any file opens; one that can't be loaded
+ *  (too large, or gone) leaves a message in the sidebar instead. */
 async function openFile(path: string, after?: () => void): Promise<void> {
   if (path === filePath) { after?.(); return; }
   const existing = tabs.findIndex((t) => t.path === path);
   if (existing >= 0) { await switchTab(existing, after); return; }
-  const text = await backend.read(path);
-  if (text === null) { leftSidebar.hint('That note no longer exists.', true); void leftSidebar.refresh(); return; }
+  const opened = await backend.readText(path);
+  if (opened.status !== 'text') {
+    leftSidebar.hint(opened.status === 'too-large'
+      ? `“${fileName(path)}” is too large to open here (${formatBytes(opened.size)}).`
+      : (await backend.stat(path).catch(() => null) ? 'That file could not be read.' : 'That file no longer exists.'), true);
+    void leftSidebar.refresh();
+    return;
+  }
   if (!await leaveCurrent()) return;
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
-  showFile(path, text, after);
+  showFile(path, opened.text, after, { lossy: !opened.clean });
 }
 /** The bottom bar's arrows: the previous / next tab. */
 async function stepTab(step: number): Promise<void> {
@@ -848,9 +914,11 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
   externalFileScreen.hidden = false;
   document.body.classList.remove('is-empty-tab');
   document.body.classList.add('external-file-active');
-  const description = file.kind === 'too-large'
-    ? 'This file is too large for a safe in-app preview. It will not be partially decoded or modified.'
-    : 'Satr keeps unsupported and binary formats read-only. Open it in another app to view or edit it.';
+  const description = file.dataUrl?.startsWith('data:image/')
+    ? 'Shown as a picture, read-only. Open it in another app to edit it.'
+    : file.kind === 'too-large'
+      ? `Too large for Satr to open as text (${formatBytes(file.size)}). Open it in another app to view or edit it.`
+      : 'Satr couldn’t read this file. Open it in another app to view or edit it.';
   externalFileScreen.innerHTML = `
     <div class="external-file-card">
       <button type="button" class="external-file-back" data-external-act="back" aria-label="Back">‹</button>
@@ -880,6 +948,8 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
     });
   });
   renderNavButtons();
+  // A file from another app isn't in the tree: nothing stays selected there.
+  leftSidebar.reveal('');
 }
 
 function formatBytes(size: number): string {
@@ -906,9 +976,9 @@ async function openIncomingPath(path: string, after?: () => void): Promise<void>
   if (existing.kind === 'text' || existing.kind === 'shared-text') {
     try {
       const current = await readIncomingText(existing.id);
-      const updated = { ...existing, text: current.text, modified: current.modified };
+      const updated = { ...existing, text: current.text, modified: current.modified, lossy: current.lossy, readOnly: existing.readOnly || current.lossy };
       externalFilesByPath.set(path, updated);
-      if (curTab().path === path) showFile(path, current.text, after);
+      if (curTab().path === path) showFile(path, current.text, after, { lossy: current.lossy });
     } catch (error) {
       const unavailable: IncomingOpenFile = { ...existing, kind: 'binary', readOnly: true, text: undefined, dataUrl: undefined };
       externalFilesByPath.set(path, unavailable);
@@ -936,9 +1006,9 @@ async function handleIncomingId(id: string): Promise<void> {
       if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
       else curTab().path = path;
       await openIncomingPath(path);
-      if ((file.kind === 'text' || file.kind === 'shared-text') && (file.readOnly || file.kind === 'shared-text')) {
-        showNotice('Opened as read-only; the original file will not be changed.', 4500);
-      }
+      if (file.lossy) showNotice('Not plain text: shown as it decodes, and read-only.', 4500);
+      else if (file.kind === 'shared-text') showNotice('Shared text opens read-only.', 4500);
+      else if (file.readOnly) showNotice('Opened as read-only; the original file will not be changed.', 4500);
     }
     toggleFiles(false);
     renderNavButtons();
@@ -953,8 +1023,9 @@ async function handleIncomingId(id: string): Promise<void> {
 async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
   if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
-  const text = await backend.read(tab.path);
-  if (text !== null) { showFile(tab.path, text, after); return; }
+  const opened = await backend.readText(tab.path);
+  if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
+  if (opened.status === 'too-large') leftSidebar.hint(`“${fileName(tab.path)}” is too large to open here (${formatBytes(opened.size)}).`, true);
   if (tabs.length > 1) {
     const at = tabs.indexOf(tab);
     tabs.splice(at, 1);
@@ -996,7 +1067,10 @@ function closeTab(index: number): void {
   })();
 }
 function reopenClosedTab(): void {
-  const tab = closedTabs.pop();
+  // A file opened from another app can't come back on its own: its permission
+  // lasts for this session only, and its tab has no path in the tree.
+  let tab = closedTabs.pop();
+  while (tab && isExternalPath(tab.path)) tab = closedTabs.pop();
   if (tab) void openFile(tab.path);
 }
 /** Drag to reorder in the switcher; the open tab stays the open tab. */
@@ -1066,6 +1140,8 @@ function showEmptyTab(): void {
   filePath = '';
   fileBase = '';
   diskBase = null;
+  picture.path = '';
+  picture.url = '';
   editor.setReadOnly(false);
   editor.setTitleEditable(true);
   restoringView = true;
@@ -1080,6 +1156,9 @@ function showEmptyTab(): void {
   void renderEmptyTab();
   renderNavButtons();
   sidebar.refresh();
+  // No file is open: nothing is selected in the file tree either. Without
+  // this the row of the note that was just closed stayed highlighted.
+  void leftSidebar.refresh();
 }
 async function renderEmptyTab(): Promise<void> {
   const recent: string[] = [];
@@ -1171,7 +1250,7 @@ function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
       run: () => { setMode(mode === 'edit' ? 'preview' : 'edit'); renderMenuButton(); },
     };
     case 'pdf': return { title: 'Export to PDF', icon: MENU_ICONS.pdf, needsNote: true, run: () => void exportCurrentPdf() };
-    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (!isExternalPath(filePath)) { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } } };
+    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (canRenameInline(filePath)) { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } } };
     case 'delete': return { title: 'Delete note', icon: MENU_ICONS.trash, needsNote: true, warning: true, run: () => { if (filePath && !isExternalPath(filePath)) leftSidebar.deleteFile(filePath); } };
     case 'settings': return { title: 'Settings', icon: MENU_ICONS.settings, needsNote: false, run: showSettings };
   }

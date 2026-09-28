@@ -40,7 +40,7 @@ Chrome
 - [x] Both drawers share one implementation of Obsidian's release physics (drag, fling, re-grab mid-animation, same look)
 - [x] Right drawer: outline and search in one view, built like the left drawer. A two-option pill (tap only) picks This note / All notes. This note: the outline, and while searching the matching headings with each match under its heading. All notes: every note with its outline, even before you type; searching narrows it to the same heading tree under each note. Each match shows its line number and up to seven lines of context. Regular expressions
 - [x] Tabs: every note opens in its own tab (an open note just switches to its tab); the bottom bar's arrows step through the tabs; switching never opens the keyboard and comes back where you were. A tab button with the count, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done, press and hold a card to drag it to a new place), an empty tab page ("No file is open" with recent notes), swipe a card away to close, reopen closed tab, kept across restarts
-- [x] Left sidebar: filter by name (found files and folders, flat, with their folder); Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons
+- [x] Left sidebar: filter by name (found files and folders, flat, with their folder); Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted — and only the open one: the tree is redrawn when the drawer opens if the note changed while it was closed), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons. Every file opens
 - [x] "All files" walker (Markor-style): only the current folder, ".." to go up
 - [x] Space switcher (vault-switcher style): spaces are shortcuts to folders; their notes are ordinary files, edited in place. "All files", add or remove a space
 - [x] Bottom-sheet menus in Obsidian's phone style
@@ -79,6 +79,7 @@ Chrome
 - [x] Page breaks: `\pagebreak`, `\newpage`, `\clearpage`, `<!-- pagebreak -->`, `<!-- newpage -->`, or any HTML with a page-break style (`page-break-before: always`, `break-after: page`…); hidden on screen, ignored inside code
 - [x] Custom CSS (Settings → PDF export), applied after Satr's own
 - [x] Fonts (Vazirmatn, Vazir Code, KaTeX) embedded as data URIs; Paged.js (≈500 KB) loads only when exporting
+- [x] The font-scale override used while measuring is an adopted stylesheet, never a `<style>`: Paged.js takes every style element out of the document and copies its text into the stylesheet it prints with, which once divided every font size in the PDF by the phone's scale and made it tiny
 - [x] Images embedded as data URIs, centred, never split across pages
 - [ ] On-device check of the print path (fonts, links, page size) with the first APK
 
@@ -92,11 +93,11 @@ Chrome
 - [x] `@capacitor/filesystem` installed natively (the backend in `src/vault.ts`); new notes with "All files" go to a Notes folder, not the top of the storage; the phone's Android/ folder is skipped when listing notes
 - [ ] Test list, read, write, stat, rename, delete, mkdir on the device
 - [x] System bars, edge to edge as Obsidian (`SystemBarsPlugin` "SatrSystemBars", replaces `@capacitor/status-bar`): the page draws behind transparent status and navigation bars, icons follow the theme, and the header / bottom bar keep clear of them through `--safe-area-inset-*` set from the real insets (Android's `env()` is unreliable in the WebView). No black band at the notch, no empty strip under the bottom bar. The keyboard gets a WebView bottom margin, since edge to edge disables adjustResize. The status bar still hides and shows on scroll
-- [x] Fixed text size: WebView text zoom pinned to 100% (app and print), so the phone's font-size setting enlarges neither the app nor the PDF
+- [x] Text size: the app's WebView follows the phone's font size (Android's default text zoom, as Obsidian does); the PDF stays fixed — the export divides font sizes by that scale while Paged.js measures and sends the print WebView the unscaled CSS at `setTextZoom(100)`, so both pagination and the page are exactly A4 at 100%
 - [ ] On-device check of the insets (notch, gesture and 3-button navigation, keyboard up / down, rotation)
 - [ ] Code keyboard: a small WebView subclass that overrides `onCreateInputConnection` and, while the caret is in code or math, requests `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | TYPE_TEXT_FLAG_NO_SUGGESTIONS` (Termux's trick: Gboard shows the number row and no suggestions), switched from JS through a bridge call plus `InputMethodManager.restartInput`
 - [ ] On-device IME check: Persian and Arabic composition, caret placement, selection handles
-- [ ] Share intent (open .md from other apps)
+- [x] Open from other apps (`OpenFilePlugin`): ACTION_VIEW / ACTION_EDIT / ACTION_SEND, any file type. Plain UTF-8 text (any extension, `.patch` too) is editable; anything else is decoded best effort and shown read-only, pictures also in the reading view; shared text opens read-only. Needs its on-device check
 - [x] Print / PDF: the Android side (see Print below); needs its on-device check with the first build
 
 ### Obsidian's sizes (done, September 2026)

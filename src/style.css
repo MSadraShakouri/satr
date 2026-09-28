@@ -2130,7 +2130,7 @@ input.mod-no-match {
   font-weight: 600;
   letter-spacing: 0.1em;
 }
-.tree-item-self.is-unsupported {
+.tree-item-self.is-plain-file {
   color: var(--text-faint);
 }
 .nav-file-tag {
