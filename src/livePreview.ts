@@ -273,8 +273,8 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
 // opening the keyboard.
 const toggleTask = EditorView.domEventHandlers({
   click(event, view) {
-    // Tapping a footnote reference opens its note in a dialog (Obsidian's
-    // footnote popover). A second tap, with the caret already in the
+    // Tapping a footnote reference opens its note in a popover at the
+    // reference (Obsidian's footnote popover). A second tap, with the caret already in the
     // reference, edits the reference text itself.
     const ref = (event.target as HTMLElement | null)?.closest?.('.cm-lp-footref');
     if (!ref || !(event.target as HTMLElement).isConnected) return false;
@@ -283,7 +283,7 @@ const toggleTask = EditorView.domEventHandlers({
     const match = /^\[\^([^\]\s]+)\]/.exec(view.state.sliceDoc(pos, line.to));
     if (!match || !findDefinition(view, match[1])) return false;
     if (lastTapHead > pos && lastTapHead < pos + match[0].length) return false;
-    editFootnote(view, match[1]);
+    editFootnote(view, match[1], { at: pos });
     return true;
   },
   mousedown(event, view) {

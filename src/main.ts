@@ -6,6 +6,8 @@ import { SatrEditor } from './editor';
 import { renderMarkdown } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
+import { footnoteLayout } from './footnoteDialog';
+import { closePopover, openPopover } from './popover';
 
 type Mode = 'edit' | 'preview';
 const starter = `# Satr demo
@@ -92,6 +94,16 @@ app.innerHTML = `
         <button tabindex="-1" data-command="lineDown" aria-label="Move line down"><svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button>
       </div>
     </div>
+    <div class="navbar-wrap" id="navbar-wrap">
+      <nav class="mobile-navbar" id="navbar" aria-label="Navigation" data-ignore-swipe>
+        <div class="mobile-navbar-actions">
+          <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Forward"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-fold" aria-label="Collapse all headings"></button></div>
+        </div>
+      </nav>
+    </div>
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
@@ -114,6 +126,9 @@ function keyboardOverlap(): number {
   if (!viewport) return 0;
   return Math.max(0, window.innerHeight - (viewport.offsetTop + viewport.height));
 }
+/** Height hidden at the bottom of the screen: keyboard overlap + toolbar. */
+const obscuredBottom = (): number => keyboardOverlap() + (document.body.classList.contains('keyboard-open') ? TOOLBAR_STRIP : 0);
+footnoteLayout.obscuredBottom = obscuredBottom;
 // Split view (wide screens, same breakpoint as style.css): keep the other
 // pane in step, by source line. The flag stops the follower's own scroll
 // event from echoing back. A media query instead of measuring both panes on
@@ -138,14 +153,15 @@ let fileBase = localStorage.getItem(NAME_KEY) ?? 'untitled';
 // the scroll position (as a fractional source line, the same measure the
 // edit/preview toggle uses), under satr:view:<base>.
 const viewKey = (base: string): string => `satr:view:${base}`;
-interface SavedView { mode: Mode; line: number; cursor?: [number, number] }
+interface SavedView { mode: Mode; line: number; cursor?: [number, number]; folds?: number[] }
 function readView(base: string): SavedView | null {
   try {
     const value = JSON.parse(localStorage.getItem(viewKey(base)) ?? 'null') as Partial<SavedView> | null;
     if (!value || (value.mode !== 'edit' && value.mode !== 'preview') || !Number.isFinite(value.line)) return null;
     const cursor = Array.isArray(value.cursor) && value.cursor.length === 2 && value.cursor.every(Number.isInteger)
       ? value.cursor as [number, number] : undefined;
-    return { mode: value.mode, line: Math.max(0, value.line as number), cursor };
+    const folds = Array.isArray(value.folds) ? value.folds.filter((n) => Number.isInteger(n) && n >= 0) : undefined;
+    return { mode: value.mode, line: Math.max(0, value.line as number), cursor, folds };
   } catch {
     return null;
   }
@@ -160,11 +176,46 @@ fileRow.textContent = `${fileBase}.md`;
 let previewDirty = true;
 let renderTimer: number | undefined;
 const previewVisible = (): boolean => mode === 'preview' || splitView.matches;
+// Reading view shows the note's name on top, like Obsidian's inline title.
+const escapeText = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
+let lastRender = 0;
 function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
-  preview.innerHTML = renderMarkdown(editor.getValue());
+  lastRender = Date.now();
+  preview.innerHTML = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>${renderMarkdown(editor.getValue())}`;
+  applyPreviewFolds();
   scheduleMathLayout(preview);
+}
+function setPreviewTitle(): void {
+  const title = preview.querySelector<HTMLElement>('.inline-title');
+  if (title) title.textContent = fileBase;
+}
+
+// Folded headings in the preview mirror the editor's folds (one set of folds
+// per note, shared by both modes): a section is hidden when a heading above
+// it, of a higher level and with no heading of the same or higher level in
+// between, is folded. Only headings with something under them get a chevron.
+function applyPreviewFolds(): void {
+  const folded = new Set(editor.foldedLines());
+  let hideBelow = 7; // hide sections until a heading of this level or higher
+  for (const section of preview.querySelectorAll<HTMLElement>(':scope > .md-section')) {
+    const heading = section.firstElementChild as HTMLElement | null;
+    const match = heading && /^H([1-6])$/.exec(heading.tagName);
+    const level = match ? Number(match[1]) : 0;
+    if (level && level <= hideBelow) hideBelow = 7;
+    section.classList.toggle('is-folded-away', hideBelow < 7);
+    if (!level || hideBelow < 7) continue;
+    // Has content under it: the next section isn't a heading of the same or higher level.
+    let next = section.nextElementSibling as HTMLElement | null;
+    while (next && !next.classList.contains('md-section')) next = next.nextElementSibling as HTMLElement | null;
+    const nextMatch = next && /^H([1-6])$/.exec(next.firstElementChild?.tagName ?? '');
+    const hasContent = Boolean(next) && !(nextMatch && Number(nextMatch[1]) <= level);
+    const isFolded = hasContent && folded.has(Number(section.dataset.line));
+    heading!.classList.toggle('has-fold', hasContent);
+    heading!.classList.toggle('is-folded', isFolded);
+    if (isFolded) hideBelow = level;
+  }
 }
 function saveNow(): void {
   window.clearTimeout(saveTimer);
@@ -208,7 +259,8 @@ function toggleFiles(open = !document.body.classList.contains('files-open')): vo
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   onSelection: () => rememberViewSoon(),
-  obscuredBottom: () => keyboardOverlap() + (document.body.classList.contains('keyboard-open') ? TOOLBAR_STRIP : 0),
+  onFold: () => { applyPreviewFolds(); renderFoldButton(); rememberViewSoon(); },
+  obscuredBottom: () => obscuredBottom(),
   checkName: (base) => (nameExists(base) && base !== fileBase ? 'There is already a file with that name' : null),
   onRename: (base) => {
     if (nameExists(base) && base !== fileBase) return 'There is already a file with that name';
@@ -218,17 +270,27 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
     const view = localStorage.getItem(viewKey(fileBase));
     localStorage.removeItem(viewKey(fileBase));
     if (view) localStorage.setItem(viewKey(base), view);
+    for (let i = 0; i < fileHistory.length; i += 1) if (fileHistory[i] === fileBase) fileHistory[i] = base;
     fileBase = base;
     localStorage.setItem(NAME_KEY, base);
     fileRow.textContent = `${base}.md`;
+    setPreviewTitle();
     return null;
   },
 });
 // Auto-hide navigation, as Obsidian's "auto full screen" (MobileNavbar.
-// onScroll): any scroll down hides the floating buttons (and the Android
-// status bar, in the app); any scroll up, or a tap, brings them back.
-// Nothing hides while the keyboard is up. Deltas under 0.125px are noise.
-const topbarEl = document.querySelector<HTMLElement>('.topbar')!;
+// onScroll, read in its app.js): scrolling down hides the header buttons,
+// the bottom bar and the Android status bar (in the app); scrolling up, or a
+// tap, brings them back. What makes it feel calm:
+// - movement is measured against the position where the bars last changed
+//   (or last passed the threshold), not per scroll event, and it takes 1/8
+//   of a line (Obsidian's 0.125 in line units) to count;
+// - scrolls the app makes itself — restoring a position, keeping split view
+//   in step, CodeMirror correcting its height estimates, a re-render — are
+//   ignored (Obsidian skips scrolls within 100ms of a render the same way).
+// Nothing hides while the keyboard is up.
+const LINE_PX = 16 * 1.85;
+const NAV_THRESHOLD = 0.125 * LINE_PX;
 type StatusBarPlugin = { hide(options?: { animation?: string }): Promise<void>; show(options?: { animation?: string }): Promise<void> };
 const statusBar = (): StatusBarPlugin | undefined =>
   (window as unknown as { Capacitor?: { Plugins?: { StatusBar?: StatusBarPlugin } } }).Capacitor?.Plugins?.StatusBar;
@@ -236,24 +298,33 @@ let navHidden = false;
 function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
-  topbarEl.classList.add('is-hidden-nav');
+  document.body.classList.add('is-hidden-nav');
   void statusBar()?.hide({ animation: 'FADE' }).catch(() => undefined);
 }
 function restoreNavigation(): void {
   if (!navHidden) return;
   navHidden = false;
-  topbarEl.classList.remove('is-hidden-nav');
+  document.body.classList.remove('is-hidden-nav');
   void statusBar()?.show({ animation: 'FADE' }).catch(() => undefined);
 }
-const scrollTops = new WeakMap<Element, number>();
+const scrollAnchors = new WeakMap<Element, number>();
+let programmaticUntil = 0;
+/** Mark the next moment's scroll events as the app's own. */
+function ownScroll(ms = 150): void { programmaticUntil = Math.max(programmaticUntil, performance.now() + ms); }
 function onNavScroll(el: HTMLElement): void {
   const top = el.scrollTop;
-  const previous = scrollTops.get(el) ?? 0;
-  scrollTops.set(el, top);
-  if (document.body.classList.contains('keyboard-open') || keyboardOverlap() > 120) return;
-  const delta = top - previous;
-  if ((top < 0.1 && previous < 0.1) || Math.abs(delta) < 0.125) return;
-  if (delta > 0 && top > 0) hideNavigation();
+  const anchor = scrollAnchors.get(el) ?? 0; // panes start at the top
+  if (syncingScroll || restoringView || performance.now() < programmaticUntil
+    || Date.now() - lastRender < 100 || el.getBoundingClientRect().height === 0) {
+    scrollAnchors.set(el, top);
+    return;
+  }
+  if (document.body.classList.contains('keyboard-open') || keyboardOverlap() > 120) { scrollAnchors.set(el, top); return; }
+  if (top <= 0) { scrollAnchors.set(el, 0); restoreNavigation(); return; }
+  const delta = top - anchor;
+  if (Math.abs(delta) < NAV_THRESHOLD) return;
+  scrollAnchors.set(el, top);
+  if (delta > 0) hideNavigation();
   else restoreNavigation();
 }
 // mousedown, not pointerdown: on touch screens it only fires for taps, not
@@ -275,7 +346,8 @@ function rememberView(): void {
   window.clearTimeout(viewTimer);
   if (restoringView) return;
   const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
-  localStorage.setItem(viewKey(fileBase), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection() }));
+  const folds = editor.foldedLines();
+  localStorage.setItem(viewKey(fileBase), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) }));
 }
 function rememberViewSoon(): void {
   window.clearTimeout(viewTimer);
@@ -288,6 +360,7 @@ function restoreView(base: string): void {
   // scroll. Otherwise it sat at the top of the note, and the first tap on a
   // toolbar command or the keyboard opening jumped the view back up there.
   if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
+  if (view?.folds?.length) editor.restoreFolds(view.folds);
   setMode(view?.mode ?? 'edit');
   // Positions depend on fonts, KaTeX and math line breaks: apply once now,
   // and again when those have settled.
@@ -326,24 +399,96 @@ document.addEventListener('visibilitychange', () => {
 document.querySelector('#files')!.addEventListener('click', () => toggleFiles());
 document.querySelector('#close-files')!.addEventListener('click', () => toggleFiles(false));
 document.querySelector('#backdrop')!.addEventListener('click', () => toggleFiles(false));
-document.querySelector('#new-file')!.addEventListener('click', () => {
+// Opening notes, with back/forward history like Obsidian's navbar arrows.
+// Each note comes back with its own mode, position, caret and folds.
+const fileHistory: string[] = [fileBase];
+let historyIndex = 0;
+function leaveCurrent(): void {
+  closePopover();
+  saveNow();
+  rememberView();
+}
+function showFile(base: string, content: string): void {
+  fileBase = base;
+  localStorage.setItem(NAME_KEY, base);
+  fileRow.textContent = `${base}.md`;
+  restoringView = true;
+  editor.setValue(content);
+  editor.setTitle(base);
+  window.clearTimeout(saveTimer); // loading isn't an edit
+  saveTimer = undefined;
+  previewDirty = true;
+  if (previewVisible()) renderPreview();
+  restoreView(base);
+  renderNavButtons();
+}
+function openFile(base: string): void {
+  if (base === fileBase) return;
+  leaveCurrent();
+  fileHistory.splice(historyIndex + 1, Infinity, base);
+  historyIndex = fileHistory.length - 1;
+  showFile(base, localStorage.getItem(storageKey(base)) ?? '');
+}
+function goHistory(step: number): void {
+  let index = historyIndex + step;
+  // Skip notes that no longer exist.
+  while (index >= 0 && index < fileHistory.length && !nameExists(fileHistory[index])) {
+    fileHistory.splice(index, 1);
+    if (step < 0) index -= 1;
+    if (index < historyIndex) historyIndex -= 1;
+  }
+  if (index < 0 || index >= fileHistory.length || fileHistory[index] === fileBase) { renderNavButtons(); return; }
+  leaveCurrent();
+  historyIndex = index;
+  showFile(fileHistory[index], localStorage.getItem(storageKey(fileHistory[index])) ?? '');
+}
+function newFile(): void {
   let index = 0;
   let base = 'untitled';
   while (nameExists(base)) base = `untitled ${(index += 1) + 1}`;
-  const content = editor.getValue();
-  localStorage.setItem(storageKey(fileBase), content);
-  rememberView();
-  fileBase = base;
-  localStorage.setItem(NAME_KEY, base);
+  leaveCurrent();
   localStorage.setItem(storageKey(base), '');
   localStorage.removeItem(viewKey(base));
-  fileRow.textContent = `${base}.md`;
-  editor.setValue('');
-  editor.setTitle(base);
+  fileHistory.splice(historyIndex + 1, Infinity, base);
+  historyIndex = fileHistory.length - 1;
+  showFile(base, '');
   setMode('edit');
   toggleFiles(false);
   editor.focusTitle();
+}
+document.querySelector('#new-file')!.addEventListener('click', newFile);
+
+// Bottom bar (no keyboard): back, forward, new note, and fold / unfold all
+// headings. Obsidian's floating navbar: a 52px pill, at most 316px wide,
+// max(safe area, 12px) from the bottom; hidden while typing and while
+// scrolling down, like the header buttons.
+const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
+const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
+const navFold = document.querySelector<HTMLButtonElement>('#nav-fold')!;
+const FOLD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg>'; // chevrons-down-up
+const UNFOLD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>'; // chevrons-up-down
+function renderFoldButton(): void {
+  const anyFolded = editor.foldedLines().length > 0;
+  navFold.innerHTML = anyFolded ? UNFOLD_ICON : FOLD_ICON;
+  navFold.setAttribute('aria-label', anyFolded ? 'Expand all headings' : 'Collapse all headings');
+}
+function renderNavButtons(): void {
+  navBack.disabled = historyIndex <= 0;
+  navForward.disabled = historyIndex >= fileHistory.length - 1;
+  renderFoldButton();
+}
+navBack.addEventListener('click', () => goHistory(-1));
+navForward.addEventListener('click', () => goHistory(1));
+document.querySelector('#nav-new')!.addEventListener('click', newFile);
+navFold.addEventListener('click', () => {
+  ownScroll();
+  if (editor.foldedLines().length) editor.unfoldAll();
+  else editor.foldAll();
 });
+// The bar never takes focus from the note (no keyboard flicker).
+document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
+renderNavButtons();
+
 // Theme switch in the drawer: Auto (follows the system) → Light → Dark.
 const themeButton = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
 const THEME_LABEL: Record<ThemeChoice, string> = { auto: 'Theme: Auto', light: 'Theme: Light', dark: 'Theme: Dark' };
@@ -380,7 +525,45 @@ preview.addEventListener('click', (event) => {
     });
     return;
   }
-  const link = target.closest<HTMLAnchorElement>('a.footnote-link, a.footnote-backref');
+  // Heading chevron (at the end of the heading line): fold / unfold.
+  const heading = target.closest<HTMLElement>('.md-section > .has-fold');
+  if (heading) {
+    const box = heading.getBoundingClientRect();
+    const rtl = getComputedStyle(heading).direction === 'rtl';
+    const lineHeight = parseFloat(getComputedStyle(heading).lineHeight) || box.height;
+    const onChevron = (rtl ? event.clientX <= box.left + 36 : event.clientX >= box.right - 36) && event.clientY <= box.top + lineHeight + 4;
+    if (onChevron) {
+      event.preventDefault();
+      ownScroll();
+      editor.toggleFold(Number(heading.parentElement!.dataset.line));
+      return;
+    }
+  }
+  // Footnote reference: show the note in a popover at the reference, as
+  // Obsidian's reading view does, instead of scrolling away to it.
+  const ref = target.closest<HTMLAnchorElement>('a.footnote-link');
+  if (ref) {
+    const id = decodeURIComponent(ref.getAttribute('href')?.slice(1) ?? '');
+    const definition = [...preview.querySelectorAll<HTMLElement>('[data-footnote-id]')].find((el) => el.dataset.footnoteId === id);
+    if (definition) {
+      event.preventDefault();
+      const content = document.createElement('div');
+      content.className = 'markdown-embed footnote-embed markdown-rendered';
+      content.dataset.type = 'footnote';
+      content.innerHTML = definition.innerHTML;
+      content.querySelectorAll('.footnote-backref').forEach((el) => el.remove());
+      content.dir = 'auto';
+      openPopover({
+        className: 'footnote-popover',
+        anchor: () => (ref.isConnected ? ref.getBoundingClientRect() : null),
+        rtl: getComputedStyle(ref).direction === 'rtl',
+        content,
+        scrollers: [previewPane],
+      });
+      return;
+    }
+  }
+  const link = target.closest<HTMLAnchorElement>('a.footnote-backref');
   const href = link?.getAttribute('href');
   if (!link || !href?.startsWith('#')) return;
   event.preventDefault();
@@ -511,6 +694,7 @@ let settleTarget: boolean | null = null;
 let settleAnims: Animation[] = [];
 const panel = document.querySelector<HTMLElement>('.file-panel')!;
 const topbar = document.querySelector<HTMLElement>('.topbar')!;
+const navWrap = document.querySelector<HTMLElement>('#navbar-wrap')!;
 const workspace = document.querySelector<HTMLElement>('.workspace')!;
 const backdrop = document.querySelector<HTMLElement>('#backdrop')!;
 const drawerWidth = (): number => Math.min(window.innerWidth * .84, 420);
@@ -531,10 +715,11 @@ function drawerShiftOf(): number {
 function renderDrawer(shift: number): void {
   const width = gestureWidth || drawerWidth();
   const s = Math.max(0, Math.min(width, shift));
-  for (const el of [panel, workspace, topbar, backdrop]) el.style.transition = 'none';
+  for (const el of [panel, workspace, topbar, navWrap, backdrop]) el.style.transition = 'none';
   panel.style.transform = `translate3d(${-HIDE_FACTOR * (width - s)}px,0,0)`;
   workspace.style.transform = `translate3d(${s}px,0,0)`;
   topbar.style.transform = `translate3d(${s}px,0,0)`;
+  navWrap.style.transform = `translate3d(${s}px,0,0)`;
   // A fully closed drawer must not leave the (invisible) backdrop covering the
   // editor, or it becomes the scroll target and vertical scrolling dies.
   backdrop.style.display = s > 0 ? 'block' : 'none';
@@ -543,10 +728,11 @@ function renderDrawer(shift: number): void {
 function clearDrawerDrag(): void {
   // Restore steady state from the .files-open class; it equals the visual end
   // state of the settle animation, so nothing visibly moves here.
-  for (const el of [panel, workspace, topbar, backdrop]) el.style.transition = '';
+  for (const el of [panel, workspace, topbar, navWrap, backdrop]) el.style.transition = '';
   panel.style.transform = '';
   workspace.style.transform = '';
   topbar.style.transform = '';
+  navWrap.style.transform = '';
   backdrop.style.display = '';
   backdrop.style.opacity = '';
 }
@@ -592,11 +778,14 @@ function settleDrawer(open: boolean): void {
     topbar.animate(
       [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
       { duration, easing, fill: 'forwards' }),
+    navWrap.animate(
+      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${end}px,0,0)` }],
+      { duration, easing, fill: 'forwards' }),
     backdrop.animate(
       [{ opacity: width ? from / width : 0 }, { opacity: open ? 1 : 0 }],
       { duration, easing, fill: 'forwards' }),
   ];
-  for (const el of [panel, workspace, topbar, backdrop]) el.style.transition = 'none';
+  for (const el of [panel, workspace, topbar, navWrap, backdrop]) el.style.transition = 'none';
   settleAnims[0].onfinish = () => {
     document.body.classList.toggle('files-open', open);
     clearDrawerDrag();

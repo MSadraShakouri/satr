@@ -192,12 +192,12 @@ button:focus-visible {
 .topbar > * {
   pointer-events: auto;
 }
-.topbar.is-hidden-nav {
+.is-hidden-nav .topbar {
   /* .is-hidden-nav .view-header: slide up by its own height and fade */
   transform: translateY(calc(-44px - max(12px, env(safe-area-inset-top))));
   opacity: 0;
 }
-.topbar.is-hidden-nav > * {
+.is-hidden-nav .topbar > * {
   pointer-events: none;
 }
 .topbar-actions {
@@ -259,17 +259,37 @@ button:focus-visible {
 .files-open .topbar {
   transform: translate3d(min(84vw, 420px), 0, 0);
 }
-.files-open .topbar.is-hidden-nav {
+.files-open.is-hidden-nav .topbar {
   opacity: 1;
   transform: translate3d(min(84vw, 420px), 0, 0);
 }
-.files-open .topbar.is-hidden-nav > * {
+.files-open.is-hidden-nav .topbar > * {
   pointer-events: auto;
 }
 body {
   overflow: hidden;
   overflow-x: hidden;
   overscroll-behavior-x: none;
+}
+/* Floating navigation, as Obsidian: the note fades out under the header
+   buttons (--view-top-fade-mask: 25% opacity at the top edge, solid below
+   the buttons) and at the bottom edge (--view-bottom-fade-mask, 50%). With
+   the bars hidden, the top fade shrinks to the status bar area. */
+:root {
+  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 calc(env(safe-area-inset-top, 0px) + 44px + 12px));
+  --view-bottom-fade-mask: linear-gradient(to top, rgba(0, 0, 0, 0.5) 0%, #000 calc(env(safe-area-inset-bottom, 0px) + 12px));
+  /* --view-top-spacing-markdown: note text starts 16px below the buttons */
+  --view-top-spacing-markdown: calc(max(12px, env(safe-area-inset-top, 0px)) + 44px + 16px);
+}
+.is-hidden-nav {
+  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 env(safe-area-inset-top, 0px));
+}
+.editor-pane,
+.preview-pane {
+  -webkit-mask-image: var(--view-top-fade-mask), var(--view-bottom-fade-mask);
+  mask-image: var(--view-top-fade-mask), var(--view-bottom-fade-mask);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
 }
 .editor-pane {
   display: flex;
@@ -295,7 +315,7 @@ body {
 .preview-pane article {
   max-width: 72ch;
   margin: auto;
-  padding: 5.5rem 22px 50vh;
+  padding: var(--view-top-spacing-markdown) 22px 50vh;
   line-height: 1.75;
   direction: ltr;
 }
@@ -1119,85 +1139,240 @@ body {
 }
 
 /* ---- Math source (src/mathSource.ts) ----
-   Not rendered while editing: math reads left to right (also inside Persian
-   text) and its dollar signs are faint. */
-.cm-math {
+   Not rendered while editing, but clearly not prose either — Obsidian's
+   source math (.cm-s-obsidian span.cm-math / .cm-formatting-math): the
+   monospace font at code size, italic, with the dollar signs in the accent
+   colour. Math reads left to right, also inside Persian text. */
+.cm-math,
+.cm-editor .cm-line.cm-math-line {
+  font-family: var(--font-monospace);
+  font-style: italic;
   direction: ltr;
+}
+.cm-math {
+  font-size: var(--code-size);
   unicode-bidi: isolate;
 }
 .cm-math-delim {
-  color: var(--text-faint);
+  color: var(--text-accent);
+  font-family: var(--font-monospace);
+  font-style: normal;
 }
 .cm-editor .cm-line.cm-math-line {
-  direction: ltr;
+  /* $$ blocks: 16px x 0.875, on the same line pitch as the text */
+  font-size: var(--code-size);
+  line-height: calc(1.85em / 0.875);
   text-align: left;
 }
 
-/* ---- Dialogs (footnotes) ----
-   After Obsidian's phone modal: page-coloured card with 12px corners and a
-   soft shadow over a dimmed page; placed near the top so the keyboard never
-   covers it. */
-.modal-container {
+/* ---- Bottom bar (no keyboard) ----
+   Obsidian's floating .mobile-navbar: a 52px raised pill, as wide as its
+   buttons (at most 316px), centred, max(safe area, 12px) above the bottom;
+   26px icons at 1.75 stroke. It slides down and fades out with the header
+   buttons when scrolling down, and is gone while the keyboard is up. The
+   wrapper follows the drawer's slide (src/main.ts). */
+.navbar-wrap {
   position: fixed;
-  z-index: 50;
-  inset: 0;
+  z-index: 6;
+  inset: auto 0 0;
+  pointer-events: none;
 }
-.modal-bg {
-  position: absolute;
-  inset: 0;
-  background: var(--background-modifier-cover);
+.mobile-navbar {
+  display: flex;
+  width: fit-content;
+  max-width: 316px;
+  height: 52px;
+  margin: 0 auto max(env(safe-area-inset-bottom, 0px), 12px);
+  padding: 0 8px;
+  border-radius: 52px;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
+  pointer-events: auto;
+  transition:
+    opacity 0.2s ease-in-out,
+    transform 0.3s ease-out;
 }
-.modal {
-  position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + 8px);
-  left: 12px;
-  right: 12px;
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 16px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  background: var(--background-primary);
-  box-shadow: var(--shadow-s);
+.is-hidden-nav .mobile-navbar,
+.keyboard-open .mobile-navbar,
+.files-open .mobile-navbar {
+  transform: translateY(calc(52px + max(env(safe-area-inset-bottom, 0px), 12px)));
+  opacity: 0;
+  pointer-events: none;
 }
-.modal-title {
-  margin-bottom: 12px;
-  font-size: 1.05em;
-  font-weight: 600;
-}
-.modal-textarea {
-  display: block;
+.mobile-navbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
-  min-height: 88px;
-  padding: 8px 12px;
+}
+.mobile-navbar-action {
+  flex-grow: 1;
+  width: 52px;
+  height: 100%;
+}
+.mobile-navbar-action button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border-radius: 52px;
+  background: transparent;
+  color: var(--text-normal);
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.1s ease-in-out;
+}
+.mobile-navbar-action button:active {
+  opacity: 0.65;
+}
+.mobile-navbar-action button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.mobile-navbar-action svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Split view on wide screens has room for the bar without it covering text. */
+@media (min-width: 761px) {
+  .mobile-navbar {
+    margin-bottom: 16px;
+  }
+}
+
+/* ---- Heading folding (src/headingFold.ts, preview in src/main.ts) ----
+   A chevron at the end of every heading that has something under it — the
+   left end for a Persian heading, the right end for an English one — so it
+   never crowds the "#" or the first word. Faint when open; pointing along
+   the line (right in LTR, left in RTL) and in full text colour when folded,
+   like Obsidian's collapse indicator. Its box is one line of the heading
+   tall, so it lines up with the first line of a wrapped heading. */
+.cm-editor .cm-line.cm-heading-fold,
+.preview-pane .md-section > .has-fold {
+  position: relative;
+  padding-inline-end: 32px;
+}
+.cm-heading-fold::after,
+.preview-pane .md-section > .has-fold::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+  width: 24px;
+  height: var(--fold-line, 1lh);
+  background: var(--text-faint);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 18px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 18px no-repeat;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+/* Editor heading lines keep the 16px line font; the heading size lives on
+   the text inside, so the chevron's line box is sized per level. */
+.cm-heading-fold { --fold-line: 1.85em; }
+.cm-heading-fold-h1 { --fold-line: calc(1.85em * 1.45); }
+.cm-heading-fold-h2 { --fold-line: calc(1.85em * 1.25); }
+.cm-heading-fold-h3 { --fold-line: calc(1.85em * 1.1); }
+.cm-heading-fold.is-folded::after,
+.preview-pane .md-section > .has-fold.is-folded::after {
+  background: var(--text-muted);
+  opacity: 1;
+  transform: rotate(-90deg);
+}
+.cm-heading-fold.is-folded[dir="rtl"]::after,
+.preview-pane .md-section > .has-fold.is-folded:dir(rtl)::after {
+  transform: rotate(90deg);
+}
+.preview-pane .md-section.is-folded-away {
+  display: none;
+}
+/* The folded section's badge after the heading */
+.cm-editor .cm-foldPlaceholder {
+  display: inline-block;
+  margin-inline-start: 0.4em;
+  padding: 0 0.45em;
+  border: 0;
+  border-radius: 4px;
+  background: var(--background-modifier-hover, rgba(var(--mono-rgb-100), 0.075));
+  color: var(--text-faint);
+  font-size: 0.875em;
+  line-height: 1.4;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+/* ---- Popovers (footnotes; src/popover.ts) ----
+   Obsidian's .popover.hover-popover: page background, 1px border,
+   --shadow-s, 8px corners, 450px wide at most (80vw on a phone); a footnote
+   inside is set at --footnote-size with 12px 16px margins. */
+.popover.hover-popover {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: min(450px, 80vw);
+  max-height: min(400px, 60vh);
+  overflow: hidden;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+}
+.footnote-embed {
+  width: 100%;
+  overflow: auto;
+  font-size: var(--footnote-size);
+  line-height: 1.6;
+}
+.footnote-embed.markdown-rendered {
+  padding: 12px 16px;
+  unicode-bidi: plaintext;
+}
+.footnote-embed.markdown-rendered > :first-child { margin-top: 0; }
+.footnote-embed.markdown-rendered > :last-child { margin-bottom: 0; }
+.footnote-input {
+  display: block;
+  width: 100%;
+  min-height: calc(1.6em + 24px);
+  max-height: min(400px, 60vh);
+  margin: 0;
+  padding: 12px 16px;
+  border: 0;
   outline: none;
-  background: var(--background-primary-alt);
+  background: transparent;
   color: var(--text-normal);
   font: inherit;
   line-height: 1.6;
   resize: none;
   unicode-bidi: plaintext;
+  caret-color: var(--caret-color);
 }
-.modal-textarea:focus {
-  border-color: var(--interactive-accent);
+.footnote-input::placeholder {
+  color: var(--text-faint);
 }
-.modal-button-container {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
-}
-.modal-button-container button {
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 8px;
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-  font-size: 0.95em;
-}
-.modal-button-container .mod-cta {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+
+/* ---- Reading view title ----
+   The note's name above the text, as Obsidian's .inline-title in reading
+   view: same look as the editor's title, not editable here. */
+.preview-pane .inline-title {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font:
+    700 2.35rem/1.15 Vazirmatn,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }

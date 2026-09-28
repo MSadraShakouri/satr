@@ -10,11 +10,13 @@ import { livePreview } from './livePreview';
 import { deleteDollarPair, inCode, inMath, mathSource } from './mathSource';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
+import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
+import { foldEffect, unfoldEffect } from '@codemirror/language';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: '16px' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: '1.85' },
-  '.cm-content': { padding: '5.5rem max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: 'var(--view-top-spacing-markdown, 5.5rem) max(1.25rem, calc((100% - 72ch) / 2)) 50vh', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });
@@ -400,6 +402,9 @@ const pairs = EditorState.languageData.of(() => [{
   closeBrackets: { brackets: ['(', '[', '{', '"', '`', '«'], before: ')]}:;>.,!?»،؛$`"' },
 }]);
 
+// A finger is on the note text (see scrollMargins and revealCaret below).
+let touching = false;
+
 export class SatrEditor {
   readonly view: EditorView;
   constructor(parent: HTMLElement, onChange: () => void, options?: {
@@ -409,6 +414,8 @@ export class SatrEditor {
     onSelection?: (position: number) => void;
     /** Height in px hidden at the bottom of the viewport (e.g. the keyboard toolbar). */
     obscuredBottom?: () => number;
+    /** A heading was folded or unfolded. */
+    onFold?: () => void;
   }) {
     initialTitle = options?.title ?? 'untitled';
     titleRuntime.onRename = options?.onRename ?? (() => null);
@@ -435,9 +442,13 @@ export class SatrEditor {
       titleField,
       rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, livePreview, mathSource,
       technicalContext, keyboardAttributes, closeBrackets(), pairs,
-      // Keep the caret clear of the on-screen keyboard and the toolbar on
-      // every scroll-into-view (typing, commands, selecting low on the screen).
-      EditorView.scrollMargins.of(() => ({ bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
+      // Keep the caret clear of the on-screen keyboard and the toolbar when
+      // typing and running commands. Not while a finger is on the text:
+      // selecting near the bottom then made CodeMirror jump the page at once,
+      // because it counted the space the keyboard was about to cover as
+      // hidden. The caret is brought up gently afterwards instead (below).
+      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
+      headingFolding,
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ dir: 'auto' }),
@@ -455,25 +466,45 @@ export class SatrEditor {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) options?.onSelection?.(update.state.selection.main.head);
+        if (update.transactions.some((tr) => tr.effects.some((e) => e.is(foldEffect) || e.is(unfoldEffect)))) options?.onFold?.();
       }),
     ];
     this.view = new EditorView({ state: EditorState.create({ extensions }), parent });
-    // When the keyboard opens (or the caret is placed by touch), bring the
-    // caret above it. scrollIntoView honours the scrollMargins above, which
-    // include the keyboard overlap and the toolbar.
-    const focusCaret = (): void => {
-      window.requestAnimationFrame(() => {
-        if (!this.view.hasFocus) return;
-        this.view.dispatch({ effects: EditorView.scrollIntoView(this.view.state.selection.main.head, { y: 'nearest' }) });
-      });
+    // When the keyboard opens, or the caret is placed by touch, glide the
+    // caret into the part of the screen the keyboard and toolbar leave
+    // visible — a short smooth scroll, only if it is actually hidden, and
+    // only once the keyboard has finished resizing the page.
+    const revealCaret = (): void => {
+      if (!this.view.hasFocus || touching) return;
+      const coords = this.view.coordsAtPos(this.view.state.selection.main.head);
+      if (!coords) return;
+      const box = this.view.scrollDOM.getBoundingClientRect();
+      const bottom = box.bottom - (options?.obscuredBottom?.() ?? 0) - 24;
+      const top = box.top + 8;
+      const delta = coords.bottom > bottom ? coords.bottom - bottom : coords.top < top ? coords.top - top : 0;
+      if (Math.abs(delta) < 1) return;
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      this.view.scrollDOM.scrollBy({ top: delta, behavior: reduce ? 'instant' as ScrollBehavior : 'smooth' });
     };
-    this.view.contentDOM.addEventListener('focus', focusCaret);
-    this.view.contentDOM.addEventListener('pointerup', (event) => {
-      if (event.pointerType === 'touch' || event.pointerType === 'pen') {
-        window.requestAnimationFrame(() => window.requestAnimationFrame(() => window.setTimeout(focusCaret, 40)));
-      }
-    });
-    window.visualViewport?.addEventListener('resize', focusCaret);
+    let revealTimer: number | undefined;
+    const revealSoon = (delay: number): void => {
+      window.clearTimeout(revealTimer);
+      revealTimer = window.setTimeout(() => window.requestAnimationFrame(revealCaret), delay);
+    };
+    this.view.contentDOM.addEventListener('focus', () => revealSoon(160));
+    let touchTimer: number | undefined;
+    this.view.contentDOM.addEventListener('touchstart', () => {
+      window.clearTimeout(touchTimer);
+      touching = true;
+    }, { passive: true });
+    const release = (): void => {
+      window.clearTimeout(touchTimer);
+      // Native selection handles keep adjusting for a moment after the lift.
+      touchTimer = window.setTimeout(() => { touching = false; revealSoon(0); }, 350);
+    };
+    this.view.contentDOM.addEventListener('touchend', release, { passive: true });
+    this.view.contentDOM.addEventListener('touchcancel', release, { passive: true });
+    window.visualViewport?.addEventListener('resize', () => revealSoon(160));
   }
   getValue(): string { return this.view.state.doc.toString(); }
   setTitle(base: string): void { this.view.dispatch({ effects: setTitleEffect.of(base) }); }
@@ -497,6 +528,13 @@ export class SatrEditor {
     this.view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } });
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
+  /** Fold / unfold the heading on this 0-based line. */
+  toggleFold(line: number): boolean { return toggleHeadingFold(this.view, line); }
+  foldAll(): void { foldAllHeadings(this.view); }
+  unfoldAll(): void { unfoldAllHeadings(this.view); }
+  /** 0-based lines of folded headings. */
+  foldedLines(): number[] { return foldedHeadingLines(this.view.state); }
+  restoreFolds(lines: number[]): void { restoreHeadingFolds(this.view, lines); }
   /** Run a keyboard-toolbar command by name. */
   run(command: string): boolean {
     const fn = toolbarCommands[command];

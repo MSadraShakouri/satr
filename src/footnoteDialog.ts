@@ -1,10 +1,13 @@
-// Footnote editing in a dialog, after Obsidian: inserting a footnote puts
-// "[^n]" at the caret and opens a small dialog to write the note, instead of
-// jumping to the end of the file. Tapping a reference opens the same dialog.
-// The definition lives at the end of the note as "[^n]: text"; extra lines are
-// written as indented continuation lines, which is how Markdown footnotes
-// hold several lines.
+// Footnote editing in a popover, after Obsidian: inserting a footnote puts
+// "[^n]" at the caret and opens a small card right at the reference to write
+// the note — no jump to the end of the file, no dialog over the page. Tapping
+// a reference opens the same card. The note is written into the definition
+// ("[^n]: text" at the end of the note) as you type, like Obsidian's
+// embedded editor; extra lines become indented continuation lines, which is
+// how Markdown footnotes hold several lines. Closing an empty new footnote
+// removes it again.
 import type { EditorView } from '@codemirror/view';
+import { openPopover } from './popover';
 
 interface Definition { from: number; to: number; text: string }
 
@@ -33,56 +36,88 @@ export function findDefinition(view: EditorView, id: string): Definition | null 
   return null;
 }
 
-let open: HTMLElement | null = null;
+/** Set by the app: height hidden at the bottom (keyboard toolbar). */
+export const footnoteLayout = { obscuredBottom: (): number => 0 };
 
-export function editFootnote(view: EditorView, id: string, options: { isNew?: boolean; label?: string } = {}): void {
-  open?.remove();
-  const definition = findDefinition(view, id);
+/** Position of the first reference to this footnote (not the definition). */
+function firstReference(view: EditorView, id: string): number {
+  const match = new RegExp(`\\[\\^${escapeRegExp(id)}\\](?!:)`).exec(view.state.doc.toString());
+  return match ? match.index : -1;
+}
+
+export function editFootnote(view: EditorView, id: string, options: { isNew?: boolean; at?: number } = {}): void {
   const hadFocus = view.hasFocus;
-  const container = document.createElement('div');
-  container.className = 'modal-container footnote-modal';
-  container.dataset.ignoreSwipe = '';
-  container.innerHTML = `
-    <div class="modal-bg"></div>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="footnote-title">
-      <div class="modal-title" id="footnote-title"></div>
-      <textarea class="modal-textarea" dir="auto" rows="3" placeholder="Footnote text"></textarea>
-      <div class="modal-button-container">
-        <button type="button" class="mod-cancel">Cancel</button>
-        <button type="button" class="mod-cta">Done</button>
-      </div>
-    </div>`;
-  const title = container.querySelector<HTMLElement>('.modal-title')!;
-  title.textContent = `Footnote ${options.label ?? id}`;
-  const input = container.querySelector<HTMLTextAreaElement>('textarea')!;
-  input.value = definition?.text ?? '';
-  document.body.appendChild(container);
-  open = container;
+  const label = `[^${id}]`;
+  let at = options.at ?? firstReference(view, id);
+  const lineText = at >= 0 ? view.state.doc.lineAt(at) : null;
+  const firstLetter = lineText ? /\p{L}/u.exec(lineText.text.replace(/\[\^[^\]]*\]/g, ''))?.[0] ?? '' : '';
+  const rtl = /[\p{sc=Arabic}\p{sc=Hebrew}]/u.test(firstLetter);
+  const content = document.createElement('div');
+  content.className = 'markdown-embed footnote-embed';
+  content.dataset.type = 'footnote';
+  const input = document.createElement('textarea');
+  input.className = 'footnote-input';
+  input.dir = 'auto';
+  input.rows = 1;
+  input.placeholder = 'Footnote';
+  input.setAttribute('aria-label', `Footnote ${id}`);
+  input.value = findDefinition(view, id)?.text ?? '';
+  content.appendChild(input);
 
-  const close = (save: boolean): void => {
-    if (open !== container) return;
-    open = null;
-    container.remove();
-    const value = input.value.replace(/\s+$/, '');
-    const current = findDefinition(view, id);
-    if (save && current) {
-      const text = value.split('\n').join('\n    ');
-      if (text !== current.text) view.dispatch({ changes: { from: current.from, to: current.to, insert: text }, userEvent: 'input.footnote' });
-    } else if (!save && options.isNew && !value && !current?.text) {
-      removeFootnote(view, id);
-    }
-    if (hadFocus || options.isNew) view.focus();
+  // Changes elsewhere move the reference; keep the anchor on it.
+  const anchor = (): DOMRect | null => {
+    if (at < 0 || at > view.state.doc.length) return null;
+    if (view.state.sliceDoc(at, at + label.length) !== label) at = firstReference(view, id);
+    if (at < 0) return null;
+    const start = view.coordsAtPos(at, 1);
+    const end = view.coordsAtPos(at + label.length, -1) ?? start;
+    if (!start || !end) return null;
+    const scroller = view.scrollDOM.getBoundingClientRect();
+    // Off screen: park it at the nearest edge rather than closing.
+    const top = Math.max(scroller.top, Math.min(start.top, scroller.bottom));
+    const bottom = Math.max(scroller.top, Math.min(start.bottom, scroller.bottom));
+    return new DOMRect(Math.min(start.left, end.left), top, Math.abs(end.right - start.left), bottom - top);
   };
-  container.querySelector('.mod-cta')!.addEventListener('click', () => close(true));
-  container.querySelector('.mod-cancel')!.addEventListener('click', () => close(false));
-  container.querySelector('.modal-bg')!.addEventListener('click', () => close(true));
-  container.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') { event.preventDefault(); close(false); }
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); close(true); }
+  const grow = (): void => {
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+    popover.reposition();
+  };
+  const write = (): void => {
+    const current = findDefinition(view, id);
+    if (!current) return;
+    const value = input.value.replace(/\s+$/, '');
+    if (value !== current.text) {
+      view.dispatch({ changes: { from: current.from, to: current.to, insert: value.split('\n').join('\n    ') }, userEvent: 'input.footnote' });
+    }
+  };
+  const popover = openPopover({
+    className: 'footnote-popover',
+    anchor,
+    rtl,
+    content,
+    obscuredBottom: () => footnoteLayout.obscuredBottom(),
+    scrollers: [view.scrollDOM],
+    onClose: () => {
+      write();
+      if (options.isNew && !input.value.trim()) removeFootnote(view, id);
+      // Closed without tapping somewhere else that takes focus (Escape, or a
+      // tap on empty space): hand the caret back, as Obsidian does.
+      if (hadFocus || options.isNew) {
+        window.setTimeout(() => {
+          if (document.activeElement === document.body || document.activeElement === null) view.focus();
+        });
+      }
+    },
+  });
+  input.addEventListener('input', () => { write(); grow(); });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); popover.close(); }
   });
   // Focus in the same task as the tap, so the keyboard stays up (or opens).
-  input.focus();
+  input.focus({ preventScroll: true });
   input.setSelectionRange(input.value.length, input.value.length);
+  grow();
 }
 
 /** Remove a footnote's references and its definition. */

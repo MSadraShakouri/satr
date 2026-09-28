@@ -114,8 +114,8 @@ export function cycleTask(view: EditorView): boolean {
 // Insert footnote, after Obsidian's editor:insert-footnote: "[^n]" at the
 // caret (n = highest numeric footnote id + 1) and "[^n]: " appended at the
 // end of the note after a blank line. The caret stays after the reference —
-// no jump to the end of the file — and a dialog opens to write the note
-// (src/footnoteDialog.ts).
+// no jump to the end of the file — and a popover opens at the reference to
+// write the note (src/footnoteDialog.ts).
 export function insertFootnote(view: EditorView): boolean {
   const { state } = view;
   const text = state.doc.toString();
@@ -133,7 +133,7 @@ export function insertFootnote(view: EditorView): boolean {
     userEvent: 'input.footnote',
     scrollIntoView: true,
   });
-  editFootnote(view, id, { isNew: true });
+  editFootnote(view, id, { isNew: true, at: to });
   return true;
 }
 
