@@ -1,6 +1,6 @@
 name: Build Android APK
 
-# A tag v* (matching package.json's version) builds the debug APK and
+# A tag v* (its version becomes the app's version) builds the debug APK and
 # publishes a release with it; "Run workflow" builds one to download from
 # the run's artifacts. Same recipe as piecework, lyric-sync and insight,
 # except android/ is committed (Satr has its own native code), so it's
@@ -51,20 +51,15 @@ jobs:
         run: npx cap sync android
 
       - name: Set Android version
+        # The version comes from the git tag: v0.3.0 builds 0.3.0. A manual
+        # run is the latest tag plus the run number (0.3.0-12). package.json's
+        # version isn't used.
         run: |
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-
-            if [[ "$TAG_VERSION" != "$PACKAGE_VERSION" ]]; then
-              echo "Tag version $TAG_VERSION does not match package.json version $PACKAGE_VERSION"
-              exit 1
-            fi
-
-            VERSION_NAME="$PACKAGE_VERSION"
+            VERSION_NAME="${GITHUB_REF#refs/tags/v}"
           else
-            VERSION_NAME="$PACKAGE_VERSION-${GITHUB_RUN_NUMBER}"
+            LATEST_TAG="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0)"
+            VERSION_NAME="${LATEST_TAG#v}-${GITHUB_RUN_NUMBER}"
           fi
 
           VERSION_CODE=$(git rev-list --count HEAD)

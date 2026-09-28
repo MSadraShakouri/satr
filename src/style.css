@@ -2366,12 +2366,20 @@ input.mod-no-match {
 .mobile-navbar-action-tabs {
   position: relative;
 }
+/* The count is centred on its digits, not on its line box: the box is
+   trimmed to the digits' height (cap top to baseline), so no font's spare
+   room above or below them (Vazirmatn has a lot, for Persian) pushes them
+   off the middle of the frame. Obsidian centres the line box, which in
+   Roboto happens to look right; in Vazirmatn it sat 1.6px high. */
 .mobile-navbar-tabs-number {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  inset-inline: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: block;
+  line-height: 1;
+  text-align: center;
+  text-box: trim-both cap alphabetic;
   font-size: calc(26px * 0.55);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
