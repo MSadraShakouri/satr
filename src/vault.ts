@@ -21,11 +21,24 @@ export interface Entry {
   mtime: number;
 }
 
+/** What a file opened as text turned out to be.
+ *  - `text`: decoded (clean UTF-8, or a best-effort guess); `clean` is false
+ *    when the bytes were not plain UTF-8 text, so the caller opens it
+ *    read-only — rubbish is shown rather than the file being blocked.
+ *  - `too-large`: not loaded at all, so the editor never runs out of memory.
+ *  - `unreadable`: no such file (or the platform refused to read it). */
+export type TextOpen =
+  | { status: 'text'; text: string; clean: boolean }
+  | { status: 'too-large'; size: number }
+  | { status: 'unreadable' };
+
 export interface Backend {
   readonly kind: 'web' | 'device';
   /** Direct children of a folder. */
   list(dir: string): Promise<Entry[]>;
   read(path: string): Promise<string | null>;
+  /** Any file as text, best effort (see TextOpen). */
+  readText(path: string, maxBytes?: number): Promise<TextOpen>;
   /** Creates missing parent folders. */
   write(path: string, text: string): Promise<void>;
   mkdir(path: string): Promise<void>;
@@ -56,6 +69,32 @@ const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
 export const isNote = (name: string): boolean => TEXT_EXTENSIONS.has(extension(name));
 /** Inside `dir` (or `dir` itself). */
 export const within = (path: string, dir: string): boolean => !dir || path === dir || path.startsWith(`${dir}/`);
+
+/** The most the editor loads in one go: bigger files are refused with a
+ *  message instead of being read into memory (the phone's WebView would
+ *  choke on a video or an image meant for another app). */
+export const MAX_EDIT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * True when a decoded file is not plain text: binary bytes reach the page as
+ * U+FFFD (the platform's UTF-8 decoder replaces what it can't map), plus NULs
+ * and stray control characters. Such a file still opens — the point is to see
+ * something, as in a hex viewer — but read-only: saving would write those
+ * replacement characters back over the original bytes.
+ */
+export function looksBinary(text: string): boolean {
+  let replaced = 0;
+  let controls = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 0xfffd) replaced += 1;
+    else if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d && code !== 0x0c && code !== 0x08) controls += 1;
+  }
+  // A replacement character means those bytes were never text: even one is
+  // enough to keep Satr from writing the decoded guess back.
+  if (replaced > 0) return true;
+  return controls > 0 && controls > text.length * 0.01;
+}
 
 // ---- Web: virtual file system in localStorage ----
 // satr:fs:index = { files: { [path]: mtime }, folders: [path] }
@@ -104,6 +143,11 @@ class WebBackend implements Backend {
   }
   async read(path: string): Promise<string | null> {
     return this.readSync(path);
+  }
+  /** Everything in the web backend is text already. */
+  async readText(path: string): Promise<TextOpen> {
+    const text = this.readSync(path);
+    return text === null ? { status: 'unreadable' } : { status: 'text', text, clean: !looksBinary(text) };
   }
   /** The web version keeps text only; an image stored as a data: URL works. */
   async readDataUrl(path: string): Promise<string | null> {
@@ -174,7 +218,8 @@ class WebBackend implements Backend {
     const old: string[] = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i)!;
-      if (key.startsWith('satr:') && key.endsWith('.md') && !key.startsWith('satr:view:') && !key.startsWith('satr:fs:')) old.push(key);
+      // Per-file PDF preferences also end in .md; they are not legacy notes.
+      if (key.startsWith('satr:') && key.endsWith('.md') && !key.startsWith('satr:view:') && !key.startsWith('satr:fs:') && !key.startsWith('satr:pdf:')) old.push(key);
     }
     const openName = localStorage.getItem('satr:file-name');
     if (!old.length && openName === null) return null;
@@ -209,9 +254,17 @@ interface FilesystemPlugin {
   rename(o: { from: string; to: string; directory: string; toDirectory: string }): Promise<void>;
   deleteFile(o: { path: string; directory: string }): Promise<void>;
   rmdir(o: { path: string; directory: string; recursive: boolean }): Promise<void>;
-  stat(o: { path: string; directory: string }): Promise<{ type: 'file' | 'directory'; mtime?: number }>;
+  stat(o: { path: string; directory: string }): Promise<{ type: 'file' | 'directory'; mtime?: number; size?: number }>;
 }
 const EXTERNAL = 'EXTERNAL_STORAGE';
+
+/** base64 (as the Filesystem plugin returns bytes) to a writable array. */
+function base64Bytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 class DeviceBackend implements Backend {
   readonly kind = 'device' as const;
@@ -231,6 +284,30 @@ class DeviceBackend implements Backend {
       return (await this.fs.readFile({ path, directory: EXTERNAL, encoding: 'utf8' })).data;
     } catch {
       return null;
+    }
+  }
+  /**
+   * Any file, as text. The platform reads the bytes and decodes them as UTF-8,
+   * replacing what it can't map: a photo opens as a page of rubbish instead of
+   * being refused (it stays read-only, see looksBinary). The size is checked
+   * first so a video is never pulled into memory.
+   */
+  async readText(path: string, maxBytes = MAX_EDIT_BYTES): Promise<TextOpen> {
+    let size = -1;
+    try {
+      size = (await this.fs.stat({ path, directory: EXTERNAL })).size ?? -1;
+    } catch { /* the read below reports what went wrong */ }
+    if (size > maxBytes) return { status: 'too-large', size };
+    try {
+      const { data } = await this.fs.readFile({ path, directory: EXTERNAL, encoding: 'utf8' });
+      return { status: 'text', text: data, clean: !looksBinary(data) };
+    } catch { /* a plugin that won't decode that: read the bytes and guess here */ }
+    try {
+      const { data } = await this.fs.readFile({ path, directory: EXTERNAL });
+      const text = new TextDecoder('utf-8').decode(base64Bytes(data));
+      return { status: 'text', text, clean: !looksBinary(text) };
+    } catch {
+      return { status: 'unreadable' };
     }
   }
   async readDataUrl(path: string): Promise<string | null> {

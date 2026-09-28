@@ -1,16 +1,18 @@
-import { defaultKeymap, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
+import { sourceDirections } from './direction';
+import { defaultKeymap, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
-import { Compartment, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
 import { Highlight, highlightTag } from './highlightSyntax';
-import { deleteDollarPair, mathSource } from './mathSource';
+import { inCode, inMath, mathSource } from './mathSource';
+import { deleteDelimiterPair, delimiterInput, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
@@ -112,42 +114,21 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-// Line direction, as Obsidian's editor does it: each line gets an explicit
-// dir from its first strong letter (list, quote and task markers skipped), and
-// a line with no letters — an empty line, a line of digits — keeps the
-// direction of the line above. So the caret on a fresh line after Persian
-// text sits on the right, ready to continue in Persian.
-const RTL_OR_LTR = /([\u200F\p{sc=Arabic}\p{sc=Hebrew}\p{sc=Syriac}\p{sc=Thaana}])|([\u200E\p{L}])/u;
-const LINE_PREFIX = /^([>\s]*)(([*+-] |(\d+|[۰-۹٠-٩]+)([.)] ))(?:\[(.)\] )?)?/;
-type Dir = 'rtl' | 'ltr' | 'auto';
-function lineDirection(text: string): Dir {
-  const prefix = LINE_PREFIX.exec(text);
-  const match = RTL_OR_LTR.exec(prefix?.[0] ? text.slice(prefix[0].length) : text);
-  return match ? (match[1] ? 'rtl' : 'ltr') : 'auto';
-}
+// Cache whole-document context; viewport changes only rebuild decorations.
+const directionsField = StateField.define({
+  create: (state) => sourceDirections(state.doc.toString()),
+  update: (value, tr) => tr.docChanged ? sourceDirections(tr.newDoc.toString()) : value,
+});
 const dirDecorations = {
   rtl: Decoration.line({ attributes: { dir: 'rtl' } }),
   ltr: Decoration.line({ attributes: { dir: 'ltr' } }),
-  auto: Decoration.line({ attributes: { dir: 'auto' } }),
 };
 function buildDirections(view: EditorView) {
-  const { doc } = view.state;
   const builder = new RangeSetBuilder<Decoration>();
-  let inherited: Dir = 'auto';
-  const blocks = view.viewportLineBlocks;
-  // Seed from the nearest line with letters above the viewport.
-  if (blocks.length) {
-    for (let n = doc.lineAt(blocks[0].from).number - 1, steps = 0; n >= 1 && steps < 200; n -= 1, steps += 1) {
-      const dir = lineDirection(doc.line(n).text);
-      if (dir !== 'auto') { inherited = dir; break; }
-    }
-  }
-  for (const block of blocks) {
-    const line = doc.lineAt(block.from);
-    let dir = lineDirection(line.text);
-    if (dir === 'auto') dir = inherited;
-    builder.add(line.from, line.from, dirDecorations[dir]);
-    inherited = dir;
+  const directions = view.state.field(directionsField);
+  for (const block of view.viewportLineBlocks) {
+    const line = view.state.doc.lineAt(block.from);
+    builder.add(line.from, line.from, dirDecorations[directions[line.number - 1]]);
   }
   return builder.finish();
 }
@@ -417,41 +398,23 @@ const keyboardAttributes = EditorView.contentAttributes.of({
   spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off', writingsuggestions: 'false',
 });
 
-// Pairs, as Obsidian's "Auto pair brackets" and "Auto pair Markdown syntax":
-// ( [ { ' " and * _ ` ``` close themselves as you type ("$" has its own
-// rules in mathSource.ts), « too for Persian. Quote-like marks (' " * _ `)
-// don't pair after a letter, so "don't" and snake_case stay as typed.
-const pairs = EditorState.languageData.of(() => [{
-  closeBrackets: { brackets: ['(', '[', '{', "'", '"', '*', '_', '`', '```', '«'], before: ')]}:;>.,!?»،؛$`"\'*_' },
+// Brackets and quotes use CodeMirror's tracker. Markdown punctuation uses
+// delimiterInput, which also understands existing math, code and escapes.
+const pairs = EditorState.languageData.of((state, pos) => [{
+  closeBrackets: {
+    brackets: inMath(state, pos) ? ['(', '[', '{']
+      : inCode(state, pos) ? ['(', '[', '{', '`', '```'] : ['(', '[', '{', "'", '"', '`', '```', '«'],
+    before: ')]}:;>.,!?»،؛$`"\'*_',
+  },
 }]);
-// With text selected, = ~ % wrap it (as in Obsidian: ==highlight==,
-// ~~strike~~, %%comment%% by typing the mark twice).
-const wrapSelection = EditorView.inputHandler.of((view, from, to, text) => {
-  if (view.composing || !['=', '~', '%'].includes(text) || view.state.selection.ranges.every((r) => r.empty)) return false;
-  view.dispatch(view.state.changeByRange((range) => (range.empty
-    ? { changes: { from: range.from, insert: text }, range: EditorSelection.cursor(range.from + 1) }
-    : { changes: [{ from: range.from, insert: text }, { from: range.to, insert: text }], range: EditorSelection.range(range.anchor + 1, range.head + 1) })),
-  { userEvent: 'input.type', scrollIntoView: true });
-  return true;
-});
-// "* " or "_ " typed in an empty pair: a list bullet (or just a space) was
-// meant, so the closing mark goes: "*|*" + space → "* |".
-const spaceInEmptyPair = EditorView.inputHandler.of((view, from, to, text) => {
-  if (text !== ' ' || from !== to || view.composing) return false;
-  const around = view.state.sliceDoc(from - 1, from + 1);
-  if (around !== '**' && around !== '__') return false;
-  if (view.state.sliceDoc(from - 2, from - 1) === around[0]) return false; // "**|**" is bold
-  view.dispatch({ changes: { from, to: from + 1, insert: ' ' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });
-  return true;
-});
 
 // A finger is on the note text (see scrollMargins and revealCaret below).
 let touching = false;
 
 const lineNumberSlot = new Compartment();
 const readOnlySlot = new Compartment();
-// Undo history, reset whenever another note is loaded: undoing right after
-// opening a note must never bring back the previous note's text.
+// New tabs start clean; living tabs reattach their complete EditorState.
+// Histories never cross files and are never serialized to disk.
 const historySlot = new Compartment();
 
 export class SatrEditor {
@@ -493,8 +456,8 @@ export class SatrEditor {
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
       ])),
       titleField,
-      rtlLineDirection, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
-      keyboardAttributes, closeBrackets(), pairs, wrapSelection, spaceInEmptyPair,
+      rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:
       // selecting near the bottom then made CodeMirror jump the page at once,
@@ -513,10 +476,11 @@ export class SatrEditor {
         { key: 'Escape', run: (target) => { if (!isFindOpen(target.state)) return false; closeFind(target); return true; } },
         { key: 'F3', run: (target) => { findNext(target); return true; }, shift: (target) => { findPrevious(target); return true; } },
         { key: 'Mod-/', run: toggleComment },
+        { key: 'Enter', run: enterDisplayMath },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
         { key: 'Tab', run: indentMore, shift: outdentLess },
-        { key: 'Backspace', run: deleteDollarPair },
+        { key: 'Backspace', run: deleteDelimiterPair },
         ...closeBracketsKeymap,
         ...defaultKeymap, ...historyKeymap,
       ]),
@@ -626,6 +590,13 @@ export class SatrEditor {
   setValue(value: string): void {
     this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value }, effects: historySlot.reconfigure([]) });
     this.view.dispatch({ effects: historySlot.reconfigure(history()) });
+  }
+  /** Reattach a living tab, including both undo AND redo branches. */
+  restoreSession(state: EditorState): void { this.view.setState(state); }
+  /** External reloads remain undoable within the same tab session. */
+  replaceValue(value: string): void {
+    if (value === this.getValue()) return;
+    this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value }, annotations: isolateHistory.of('full') });
   }
   focus(): void { this.view.focus(); }
   /** Caret / selection as [anchor, head], for remembering between sessions. */

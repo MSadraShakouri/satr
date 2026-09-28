@@ -4,6 +4,7 @@
 import { deleteLine, moveLineDown, moveLineUp, redo, undo } from '@codemirror/commands';
 import { EditorSelection, type ChangeSpec, type Line } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { insertDelimiter } from './delimiterInput';
 import { editFootnote } from './footnoteDialog';
 
 const PERSIAN_TEXT = /[\u0600-\u06FF]/;
@@ -138,11 +139,7 @@ export function insertFootnote(view: EditorView): boolean {
 }
 
 export function insertMath(view: EditorView): boolean {
-  view.dispatch(view.state.changeByRange((range) => ({
-    changes: [{ from: range.from, insert: '$' }, { from: range.to, insert: '$' }],
-    range: range.empty ? EditorSelection.cursor(range.from + 1) : EditorSelection.range(range.from + 1, range.to + 1),
-  })), { userEvent: 'input.math', scrollIntoView: true });
-  return true;
+  return insertDelimiter(view, '$');
 }
 
 /** Markor's "new line below": an empty line after the caret's line, and the

@@ -27,8 +27,9 @@
 
             <!-- Match Markor's file-opening entry points, intentionally broad:
                  every MIME type can offer Satr in the file manager's Open with
-                 chooser. Satr edits safe UTF-8 text and shows binary files
-                 read-only; it never turns arbitrary binary data into text. -->
+                 chooser. Satr opens any file: clean UTF-8 text (whatever its
+                 extension) is editable; anything else is shown as it decodes,
+                 read-only, so no original bytes are ever written over. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />

@@ -2,6 +2,7 @@
 // the secondary background, a back arrow and the title at the top), opened
 // from the gear in the left drawer. Saved under satr:settings; the theme is
 // kept by src/theme.ts as before.
+import { loadPrintOptions, savePrintOptions, type PrintOptions } from './printOptions';
 import { setTheme, themeChoice, type ThemeChoice } from './theme';
 
 export interface Settings {
@@ -17,7 +18,7 @@ export interface Settings {
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
   pdfCss: string;
-  /** Settings format; 2 = Obsidian's text sizes. */
+  /** Settings format; 3 = roomier default line spacing. */
   version?: number;
 }
 export type QuickAction = '' | 'fold' | 'view' | 'pdf' | 'rename' | 'delete' | 'settings';
@@ -30,8 +31,8 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
   settings: 'Settings',
 };
 const KEY = 'satr:settings';
-const SETTINGS_VERSION = 2;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.5, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', pdfPageNumbers: 'persian', pdfCss: '' };
+const SETTINGS_VERSION = 3;
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', pdfPageNumbers: 'persian', pdfCss: '' };
 
 export function loadSettings(): Settings {
   try {
@@ -40,6 +41,8 @@ export function loadSettings(): Settings {
     // Version 2 moved the text to Obsidian's sizes (line height 1.5 instead
     // of 1.85); earlier text settings are reset to the new defaults once.
     if ((Number(saved.version) || 1) < 2) { s.fontSize = DEFAULTS.fontSize; s.lineHeight = DEFAULTS.lineHeight; }
+    // Migrate only the old default; keep deliberately chosen spacing.
+    if ((Number(saved.version) || 1) < 3 && s.lineHeight === 1.5) s.lineHeight = DEFAULTS.lineHeight;
     s.version = SETTINGS_VERSION;
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
     s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));
@@ -53,6 +56,9 @@ export function loadSettings(): Settings {
 function save(settings: Settings): void { localStorage.setItem(KEY, JSON.stringify(settings)); }
 
 export interface SettingsDeps {
+  /** PDF layout preferences belong to the file open when Settings is opened. */
+  notePath?: string;
+  noteName?: string;
   apply(settings: Settings): void;
   /** Keyboard toolbar buttons: command name, label and icon. */
   tools(): { command: string; label: string; icon: string }[];
@@ -75,6 +81,10 @@ export function closeSettings(): void {
 export function openSettings(deps: SettingsDeps): void {
   if (page) return;
   const settings = loadSettings();
+  const notePath = deps.notePath;
+  const printOptions = loadPrintOptions(notePath ?? '');
+  const noteName = deps.noteName || notePath?.split('/').pop() || '';
+  const pdfDisabled = notePath ? '' : ' disabled';
   const theme = themeChoice();
   const themes: ThemeChoice[] = ['auto', 'light', 'dark'];
   const pageNumbers: Settings['pdfPageNumbers'][] = ['persian', 'latin', 'none'];
@@ -132,6 +142,31 @@ export function openSettings(deps: SettingsDeps): void {
       <div class="setting-group-title">PDF export</div>
       <div class="setting-group">
         <div class="setting-item mod-column">
+          <div class="setting-item-info"><div class="setting-item-name">File layout${notePath ? ` — ${escapeHtml(noteName)}` : ''}</div><div class="setting-item-description">${notePath ? 'Layout, reading order and equation alignment are remembered for this file on this device. Page numbers and custom CSS below apply to all files.' : 'Open a file to change its PDF layout. Page numbers and custom CSS below apply to all files.'}</div></div>
+        </div>
+        <div class="setting-item mod-column">
+          <div class="setting-item-info"><label class="setting-item-name" for="pdf-layout">Layout</label><div class="setting-item-description">Two columns use A4, 1-inch outer margins and an 8 mm gap, overriding custom page geometry.</div></div>
+          <select id="pdf-layout" class="dropdown" data-pdf-option="columns"${pdfDisabled}>
+            <option value="1"${printOptions.columns === 1 ? ' selected' : ''}>One column</option>
+            <option value="2"${printOptions.columns === 2 ? ' selected' : ''}>Two columns (A4)</option>
+          </select>
+        </div>
+        <div class="setting-item mod-column">
+          <div class="setting-item-info"><label class="setting-item-name" for="pdf-direction">Reading order</label><div class="setting-item-description">Auto follows the majority of this file’s prose letters, ignoring math and code.</div></div>
+          <select id="pdf-direction" class="dropdown" data-pdf-option="direction"${pdfDisabled}>
+            <option value="auto"${printOptions.direction === 'auto' ? ' selected' : ''}>Auto — from the file’s prose</option>
+            <option value="ltr"${printOptions.direction === 'ltr' ? ' selected' : ''}>Left to right</option>
+            <option value="rtl"${printOptions.direction === 'rtl' ? ' selected' : ''}>Right to left</option>
+          </select>
+        </div>
+        <div class="setting-item mod-column">
+          <div class="setting-item-info"><label class="setting-item-name" for="pdf-math-align">Display equations</label><div class="setting-item-description">The reading edge is left for LTR files and right for RTL. Equations themselves always stay LTR.</div></div>
+          <select id="pdf-math-align" class="dropdown" data-pdf-option="mathAlign"${pdfDisabled}>
+            <option value="center"${printOptions.mathAlign === 'center' ? ' selected' : ''}>Centred</option>
+            <option value="start"${printOptions.mathAlign === 'start' ? ' selected' : ''}>At the reading edge</option>
+          </select>
+        </div>
+        <div class="setting-item mod-column">
           <div class="setting-item-name">Page numbers</div>
           <div class="segmented-control" role="radiogroup" aria-label="Page numbers" style="--count: 3; --index: ${pageNumbers.indexOf(settings.pdfPageNumbers)}">
             <div class="segmented-control-thumb"></div>
@@ -139,7 +174,7 @@ export function openSettings(deps: SettingsDeps): void {
           </div>
         </div>
         <div class="setting-item mod-column">
-          <div class="setting-item-info"><div class="setting-item-name">Custom CSS</div><div class="setting-item-description">Applied after Satr's own PDF style, so it wins. For example: <code>h1 { color: #1976d2; }</code></div></div>
+          <div class="setting-item-info"><div class="setting-item-name">Custom CSS</div><div class="setting-item-description">Applied after Satr's own PDF style; file layout and equation alignment take precedence. For example: <code>h1 { color: #1976d2; }</code></div></div>
           <textarea class="setting-textarea" data-text="pdfCss" dir="ltr" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6" placeholder="p { text-align: justify; }">${escapeHtml(settings.pdfCss)}</textarea>
         </div>
       </div>
@@ -175,6 +210,15 @@ export function openSettings(deps: SettingsDeps): void {
     commit();
   });
   el.addEventListener('change', (event) => {
+    const pdf = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-pdf-option]');
+    if (pdf) {
+      if (!notePath) return;
+      if (pdf.dataset.pdfOption === 'columns') printOptions.columns = Number(pdf.value) as PrintOptions['columns'];
+      else if (pdf.dataset.pdfOption === 'direction') printOptions.direction = pdf.value as PrintOptions['direction'];
+      else if (pdf.dataset.pdfOption === 'mathAlign') printOptions.mathAlign = pdf.value as PrintOptions['mathAlign'];
+      savePrintOptions(notePath, printOptions);
+      return;
+    }
     const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"]');
     if (!select) return;
     settings.quickAction = select.value as QuickAction;

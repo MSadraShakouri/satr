@@ -15,9 +15,9 @@ Editor
 - [x] CodeMirror editor: per-line RTL/LTR, line numbers, soft wrap, list continuation (Persian digits too)
 - [x] Live preview in the editor (Obsidian rule: syntax shows when the caret enters it): headings, emphasis, lists with a space rule, tasks, quotes, footnotes, links
 - [x] Inline file title that renames the note
-- [x] Tight character-level selection highlight
+- [x] Tight character-level selection highlight, clipped between rows so neighbouring highlights never overlap; roomier 1.85 default line spacing
 - [x] Keyboard toolbar 8px above the keyboard, scrolling like Obsidian's (undo/redo, heading, lists, to-do cycle, footnote, math, delete line, new line below, move line), and a round hide-keyboard button beside it
-- [x] Obsidian's pairs: brackets, quotes, backticks, `$`, `*`, `_`, `=`, `~` close themselves, wrap a selection, and are stepped over when typed again; `$$` then `$$` makes a math block with the caret inside
+- [x] Context-aware pairs: brackets, quotes, backticks, `$`, `*`, `_`, `=`, `~`, `%`; code, math, escapes and existing closers are distinguished. Keyboard and math toolbar share the same policy. `$$` on an empty line opens a math block; only tracked empty pairs are deleted together.
 - [x] No spell check, autocorrect or suggestions anywhere in the note (Obsidian's editor attributes)
 - [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
@@ -40,14 +40,16 @@ Chrome
 - [x] Both drawers share one implementation of Obsidian's release physics (drag, fling, re-grab mid-animation, same look)
 - [x] Right drawer: outline and search in one view, built like the left drawer. A two-option pill (tap only) picks This note / All notes. This note: the outline, and while searching the matching headings with each match under its heading. All notes: every note with its outline, even before you type; searching narrows it to the same heading tree under each note. Each match shows its line number and up to seven lines of context. Regular expressions
 - [x] Tabs: every note opens in its own tab (an open note just switches to its tab); the bottom bar's arrows step through the tabs; switching never opens the keyboard and comes back where you were. A tab button with the count, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done, press and hold a card to drag it to a new place), an empty tab page ("No file is open" with recent notes), swipe a card away to close, reopen closed tab, kept across restarts
-- [x] Left sidebar: filter by name (found files and folders, flat, with their folder); Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons
+- [x] Left sidebar: filter by name (found files and folders, flat, with their folder); Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted — and only the open one: the tree is redrawn when the drawer opens if the note changed while it was closed), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons. Every file opens
 - [x] "All files" walker (Markor-style): only the current folder, ".." to go up
 - [x] Space switcher (vault-switcher style): spaces are shortcuts to folders; their notes are ordinary files, edited in place. "All files", add or remove a space
 - [x] Bottom-sheet menus in Obsidian's phone style
 - [x] Settings page (gear in the left drawer): theme, font size, line spacing, line numbers, highlight every match, which toolbar buttons show
 - [x] Android back button, Obsidian's order: menus, popovers, the tab switcher, settings and the find bar close first, then the drawers; then "Press back again to exit." (a second press within 5s leaves the app). Works in the browser too, through the page history
 - [x] UI chrome can't be selected as text; only the note, footnotes and fields can
-- [x] Per-note memory: mode, scroll position, caret, folds; history for back/forward. Switching notes, tabs or views comes back exactly there: the caret is never pulled into view on the way
+- [x] Per-file reading memory: mode, fractional source-line position, caret and folds survive tab closure/reopening and app restarts; late font/image/scroll callbacks are cancelled on navigation or reader intent. Incoming Android files use a stable URI bookmark identity, not their temporary grant ID.
+- [x] Session-only per-tab undo/redo: switching tabs or losing focus preserves both stacks; actual tab/app closure discards them. External text reloads remain undoable; no persistent revision manager.
+- [x] Shared contextual direction inference in editor, preview and PDF: first strong prose; unanimous preceding section before neighbours; preceding prose breaks a mixed tie; headings are boundaries. Digits are neutral, math/code never vote and remain LTR. Full-document editor context is cached independently of the viewport.
 - [x] Cold start: the last screen is painted from a copy before the app's code has loaded, then the real app takes over underneath
 - [x] Right drawer, All notes: only the current note starts open; each chevron has a wide tap area
 
@@ -73,14 +75,17 @@ Chrome
 - [x] ≡ menu in the bottom bar, as Obsidian's ribbon menu: collapse / expand all headings, reading / editing view, Export to PDF, rename, delete note, settings. Settings → Navigation bar → Menu button picks a quick action: a tap runs it (its icon, with a small chevrons-up-down flair), holding opens the menu
 - [x] Export to PDF straight to Android's print dialog (as Markor), where "Save as PDF" writes the file under the note's name; in the browser, the browser's print dialog
 - [x] The look: Vazirmatn 15px at 1.8, never justified, each paragraph in its own direction; headings 1.6 / 1.4 / 1.25 / 1.1× in bold with Markor's rule under h1 and h2, kept with what follows; tables centred as in the reading view; code in a light grey box with the preview's colours; blue underlined links (clickable in the PDF); wiki links as plain text; task boxes as in the reading view; no title on top
+- [x] Per-file export options in Settings → PDF export (beside page numbers and CSS, not an export popup): one or two columns, centred or reading-edge display math, and automatic/prose-majority or explicit LTR/RTL reading order. Preferences stay in the app, follow file/folder renames and never rewrite Markdown. Two-column layout paginates at column width, then pairs columns onto A4 without scaling text.
+- [x] Stranded-heading protection at page/column boundaries (Paged.js overflow hook); consecutive headings travel with following content rather than being left alone at the bottom.
 - [x] A4, 1in margins; page numbers at the bottom centre, 12pt, in Persian digits (Settings: Persian / Latin / none)
 - [x] Footnotes at the foot of their page (Paged.js), numbered from 1 on every page, under a short Word-style rule on the start side; the call's digits follow its paragraph, the note's its own text
 - [x] Long formulas wrapped at the page's width by the same rules as on screen
 - [x] Page breaks: `\pagebreak`, `\newpage`, `\clearpage`, `<!-- pagebreak -->`, `<!-- newpage -->`, or any HTML with a page-break style (`page-break-before: always`, `break-after: page`…); hidden on screen, ignored inside code
-- [x] Custom CSS (Settings → PDF export), applied after Satr's own
+- [x] Custom CSS (Settings → PDF export), applied after Satr's own; per-file math alignment and fixed two-column page geometry take precedence
 - [x] Fonts (Vazirmatn, Vazir Code, KaTeX) embedded as data URIs; Paged.js (≈500 KB) loads only when exporting
+- [x] The font-scale override used while measuring is an adopted stylesheet, never a `<style>`: Paged.js takes every style element out of the document and copies its text into the stylesheet it prints with, which once divided every font size in the PDF by the phone's scale and made it tiny
 - [x] Images embedded as data URIs, centred, never split across pages
-- [ ] On-device check of the print path (fonts, links, page size) with the first APK
+- [ ] On-device check of the print path (fonts, links, page size), including the new two-column layout
 
 ### APK phase
 
@@ -92,16 +97,16 @@ Chrome
 - [x] `@capacitor/filesystem` installed natively (the backend in `src/vault.ts`); new notes with "All files" go to a Notes folder, not the top of the storage; the phone's Android/ folder is skipped when listing notes
 - [ ] Test list, read, write, stat, rename, delete, mkdir on the device
 - [x] System bars, edge to edge as Obsidian (`SystemBarsPlugin` "SatrSystemBars", replaces `@capacitor/status-bar`): the page draws behind transparent status and navigation bars, icons follow the theme, and the header / bottom bar keep clear of them through `--safe-area-inset-*` set from the real insets (Android's `env()` is unreliable in the WebView). No black band at the notch, no empty strip under the bottom bar. The keyboard gets a WebView bottom margin, since edge to edge disables adjustResize. The status bar still hides and shows on scroll
-- [x] Fixed text size: WebView text zoom pinned to 100% (app and print), so the phone's font-size setting enlarges neither the app nor the PDF
+- [x] Text size: the app's WebView follows the phone's font size (Android's default text zoom, as Obsidian does); the PDF stays fixed — the export divides font sizes by that scale while Paged.js measures and sends the print WebView the unscaled CSS at `setTextZoom(100)`, so both pagination and the page are exactly A4 at 100%
 - [ ] On-device check of the insets (notch, gesture and 3-button navigation, keyboard up / down, rotation)
 - [ ] Code keyboard: a small WebView subclass that overrides `onCreateInputConnection` and, while the caret is in code or math, requests `TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | TYPE_TEXT_FLAG_NO_SUGGESTIONS` (Termux's trick: Gboard shows the number row and no suggestions), switched from JS through a bridge call plus `InputMethodManager.restartInput`
 - [ ] On-device IME check: Persian and Arabic composition, caret placement, selection handles
-- [ ] Share intent (open .md from other apps)
+- [x] Open from other apps (`OpenFilePlugin`): ACTION_VIEW / ACTION_EDIT / ACTION_SEND, any file type. Plain UTF-8 text (any extension, `.patch` too) is editable; anything else is decoded best effort and shown read-only, pictures also in the reading view; shared text opens read-only. Needs its on-device check
 - [x] Print / PDF: the Android side (see Print below); needs its on-device check with the first build
 
 ### Obsidian's sizes (done, September 2026)
 
-Measured side by side against Obsidian 1.12.7 mobile at 390×844 and matched: editor (16px / 1.5, 60px top spacing, 24px side margins, 700px line width, line-level headings with Obsidian's sizes, weights, line heights and letter spacing, list and checkbox geometry, 14px code), reading view (heading, paragraph, list, blockquote, code and table spacing), bottom bar (52px pill), header (44px buttons), left drawer (space switcher at the bottom where Obsidian has its vault profile, "N files, M folders"), Settings (cards, rows, dropdowns, toggles) and the ≡ menu sheet. The theme button left the drawer; the theme is chosen in Settings only. Saved settings from before are migrated once to the new line spacing (1.5).
+Measured side by side against Obsidian 1.12.7 mobile at 390×844 and matched: editor (16px / 1.5, 60px top spacing, 24px side margins, 700px line width, line-level headings with Obsidian's sizes, weights, line heights and letter spacing, list and checkbox geometry, 14px code), reading view (heading, paragraph, list, blockquote, code and table spacing), bottom bar (52px pill), header (44px buttons), left drawer (space switcher at the bottom where Obsidian has its vault profile, "N files, M folders"), Settings (cards, rows, dropdowns, toggles) and the ≡ menu sheet. The theme button left the drawer; the theme is chosen in Settings only. That historical 1.5 spacing was subsequently relaxed to 1.85 for readability and selection clearance; the old default is migrated, while other chosen values remain unchanged.
 
 ## Original product decisions and phased to-do
 

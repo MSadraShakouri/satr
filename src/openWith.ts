@@ -5,11 +5,15 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 
 export interface IncomingOpenFile {
   id: string;
+  /** Stable, opaque source identity for reading-position preferences only. */
+  viewId?: string;
   name: string;
   mimeType: string;
   size: number;
   kind: 'text' | 'binary' | 'shared-text' | 'too-large';
   readOnly: boolean;
+  /** Decoded, but not as clean UTF-8: shown read-only, rubbish and all. */
+  lossy?: boolean;
   text?: string;
   dataUrl?: string;
   modified?: number;
@@ -19,7 +23,7 @@ interface PendingIncoming { available: boolean; id?: string }
 interface OpenFilePlugin {
   pending(): Promise<PendingIncoming>;
   open(options: { id: string }): Promise<IncomingOpenFile>;
-  readText(options: { id: string }): Promise<{ text: string; modified: number }>;
+  readText(options: { id: string }): Promise<{ text: string; modified: number; lossy: boolean }>;
   writeText(options: { id: string; text: string }): Promise<void>;
   openInOtherApp(options: { id: string }): Promise<void>;
   addListener(event: 'incoming', listener: (event: { id: string }) => void): Promise<{ remove(): Promise<void> }>;
@@ -43,7 +47,7 @@ export function openIncomingFile(id: string): Promise<IncomingOpenFile> {
   return SatrOpenFile.open({ id });
 }
 
-export function readIncomingText(id: string): Promise<{ text: string; modified: number }> {
+export function readIncomingText(id: string): Promise<{ text: string; modified: number; lossy: boolean }> {
   return SatrOpenFile.readText({ id });
 }
 

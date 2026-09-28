@@ -1,11 +1,13 @@
 {
   "name": "satr",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test": "playwright test",
+    "test:pdf": "playwright test tests/exportPdf.spec.ts tests/printBreaks.spec.ts tests/printLayout.spec.ts tests/printOptions.spec.ts",
     "preview": "vite preview",
     "android:add": "cap add android",
     "android:sync": "npm run build && cap sync android",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.15.0",
     "sharp": "^0.35.5",
     "typescript": "^5.8.3",

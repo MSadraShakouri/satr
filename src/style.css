@@ -13,7 +13,7 @@
 :root {
   /* Note text, from Settings (src/settings.ts). */
   --note-font-size: 16px;
-  --note-line-height: 1.5;
+  --note-line-height: 1.85;
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
   /* Obsidian's typography (app.css :root / body), same names and values:
      headings on the golden-ratio scale, 1rem between paragraphs, 2.5x that
@@ -411,11 +411,11 @@ body {
     summary,
     caption
   ) {
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
   text-align: start;
 }
 .preview-pane li {
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
 }
 .preview-pane :where(pre, code, .katex, .katex-display) {
   direction: ltr;
@@ -2130,7 +2130,7 @@ input.mod-no-match {
   font-weight: 600;
   letter-spacing: 0.1em;
 }
-.tree-item-self.is-unsupported {
+.tree-item-self.is-plain-file {
   color: var(--text-faint);
 }
 .nav-file-tag {
@@ -2370,20 +2370,12 @@ input.mod-no-match {
 .mobile-navbar-action-tabs {
   position: relative;
 }
-/* The count is centred on its digits, not on its line box: the box is
-   trimmed to the digits' height (cap top to baseline), so no font's spare
-   room above or below them (Vazirmatn has a lot, for Persian) pushes them
-   off the middle of the frame. Obsidian centres the line box, which in
-   Roboto happens to look right; in Vazirmatn it sat 1.6px high. */
 .mobile-navbar-tabs-number {
   position: absolute;
-  inset-inline: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  display: block;
-  line-height: 1;
-  text-align: center;
-  text-box: trim-both cap alphabetic;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: calc(26px * 0.55);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -3221,3 +3213,6 @@ textarea,
   pointer-events: none;
   background: var(--background-primary);
 }
+
+/* Contextual numeric lines must honour their inferred paragraph base. */
+.cm-editor .cm-line[dir] { unicode-bidi: isolate; }

@@ -27,10 +27,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.Locale;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -42,25 +39,25 @@ import java.util.concurrent.Executors;
  *
  * Like Markor, content:// sources are handled through ContentResolver rather
  * than guessing a filesystem path. The original URI remains the source of
- * truth for reads and writes; unsupported/binary documents are never decoded
- * into editable text. Large files are identified and shown read-only rather
- * than partially loaded.
+ * truth for reads and writes.
+ *
+ * Every file is opened: plain UTF-8 text (any extension, .patch included)
+ * is editable; anything else is decoded best effort — the bytes that aren't
+ * UTF-8 arrive as replacement characters — and shown read-only, so saving can
+ * never write that rubbish back over the original. Only files too large to
+ * load are turned away, and pictures get a data: URL for the reading view.
  */
 @CapacitorPlugin(name = "SatrOpenFile")
 public class OpenFilePlugin extends Plugin {
     private static final int MAX_TEXT_BYTES = 8 * 1024 * 1024;
     private static final int MAX_PREVIEW_BYTES = 12 * 1024 * 1024;
-    private static final Set<String> TEXT_EXTENSIONS = new HashSet<>(Arrays.asList(
-        "md", "markdown", "mdown", "txt", "text", "log", "csv", "tsv", "json", "jsonl", "xml", "html", "htm", "css", "js", "mjs", "cjs", "ts", "tsx", "jsx", "java", "kt", "kts", "py", "rb", "go", "rs", "c", "h", "cc", "cpp", "hpp", "sh", "bash", "zsh", "ps1", "toml", "ini", "conf", "config", "yaml", "yml", "sql", "env", "properties", "tex", "rst", "adoc", "svg"
-    ));
-    private static final Set<String> TEXT_MIME_TYPES = new HashSet<>(Arrays.asList(
-        "application/json", "application/ld+json", "application/xml", "application/xhtml+xml", "application/yaml", "application/x-yaml", "application/javascript", "application/x-javascript", "application/toml", "application/sql", "application/csv", "application/rtf", "application/x-www-form-urlencoded"
-    ));
 
     private final ConcurrentMap<String, Uri> sources = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> sharedText = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> mimeTypes = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Boolean> writable = new ConcurrentHashMap<>();
+    /** Whether the bytes decode as clean UTF-8 text (a binary file may not be written back). */
+    private final ConcurrentMap<String, Boolean> cleanText = new ConcurrentHashMap<>();
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private volatile String pendingId;
 
@@ -164,9 +161,7 @@ public class OpenFilePlugin extends Plugin {
         if (id == null) { call.reject("Missing incoming-file id"); return; }
         worker.execute(() -> {
             try {
-                String text = readTextSource(id);
-                JSObject result = new JSObject();
-                result.put("text", text);
+                JSObject result = readTextSource(id);
                 result.put("modified", modifiedTime(id));
                 call.resolve(result);
             } catch (Exception error) {
@@ -181,6 +176,7 @@ public class OpenFilePlugin extends Plugin {
         String text = call.getString("text");
         if (id == null || text == null) { call.reject("Missing incoming-file id or text"); return; }
         if (!Boolean.TRUE.equals(writable.get(id))) { call.reject("This file was opened read-only"); return; }
+        if (Boolean.FALSE.equals(cleanText.get(id))) { call.reject("This file isn't plain UTF-8 text; Satr won't overwrite it"); return; }
         worker.execute(() -> {
             try {
                 Uri uri = sources.get(id);
@@ -247,6 +243,7 @@ public class OpenFilePlugin extends Plugin {
             result.put("size", shared.getBytes(StandardCharsets.UTF_8).length);
             result.put("kind", "shared-text");
             result.put("readOnly", true);
+            result.put("lossy", false);
             result.put("text", shared);
             return result;
         }
@@ -261,53 +258,76 @@ public class OpenFilePlugin extends Plugin {
         long size = fileSize(uri);
         JSObject result = new JSObject();
         result.put("id", id);
+        // Grant/session ids are intentionally ephemeral. A bookmark instead
+        // follows the source URI when the user opens it again after restart.
+        // This does not retain a grant or reopen a file without permission.
+        result.put("viewId", UUID.nameUUIDFromBytes(uri.toString().getBytes(StandardCharsets.UTF_8)).toString());
         result.put("name", name);
         result.put("mimeType", mime);
         result.put("size", Math.max(0, size));
-        result.put("readOnly", !Boolean.TRUE.equals(writable.get(id)));
         result.put("modified", modifiedTime(id));
 
-        boolean textHint = looksTextByNameOrMime(name, mime);
-        int readLimit = textHint ? MAX_TEXT_BYTES : MAX_PREVIEW_BYTES;
-        byte[] bytes = readLimited(uri, readLimit);
+        // Open it: clean UTF-8 as editable text, anything else as read-only
+        // rubbish. Only a file too large to load is turned away.
+        byte[] bytes = readLimited(uri, MAX_TEXT_BYTES);
         if (bytes == null) {
+            // Too large to load (or unreadable — then `size` is unknown/small).
             result.put("kind", size > MAX_TEXT_BYTES ? "too-large" : "binary");
+            result.put("readOnly", true);
+            // A big picture can still be shown in the reading view.
+            if (size >= 0 && size <= MAX_PREVIEW_BYTES && mime.startsWith("image/")) {
+                byte[] preview = readLimited(uri, MAX_PREVIEW_BYTES);
+                if (preview != null) result.put("dataUrl", dataUrl(mime, preview));
+            }
             return result;
         }
 
         String text = decodePlainText(bytes);
-        if (textHint && text != null) {
-            if (bytes.length > MAX_TEXT_BYTES) {
-                result.put("kind", "too-large");
-                return result;
-            }
-            result.put("kind", "text");
-            result.put("text", text);
-            return result;
-        }
-
-        result.put("kind", "binary");
-        if (size >= 0 && size <= MAX_PREVIEW_BYTES && canInlinePreview(mime)) {
-            String dataMime = mime;
-            result.put("dataUrl", "data:" + dataMime + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
+        boolean lossy = text == null;
+        cleanText.put(id, !lossy);
+        result.put("kind", "text");
+        result.put("text", lossy ? decodeLossyText(bytes) : text);
+        result.put("lossy", lossy);
+        result.put("readOnly", lossy || !Boolean.TRUE.equals(writable.get(id)));
+        if (lossy && size >= 0 && size <= MAX_PREVIEW_BYTES && mime.startsWith("image/")) {
+            result.put("dataUrl", dataUrl(mime, bytes));
         }
         return result;
     }
 
-    private String readTextSource(String id) throws Exception {
+    /** The text of any file, best effort; `lossy` marks decoded rubbish. */
+    private JSObject readTextSource(String id) throws Exception {
         String shared = sharedText.get(id);
-        if (shared != null) return shared;
+        if (shared != null) {
+            JSObject result = new JSObject();
+            result.put("text", shared);
+            result.put("lossy", false);
+            cleanText.put(id, true);
+            return result;
+        }
         Uri uri = sources.get(id);
         if (uri == null) throw new IllegalStateException("The incoming source is no longer available");
-        String name = displayName(uri);
-        String mime = mimeTypes.get(id);
-        if (mime == null || mime.isEmpty()) mime = getContext().getContentResolver().getType(uri);
-        if (!looksTextByNameOrMime(name, mime)) throw new IllegalStateException("The file is no longer a supported text document");
         byte[] bytes = readLimited(uri, MAX_TEXT_BYTES);
-        if (bytes == null) throw new IllegalStateException("The file is too large to edit safely in Satr");
+        if (bytes == null) throw new IllegalStateException("The file is too large to open in Satr");
         String text = decodePlainText(bytes);
-        if (text == null) throw new IllegalStateException("The file is no longer plain UTF-8 text");
-        return text;
+        boolean lossy = text == null;
+        cleanText.put(id, !lossy);
+        JSObject result = new JSObject();
+        result.put("text", lossy ? decodeLossyText(bytes) : text);
+        result.put("lossy", lossy);
+        return result;
+    }
+
+    private String dataUrl(String mime, byte[] bytes) {
+        return "data:" + mime + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP);
+    }
+
+    /** UTF-8 with what it can't map replaced: binary bytes become U+FFFD. */
+    private String decodeLossyText(byte[] bytes) {
+        return StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(CodingErrorAction.REPLACE)
+            .decode(ByteBuffer.wrap(bytes)).toString();
     }
 
     private byte[] readLimited(Uri uri, int limit) throws Exception {
@@ -343,17 +363,6 @@ public class OpenFilePlugin extends Plugin {
         } catch (CharacterCodingException error) {
             return null;
         }
-    }
-
-    private boolean looksTextByNameOrMime(String name, String mime) {
-        String normalizedMime = mime == null ? "" : mime.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
-        if (normalizedMime.startsWith("text/") || TEXT_MIME_TYPES.contains(normalizedMime)) return true;
-        String ext = extension(name);
-        return TEXT_EXTENSIONS.contains(ext.toLowerCase(Locale.ROOT));
-    }
-
-    private boolean canInlinePreview(String mime) {
-        return mime != null && (mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/") || "application/pdf".equalsIgnoreCase(mime));
     }
 
     private String displayName(Uri uri) {

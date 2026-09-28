@@ -1,5 +1,7 @@
 node_modules
 dist/
+test-results/
+playwright-report/
 
 # Signing keys never go in the repo (CI decodes one from a secret)
 *.jks

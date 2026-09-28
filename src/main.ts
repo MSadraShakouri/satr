@@ -1,3 +1,5 @@
+import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
+import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
 import 'katex/dist/katex.min.css';
 import './style.css';
@@ -19,13 +21,14 @@ import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
+import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots } from './snapshot';
 import { ensureFileAccess, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot } from './spaces';
-import { backend, DEFAULT_FOLDER, dirname, freeName, isNote, joinPath, migrateOldNotes, stem, walkNotes, within } from './vault';
+import { backend, DEFAULT_FOLDER, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
 
 type Mode = 'edit' | 'preview';
 // The first note in a fresh browser: the demo (demo.md, at the top of the repo).
@@ -91,9 +94,32 @@ const displayNameForPath = (path: string): string => {
   const external = externalFilesByPath.get(path);
   return external ? (external.name.replace(/\.[^.]+$/, '') || external.name) : stem(path);
 };
+/** Any file opens: Satr shows what a picture or a binary contains as text if
+ *  it must (see looksBinary). Only a file too large to load is refused. */
+const isPicture = (path: string): boolean => {
+  const external = externalFilesByPath.get(path);
+  return (external ? external.mimeType : mimeType(path)).startsWith('image/');
+};
+/** The note's name, for the messages about files that wouldn't open. */
+const fileName = (path: string): string => externalFilesByPath.get(path)?.name ?? path.slice(path.lastIndexOf('/') + 1);
+/** Markdown and text notes can be renamed from the title; anything else is
+ *  opened raw, and its name is changed from the sidebar's long-press menu. */
+const canRenameInline = (path: string): boolean => !isExternalPath(path) && ['md', 'markdown'].includes(extension(path));
+/** A picture the reading view can show: the data: URL of the file open in the
+ *  tab (a photo from the file manager, or an image found in the folders). */
+const picture = { path: '', url: '' };
+function rememberPicture(path: string, url: string | null | undefined): boolean {
+  if (!url?.startsWith('data:image/')) return false;
+  picture.path = path;
+  picture.url = url;
+  return true;
+}
 let mode: Mode = 'edit';
+/** The last file the "not plain text" notice was shown for. */
+let lossyNoticed = '';
 let saveTimer: number | undefined;
 let viewTimer: number | undefined;
+let viewGeneration = 0;
 let restoringView = true; // until the saved position has been applied
 const bookIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg>';
 const penIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.2 18.8 1.1-4.4L16.7 3a2.1 2.1 0 0 1 3 3L8.3 17.7z"/><path d="M11 18.8h8.5"/></svg>';
@@ -123,11 +149,12 @@ let syncingScroll = false;
 let holdUntil = 0;
 let holdLine = 0;
 function follow(from: 'editor' | 'preview'): void {
-  if (syncingScroll || !splitView.matches) return;
+  if (syncingScroll || restoringView || !splitView.matches) return;
+  const generation = viewGeneration;
   syncingScroll = true;
   if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view));
-  else applyEditorScroll(editor.view, previewScroll(previewPane, preview));
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+  else applyEditorScroll(editor.view, previewScroll(previewPane, preview), () => generation === viewGeneration);
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
 }
 
 // Notes are files in folders (src/vault.ts: localStorage in the browser,
@@ -152,25 +179,18 @@ const nameTaken = (base: string): boolean => base.toLowerCase() !== fileBase.toL
 // Per-file view memory, kept across sessions and app restarts: the mode and
 // the scroll position (as a fractional source line, the same measure the
 // edit/preview toggle uses), under satr:view:<path>.
-const viewKey = (path: string): string => `satr:view:${path}`;
-interface SavedView { mode: Mode; line: number; cursor?: [number, number]; folds?: number[] }
-function readView(base: string): SavedView | null {
-  try {
-    const value = JSON.parse(localStorage.getItem(viewKey(base)) ?? 'null') as Partial<SavedView> | null;
-    if (!value || (value.mode !== 'edit' && value.mode !== 'preview') || !Number.isFinite(value.line)) return null;
-    const cursor = Array.isArray(value.cursor) && value.cursor.length === 2 && value.cursor.every(Number.isInteger)
-      ? value.cursor as [number, number] : undefined;
-    const folds = Array.isArray(value.folds) ? value.folds.filter((n) => Number.isInteger(n) && n >= 0) : undefined;
-    return { mode: value.mode, line: Math.max(0, value.line as number), cursor, folds };
-  } catch {
-    return null;
-  }
+function viewIdentity(path: string): ViewIdentity {
+  const sourceId = externalFilesByPath.get(path)?.viewId;
+  return { path, sourceId, temporary: isExternalPath(path) && !sourceId };
 }
+const viewKey = (path: string): string => viewMemoryKey(viewIdentity(path));
+const readView = (path: string): SavedView | null => readViewMemory(viewIdentity(path));
 
 // The preview is rendered only when it can be seen. Rendering the whole note
 // (markdown, highlight.js, KaTeX) on every keystroke into a hidden pane was
 // most of the typing cost on long notes. In split view it follows typing
 // after a short pause; switching to preview renders it at once if stale.
+let previewReady: Promise<unknown> = Promise.resolve();
 let previewDirty = true;
 let renderTimer: number | undefined;
 const previewVisible = (): boolean => mode === 'preview' || splitView.matches;
@@ -181,12 +201,20 @@ function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
   lastRender = Date.now();
-  preview.innerHTML = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>${renderMarkdown(editor.getValue())}`;
+  const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
+  // A picture Satr can't edit (a photo opened from the file manager, say):
+  // the reading view shows it as it is; the editor keeps the raw bytes.
+  if (picture.url && picture.path === filePath) {
+    preview.innerHTML = `${title}<p class="md-image-preview"><img class="md-image" src="${escapeText(picture.url)}" alt="${escapeText(fileName(filePath))}"></p>`;
+    applyPreviewFolds();
+    return;
+  }
+  preview.innerHTML = `${title}${renderMarkdown(editor.getValue())}`;
   applyPreviewFolds();
   scheduleMathLayout(preview);
   markBrokenLinks();
   const path = filePath;
-  void loadImages(preview, path).then(() => { if (path === filePath) scheduleMathLayout(preview); });
+  previewReady = loadImages(preview, path).then(() => { if (path === filePath) layoutMath(preview); });
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -275,7 +303,7 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   const wasRestoring = restoringView;
   restoringView = true;
-  editor.setValue(text);
+  editor.replaceValue(text);
   const length = editor.view.state.doc.length;
   editor.view.dispatch({ selection: {
     anchor: Math.min(selection.anchor, length),
@@ -367,6 +395,12 @@ async function performSave(path: string, text: string, authorization?: SaveConfl
     const updated = await readIncomingText(incoming.id);
     setDiskBaseIfCurrent(path, { text: updated.text, mtime: updated.modified });
   } else {
+    // A file that isn't text was opened read-only, and it stays that way:
+    // writing the decoded text back would destroy the original bytes.
+    if (diskBase?.path === path && looksBinary(diskBase.text)) {
+      showNotice('This file isn’t plain text; Satr won’t write over it.', 5000);
+      return false;
+    }
     await backend.write(path, text);
     const entry = await backend.stat(path);
     setDiskBaseIfCurrent(path, { text, mtime: entry?.mtime ?? Date.now() });
@@ -426,10 +460,12 @@ function update(): void {
   saveTimer = window.setTimeout(saveNow, 700);
 }
 splitView.addEventListener('change', () => { if (splitView.matches && previewDirty) renderPreview(); });
-function setMode(next: Mode): void {
+function setMode(next: Mode, restoredLine?: number): void {
+  if (restoredLine === undefined) releaseHold();
+  const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
   // pane reports scrollTop 0, which is what used to send preview to the top.
-  const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view));
   mode = next;
   document.body.dataset.mode = mode;
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
@@ -441,10 +477,10 @@ function setMode(next: Mode): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     applyPreviewScroll(previewPane, preview, position);
   } else {
-    applyEditorScroll(editor.view, position);
+    applyEditorScroll(editor.view, position, () => generation === viewGeneration);
     holdEditorPosition(position);
   }
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
   rememberViewSoon();
 }
 function toggleFiles(open?: boolean): void { drawers.toggle('left', open); }
@@ -554,15 +590,22 @@ function holdEditorPosition(line: number): void {
   holdLine = line;
   holdUntil = performance.now() + 1200;
 }
-const releaseHold = (): void => { holdUntil = 0; };
+const releaseHold = (): void => {
+  holdUntil = 0;
+  ++viewGeneration; // user intent cancels every outstanding restore/correction
+  restoringView = false;
+  syncingScroll = false;
+};
 for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
   editor.view.dom.addEventListener(type, releaseHold, { passive: true, capture: true });
+  previewPane.addEventListener(type, releaseHold, { passive: true, capture: true });
 }
 editor.view.scrollDOM.addEventListener('scroll', () => {
   if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view) - holdLine) > 0.5) {
+    const generation = viewGeneration;
     syncingScroll = true;
-    applyEditorScroll(editor.view, holdLine);
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
     return;
   }
   onNavScroll(editor.view.scrollDOM);
@@ -578,46 +621,54 @@ function rememberView(): void {
   if (restoringView) return;
   const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
   const folds = editor.foldedLines();
-  if (!filePath || isExternalPath(filePath)) return;
-  localStorage.setItem(viewKey(filePath), JSON.stringify({ mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) }));
+  if (!filePath) return;
+  const saved: SavedView = { mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) };
+  writeViewMemory(viewIdentity(filePath), saved);
 }
 function rememberViewSoon(): void {
   window.clearTimeout(viewTimer);
+  if (restoringView) return;
   viewTimer = window.setTimeout(rememberView, 400);
 }
-function restoreView(path: string, after?: () => void): void {
+function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit'): void {
+  window.clearTimeout(viewTimer);
+  const generation = ++viewGeneration;
+  const current = () => generation === viewGeneration && path === filePath;
   const view = readView(path);
+  const line = view?.line ?? 0;
   restoringView = true;
-  // The caret comes back where it was — without focus, so no keyboard and no
-  // scroll. Otherwise it sat at the top of the note, and the first tap on a
-  // toolbar command or the keyboard opening jumped the view back up there.
   if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
   if (view?.folds?.length) editor.restoreFolds(view.folds);
-  setMode(view?.mode ?? 'edit');
-  // Positions depend on fonts, KaTeX and math line breaks: apply once now,
-  // and again when those have settled.
-  // A note opened for the first time starts at the top (not wherever the
-  // previous note was scrolled to).
-  const line = view?.line ?? 0;
+  // Never sample the previous file's pane while installing the new file.
+  setMode(view?.mode ?? unvisited, line);
   const apply = (): void => {
+    if (!current()) return;
+    ownScroll();
     syncingScroll = true;
     if (mode === 'preview') {
       layoutMath(preview);
       applyPreviewScroll(previewPane, preview, line);
     } else {
-      applyEditorScroll(editor.view, line);
+      applyEditorScroll(editor.view, line, current);
       holdEditorPosition(line);
     }
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { syncingScroll = false; }));
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (current()) syncingScroll = false;
+    }));
   };
   apply();
-  const settle = (): void => {
+  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(() => {
+    if (!current()) return;
     apply();
-    restoringView = false;
-    after?.();
-  };
-  if (document.fonts?.ready) void document.fonts.ready.then(() => window.requestAnimationFrame(settle));
-  else window.requestAnimationFrame(settle);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (!current()) return;
+      restoringView = false;
+      after?.();
+    }));
+  }));
+  // Images can settle after fonts. Correct only if this is still the same
+  // reading session and the reader has not touched/scrolled/jumped since.
+  if (previewVisible()) void previewReady.then(() => window.requestAnimationFrame(apply));
 }
 // Leaving the app (switching away, closing, the OS killing it later): write
 // the note and the view out now instead of waiting for the debounce timers.
@@ -637,17 +688,18 @@ document.querySelector('#files')!.addEventListener('click', () => toggleFiles())
 // switches to its tab), and the bottom bar's arrows step to the previous /
 // next tab. Tabs can be reordered in the switcher. Each note comes back
 // with its own mode, position, caret and folds. Kept under satr:tabs.
-interface Tab { path: string } // '' is an empty tab ("No file is open")
+interface Tab { path: string; session?: EditorState } // '' is an empty tab ("No file is open")
 const TABS_KEY = 'satr:tabs';
 let tabs: Tab[] = [{ path: '' }];
 let activeTab = 0;
+let displayedTab: Tab | null = null;
 const curTab = (): Tab => tabs[activeTab];
 function saveTabs(): void {
   const safeTabs = tabs.filter((tab) => !isExternalPath(tab.path));
   if (!safeTabs.length) safeTabs.push({ path: '' });
   const active = safeTabs.findIndex((tab) => tab === curTab());
   const savedActive = active >= 0 ? active : Math.min(Math.max(0, activeTab - 1), safeTabs.length - 1);
-  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: safeTabs, active: savedActive }));
+  localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: safeTabs.map(({ path }) => ({ path })), active: savedActive }));
 }
 function loadTabs(): void {
   try {
@@ -682,12 +734,20 @@ function setRecent(list: string[]): void { localStorage.setItem(RECENT_KEY, JSON
 async function leaveCurrent(): Promise<boolean> {
   closePopover();
   editor.closeFind();
+  const leaving = displayedTab;
   const saved = !filePath || await saveNow();
-  if (saved) rememberView();
+  if (saved && leaving === displayedTab) { rememberView(); if (leaving) leaving.session = editor.view.state; }
   return saved;
 }
-function showFile(path: string, content: string, after?: () => void): void {
+function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  ++viewGeneration;
+  window.clearTimeout(viewTimer);
+  window.clearTimeout(renderTimer);
+  holdUntil = 0;
   const incoming = externalFilesByPath.get(path);
+  // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
+  // never saved back over the original.
+  const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
   externalFileScreen.hidden = true;
   document.body.classList.remove('external-file-active', 'is-empty-tab');
   renderMenuButton();
@@ -695,8 +755,23 @@ function showFile(path: string, content: string, after?: () => void): void {
   // at its remembered place, unfocused, until you tap into it.
   editor.view.contentDOM.blur();
   curTab().path = path;
+  displayedTab = curTab();
   filePath = path;
   fileBase = displayNameForPath(path);
+  // A picture is worth showing: the reading view gets it (a data: URL from
+  // the file manager, or read here), the editor the bytes as they decode.
+  picture.path = '';
+  picture.url = '';
+  let opening: Mode = 'edit';
+  if (isPicture(path)) {
+    if (incoming) { if (rememberPicture(path, incoming.dataUrl)) opening = 'preview'; }
+    else if (lossy) {
+      opening = 'preview'; // the picture is read below, a moment from now
+      void backend.readDataUrl(path).then((url) => {
+        if (filePath === path && rememberPicture(path, url) && mode === 'preview') renderPreview();
+      });
+    }
+  }
   if (incoming) {
     diskBase = { path, text: content, mtime: incoming.modified ?? 0 };
     localStorage.removeItem(CURRENT_KEY); // incoming URI ids only last for this app session
@@ -711,35 +786,52 @@ function showFile(path: string, content: string, after?: () => void): void {
     });
   }
   restoringView = true;
-  editor.setValue(content);
-  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text'));
+  const session = curTab().session;
+  if (session) { editor.restoreSession(session); editor.replaceValue(content); }
+  else editor.setValue(content);
+  // Inactive states may predate a global settings change.
+  editor.setLineNumbers(loadSettings().lineNumbers);
+  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  // Say it once per file: the editor takes no writing because the bytes are
+  // not text, and nobody should wonder why nothing happens.
+  if (lossy && !incoming && !isPicture(path) && lossyNoticed !== path) {
+    lossyNoticed = path;
+    showNotice('Not plain text: shown read-only, exactly as it decodes.', 4500);
+  }
   editor.setTitle(fileBase);
-  editor.setTitleEditable(!incoming);
+  editor.setTitleEditable(canRenameInline(path));
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  restoreView(path, after);
+  // A picture opens in the reading view, unless this file has a remembered
+  // mode; anything else comes back where it was left.
+  restoreView(path, after, opening);
   renderNavButtons();
-  if (incoming) {
-    sidebar.refresh();
-  } else {
-    sidebar.refresh();
-    leftSidebar.reveal(path);
-    void loadSiblings();
-  }
+  sidebar.refresh();
+  // Mark the open note, and clear the mark when this file isn't in the tree
+  // (opened from another app, or read-only rubbish).
+  leftSidebar.reveal(path);
+  if (!incoming) void loadSiblings();
 }
-/** Open a note: its tab if it has one, else a new tab after this one (or
- *  this tab, when it's empty). */
+/** Open a file: its tab if it has one, else a new tab after this one (or
+ *  this tab, when it's empty). Any file opens; one that can't be loaded
+ *  (too large, or gone) leaves a message in the sidebar instead. */
 async function openFile(path: string, after?: () => void): Promise<void> {
   if (path === filePath) { after?.(); return; }
   const existing = tabs.findIndex((t) => t.path === path);
   if (existing >= 0) { await switchTab(existing, after); return; }
-  const text = await backend.read(path);
-  if (text === null) { leftSidebar.hint('That note no longer exists.', true); void leftSidebar.refresh(); return; }
+  const opened = await backend.readText(path);
+  if (opened.status !== 'text') {
+    leftSidebar.hint(opened.status === 'too-large'
+      ? `“${fileName(path)}” is too large to open here (${formatBytes(opened.size)}).`
+      : (await backend.stat(path).catch(() => null) ? 'That file could not be read.' : 'That file no longer exists.'), true);
+    void leftSidebar.refresh();
+    return;
+  }
   if (!await leaveCurrent()) return;
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
-  showFile(path, text, after);
+  showFile(path, opened.text, after, { lossy: !opened.clean });
 }
 /** The bottom bar's arrows: the previous / next tab. */
 async function stepTab(step: number): Promise<void> {
@@ -755,12 +847,14 @@ function pathMoved(from: string, to: string): void {
   const keys: string[] = [];
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i)!;
-    if (key.startsWith('satr:view:') && within(key.slice(10), from)) keys.push(key);
+    const prefix = ['satr:view:', 'satr:pdf:'].find((p) => key.startsWith(p));
+    if (prefix && within(key.slice(prefix.length), from)) keys.push(key);
   }
   for (const key of keys) {
     const value = localStorage.getItem(key);
     localStorage.removeItem(key);
-    if (value !== null) localStorage.setItem(viewKey(move(key.slice(10))), value);
+    const prefix = key.startsWith('satr:view:') ? 'satr:view:' : 'satr:pdf:';
+    if (value !== null) localStorage.setItem(prefix + move(key.slice(prefix.length)), value);
   }
   if (within(filePath, from)) {
     filePath = move(filePath);
@@ -827,6 +921,7 @@ async function newFile(dir = notesHome()): Promise<void> {
   try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   localStorage.removeItem(viewKey(path));
+  localStorage.removeItem(printOptionsKey(path));
   showFile(path, '');
   setMode('edit');
   toggleFiles(false);
@@ -835,6 +930,11 @@ async function newFile(dir = notesHome()): Promise<void> {
 }
 
 function showIncomingScreen(path: string, file: IncomingOpenFile): void {
+  ++viewGeneration;
+  window.clearTimeout(viewTimer);
+  holdUntil = 0;
+  restoringView = true; // there is no text viewport to bookmark on this screen
+  displayedTab = null;
   filePath = path;
   fileBase = file.name;
   diskBase = null;
@@ -848,9 +948,11 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
   externalFileScreen.hidden = false;
   document.body.classList.remove('is-empty-tab');
   document.body.classList.add('external-file-active');
-  const description = file.kind === 'too-large'
-    ? 'This file is too large for a safe in-app preview. It will not be partially decoded or modified.'
-    : 'Satr keeps unsupported and binary formats read-only. Open it in another app to view or edit it.';
+  const description = file.dataUrl?.startsWith('data:image/')
+    ? 'Shown as a picture, read-only. Open it in another app to edit it.'
+    : file.kind === 'too-large'
+      ? `Too large for Satr to open as text (${formatBytes(file.size)}). Open it in another app to view or edit it.`
+      : 'Satr couldn’t read this file. Open it in another app to view or edit it.';
   externalFileScreen.innerHTML = `
     <div class="external-file-card">
       <button type="button" class="external-file-back" data-external-act="back" aria-label="Back">‹</button>
@@ -880,6 +982,8 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
     });
   });
   renderNavButtons();
+  // A file from another app isn't in the tree: nothing stays selected there.
+  leftSidebar.reveal('');
 }
 
 function formatBytes(size: number): string {
@@ -906,9 +1010,9 @@ async function openIncomingPath(path: string, after?: () => void): Promise<void>
   if (existing.kind === 'text' || existing.kind === 'shared-text') {
     try {
       const current = await readIncomingText(existing.id);
-      const updated = { ...existing, text: current.text, modified: current.modified };
+      const updated = { ...existing, text: current.text, modified: current.modified, lossy: current.lossy, readOnly: existing.readOnly || current.lossy };
       externalFilesByPath.set(path, updated);
-      if (curTab().path === path) showFile(path, current.text, after);
+      if (curTab().path === path) showFile(path, current.text, after, { lossy: current.lossy });
     } catch (error) {
       const unavailable: IncomingOpenFile = { ...existing, kind: 'binary', readOnly: true, text: undefined, dataUrl: undefined };
       externalFilesByPath.set(path, unavailable);
@@ -936,9 +1040,9 @@ async function handleIncomingId(id: string): Promise<void> {
       if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
       else curTab().path = path;
       await openIncomingPath(path);
-      if ((file.kind === 'text' || file.kind === 'shared-text') && (file.readOnly || file.kind === 'shared-text')) {
-        showNotice('Opened as read-only; the original file will not be changed.', 4500);
-      }
+      if (file.lossy) showNotice('Not plain text: shown as it decodes, and read-only.', 4500);
+      else if (file.kind === 'shared-text') showNotice('Shared text opens read-only.', 4500);
+      else if (file.readOnly) showNotice('Opened as read-only; the original file will not be changed.', 4500);
     }
     toggleFiles(false);
     renderNavButtons();
@@ -953,13 +1057,15 @@ async function handleIncomingId(id: string): Promise<void> {
 async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
   if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
-  const text = await backend.read(tab.path);
-  if (text !== null) { showFile(tab.path, text, after); return; }
+  const opened = await backend.readText(tab.path);
+  if (curTab() !== tab) return; // a newer tab activation won the read race
+  if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
+  if (opened.status === 'too-large') leftSidebar.hint(`“${fileName(tab.path)}” is too large to open here (${formatBytes(opened.size)}).`, true);
   if (tabs.length > 1) {
     const at = tabs.indexOf(tab);
     tabs.splice(at, 1);
     activeTab = Math.min(at, tabs.length - 1);
-  } else tab.path = '';
+  } else { tab.path = ''; tab.session = undefined; }
   await openTab(curTab(), after);
 }
 async function switchTab(index: number, after?: () => void): Promise<void> {
@@ -981,7 +1087,7 @@ function newTab(): void {
 function closeTab(index: number): void {
   if (tabs.length < 2 || !tabs[index]) return;
   if (index !== activeTab) {
-    if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
+    if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
     if (index < activeTab) activeTab -= 1;
     renderNavButtons();
@@ -989,14 +1095,17 @@ function closeTab(index: number): void {
   }
   void (async () => {
     if (!await leaveCurrent()) return;
-    if (tabs[index].path) { closedTabs.push({ ...tabs[index] }); if (closedTabs.length > 20) closedTabs.shift(); }
+    if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
     activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
     await openTab(curTab());
   })();
 }
 function reopenClosedTab(): void {
-  const tab = closedTabs.pop();
+  // A file opened from another app can't come back on its own: its permission
+  // lasts for this session only, and its tab has no path in the tree.
+  let tab = closedTabs.pop();
+  while (tab && isExternalPath(tab.path)) tab = closedTabs.pop();
   if (tab) void openFile(tab.path);
 }
 /** Drag to reorder in the switcher; the open tab stays the open tab. */
@@ -1059,6 +1168,10 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
+  displayedTab = curTab();
+  ++viewGeneration;
+  window.clearTimeout(viewTimer);
+  holdUntil = 0;
   closePopover();
   editor.closeFind();
   externalFileScreen.hidden = true;
@@ -1066,6 +1179,8 @@ function showEmptyTab(): void {
   filePath = '';
   fileBase = '';
   diskBase = null;
+  picture.path = '';
+  picture.url = '';
   editor.setReadOnly(false);
   editor.setTitleEditable(true);
   restoringView = true;
@@ -1080,6 +1195,9 @@ function showEmptyTab(): void {
   void renderEmptyTab();
   renderNavButtons();
   sidebar.refresh();
+  // No file is open: nothing is selected in the file tree either. Without
+  // this the row of the note that was just closed stayed highlighted.
+  void leftSidebar.refresh();
 }
 async function renderEmptyTab(): Promise<void> {
   const recent: string[] = [];
@@ -1129,7 +1247,7 @@ function showTabs(): void {
       newTab,
       canReopen: () => closedTabs.length > 0,
       reopen: reopenClosedTab,
-      closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path)); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+      closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
       move: moveTab,
     });
   })();
@@ -1171,16 +1289,20 @@ function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
       run: () => { setMode(mode === 'edit' ? 'preview' : 'edit'); renderMenuButton(); },
     };
     case 'pdf': return { title: 'Export to PDF', icon: MENU_ICONS.pdf, needsNote: true, run: () => void exportCurrentPdf() };
-    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (!isExternalPath(filePath)) { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } } };
+    case 'rename': return { title: 'Rename', icon: MENU_ICONS.rename, needsNote: true, run: () => { if (canRenameInline(filePath)) { if (mode !== 'edit') setMode('edit'); editor.focusTitle(); } } };
     case 'delete': return { title: 'Delete note', icon: MENU_ICONS.trash, needsNote: true, warning: true, run: () => { if (filePath && !isExternalPath(filePath)) leftSidebar.deleteFile(filePath); } };
     case 'settings': return { title: 'Settings', icon: MENU_ICONS.settings, needsNote: false, run: showSettings };
   }
 }
 const hasNote = (): boolean => !document.body.classList.contains('is-empty-tab');
 async function exportCurrentPdf(): Promise<void> {
+  const path = filePath;
+  const name = displayNameForPath(path) || 'Note';
+  const markdown = editor.getValue();
+  const options = loadPrintOptions(path);
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
-    await exportPdf(displayNameForPath(filePath) || 'Note', editor.getValue(), isExternalPath(filePath) ? '' : filePath);
+    await exportPdf(name, markdown, isExternalPath(path) ? '' : path, options);
   } catch (error) {
     showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
   } finally {
@@ -1348,6 +1470,8 @@ settingsButton.addEventListener('click', () => showSettings());
 function showSettings(): void {
   toggleFiles(false);
   openSettings({
+    notePath: hasNote() ? filePath : undefined,
+    noteName: hasNote() ? displayNameForPath(filePath) : undefined,
     apply: applySettings,
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });

@@ -16,6 +16,10 @@ html {
   font-size: 15px;
   font-weight: 400;
   line-height: 1.8;
+  /* Inherited by ALL text blocks, including tight list items (no <p>),
+     blockquotes, captions and code. Paragraph-only rules missed these. */
+  orphans: 3;
+  widows: 3;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -25,7 +29,7 @@ body {
 
 /* Direction per paragraph, as in the reading view */
 :where(p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, dt, dd, figcaption, caption) {
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
   text-align: start;
 }
 
@@ -305,7 +309,7 @@ tr {
 [data-footnote-marker] {
   display: block !important;
   list-style: none !important;
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
   text-align: start;
   margin: 0;
 }

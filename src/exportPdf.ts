@@ -20,6 +20,9 @@ import { renderMarkdown } from './markdown';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
 import { getSystemFontScale } from './native';
+import { keepHeadingWithContent } from './printHeadings';
+import { loadPrintOptions, printDirection, validPrintOptions, type PrintOptions } from './printOptions';
+import { assembleColumns, columnPageCss, COLUMN_WIDTH_PX } from './printColumns';
 
 interface SatrPrintPlugin {
   print(options: { html: string; name: string }): Promise<void>;
@@ -40,13 +43,14 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({
 
 let busy = false;
 
-export async function exportPdf(name: string, markdown: string, notePath = ''): Promise<void> {
+export async function exportPdf(name: string, markdown: string, notePath = '', options: PrintOptions = loadPrintOptions(notePath)): Promise<void> {
   if (busy) return;
   busy = true;
   const frame = document.createElement('iframe');
-  let scaleCorrection: HTMLStyleElement | null = null;
+  let scaleCorrection: { remove(): void } | null = null;
   try {
     const settings = loadSettings();
+    options = validPrintOptions(options);
     const hasMath = /\$/.test(markdown);
     const [fonts, pagedJs, systemScale] = await Promise.all([
       embeddedFonts(hasMath),
@@ -56,7 +60,8 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     const printScale = Math.min(3, Math.max(0.5, systemScale));
     const body = printableBody(renderMarkdown(markdown));
     await loadImages(body, notePath); // embedded as data: URLs before paging
-    const dir = isRtlText(body.textContent ?? '') ? 'rtl' : 'ltr';
+    const dir = printDirection(body, options.direction);
+    const mathAlign = options.mathAlign === 'center' ? 'center' : dir === 'rtl' ? 'right' : 'left';
     const pageNumber = settings.pdfPageNumbers === 'none' ? ''
       : `@page { @bottom-center { content: counter(page${settings.pdfPageNumbers === 'persian' ? ', persian' : ''}); font-family: Vazirmatn, sans-serif; font-size: 12pt; color: #222; vertical-align: middle; } }`;
     const styles = [
@@ -65,6 +70,9 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
       printCss,
       pageNumber,
       settings.pdfCss,
+      `.math-display, .math-display .katex-display > .katex { text-align: ${mathAlign}; }
+       .math-display .katex-display > .katex { white-space: normal; }`,
+      options.columns === 2 ? columnPageCss : '',
     ].map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n');
 
     // Hidden but laid out (display: none would stop both layout and print).
@@ -80,7 +88,7 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     const loaded = new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
     document.body.appendChild(frame);
     await loaded;
-    const win = frame.contentWindow as (Window & { PagedConfig?: unknown; PagedPolyfill?: { preview(): Promise<unknown> } }) | null;
+    const win = frame.contentWindow as (Window & { PagedConfig?: unknown; PagedPolyfill?: { preview(): Promise<unknown>; chunker: { hooks: { onOverflow: { register(fn: typeof keepHeadingWithContent): void } } } } }) | null;
     const doc = frame.contentDocument;
     if (!win || !doc) throw new Error('No print frame');
     await doc.fonts.ready;
@@ -91,16 +99,22 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     // size by that scale while measuring. Remove this override before
     // serializing: the final HTML then contains the original 100% CSS and
     // PrintPlugin renders it with setTextZoom(100).
+    //
+    // The override must never reach the printed document: Paged.js's
+    // Previewer.removeStyles() takes every plain <style> out of the document
+    // and copies its text into a stylesheet of its own, so a plain <style>
+    // override could not be removed any more. That leak was the bug behind
+    // "the PDF is tiny now": the printed copy divided every font size by the
+    // phone's font scale, and PrintPlugin renders at setTextZoom(100).
+    // applyFontScaleCorrection() keeps the override out of the document.
     if (Capacitor.isNativePlatform() && Math.abs(printScale - 1) > 0.001) {
-      scaleCorrection = doc.createElement('style');
-      scaleCorrection.textContent = fontScaleCorrectionCss(printScale, settings.pdfCss);
-      doc.head.appendChild(scaleCorrection);
+      scaleCorrection = applyFontScaleCorrection(doc, fontScaleCorrectionCss(printScale, settings.pdfCss));
       await doc.fonts.ready;
     }
 
     // Wrap long formulas at the page's width, as on screen.
     if (hasMath) {
-      doc.body.style.width = `${CONTENT_WIDTH}px`;
+      doc.body.style.width = `${options.columns === 2 ? COLUMN_WIDTH_PX : CONTENT_WIDTH}px`;
       layoutMath(doc.body);
       doc.body.style.width = '';
     }
@@ -111,13 +125,22 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
     script.textContent = pagedJs;
     doc.head.appendChild(script);
     if (!win.PagedPolyfill) throw new Error('Paged.js did not load');
+    win.PagedPolyfill.chunker.hooks.onOverflow.register(keepHeadingWithContent);
     await win.PagedPolyfill.preview();
+    if (options.columns === 2) assembleColumns(doc, dir, settings.pdfPageNumbers);
     numberFootnotes(doc);
     // The native print WebView is pinned at 100%; send it the unscaled source
     // CSS rather than the temporary, inverse-fontScale layout override.
     scaleCorrection?.remove();
     scaleCorrection = null;
     script.remove();
+
+    // Last line of defence: if a copy of the override did land in the
+    // document after all (a browser without adoptedStyleSheets, a future
+    // Paged.js), it must not reach the print WebView at 100%.
+    doc.querySelectorAll('style').forEach((style) => {
+      if (style.textContent?.includes('--satr-font-scale-correction')) style.remove();
+    });
 
     if (Capacitor.isNativePlatform()) {
       doc.querySelectorAll('script').forEach((el) => el.remove());
@@ -139,7 +162,8 @@ export async function exportPdf(name: string, markdown: string, notePath = ''): 
 }
 
 /** Temporary CSS for layout in the text-scaled app WebView. The matching
- * unscaled CSS stays in the document and is restored before serialization. */
+ * unscaled CSS stays in the document and is what gets printed. The custom
+ * property is a marker, in case a copy of this CSS is ever found somewhere. */
 function fontScaleCorrectionCss(scale: number, customCss: string): string {
   const adjustedCustomCss = customCss.replace(/(font-size\s*:\s*)([^;{}]+)(;?)/gi, (_all, prefix: string, value: string, end: string) => {
     const adjusted = value.replace(/(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(px|pt|pc|in|cm|mm|q)\b/gi,
@@ -147,11 +171,35 @@ function fontScaleCorrectionCss(scale: number, customCss: string): string {
     return `${prefix}${adjusted}${end}`;
   });
   return `
-    html { font-size: ${15 / scale}px !important; }
+    html { --satr-font-scale-correction: 1; font-size: ${15 / scale}px !important; }
     @page { @bottom-center { font-size: ${12 / scale}pt !important; } }
     .pagedjs_margin-bottom-center { font-size: ${12 / scale}pt !important; }
     ${adjustedCustomCss}
   `;
+}
+
+/** Applies the temporary override to the measuring frame, out of reach of the
+ *  page it will serialize. An adopted stylesheet is used where there is one:
+ *  it takes part in layout like any other, but it is not a <style> element,
+ *  so Paged.js's style collection doesn't copy it and it is never serialized.
+ *  Older WebViews (no adoptedStyleSheets) get a marked <style>, which
+ *  Paged.js leaves alone and remove() takes back out before printing. */
+function applyFontScaleCorrection(doc: Document, css: string): { remove(): void } {
+  const view = doc.defaultView as (Window & { CSSStyleSheet?: typeof CSSStyleSheet }) | null;
+  try {
+    const Sheet = view?.CSSStyleSheet;
+    if (Sheet && 'adoptedStyleSheets' in doc) {
+      const sheet = new Sheet();
+      sheet.replaceSync(css);
+      doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+      return { remove: () => { doc.adoptedStyleSheets = doc.adoptedStyleSheets.filter((s) => s !== sheet); } };
+    }
+  } catch { /* fall through to the marked style element */ }
+  const style = doc.createElement('style');
+  style.setAttribute('data-pagedjs-ignore', 'true');
+  style.textContent = css;
+  doc.head.appendChild(style);
+  return { remove: () => style.remove() };
 }
 
 // The reading view's HTML, readied for paper: no copy buttons, wiki links as
@@ -168,20 +216,33 @@ function printableBody(html: string): HTMLElement {
   });
   root.querySelectorAll('[data-line], [data-lines]').forEach((el) => { el.removeAttribute('data-line'); el.removeAttribute('data-lines'); });
   root.querySelectorAll<HTMLElement>('.md-section').forEach((section) => section.replaceWith(...section.childNodes));
+  // Display math inside prose (e.g. "sketch $$u+v$$, $$u-v$$") closes
+  // the paragraph during HTML parsing, leaving punctuation / trailing prose
+  // as bare text. Once sections are unwrapped, that text is at the page root.
+  // Paged.js 0.4 cannot map a break in root text back to its source element
+  // and throws "getAttribute is not a function". Give it an inline element
+  // to track without adding paragraph margins or changing the math layout.
+  for (const node of [...root.childNodes]) {
+    if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+    const span = document.createElement('span');
+    node.replaceWith(span);
+    span.appendChild(node);
+  }
   root.querySelectorAll('input[type="checkbox"]').forEach((box) => box.setAttribute('disabled', ''));
 
-  const notes = new Map<string, string>();
+  const notes = new Map<string, { html: string; dir: string }>();
   root.querySelectorAll<HTMLElement>('section.footnotes li[data-footnote-id]').forEach((item) => {
     const content = item.querySelector(':scope > p') ?? item;
-    notes.set(item.dataset.footnoteId!, content.innerHTML.trim());
+    notes.set(item.dataset.footnoteId!, { html: content.innerHTML.trim(), dir: content.getAttribute('dir') ?? item.dir });
   });
   root.querySelectorAll('section.footnotes').forEach((el) => el.remove());
   root.querySelectorAll<HTMLElement>('sup.footnote-ref').forEach((ref) => {
     const id = ref.querySelector('a')?.getAttribute('href')?.slice(1) ?? '';
     const note = document.createElement('span');
     note.className = 'footnote';
-    note.innerHTML = notes.get(id) ?? '';
-    note.setAttribute('dir', isRtlText(note.textContent ?? '') ? 'rtl' : 'ltr');
+    const saved = notes.get(id);
+    note.innerHTML = saved?.html ?? '';
+    note.setAttribute('dir', saved?.dir || 'ltr');
     ref.replaceWith(note);
   });
   return root;
@@ -191,7 +252,7 @@ function printableBody(html: string): HTMLElement {
 // call's number. A call's digits follow its paragraph, a note's its own text.
 function numberFootnotes(doc: Document): void {
   const view = doc.defaultView!;
-  doc.querySelectorAll('.pagedjs_page').forEach((page) => {
+  doc.querySelectorAll(doc.querySelector('.satr-print-sheet') ? '.satr-print-sheet' : '.pagedjs_page').forEach((page) => {
     let count = 0;
     const numbers = new Map<string, number>();
     page.querySelectorAll<HTMLElement>('.pagedjs_page_content [data-footnote-call]').forEach((call) => {
