@@ -64,6 +64,11 @@ public class PrintPlugin extends Plugin {
             view.getSettings().setUseWideViewPort(true);
             // A fixed size: the phone's font size setting doesn't scale the PDF.
             view.getSettings().setTextZoom(100);
+            // Same 1px floor as the app WebView (SystemBarsPlugin). The pages
+            // were measured with KaTeX's real strut height; an 8px minimum
+            // here would inflate it again when Android draws the PDF.
+            view.getSettings().setMinimumFontSize(1);
+            view.getSettings().setMinimumLogicalFontSize(1);
             view.setWebViewClient(new WebViewClient() {
                 private boolean started = false;
 

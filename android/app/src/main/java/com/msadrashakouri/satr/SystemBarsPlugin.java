@@ -68,6 +68,11 @@ public class SystemBarsPlugin extends Plugin {
             WebView webView = getBridge().getWebView();
             // Do not call setTextZoom(100) here: Android's default WebView
             // zoom follows Configuration.fontScale, as Obsidian does.
+            // KaTeX builds a fraction's height with a 1px font. The WebView's
+            // default 8px minimum inflates that, so the strut is the wrong
+            // height and a large display formula is cramped or clipped.
+            webView.getSettings().setMinimumFontSize(1);
+            webView.getSettings().setMinimumLogicalFontSize(1);
             ViewCompat.setOnApplyWindowInsetsListener(webView, (view, insets) -> {
                 int types = WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout();
                 Insets bars = insets.getInsetsIgnoringVisibility(types);
