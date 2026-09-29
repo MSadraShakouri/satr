@@ -8,7 +8,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
 
 - **Both directions in one note.** Prose follows its first strong letter. Numbers and dates infer their direction from surrounding prose, using the same policy in the editor, reading view and PDF. Math and literal code stay LTR and never influence neighbouring prose.
 - **Live preview while editing**, with Obsidian's rule: the Markdown syntax shows only on the line you're editing. There's also a separate reading view (double-tap it to edit).
-- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, and repeat the relation on the next line. They can also wrap at spaces you typed between words. Overwide display formulas in print can also use KaTeX’s own operator breaks to fit the column. The source is never changed.
+- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, and repeat the relation on the next line. They can also wrap at spaces you typed between words, including words inside `\text{...}` and the other text commands. Overwide display formulas in print can also use KaTeX’s own operator breaks to fit the column. The source is never changed.
 - **Obsidian's Markdown:**
   - `[[wiki links]]`, with a picker while you type
   - `![[image embeds]]` with `|300` sizes
