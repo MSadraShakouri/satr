@@ -481,7 +481,7 @@ function setMode(next: Mode, restoredLine?: number): void {
     // as they settle and compensates (src/scrollSync.ts).
     applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true);
   } else {
-    applyEditorScroll(editor.view, position, () => generation === viewGeneration);
+    applyEditorScroll(editor.view, position, () => generation === viewGeneration, true);
     holdEditorPosition(position);
   }
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));

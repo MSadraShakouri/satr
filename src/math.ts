@@ -255,6 +255,10 @@ function splitCuts(rawTex: string): Split | null {
     }
     if (c === '{') { depth += 1; i += 1; continue; }
     if (c === '}') { depth -= 1; i += 1; continue; }
+    if (c === '(') { depth += 1; i += 1; continue; }
+    if (c === ')' && depth > 0) { depth -= 1; i += 1; continue; }
+    if (c === '[') { depth += 1; i += 1; continue; }
+    if (c === ']' && depth > 0) { depth -= 1; i += 1; continue; }
     if (c === '&' && depth === 0) return null; // alignment: leave alone
     if (c === '\n' && depth === 0) {
       cut(i, i + 1, newCut(0)); // the writer's own line end, preferred

@@ -143,12 +143,17 @@ const directionPlugin = ViewPlugin.fromClass(class {
 
 // The line-number gutter sits on the note's majority side (#10): right for a
 // mostly Persian note, left for a mostly English one. A class, not a bidi
-// override, so the scroller keeps its LTR scroll coordinates.
+// override, so the scroller keeps its LTR scroll coordinates. It must update
+// on any state change (tab switch, initial load), not only on typing.
 const gutterSidePlugin = ViewPlugin.fromClass(class {
+  lastDir: 'ltr' | 'rtl' | null = null;
   constructor(view: EditorView) { this.sync(view); }
-  update(update: ViewUpdate): void { if (update.docChanged) this.sync(update.view); }
+  update(update: ViewUpdate): void { this.sync(update.view); }
   sync(view: EditorView): void {
-    view.dom.classList.toggle('cm-satr-gutter-rtl', majorityDirection(view.state.doc.toString()) === 'rtl');
+    const dir = majorityDirection(view.state.doc.toString());
+    if (dir === this.lastDir && view.dom.classList.contains('cm-satr-gutter-rtl') === (dir === 'rtl')) return;
+    this.lastDir = dir;
+    view.dom.classList.toggle('cm-satr-gutter-rtl', dir === 'rtl');
   }
 });
 
@@ -489,6 +494,7 @@ export class SatrEditor {
         { key: 'Escape', run: (target) => { if (!isFindOpen(target.state)) return false; closeFind(target); return true; } },
         { key: 'F3', run: (target) => { findNext(target); return true; }, shift: (target) => { findPrevious(target); return true; } },
         { key: 'Mod-/', run: toggleComment },
+        { key: 'Mod-a', run: (target) => { target.dispatch({ selection: { anchor: 0, head: target.state.doc.length } }); return true; } },
         { key: 'Enter', run: enterDisplayMath },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
