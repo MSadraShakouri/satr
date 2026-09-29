@@ -11,6 +11,14 @@
 //
 // A single unit wider than the whole line is allowed to break internally as a
 // last resort (KaTeX's own breaks), rather than overflowing the screen.
+//
+// Height. KaTeX sizes a formula from font struts, then the screen preview
+// clips that box (overflow-y: hidden, so a wide formula can scroll sideways
+// without a vertical scrollbar). On Android the glyphs paint past the strut —
+// a large fraction most of all — so the box is too short and the formula is
+// cut off or sits on the lines around it. The site and the PDF don't do this.
+// fitDisplayMath() grows the box to the content, and only in the app preview.
+import { isNative } from './native';
 
 function width(el: Element | null): number {
   return el ? el.getBoundingClientRect().width : 0;
@@ -110,6 +118,21 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
   }
 }
 
+/** Grow a display formula's box to its content. No-op when the strut already fits. */
+export function fitDisplayMath(root: HTMLElement): void {
+  for (const box of root.querySelectorAll<HTMLElement>('.math-display')) {
+    const frame = box.querySelector<HTMLElement>(':scope > .katex-display');
+    const targets = frame ? [frame] : [...box.querySelectorAll<HTMLElement>(':scope > .math-flow > .math-unit')];
+    for (const el of targets) {
+      el.style.minHeight = '';
+      // scrollHeight includes what overflow-y: hidden (and a short line box)
+      // leave out of clientHeight. A pixel of subpixel noise is not a clip.
+      const extra = el.scrollHeight - el.clientHeight;
+      if (extra > 1) el.style.minHeight = `${Math.ceil(el.scrollHeight)}px`;
+    }
+  }
+}
+
 export function layoutMath(root: HTMLElement): void {
   if (!root.getClientRects().length) return; // hidden (e.g. preview pane while editing)
   for (const flow of root.querySelectorAll<HTMLElement>('.math-flow')) {
@@ -118,6 +141,9 @@ export function layoutMath(root: HTMLElement): void {
     if (flow.classList.contains('is-display')) layoutDisplay(flow, units);
     else layoutInline(flow, units);
   }
+  // The print iframe is measured here too; leave it alone (the PDF is already
+  // right, and its WebView does not clip the way the preview does).
+  if (isNative() && root.ownerDocument === document) fitDisplayMath(root);
 }
 
 let pending = 0;

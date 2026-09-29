@@ -60,10 +60,14 @@ $$
 f(x) = (x + 1)(x + 2)(x + 3)(x + 4) = x^4 + 10x^3 + 35x^2 + 50x + 24
 $$
 
-Spaces you type between words in math are kept (KaTeX would drop them), and the formula can wrap there too:
+Spaces you type between words in math are kept (KaTeX would drop them), and the formula can wrap there too — including words inside `\text`:
 
 $$
 average speed = total distance travelled divided by the time it took
+$$
+
+$$
+\text{If } f \text{ is continuous on the closed interval } [a, b]
 $$
 
 ## Images

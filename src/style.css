@@ -546,10 +546,17 @@ body {
   margin: 1em 0;
   text-align: center;
   direction: ltr;
+  /* Room between wrapped lines. The box itself is not this tall: a large
+     fraction is as tall as its content. On Android the strut under-reports
+     that, and src/mathLayout.ts grows the box (min-height) to match. */
   line-height: 2.1;
 }
 .math-display > .katex-display {
   margin: 0;
+  /* Sideways scroll for a formula that still won't fit. overflow-y is hidden
+     only so that scroll doesn't grow a vertical bar. On Android the strut is
+     short of the glyphs; src/mathLayout.ts grows this box to the content
+     first, so the clip does not eat a large fraction. */
   overflow-x: auto;
   overflow-y: hidden;
 }

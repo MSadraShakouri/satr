@@ -7,6 +7,11 @@
 //    "$ \frac13 b $") are dropped, and leading/trailing spaces are trimmed.
 //    A kept space outside braces is also a place the line may break
 //    ("hello" / "world"), and the space goes at the break; + and − never are.
+//    The same spaces inside a text command (\text, \textbf, …) are break
+//    points too — otherwise "\text{is continuous on the interval}" is one
+//    unbreakable unit and overflows the screen. The command is closed and
+//    reopened around each word, so the space between those words is an
+//    ordinary break. Spaces inside other braces still are not.
 //
 // 2. Line breaking at relations. The formula is split at its top-level
 //    relations (=, ≡, ≈, ≤, arrows, ∴ ...), never at + or −, and never inside
@@ -45,9 +50,88 @@ function markMathSpaces(tex: string): string {
   });
 }
 
+// Prose commands. Their braces would hide word spaces from the splitter, so
+// lift those spaces out: \text{hello world} → \text{hello} · \text{world}.
+// Math structure (\frac, \mathrm, \left…\right, other groups) is not prose.
+const TEXT_COMMANDS = new Set([
+  'text', 'textrm', 'textsf', 'texttt', 'textnormal',
+  'textbf', 'textmd', 'textit', 'textup', 'emph',
+]);
+
+function commandName(tex: string, i: number): string | null {
+  if (tex[i] !== '\\' || !LATIN.test(tex[i + 1] ?? '')) return null;
+  let k = i + 1;
+  while (LATIN.test(tex[k] ?? '')) k += 1;
+  return tex.slice(i + 1, k);
+}
+
+function liftTextBreaks(tex: string): string {
+  let depth = 0;
+  let out = '';
+  for (let i = 0; i < tex.length; i += 1) {
+    const c = tex[i];
+    if (c !== '\\') {
+      if (c === '{') depth += 1;
+      else if (c === '}') depth -= 1;
+      out += c;
+      continue;
+    }
+    const name = commandName(tex, i);
+    if (!name) {
+      out += tex.slice(i, i + 2);
+      i += 1; // the escaped character; the loop adds one more
+      continue;
+    }
+    if (name === 'left' || name === 'begin') depth += 1;
+    else if ((name === 'right' || name === 'end') && depth > 0) depth -= 1;
+    const after = i + 1 + name.length;
+    if (depth === 0 && TEXT_COMMANDS.has(name)) {
+      const brace = skipSpaces(tex, after);
+      if (tex[brace] === '{') {
+        const end = skipGroup(tex, brace, '{', '}');
+        if (tex[end - 1] === '}') {
+          out += liftTextCommand(name, tex.slice(brace + 1, end - 1));
+          i = end - 1;
+          continue;
+        }
+      }
+    }
+    out += tex.slice(i, after);
+    i = after - 1;
+  }
+  return out;
+}
+
+function liftTextCommand(name: string, inner: string): string {
+  const lifted = liftTextBreaks(inner);
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < lifted.length; i += 1) {
+    const c = lifted[i];
+    if (c === '\\') {
+      const cmd = commandName(lifted, i);
+      if (cmd) { i += cmd.length; continue; }
+      i += 1;
+      continue;
+    }
+    if (c === '{') depth += 1;
+    else if (c === '}') depth -= 1;
+    else if (c === SPACE && depth === 0) {
+      parts.push(lifted.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(lifted.slice(start));
+  if (parts.length < 2 || parts.some((part) => !part.length)) return `\\${name}{${inner}}`;
+  return parts.map((part) => `\\${name}{${part}}`).join(SPACE);
+}
+
 // Splits a formula at its kept spaces outside braces, \left…\right and
-// environments. Spaces inside those stay spaces.
+// environments. Spaces inside those stay spaces. Word spaces inside a
+// top-level text command are lifted out first, so they split too.
 function splitWords(tex: string): string[] {
+  tex = liftTextBreaks(tex);
   const words: string[] = [];
   let depth = 0;
   let start = 0;

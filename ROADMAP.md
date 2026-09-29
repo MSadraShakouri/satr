@@ -30,7 +30,7 @@ Editor
 - [x] Keeps the caret clear of the keyboard without jumping or locking the scroll
 
 Preview
-- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking (at relations, and at spaces typed between words; never at + or −), inline math kept left to right inside Persian text, dollar signs in code left alone, code highlighting and copy, tables, footnotes in popovers, title on top
+- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking (at relations, and at spaces typed between words, including inside `\text`; never at + or −), inline math kept left to right inside Persian text, dollar signs in code left alone, code highlighting and copy, tables, footnotes in popovers, title on top
 - [x] Edit/preview switch keeps the position; double-tap the preview to edit
 - [x] Rendered only when visible (about 14x faster typing on long notes)
 
