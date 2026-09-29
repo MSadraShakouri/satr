@@ -19,7 +19,10 @@
 //    Commas stay at the end of the line they break; a line that ends at a
 //    relation repeats it on the next line ("a = b =" / "= c"), the usual
 //    convention for continued relations. Never at + or −, and never inside
-//    braces, \left…\right or environments. Each piece is rendered as an
+//    braces, \left…\right or environments. A break inside ordinary
+//    parentheses or brackets is the last resort of all — "f(x, y)" holds
+//    together while a relation or comma outside it can break — so a line
+//    never comes apart between a "(" and its ")" if it can help it. Each piece is rendered as an
 //    unbreakable unit; the actual line choice happens in layoutMath()
 //    (src/mathLayout.ts), once the units can be measured: display math is
 //    balanced (fewest lines, then preferred break points, then the most even
@@ -151,6 +154,13 @@ const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 // Break points, preferred in this order: the writer's own line ends, then
 // commas, then relations (which repeat on the next line), then the spaces
 // typed between words. The comma stays at the end of the line it breaks.
+// A break inside ordinary parentheses or brackets is the last resort of all
+// (PRIO_IN_PARENS): those marks hold a value together, so "f(x, y)" never
+// breaks after that comma while anything outside the parentheses can break,
+// and only a group wider than the line itself comes apart (there KaTeX's own
+// breaks take over anyway). Braces, \left…\right and environments stay
+// unbreakable as before.
+const PRIO_IN_PARENS = 4;
 interface Cut { prio: number; rel: string; comma: boolean; prefix: string }
 const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', comma: false, prefix: '', ...fields });
 function mergeCuts(a: Cut, b: Cut): Cut {
@@ -214,6 +224,10 @@ function splitCuts(rawTex: string): Split | null {
     termStart = to;
   };
   let depth = 0;
+  let parens = 0;
+  // A cut inside parentheses/brackets is a last resort: demote every break
+  // point found there below the ordinary ones.
+  const at = (prio: number): number => (parens > 0 ? Math.max(prio, PRIO_IN_PARENS) : prio);
   let i = 0;
   while (i < tex.length) {
     const c = tex[i];
@@ -234,19 +248,19 @@ function splitCuts(rawTex: string): Split | null {
         // \not= , \not\equiv ...
         let end = skipSpaces(tex, k);
         if (tex[end] === '\\') { end += 1; while (LATIN.test(tex[end] ?? '')) end += 1; } else end += 1;
-        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(at(2), { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
       if (depth === 0 && EXT_ARROWS.has(name)) {
         let end = skipGroup(tex, skipSpaces(tex, k), '[', ']');
         end = skipGroup(tex, skipSpaces(tex, end), '{', '}');
-        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(at(2), { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
       if (depth === 0 && RELATIONS.has(name)) {
-        cut(i, k, newCut(2, { rel: tex.slice(i, k) }));
+        cut(i, k, newCut(at(2), { rel: tex.slice(i, k) }));
         i = k;
         continue;
       }
@@ -255,29 +269,33 @@ function splitCuts(rawTex: string): Split | null {
     }
     if (c === '{') { depth += 1; i += 1; continue; }
     if (c === '}') { depth -= 1; i += 1; continue; }
+    // Ordinary parentheses and brackets only demote their breaks; braces,
+    // \left…\right and environments already block them outright.
+    if (c === '(' || c === '[') { parens += 1; i += 1; continue; }
+    if (c === ')' || c === ']') { if (parens > 0) parens -= 1; i += 1; continue; }
     if (c === '&' && depth === 0) return null; // alignment: leave alone
     if (c === '\n' && depth === 0) {
-      cut(i, i + 1, newCut(0)); // the writer's own line end, preferred
+      cut(i, i + 1, newCut(at(0))); // the writer's own line end, preferred
       i += 1;
       continue;
     }
     if (c === SPACE && depth === 0) {
-      cut(i, i + 1, newCut(3, { prefix: '\\ ' }));
+      cut(i, i + 1, newCut(at(3), { prefix: '\\ ' }));
       i += 1;
       continue;
     }
     if (c === ',' && depth === 0) {
-      cut(i, i + 1, newCut(1, { comma: true }));
+      cut(i, i + 1, newCut(at(1), { comma: true }));
       i += 1;
       continue;
     }
     if (depth === 0 && c === ':' && tex[i + 1] === '=') {
-      cut(i, i + 2, newCut(2, { rel: ':=' }));
+      cut(i, i + 2, newCut(at(2), { rel: ':=' }));
       i += 2;
       continue;
     }
     if (depth === 0 && (c === '=' || c === '<' || c === '>')) {
-      cut(i, i + 1, newCut(2, { rel: c }));
+      cut(i, i + 1, newCut(at(2), { rel: c }));
       i += 1;
       continue;
     }

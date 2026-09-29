@@ -1,4 +1,4 @@
-import { MATH_OR_CODE } from './markdownSyntax';
+import { MATH_OR_CODE, isDisplayMathContent } from './markdownSyntax';
 import { applyReadingDirections } from './direction';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -213,6 +213,9 @@ export function renderMarkdown(source: string): string {
     // an empty $$ … $$ block on its own lines is the block being written and
     // stays a (blank) display line.
     if (!(display ?? inline ?? '').trim() && (inline !== undefined || !full.includes('\n'))) return full;
+    // A list, heading, quote or fence between the dollars means the writer
+    // left the formula: that pair is plain text, here as in the editor.
+    if (display !== undefined && !isDisplayMathContent(display)) return full;
     const isDisplay = display !== undefined;
     const id = math.push(renderMath(display ?? inline ?? '', isDisplay)) - 1;
     // Keep the newlines the formula spanned, so later lines keep their numbers.

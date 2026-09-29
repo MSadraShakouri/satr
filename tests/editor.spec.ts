@@ -263,3 +263,68 @@ test('Markor keyboard: autocorrect and suggestions on, no spell check', async ({
     writingsuggestions: 'false',
   });
 });
+
+test('a $$ pair that grew a list or a heading stops being math source', async ({ page }) => {
+  await draft(page, '$$\na = b\n- item\n$$|');
+  const grown = await page.evaluate(() => {
+    const dom = window.testEditor.view.dom;
+    return {
+      math: dom.querySelectorAll('.cm-math').length,
+      delims: dom.querySelectorAll('.cm-math-delim').length,
+      listLines: dom.querySelectorAll('.cm-line.cm-lp-list-line').length,
+      text: [...dom.querySelectorAll('.cm-content > .cm-line')].map((line) => line.textContent).join('\n'),
+    };
+  });
+  // The dollars stay text, nothing between them turns monospace, and the line
+  // that made it a list renders as the list it is.
+  expect(grown.math).toBe(0);
+  expect(grown.delims).toBe(0);
+  expect(grown.listLines).toBe(1);
+  expect(grown.text).toContain('a = b');
+  expect(grown.text).toContain('$$');
+
+  await draft(page, '$$\na = b\n# head\n$$|');
+  const heading = await page.evaluate(() => {
+    const dom = window.testEditor.view.dom;
+    return {
+      math: dom.querySelectorAll('.cm-math').length,
+      headingLines: dom.querySelectorAll('.cm-line.cm-h1').length,
+    };
+  });
+  expect(heading.math).toBe(0);
+  expect(heading.headingLines).toBe(1);
+
+  // A pair that kept its formula is still the math it was.
+  await draft(page, '$$\na = b\n$$|');
+  expect(await page.evaluate(() => window.testEditor.view.dom.querySelectorAll('.cm-math').length)).toBe(1);
+});
+
+test('a space is never typed before a closing bracket or an ellipsis', async ({ page }) => {
+  for (const before of ['a|)', 'a|]', 'a|}', 'a|...', 'a|\u2026']) {
+    await draft(page, before);
+    await page.keyboard.insertText(' ');
+    expect(await contents(page)).toBe(before);
+  }
+  // Everywhere else a space is a space: before a single dot, between words,
+  // and inside code (a space before ")" in code is the writer's business).
+  await draft(page, 'a|. b');
+  await page.keyboard.insertText(' ');
+  expect(await contents(page)).toBe('a |. b');
+  await draft(page, 'a| b');
+  await page.keyboard.insertText(' ');
+  expect(await contents(page)).toBe('a | b');
+  await draft(page, '`a|)`');
+  await page.keyboard.insertText(' ');
+  expect(await contents(page)).toBe('`a |)`');
+});
+
+test('select all covers the whole note', async ({ page }) => {
+  await draft(page, 'one\ntwo\nthree|');
+  await page.keyboard.press('Control+a');
+  const selected = await page.evaluate(() => ({
+    selection: window.testEditor.getSelection(),
+    length: window.testEditor.getValue().length,
+  }));
+  expect(selected.length).toBe('one\ntwo\nthree'.length);
+  expect(selected.selection).toEqual([0, selected.length]);
+});

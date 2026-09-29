@@ -1,5 +1,5 @@
 import { sourceDirections, majorityDirection } from './direction';
-import { defaultKeymap, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, isolateHistory, history, historyKeymap, selectAll, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
@@ -143,12 +143,26 @@ const directionPlugin = ViewPlugin.fromClass(class {
 
 // The line-number gutter sits on the note's majority side (#10): right for a
 // mostly Persian note, left for a mostly English one. A class, not a bidi
-// override, so the scroller keeps its LTR scroll coordinates.
+// override, so the scroller keeps its LTR scroll coordinates. The majority is
+// cached per document text: the sync runs on every keystroke, and counting
+// the letters of a long note each time is wasted work.
 const gutterSidePlugin = ViewPlugin.fromClass(class {
+  private lastDoc = '';
+  private lastRtl = false;
   constructor(view: EditorView) { this.sync(view); }
-  update(update: ViewUpdate): void { if (update.docChanged) this.sync(update.view); }
+  update(update: ViewUpdate): void {
+    // Also after focus/geometry changes: a note that was restored from a
+    // saved tab (view.setState) gets a fresh plugin instance, but a document
+    // replaced without our own transaction must not leave the old side.
+    if (update.docChanged || update.viewportChanged) this.sync(update.view);
+  }
   sync(view: EditorView): void {
-    view.dom.classList.toggle('cm-satr-gutter-rtl', majorityDirection(view.state.doc.toString()) === 'rtl');
+    const doc = view.state.doc.toString();
+    if (doc !== this.lastDoc) {
+      this.lastDoc = doc;
+      this.lastRtl = majorityDirection(doc) === 'rtl';
+    }
+    view.dom.classList.toggle('cm-satr-gutter-rtl', this.lastRtl);
   }
 });
 
@@ -489,6 +503,7 @@ export class SatrEditor {
         { key: 'Escape', run: (target) => { if (!isFindOpen(target.state)) return false; closeFind(target); return true; } },
         { key: 'F3', run: (target) => { findNext(target); return true; }, shift: (target) => { findPrevious(target); return true; } },
         { key: 'Mod-/', run: toggleComment },
+        { key: 'Mod-a', run: selectAll }, // explicit: select-all must never depend on focus order
         { key: 'Enter', run: enterDisplayMath },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
@@ -659,6 +674,11 @@ export class SatrEditor {
     if (this.isReadOnly) return false;
     const fn = toolbarCommands[command];
     return fn ? fn(this.view) : false;
+  }
+  /** Select the whole note, giving the editor focus so copy works too. */
+  selectAll(): void {
+    this.view.focus();
+    selectAll(this.view);
   }
   findNext(): void { findNext(this.view); }
   findPrevious(): void { findPrevious(this.view); }

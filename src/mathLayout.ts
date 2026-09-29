@@ -135,16 +135,29 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
 
 /** KaTeX sizes its SVG signs (the \vec arrow, stretchy brackets, roots) with
  * em values in width/height attributes. Android's WebView applies the system
- * font scale to CSS text sizes but not to SVG attribute lengths, so the signs
- * stopped scaling while the letters grew (the vec ended up touching its
- * letter). Mirroring the attributes into inline styles — CSS ems follow the
- * text scale — keeps every sign with its letters at any font scale. At scale
- * 1 this is geometrically a no-op; the attributes stay as fallbacks. */
+ * font scale to CSS lengths but not (reliably) to SVG attribute lengths, so
+ * the drawn signs stopped scaling while their letters grew — the vec arrow
+ * ended up sitting on its letter while the print, rendered at text zoom 100,
+ * was right. Writing the same lengths as pixels, computed from the element's
+ * own computed font size (which already carries the system scale), keeps every
+ * sign with its letters at any font scale on every engine. Em values in a
+ * style would do on a desktop browser, but they are exactly what the app's
+ * WebView mis-resolves, so px it is: layoutMath() runs again on every
+ * font-scale change (src/native.ts → main.ts) and re-derives them.
+ *
+ * KaTeX's 400em-wide "stretchy" rule SVGs are clipped by their box and sized
+ * by KaTeX's own CSS (width: 100%), so those are left alone. */
+const EM_LENGTH = /^(-?\d*\.?\d+)em$/;
 export function normalizeKatexSvg(root: HTMLElement): void {
   for (const svg of root.querySelectorAll<SVGElement>('svg[width], svg[height]')) {
-    for (const name of ['width', 'height']) {
+    const font = parseFloat(getComputedStyle(svg).fontSize) || 0;
+    for (const name of ['width', 'height'] as const) {
       const value = svg.getAttribute(name);
-      if (value && !svg.style.getPropertyValue(name)) svg.style.setProperty(name, value);
+      const match = value ? EM_LENGTH.exec(value.trim()) : null;
+      if (!match || !font) continue;
+      const em = Number(match[1]);
+      if (name === 'width' && em > 20) continue; // the stretchy 400em rule
+      svg.style.setProperty(name, `${Math.round(em * font * 100) / 100}px`);
     }
   }
 }

@@ -12,6 +12,7 @@
 import { syntaxTree } from '@codemirror/language';
 import { StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { isDisplayMathContent } from './markdownSyntax';
 
 interface Block { open: number; close: number }
 
@@ -21,6 +22,9 @@ interface Block { open: number; close: number }
 // ("$$" alone on its own lines is the block being written). A pair with
 // nothing between its dollars on one line ("$$$$", "$$ $$") is not math,
 // and an unmatched $$ opens nothing (it is text, not an unfinished block).
+// A pair that has grown a list, a heading, a quote or a fence between its
+// dollars is not math either: those lines mean the writer left the formula,
+// so the whole pair stays plain text (no line-swallowing monospace region).
 // Rescanned on edits.
 function scanBlocks(state: EditorState): Block[] {
   const blocks: Block[] = [];
@@ -44,8 +48,19 @@ function scanBlocks(state: EditorState): Block[] {
         open = line.from + match.index!;
       } else {
         const close = line.from + match.index!;
-        if (close > open + 2 && state.doc.lineAt(close).number > state.doc.lineAt(open).number) blocks.push({ open, close });
-        open = -1;
+        const spansLines = close > open + 2 && state.doc.lineAt(close).number > state.doc.lineAt(open).number;
+        if (spansLines && isDisplayMathContent(state.sliceDoc(open + 2, close))) {
+          blocks.push({ open, close });
+          open = -1;
+        } else if (spansLines) {
+          // A list / heading / fence grew between the dollars: this pair is
+          // plain text, and the dollar that would have closed it may open a
+          // real block further down.
+          open = close;
+        } else {
+          // "$$$$" / "$$ $$": nothing between the dollars, both are text.
+          open = -1;
+        }
       }
     }
   }

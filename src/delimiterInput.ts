@@ -138,9 +138,19 @@ export function deleteDelimiterPair(view: EditorView): boolean {
   return true;
 }
 
+// A space is never wanted right before a closing bracket or an ellipsis:
+// "word )", "word ]" and "word ..." are what an IME (or a quick tap, with
+// autocorrect on) produces, and the writer then has to delete it again.
+// Nothing is inserted and nothing is reported, so no other rule fires.
+const NO_SPACE_BEFORE = /^[)\]}…]|^\.\.\./;
+function spaceBeforeCloser(state: EditorState, pos: number): boolean {
+  return NO_SPACE_BEFORE.test(state.sliceDoc(pos, pos + 3));
+}
+
 const input = EditorView.inputHandler.of((view, from, to, text) => {
   if (view.composing || view.state.readOnly || from !== view.state.selection.main.from || to !== view.state.selection.main.to) return false;
   if (/^(\${1,2}|\*{1,3}|_{1,3}|~{1,2}|={1,2}|%{1,2})$/.test(text)) return insertDelimiter(view, text);
+  if (text === ' ' && from === to && !inCode(view.state, from) && spaceBeforeCloser(view.state, from)) return true;
   // A space in *|* means a bullet, not an empty emphasis. Only remove our
   // own one-character closer, never an existing ** opening/closing mark.
   if (text === ' ' && from === to) {

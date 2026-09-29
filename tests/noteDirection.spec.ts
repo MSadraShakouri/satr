@@ -86,3 +86,43 @@ test('the outline tree flips with the note while rows keep their own direction',
   // Each heading row still runs in its own direction.
   expect(out.rows).toEqual(['auto', 'auto']);
 });
+
+test('a note restored into a living tab keeps the gutter on its side', async ({ page }) => {
+  const out = await page.evaluate(async () => {
+    const { SatrEditor } = await import('/src/editor.ts');
+    const make = (text: string) => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
+      document.body.appendChild(host);
+      const editor = new SatrEditor(host, () => {});
+      editor.setValue(text);
+      return editor;
+    };
+    const read = (editor: InstanceType<typeof SatrEditor>) => {
+      const dom = editor.view.dom;
+      const gutters = dom.querySelector<HTMLElement>('.cm-gutters')!;
+      return {
+        rtlClass: dom.classList.contains('cm-satr-gutter-rtl'),
+        left: getComputedStyle(gutters).left,
+        right: getComputedStyle(gutters).right,
+      };
+    };
+    // showFile() hands an open tab its living state back with restoreSession()
+    // and only then replaces its text: the gutter must not keep the old side
+    // until the next keystroke.
+    const english = make('This note is English');
+    const living = make('این یک متن فارسی است');
+    living.restoreSession(english.view.state);
+    const toEnglish = read(living);
+    const persian = make('این یک متن فارسی است');
+    const back = make('This note is English');
+    back.restoreSession(persian.view.state);
+    const toPersian = read(back);
+    return { toEnglish, toPersian };
+  });
+  expect(out.toEnglish.rtlClass).toBe(false);
+  expect(out.toEnglish.right).toBe('auto');
+  expect(out.toPersian.rtlClass).toBe(true);
+  expect(out.toPersian.right).toBe('0px');
+  expect(out.toPersian.left).toBe('auto');
+});

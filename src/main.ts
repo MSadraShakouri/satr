@@ -1438,7 +1438,19 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     toggleOutline(true);
     sidebar.focusSearch();
+    return;
   }
+  // Select all, also when the note itself hasn't got the focus (a tap on the
+  // title, the drawers, the tab strip...): the note is what "all" means here.
+  // Fields that have their own select-all (the find bar, settings, the file
+  // title) keep it, and the reading view keeps the browser's own select-all.
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'a') return;
+  if (mode === 'preview') return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+  if (editor.view.hasFocus) return; // CodeMirror's own keymap has it
+  event.preventDefault();
+  editor.selectAll();
 });
 editor.view.scrollDOM.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });
 previewPane.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });

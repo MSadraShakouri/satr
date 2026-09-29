@@ -202,3 +202,49 @@ test('a comma wins over an equal sign when both can break', async ({ page }) => 
   expect(report.starts).toEqual([false, false, true]);
   expect(report.commaEndsLine).toBe(true);
 });
+
+test('a break inside parentheses is the last resort', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const breaks = (tex: string) => [...renderMath(tex, true).matchAll(/<span class="math-unit"(?: data-first)?(?: data-break="(\d)")?/g)]
+      .map((m) => m[1] ?? 'first');
+    return {
+      call: breaks('f(x, y) = g(a, b)'),
+      nested: breaks('(a, b) = c'),
+      outside: breaks('a, b = c, d'),
+      group: breaks(String.raw`f\left(x, y\right) = z, w`),
+      oneSide: breaks('a = f(x, y) + g(p, q) = b'),
+    };
+  });
+  // The relation outside the parentheses (2) is preferred to the commas
+  // inside them (4): a value written between brackets holds together.
+  expect(result.call).toEqual(['first', '4', '2', '4']);
+  expect(result.nested).toEqual(['first', '4', '2']);
+  expect(result.oneSide).toEqual(['first', '2', '4', '4', '2']);
+  // Top-level commas keep their ordinary preference (1); \\left…\\right
+  // stays unbreakable at all (nothing to break before the relation).
+  expect(result.outside).toEqual(['first', '1', '2', '1']);
+  expect(result.group).toEqual(['first', '2', '1']);
+});
+
+test('a narrow line breaks at the relation outside the brackets, not inside them', async ({ page }) => {
+  const starts = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const host = document.createElement('article');
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;';
+    host.innerHTML = renderMath('f(x, y) = g(a, b)', true);
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const flow = host.querySelector<HTMLElement>('.math-flow')!;
+    const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
+    const widths = units.map((unit) => unit.getBoundingClientRect().width);
+    // Exactly wide enough for two lines that break at the "=", and not wide
+    // enough for one line: the only break worth taking is the "=".
+    const fits = Math.max(widths[0] + widths[1], widths[2] + widths[3]) + 6;
+    (host.querySelector<HTMLElement>('.math-display')!).style.width = `${fits}px`;
+    layoutMath(host);
+    return { starts: units.map((unit) => unit.classList.contains('is-line-start')), widths };
+  });
+  expect(starts.starts).toEqual([false, false, true, false]);
+});
