@@ -209,6 +209,10 @@ export function renderMarkdown(source: string): string {
   // fenced block or in `code` are text, not math.
   const withMathPlaceholders = normalizedTables.replace(MATH_OR_CODE, (full: string, _i: string, _f: string, _t: string, display: string | undefined, inline: string | undefined) => {
     if (display === undefined && inline === undefined) return full;
+    // "$$" with nothing between on one line ("$$$$", "$$ $$") is plain text;
+    // an empty $$ … $$ block on its own lines is the block being written and
+    // stays a (blank) display line.
+    if (!(display ?? inline ?? '').trim() && (inline !== undefined || !full.includes('\n'))) return full;
     const isDisplay = display !== undefined;
     const id = math.push(renderMath(display ?? inline ?? '', isDisplay)) - 1;
     // Keep the newlines the formula spanned, so later lines keep their numbers.

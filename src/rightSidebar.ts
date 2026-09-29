@@ -33,6 +33,8 @@ export interface SidebarDeps {
   /** Name of the space (or "All files"), for the header. */
   scopeName(): string;
   onResult(path: string, from: number, to: number): void;
+  /** The current note's majority direction; the whole tree flips for it. */
+  noteDir(): 'ltr' | 'rtl';
 }
 export type SearchScope = 'note' | 'all';
 
@@ -254,6 +256,8 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const invalid = isInvalidSearch(query);
     input.classList.toggle('mod-no-match', invalid);
     renderChrome();
+    // The whole tree flips with the note's majority; each row keeps its own.
+    list.dir = deps.noteDir();
     if (invalid) {
       run += 1;
       summary.textContent = 'Invalid regular expression';

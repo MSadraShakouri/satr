@@ -876,6 +876,10 @@ body {
   font-variant-numeric: tabular-nums;
   line-height: calc(var(--note-line-height) * 1.25);
 }
+/* The gutter follows the note's majority direction: on the right for a
+   mostly Persian note. The scroller keeps its direction, so its scroll
+   coordinates (and the selection layer) don't flip with it. */
+.cm-editor.cm-satr-gutter-rtl .cm-gutters { order: 2; left: auto; right: 0; }
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement {
   min-width: calc(3ch + 18px);
   padding: 0 7px 0 11px;
@@ -1278,28 +1282,28 @@ body {
    Not rendered while editing, but clearly not prose either — Obsidian's
    source math (.cm-s-obsidian span.cm-math / .cm-formatting-math): the
    monospace font at code size, italic, with the dollar signs in the accent
-   colour. Math reads left to right, also inside Persian text. */
-.cm-math,
-.cm-editor .cm-line.cm-math-line {
+   colour. Only the things between the dollars are monospace; the dollars
+   themselves keep the note's font. Math reads left to right, also inside
+   Persian text. */
+.cm-math {
   font-family: var(--font-monospace);
   font-style: italic;
-  direction: ltr;
-}
-.cm-math {
   font-size: var(--code-size);
   direction: ltr;
   unicode-bidi: isolate;
 }
 .cm-math-delim {
   color: var(--text-accent);
-  font-family: var(--font-monospace);
-  font-style: normal;
 }
-.cm-editor .cm-line.cm-math-line {
-  /* $$ blocks: 16px x 0.875, on the same line pitch as the text */
-  font-size: var(--code-size);
-  line-height: calc(var(--note-line-height) * 1.1428571429);
-  text-align: left;
+/* Inside math source nothing is bold, struck or highlighted — a `**`, `~~`
+   or `==` is just part of the formula (11). Beats the parser's own emphasis
+   styles on nested spans. */
+.cm-math,
+.cm-math * {
+  font-weight: normal !important;
+  font-style: italic !important;
+  text-decoration: none !important;
+  background: none !important;
 }
 
 /* ---- Bottom bar (no keyboard) ----

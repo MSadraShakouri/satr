@@ -17,6 +17,20 @@ export function strongDirection(text: string): TextDirection | null {
   return /[\u200f\u061c\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u.test(first) ? 'rtl' : 'ltr';
 }
 
+/** The note's own majority: which script has more strong letters. Math, code
+ * and URLs don't vote. The line-number gutter and the outline tree follow
+ * this. */
+export function majorityDirection(markdown: string): TextDirection {
+  const masked = markdown.replace(MATH_OR_CODE, (match: string) => match.replace(/[^\n]/g, ' '));
+  let rtl = 0, ltr = 0;
+  for (const ch of masked) {
+    if (!/\p{L}/u.test(ch)) continue;
+    if (/[\u200f\u061c\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u.test(ch)) rtl += 1;
+    else ltr += 1;
+  }
+  return rtl > ltr ? 'rtl' : 'ltr';
+}
+
 export function resolveDirections(units: readonly DirectionUnit[]): TextDirection[] {
   const result: TextDirection[] = [];
   const headings: { level: number; dir: TextDirection }[] = [];
@@ -84,20 +98,17 @@ export function sourceDirections(markdown: string): TextDirection[] {
   let masked = source.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, blank)
     .replace(/<!--[\s\S]*?-->/g, blank)
     .replace(/^ {0,3}\[(?!\^)[^\]]+\]:[^\n]*$/gm, blank);
-  masked = masked.replace(MATH_OR_CODE, (match: string, _a, _b, _c, _d, _e, offset: number) => {
+  masked = masked.replace(MATH_OR_CODE, (match: string, _a, _b, _c, display: string | undefined, inline: string | undefined, offset: number) => {
+    // "$$" with nothing between on one line and a lone unpaired "$$" are
+    // text, not math; an empty $$ … $$ block is still a math block.
+    if (display !== undefined && !display.trim() && !match.includes('\n')) return match;
+    if (inline !== undefined && !inline.trim()) return match;
     line += source.slice(cursor, offset).split('\n').length - 1;
     const lines = match.split('\n').length - 1;
     for (let i = line; i <= line + lines; i++) ignored.add(i);
     line += lines; cursor = offset + match.length;
     return blank(match);
   });
-  // An unfinished display block while typing is math, not English evidence.
-  const unclosed = /(?<!\\)\$\$/.exec(masked);
-  if (unclosed) {
-    const from = masked.slice(0, unclosed.index).split('\n').length - 1;
-    for (let i = from; i < originalLines.length; i++) ignored.add(i);
-    masked = masked.slice(0, unclosed.index) + blank(masked.slice(unclosed.index));
-  }
   const lines = masked.split('\n');
   const units: DirectionUnit[] = lines.map((raw, index) => {
     const text = withoutSyntax(raw);

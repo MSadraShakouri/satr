@@ -62,3 +62,42 @@ test('a display formula grows to its content instead of the strut height', async
   expect(report.plainMin.every((min) => min === '')).toBe(true);
   expect(report.siteMin).toBe('');
 });
+
+test('KaTeX SVG signs carry their em sizes in CSS so they scale with the text', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const host = document.createElement('div');
+    host.style.cssText = 'width: 380px; position: fixed; left: 0; top: 0; background: white;';
+    host.innerHTML = renderMath('\\vec{u} + \\sqrt{2} + \\left(\\frac{a}{b}\\right)', true);
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    layoutMath(host);
+    const styled = [...host.querySelectorAll('svg')]
+      .filter((svg) => svg.hasAttribute('width') || svg.hasAttribute('height'))
+      .map((svg) => ({
+        width: svg.style.getPropertyValue('width'),
+        height: svg.style.getPropertyValue('height'),
+        attrWidth: svg.getAttribute('width'),
+        attrHeight: svg.getAttribute('height'),
+      }));
+    const measure = () => {
+      const arrow = host.querySelector<SVGElement>('.accent-body svg')!.getBoundingClientRect();
+      const u = host.querySelector('.mord.mathnormal')!.getBoundingClientRect();
+      return { arrowOverLetter: arrow.width / u.width, letterWidth: u.width };
+    };
+    const at16 = measure();
+    host.style.fontSize = '32px';
+    const at32 = measure();
+    return { styled, at16, at32 };
+  });
+  expect(report.styled.length).toBeGreaterThan(0);
+  for (const s of report.styled) {
+    // The sign's box is sized in CSS (inline style), not only in attributes.
+    if (s.attrWidth) expect(s.width).toBe(s.attrWidth);
+    if (s.attrHeight) expect(s.height).toBe(s.attrHeight);
+  }
+  // The vec arrow keeps its proportion over the letter at any text size.
+  expect(report.at32.letterWidth / report.at16.letterWidth).toBeGreaterThan(1.9);
+  expect(Math.abs(report.at32.arrowOverLetter - report.at16.arrowOverLetter)).toBeLessThan(0.01);
+});

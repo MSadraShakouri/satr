@@ -139,3 +139,66 @@ test('the theorem note keeps each display line and wraps the sentences', async (
   expect(html).toContain('continuous');
   expect(html).not.toContain('katex-error');
 });
+
+test('break points carry their preference: line ends, then commas, then relations, then spaces', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const breaks = (tex: string) => [...renderMath(tex, true).matchAll(/<span class="math-unit"(?: data-first)?(?: data-break="(\d)")?/g)]
+      .map((m) => m[1] ?? 'first');
+    return {
+      lines: breaks('a = b\nc = d'),
+      comma: breaks('a, b'),
+      commaLine: breaks('x = y,\nz = w'),
+      words: breaks('hello world'),
+    };
+  });
+  expect(result.lines).toEqual(['first', '2', '0', '2']);
+  expect(result.comma).toEqual(['first', '1']);
+  // A comma at the writer's line end breaks at the line end (0), comma stays.
+  expect(result.commaLine).toEqual(['first', '2', '0', '2']);
+  expect(result.words).toEqual(['first', '3']);
+});
+
+test('a source line end wins over an equal sign when both can break', async ({ page }) => {
+  const starts = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const host = document.createElement('article');
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;';
+    host.innerHTML = renderMath('aaa = bbb\ncc', true);
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const flow = host.querySelector<HTMLElement>('.math-flow')!;
+    const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
+    const widths = units.map((u) => u.getBoundingClientRect().width);
+    // The first two units fit on one line; all three do not. Breaking at the
+    // line end is less even than breaking at the "=", yet preferred.
+    (host.querySelector<HTMLElement>('.math-display')!).style.width = `${widths[0] + widths[1] + 2}px`;
+    layoutMath(host);
+    return units.map((u) => u.classList.contains('is-line-start'));
+  });
+  expect(starts).toEqual([false, false, true]);
+});
+
+test('a comma wins over an equal sign when both can break', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const host = document.createElement('article');
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;';
+    host.innerHTML = renderMath('aaa = bbb, ccc', true);
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const flow = host.querySelector<HTMLElement>('.math-flow')!;
+    const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
+    const widths = units.map((u) => u.getBoundingClientRect().width);
+    (host.querySelector<HTMLElement>('.math-display')!).style.width = `${widths[0] + widths[1] + 2}px`;
+    layoutMath(host);
+    return {
+      starts: units.map((u) => u.classList.contains('is-line-start')),
+      commaEndsLine: (units[1].querySelector('.math-plain')?.textContent ?? '').trim().endsWith(','),
+    };
+  });
+  expect(report.starts).toEqual([false, false, true]);
+  expect(report.commaEndsLine).toBe(true);
+});

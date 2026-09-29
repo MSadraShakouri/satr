@@ -13,14 +13,17 @@
 //    reopened around each word, so the space between those words is an
 //    ordinary break. Spaces inside other braces still are not.
 //
-// 2. Line breaking at relations. The formula is split at its top-level
-//    relations (=, ≡, ≈, ≤, arrows, ∴ ...), never at + or −, and never inside
+// 2. Line breaking. The formula is split at its top-level break points,
+//    preferred in this order: the writer's own line ends, then commas, then
+//    relations (=, ≡, ≈, ≤, arrows, ∴ ...), then the kept word spaces.
+//    Commas stay at the end of the line they break; a line that ends at a
+//    relation repeats it on the next line ("a = b =" / "= c"), the usual
+//    convention for continued relations. Never at + or −, and never inside
 //    braces, \left…\right or environments. Each piece is rendered as an
-//    unbreakable unit; if a line ends at a relation, the next line repeats it
-//    ("a = b =" / "= c"), the usual convention for continued relations. The
-//    actual line choice happens in layoutMath() (src/mathLayout.ts), once the
-//    units can be measured: display math is balanced (fewest lines, then the
-//    most even line widths); inline math wraps with the paragraph.
+//    unbreakable unit; the actual line choice happens in layoutMath()
+//    (src/mathLayout.ts), once the units can be measured: display math is
+//    balanced (fewest lines, then preferred break points, then the most even
+//    line widths); inline math wraps with the paragraph.
 import katex from 'katex';
 
 const LETTER = /[A-Za-z\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
@@ -112,7 +115,7 @@ function liftTextCommand(name: string, inner: string): string {
     if (c === '\\') {
       const cmd = commandName(lifted, i);
       if (cmd) { i += cmd.length; continue; }
-      i += 1;
+      i += 1; // an escaped character
       continue;
     }
     if (c === '{') depth += 1;
@@ -127,35 +130,6 @@ function liftTextCommand(name: string, inner: string): string {
   return parts.map((part) => `\\${name}{${part}}`).join(SPACE);
 }
 
-// Splits a formula at its kept spaces outside braces, \left…\right and
-// environments. Spaces inside those stay spaces. Word spaces inside a
-// top-level text command are lifted out first, so they split too.
-function splitWords(tex: string): string[] {
-  tex = liftTextBreaks(tex);
-  const words: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < tex.length; i += 1) {
-    const c = tex[i];
-    if (c === '\\') {
-      const name = /^\\([A-Za-z]+)/.exec(tex.slice(i))?.[1];
-      if (name === 'left' || name === 'begin') depth += 1;
-      else if (name === 'right' || name === 'end') depth -= 1;
-      if (name) { i += name.length; continue; }
-      i += 1; // an escaped character
-      continue;
-    }
-    if (c === '{') depth += 1;
-    else if (c === '}') depth -= 1;
-    else if (c === SPACE && depth === 0) {
-      words.push(tex.slice(start, i));
-      start = i + 1;
-    }
-  }
-  words.push(tex.slice(start));
-  return words.map((word) => word.split(SPACE).join('\\ ')).filter((word) => word.length);
-}
-
 // Relations a line may break after. Vertical arrows are left out on purpose.
 const RELATIONS = new Set([
   'le', 'leq', 'ge', 'geq', 'leqslant', 'geqslant', 'ne', 'neq', 'lt', 'gt',
@@ -168,13 +142,30 @@ const RELATIONS = new Set([
   'to', 'gets', 'rightarrow', 'leftarrow', 'Rightarrow', 'Leftarrow', 'leftrightarrow', 'Leftrightarrow',
   'longrightarrow', 'longleftarrow', 'Longrightarrow', 'Longleftarrow', 'longleftrightarrow', 'Longleftrightarrow',
   'implies', 'impliedby', 'iff', 'mapsto', 'longmapsto', 'hookrightarrow', 'hookleftarrow',
-  'twoheadrightarrow', 'rightharpoonup', 'rightleftharpoons', 'leadsto',
+  'twoheadrightarrow', 'rightharpoonup', 'rightrightarrows', 'rightleftharpoons', 'leadsto',
 ]);
 // Extensible arrows take an optional [below] and a {above} argument.
 const EXT_ARROWS = new Set(['xrightarrow', 'xleftarrow', 'xRightarrow', 'xLeftarrow', 'xleftrightarrow', 'xLeftrightarrow', 'xmapsto', 'xlongequal', 'xtofrom']);
 const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 
-type Split = { terms: string[]; relations: string[] };
+// Break points, preferred in this order: the writer's own line ends, then
+// commas, then relations (which repeat on the next line), then the spaces
+// typed between words. The comma stays at the end of the line it breaks.
+interface Cut { prio: number; rel: string; comma: boolean; prefix: string }
+const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', comma: false, prefix: '', ...fields });
+function mergeCuts(a: Cut, b: Cut): Cut {
+  return newCut(Math.min(a.prio, b.prio), {
+    rel: [a.rel, b.rel].filter(Boolean).join(' '),
+    comma: a.comma || b.comma,
+    prefix: a.prefix || b.prefix,
+  });
+}
+function cutAfter(cut: Cut | null): string {
+  return cut ? `${cut.rel ? ` ${cut.rel} {}` : ''}${cut.comma ? ',' : ''}` : '';
+}
+function cutCont(cut: Cut | null): string {
+  return cut?.rel ? `${cut.rel} ` : '';
+}
 
 function skipGroup(tex: string, i: number, open: string, close: string): number {
   if (tex[i] !== open) return i;
@@ -202,28 +193,28 @@ function skipDelimiter(tex: string, i: number): number {
   return k;
 }
 
-/** Split at top-level relations; null when there's nothing to split. */
-export function splitRelations(tex: string): Split | null {
+interface Split { terms: string[]; cuts: Cut[] }
+
+/** Split at top-level break points; null when the writer's own layout rules
+ * (manual \\ line breaks, alignment) mean the formula must be left alone. */
+function splitCuts(rawTex: string): Split | null {
+  const tex = liftTextBreaks(rawTex);
   const terms: string[] = [];
-  const relations: string[] = [];
-  let depth = 0;
+  const cuts: Cut[] = [];
   let termStart = 0;
-  let i = 0;
-  const cut = (from: number, to: number): void => {
+  const cut = (from: number, to: number, descriptor: Cut): void => {
     const term = tex.slice(termStart, from);
-    const previous = term.trimEnd().slice(-1);
-    // "x^=" / "a_=" : a script, not a relation.
-    if (previous === '^' || previous === '_') return;
-    if (!term.trim() && relations.length) {
-      relations[relations.length - 1] += ' ' + tex.slice(from, to); // "\le =" → one relation
-    } else if (!term.trim()) {
-      return; // relation at the very start: nothing to break after
+    if (!term.trim() && !cuts.length) return; // nothing to break after at the start
+    if (!term.trim()) {
+      cuts[cuts.length - 1] = mergeCuts(cuts[cuts.length - 1], descriptor);
     } else {
       terms.push(term);
-      relations.push(tex.slice(from, to));
+      cuts.push(descriptor);
     }
     termStart = to;
   };
+  let depth = 0;
+  let i = 0;
   while (i < tex.length) {
     const c = tex[i];
     if (c === '\\') {
@@ -243,82 +234,122 @@ export function splitRelations(tex: string): Split | null {
         // \not= , \not\equiv ...
         let end = skipSpaces(tex, k);
         if (tex[end] === '\\') { end += 1; while (LATIN.test(tex[end] ?? '')) end += 1; } else end += 1;
-        cut(i, end);
+        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
       if (depth === 0 && EXT_ARROWS.has(name)) {
         let end = skipGroup(tex, skipSpaces(tex, k), '[', ']');
         end = skipGroup(tex, skipSpaces(tex, end), '{', '}');
-        cut(i, end);
+        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
-      if (depth === 0 && RELATIONS.has(name)) { cut(i, k); i = k; continue; }
+      if (depth === 0 && RELATIONS.has(name)) {
+        cut(i, k, newCut(2, { rel: tex.slice(i, k) }));
+        i = k;
+        continue;
+      }
       i = k;
       continue;
     }
-    if (c === '{') depth += 1;
-    else if (c === '}') depth -= 1;
-    else if (c === '&' && depth === 0) return null; // alignment: leave alone
-    else if (depth === 0 && c === ':' && tex[i + 1] === '=') { cut(i, i + 2); i += 2; continue; }
-    else if (depth === 0 && (c === '=' || c === '<' || c === '>')) { cut(i, i + 1); i += 1; continue; }
+    if (c === '{') { depth += 1; i += 1; continue; }
+    if (c === '}') { depth -= 1; i += 1; continue; }
+    if (c === '&' && depth === 0) return null; // alignment: leave alone
+    if (c === '\n' && depth === 0) {
+      cut(i, i + 1, newCut(0)); // the writer's own line end, preferred
+      i += 1;
+      continue;
+    }
+    if (c === SPACE && depth === 0) {
+      cut(i, i + 1, newCut(3, { prefix: '\\ ' }));
+      i += 1;
+      continue;
+    }
+    if (c === ',' && depth === 0) {
+      cut(i, i + 1, newCut(1, { comma: true }));
+      i += 1;
+      continue;
+    }
+    if (depth === 0 && c === ':' && tex[i + 1] === '=') {
+      cut(i, i + 2, newCut(2, { rel: ':=' }));
+      i += 2;
+      continue;
+    }
+    if (depth === 0 && (c === '=' || c === '<' || c === '>')) {
+      cut(i, i + 1, newCut(2, { rel: c }));
+      i += 1;
+      continue;
+    }
     i += 1;
   }
   const last = tex.slice(termStart);
-  if (!relations.length) return null;
-  if (!last.trim()) {
-    // Trailing relation ("a = b ="): glue it back onto the last term.
-    const rel = relations.pop()!;
-    terms[terms.length - 1] += ` ${rel}`;
-    return relations.length ? { terms, relations } : null;
+  if (!last.trim() && cuts.length) {
+    // Trailing break point ("a = b ="): glue it back onto the last term.
+    const trailing = cuts.pop()!;
+    const glued = (trailing.rel ? ` ${trailing.rel}` : '') + (trailing.comma ? ',' : '');
+    terms[terms.length - 1] += glued;
+    return terms.length > 1 ? { terms, cuts } : null;
   }
-  terms.push(last);
-  return { terms, relations };
+  if (last) terms.push(last);
+  return terms.length > 1 ? { terms, cuts } : null;
 }
 
 const render = (tex: string, displayMode = false): string =>
   katex.renderToString(tex, { displayMode, throwOnError: false });
 
+// Math digit display (Settings → Editor): formulas can be shown with one
+// digit set all through — including \text, \texttt and \tag — without the
+// note ever being changed. "Auto" leaves the writer's digits alone.
+export type MathDigits = 'auto' | 'english' | 'persian';
+const DIGIT_SETS = ['0123456789', '۰۱۲۳۴۵۶۷۸۹', '٠١٢٣٤٥٦٧٨٩'];
+let digitMode: MathDigits = 'auto';
+export function setMathDigits(mode: MathDigits): void { digitMode = mode; }
+function mapDigits(tex: string): string {
+  if (digitMode === 'auto') return tex;
+  const to = DIGIT_SETS[digitMode === 'persian' ? 1 : 0];
+  return tex.replace(/[0-9\u06f0-\u06f9\u0660-\u0669]/g, (digit) => {
+    const set = digit <= '9' ? 0 : digit >= '\u06f0' ? 1 : 2;
+    return to[DIGIT_SETS[set].indexOf(digit)];
+  });
+}
+
 export function renderMath(raw: string, display: boolean): string {
   // Empty display math is still a blank display line, not zero-height KaTeX.
   if (display && !raw.trim()) return '<div class="math-display"><br></div>';
-  const marked = markMathSpaces(raw);
+  const marked = markMathSpaces(mapDigits(raw));
   const tex = marked.split(SPACE).join('\\ ');
   const styleMatch = STYLE_PREFIX.exec(tex);
   const style = (display ? '\\displaystyle ' : '') + (styleMatch ? styleMatch[0] : '');
   const body = styleMatch ? marked.slice(styleMatch[0].length) : marked;
   // Manual line breaks and alignment are the writer's own layout: left alone.
   const manual = /\\\\|&/.test(body);
-  const split = splitRelations(body) ?? (manual ? null : { terms: [body], relations: [] });
+  const split = manual ? null : splitCuts(body);
   if (!split) {
     if (display) return `<div class="math-display">${render(tex, true)}</div>`;
     return `<span class="math-flow"><span class="math-unit">${render(tex)}</span></span>`;
   }
-  // The pieces a line may break between: each term split at its word spaces.
-  // A piece after a relation repeats it when it starts a line; a piece after
-  // a space drops the space there.
-  const pieces: { tex: string; relation: string | null; spaced: boolean; after: string }[] = [];
-  split.terms.forEach((term, index) => {
-    const words = splitWords(term);
-    words.forEach((word, w) => pieces.push({
-      tex: word,
-      relation: w === 0 && index > 0 ? split.relations[index - 1] : null,
-      spaced: w > 0,
-      after: w === words.length - 1 && index < split.relations.length ? ` ${split.relations[index]} {}` : '',
-    }));
-  });
+  // Each piece ends at a break point: the piece plus what stays on its line
+  // (a comma, or a relation that repeats on the next line). The form that
+  // starts a line repeats the relation; a space there is dropped.
+  const pieces = split.terms.map((term, index) => ({
+    tex: term.split(SPACE).join('\\ '),
+    before: index > 0 ? split.cuts[index - 1] : null,
+    after: index < split.cuts.length ? split.cuts[index] : null,
+  }));
   if (pieces.length < 2) {
     if (display) return `<div class="math-display">${render(tex, true)}</div>`;
     return `<span class="math-flow"><span class="math-unit">${render(tex)}</span></span>`;
   }
-  // unit = the piece + the relation after it (+ "{}" so it keeps its right
-  // spacing); the continuation form is how it looks at the start of a line.
+  // unit = the piece + what follows it; the continuation form is how it
+  // looks at the start of a line. data-break is the cut before the unit,
+  // in the order layoutMath() should prefer to break at.
   const units = pieces.map((piece, index) => {
-    const plain = render(`${style}${piece.spaced ? '\\ ' : ''}${piece.tex}${piece.after}`);
+    const after = cutAfter(piece.after);
+    const plain = render(`${style}${piece.before?.prefix ?? ''}${piece.tex}${after}`);
     if (index === 0) return `<span class="math-unit" data-first><span class="math-plain">${plain}</span></span>`;
-    const cont = render(`${style}${piece.relation ? `${piece.relation} ` : ''}${piece.tex}${piece.after}`);
-    return `<span class="math-unit"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
+    const cont = render(`${style}${cutCont(piece.before)}${piece.tex}${after}`);
+    return `<span class="math-unit" data-break="${piece.before!.prio}"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
   });
   const flow = `<span class="math-flow${display ? ' is-display' : ''}" data-units="${units.length}">${units.join('<wbr>')}</span>`;
   return display ? `<div class="math-display">${flow}</div>` : flow;
