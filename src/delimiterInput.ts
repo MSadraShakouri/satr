@@ -141,9 +141,14 @@ export function deleteDelimiterPair(view: EditorView): boolean {
 const input = EditorView.inputHandler.of((view, from, to, text) => {
   if (view.composing || view.state.readOnly || from !== view.state.selection.main.from || to !== view.state.selection.main.to) return false;
   if (/^(\${1,2}|\*{1,3}|_{1,3}|~{1,2}|={1,2}|%{1,2})$/.test(text)) return insertDelimiter(view, text);
-  // A space in *|* means a bullet, not an empty emphasis. Only remove our
-  // own one-character closer, never an existing ** opening/closing mark.
+  // Don't add a space when a closing bracket or punctuation sits right after
+  // the caret — e.g. "foo|)" should stay "foo|)" not "foo |)" and autocorrect
+  // should not insert a space before it.
   if (text === ' ' && from === to) {
+    const after = view.state.sliceDoc(to, to + 1);
+    if (/[)\]}».,;:!?،؛]/.test(after)) {
+      return true;
+    }
     const pair = view.state.field(pairs).find((p) => p.mark.length === 1 && p.mark !== '$' && p.from + 1 === from && p.to - 1 === to);
     if (pair) {
       view.dispatch({ changes: { from, to: from + 1, insert: ' ' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });

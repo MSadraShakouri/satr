@@ -8,7 +8,7 @@
 // source for now.
 import { syntaxTree } from '@codemirror/language';
 import type { Range } from '@codemirror/state';
-import { inMath } from './mathSource';
+import { inMath, overlapsMath } from './mathSource';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNodeRef } from '@lezer/common';
 import { editFootnote, findDefinition } from './footnoteDialog';
@@ -150,7 +150,7 @@ function build(view: EditorView): DecorationSet {
           case 'Highlight': {
             // Inside math source these are just characters of the formula:
             // `**` is never bold, never revealed or hidden (11).
-            if (inMath(state, node.from)) return;
+            if (inMath(state, node.from) || inMath(state, node.to - 1) || overlapsMath(state, node.from, node.to)) return;
             if (touches(node.from, node.to)) return;
             const mark = node.name === 'Strikethrough' ? 'StrikethroughMark' : node.name === 'Highlight' ? 'HighlightMark' : 'EmphasisMark';
             for (let child = node.node.firstChild; child; child = child.nextSibling) {

@@ -137,15 +137,37 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
  * em values in width/height attributes. Android's WebView applies the system
  * font scale to CSS text sizes but not to SVG attribute lengths, so the signs
  * stopped scaling while the letters grew (the vec ended up touching its
- * letter). Mirroring the attributes into inline styles — CSS ems follow the
- * text scale — keeps every sign with its letters at any font scale. At scale
- * 1 this is geometrically a no-op; the attributes stay as fallbacks. */
+ * letter). On the web at scale 1 this is invisible; on Android with a large
+ * system font it makes \vec{u} overlap. The fix mirrors the em attributes
+ * into CSS px values computed from the parent's *scaled* font size, so the
+ * SVG grows exactly like the surrounding text. At scale 1 the px value is
+ * geometrically identical to the original em, so the attributes stay as
+ * fallbacks and print (which is fixed-scale) is unchanged. */
 export function normalizeKatexSvg(root: HTMLElement): void {
-  for (const svg of root.querySelectorAll<SVGElement>('svg[width], svg[height]')) {
-    for (const name of ['width', 'height']) {
-      const value = svg.getAttribute(name);
-      if (value && !svg.style.getPropertyValue(name)) svg.style.setProperty(name, value);
-    }
+  for (const svg of root.querySelectorAll<SVGElement>('svg')) {
+    const parent = svg.parentElement as HTMLElement | null;
+    if (!parent) continue;
+    const parentFont = parseFloat(getComputedStyle(parent).fontSize);
+    if (!Number.isFinite(parentFont) || parentFont <= 0) continue;
+    const parseEm = (v: string | null): number | null => {
+      if (!v) return null;
+      const m = /^\s*([\d.]+)em\s*$/.exec(v);
+      return m ? parseFloat(m[1]) : null;
+    };
+    // Prefer the attribute (KaTeX's intended size), fallback to inline style
+    // that is already em (e.g. \vec has style="width:0.471em").
+    const wAttr = svg.getAttribute('width');
+    const hAttr = svg.getAttribute('height');
+    const wStyle = svg.style.getPropertyValue('width');
+    const hStyle = svg.style.getPropertyValue('height');
+    const wEm = parseEm(wAttr) ?? parseEm(wStyle);
+    const hEm = parseEm(hAttr) ?? parseEm(hStyle);
+    if (wEm !== null) svg.style.setProperty('width', `${wEm * parentFont}px`);
+    if (hEm !== null) svg.style.setProperty('height', `${hEm * parentFont}px`);
+    // For sqrt and other stretchy symbols the SVG is intentionally 400em
+    // wide with a slice viewBox; its parent (.hide-tail) is overflow-hidden
+    // and only 0.853em wide. Setting width to px based on parent font keeps
+    // the slice geometry but scaled.
   }
 }
 

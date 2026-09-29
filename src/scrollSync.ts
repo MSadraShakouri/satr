@@ -29,7 +29,7 @@ export function editorScroll(view: EditorView): number {
   return first + (last - first + 1) * into;
 }
 
-export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true): void {
+export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false): void {
   const { doc } = view.state;
   if (!(position > 0)) { scrollInstantly(view.scrollDOM, 0); return; }
   const index = Math.min(doc.lines - 1, Math.floor(position));
@@ -43,10 +43,18 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
     scrollInstantly(view.scrollDOM, view.scrollDOM.scrollTop + target - top);
   };
   // Off-screen line heights are estimates until CodeMirror measures them:
-  // jump, let it measure, then correct.
+  // jump, let it measure, then correct. With settle, keep correcting as math
+  // and tables cause height changes.
   place();
   view.requestMeasure({ read: () => null, write: () => place() });
   window.requestAnimationFrame(() => window.requestAnimationFrame(place));
+  if (!settle) return;
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    place();
+    window.setTimeout(place, 120);
+    window.setTimeout(place, 350);
+  }));
+  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(place));
 }
 
 function anchors(preview: HTMLElement): HTMLElement[] {
@@ -63,6 +71,9 @@ export function previewScroll(pane: HTMLElement, preview: HTMLElement): number {
     const lines = Number(el.dataset.lines) || 1;
     if (rect.bottom <= top) { passed = line + lines; continue; }
     if (rect.top >= top) return index === 0 ? 0 : Math.max(passed, line);
+    // Inside a section that may contain tall math/tables: the proportional
+    // mapping uses the section's actual rendered height, which already
+    // includes math/table heights, so source line -> pixel stays stable.
     return line + lines * (top - rect.top) / Math.max(1, rect.height);
   }
   return passed;
@@ -80,7 +91,13 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
       const line = Number(el.dataset.line);
       const lines = Number(el.dataset.lines) || 1;
       if (position < line) { target = rect.top; break; }
-      if (position < line + lines) { target = rect.top + (position - line) / lines * rect.height; break; }
+      if (position < line + lines) {
+        // For sections containing math/tables, the height is already the
+        // rendered height. Using proportional mapping inside the section
+        // keeps the scroll stable when math is tall.
+        target = rect.top + (position - line) / lines * rect.height;
+        break;
+      }
     }
     if (target === null) target = list[list.length - 1].getBoundingClientRect().bottom;
     scrollInstantly(pane, pane.scrollTop + target - pane.getBoundingClientRect().top);
@@ -90,10 +107,28 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   // Rendered math and tables are taller or shorter than their source lines,
   // and the numbers move under us after the jump: KaTeX's fonts, the Android
   // grow-box pass, lazy images. Measure the rendered heights again once
-  // they settle, and compensate the scroll with the new ones.
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+  // they settle, and compensate the scroll with the new ones. Do it several
+  // times so a tall display math that changes height after font load doesn't
+  // leave the user feeling a jump.
+  const settlePlace = (): void => {
+    if (!isCurrent()) return;
     place();
-    window.setTimeout(place, 120);
+  };
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    settlePlace();
+    window.setTimeout(settlePlace, 120);
+    window.setTimeout(settlePlace, 350);
   }));
-  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(place));
+  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(settlePlace));
+  // Images and KaTeX may load after fonts; observe height changes.
+  if (typeof ResizeObserver !== 'undefined') {
+    let observed = 0;
+    const ro = new ResizeObserver(() => {
+      if (!isCurrent() || observed++ > 8) { ro.disconnect(); return; }
+      settlePlace();
+    });
+    // Observe the preview container; any math/table growth changes it.
+    ro.observe(preview);
+    window.setTimeout(() => ro.disconnect(), 2000);
+  }
 }

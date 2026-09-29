@@ -1299,8 +1299,12 @@ body {
    or `==` is just part of the formula (11). Beats the parser's own emphasis
    styles on nested spans. */
 .cm-math,
-.cm-math * {
-  font-weight: normal !important;
+.cm-math *,
+.cm-editor .cm-content .cm-math,
+.cm-editor .cm-content .cm-math *,
+.cm-editor .cm-line .cm-math,
+.cm-editor .cm-line .cm-math * {
+  font-weight: 400 !important;
   font-style: italic !important;
   text-decoration: none !important;
   background: none !important;

@@ -8,23 +8,29 @@
 // the accent colour in the note's own font, and a line holding only "$$"
 // never turns monospace. Only a matched $$ … $$ pair with real content is
 // math — a lone unpaired $$ (which opens nothing) and $$ with nothing
-// between are plain text.
+// between are plain text. A display block never runs through a list, heading,
+// quote, rule or footnote — those stop the monospace, as in Obsidian.
 import { syntaxTree } from '@codemirror/language';
 import { StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 
 interface Block { open: number; close: number }
 
-// Multiline display math. Count only unescaped delimiters outside code;
-// same-line pairs are inline spans. A pair becomes a block when its
-// delimiters sit on different lines — including the empty writing line
-// ("$$" alone on its own lines is the block being written). A pair with
-// nothing between its dollars on one line ("$$$$", "$$ $$") is not math,
-// and an unmatched $$ opens nothing (it is text, not an unfinished block).
-// Rescanned on edits.
+// Block boundaries that should stop a display-math span from continuing.
+export function isMathBlockBoundary(text: string): boolean {
+  return /^\s{0,3}#{1,6}(?:\s|$)/.test(text) ||
+    /^\s{0,3}(?:=+|-+)\s*$/.test(text) ||
+    /^\s*[-*+]\s+/.test(text) ||
+    /^\s*[0-9۰-۹٠-٩]+[.)]\s+/.test(text) ||
+    /^\s*>/.test(text) ||
+    /^\s{0,3}(?:-{3,}|_{3,}|\*{3,})\s*$/.test(text) ||
+    /^\s*\[\^/.test(text);
+}
+
 function scanBlocks(state: EditorState): Block[] {
   const blocks: Block[] = [];
   let open = -1;
+  let openLine = -1;
   let fence: string | null = null;
   for (let n = 1; n <= state.doc.lines; n += 1) {
     const line = state.doc.line(n);
@@ -35,15 +41,37 @@ function scanBlocks(state: EditorState): Block[] {
       else if (fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length) fence = null;
       continue;
     }
-    if (fence !== null || !text.includes('$$')) continue;
+    if (fence !== null) continue;
+
+    if (open >= 0 && isMathBlockBoundary(text) && !text.includes('$$')) {
+      const between = state.sliceDoc(open + 2, line.from);
+      if (between.trim() && state.doc.lineAt(open).number < n) {
+        const prev = state.doc.line(n - 1);
+        blocks.push({ open, close: prev.to });
+      }
+      open = -1;
+      continue;
+    }
+    if (!text.includes('$$')) continue;
+
     for (const match of text.matchAll(/\$\$/g)) {
       let slashes = 0;
-      for (let i = match.index! - 1; i >= 0 && text[i] === '\\'; i -= 1) slashes += 1;
+      for (let i = match.index! - 1; i >= 0 && text[i] === '\\\\'; i -= 1) slashes += 1;
       if (slashes % 2 || (open < 0 && isCode(state, line.from + match.index!))) continue;
       if (open < 0) {
         open = line.from + match.index!;
+        openLine = n;
       } else {
         const close = line.from + match.index!;
+        let hasBoundary = false;
+        for (let k = openLine + 1; k < n; k += 1) {
+          if (isMathBlockBoundary(state.doc.line(k).text)) { hasBoundary = true; break; }
+        }
+        if (hasBoundary) {
+          open = close;
+          openLine = n;
+          continue;
+        }
         if (close > open + 2 && state.doc.lineAt(close).number > state.doc.lineAt(open).number) blocks.push({ open, close });
         open = -1;
       }
@@ -57,8 +85,6 @@ export const mathBlocks = StateField.define<Block[]>({
   update: (value, tr) => (tr.docChanged ? scanBlocks(tr.state) : value),
 });
 
-// Inline math on one line, including single-character and spaced formulas.
-// No digit right after the closing dollar ("$5 and $6" isn't math).
 const INLINE = /(?<!\$)\$\$(.*?)\$\$|(?<!\$)\$([^$\n]+?)\$(?![\d$])/g;
 
 function isCode(state: EditorState, pos: number): boolean {
@@ -74,12 +100,9 @@ function isCode(state: EditorState, pos: number): boolean {
 function inlineSpans(state: EditorState, lineFrom: number, text: string): { from: number; to: number; open: number; close: number }[] {
   if (!text.includes('$')) return [];
   const spans = [];
-  // Mask escaped dollars without shifting offsets; an even run of slashes
-  // leaves the dollar active, exactly as the typing handler does.
   const unescaped = text.replace(/\\+\$/g, (run) => (run.length - 1) % 2 ? run.slice(0, -1) + '\0' : run);
   INLINE.lastIndex = 0;
   for (const m of unescaped.matchAll(INLINE)) {
-    // "$$" with nothing between is not math either.
     if (!(m[1] ?? m[2]).trim()) continue;
     const from = lineFrom + m.index;
     if (isCode(state, from)) continue;
@@ -89,7 +112,6 @@ function inlineSpans(state: EditorState, lineFrom: number, text: string): { from
   return spans;
 }
 
-/** Is the caret inside math (between the dollars, or inside a $$ block)? */
 export function inMath(state: EditorState, pos: number): boolean {
   for (const block of state.field(mathBlocks, false) ?? []) {
     if (block.open > pos) break;
@@ -99,7 +121,23 @@ export function inMath(state: EditorState, pos: number): boolean {
   return inlineSpans(state, line.from, line.text).some((s) => pos >= s.from + s.open && pos <= s.to - s.close);
 }
 
-/** Is the caret inside code (inline, fenced or indented)? */
+export function overlapsMath(state: EditorState, from: number, to: number): boolean {
+  if (from >= to) return false;
+  for (const block of state.field(mathBlocks, false) ?? []) {
+    if (block.open + 2 < to && block.close > from) return true;
+    if (block.open > to) break;
+  }
+  for (let p = from; p < to;) {
+    const line = state.doc.lineAt(p);
+    for (const s of inlineSpans(state, line.from, line.text)) {
+      if (s.from + s.open < to && s.to - s.close > from) return true;
+    }
+    p = line.to + 1;
+    if (p <= from) break;
+  }
+  return false;
+}
+
 export function inCode(state: EditorState, pos: number): boolean {
   return isCode(state, pos);
 }
@@ -118,11 +156,21 @@ function build(view: EditorView): DecorationSet {
       const lineFrom = state.doc.lineAt(block.open).number;
       const lineTo = state.doc.lineAt(block.close).number;
       for (let n = lineFrom; n <= lineTo; n += 1) inBlock.add(n);
-      // Only the things between the dollars are monospace; the dollars
-      // themselves keep the note's font in the accent colour. An empty
-      // writing line has nothing between them to set in monospace.
       out.push(mathDelim.range(block.open, block.open + 2));
-      if (state.sliceDoc(block.open + 2, block.close).trim()) out.push(mathText.range(block.open + 2, block.close));
+      // Only the things between the dollars are monospace, and a boundary
+      // line inside a $$ … $$ pair is never monospace.
+      let cur = block.open + 2;
+      for (let ln = lineFrom; ln <= lineTo; ln += 1) {
+        const l = state.doc.line(ln);
+        if (ln !== lineFrom && isMathBlockBoundary(l.text)) break;
+        const segEnd = ln === lineTo ? block.close : l.to;
+        if (cur < segEnd) {
+          const seg = state.sliceDoc(cur, segEnd);
+          if (seg.trim()) out.push(mathText.range(cur, segEnd));
+        }
+        cur = l.to + 1;
+        if (cur > block.close) break;
+      }
       out.push(mathDelim.range(block.close, block.close + 2));
     }
     for (let pos = from; pos <= to;) {
@@ -147,10 +195,8 @@ const mathDecorations = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-// Pairing lives in delimiterInput.ts so keyboard and toolbar use one policy.
 export const mathSource = [mathBlocks, mathDecorations];
 
-/** Closing dollars, not an opening pair that merely happens to be next. */
 export function closingMathDelimiter(state: EditorState, pos: number): number {
   const line = state.doc.lineAt(pos);
   const inline = inlineSpans(state, line.from, line.text).find((s) => pos >= s.to - s.close && pos < s.to);
