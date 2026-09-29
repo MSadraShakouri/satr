@@ -324,10 +324,16 @@ public class OpenFilePlugin extends Plugin {
 
     /** UTF-8 with what it can't map replaced: binary bytes become U+FFFD. */
     private String decodeLossyText(byte[] bytes) {
-        return StandardCharsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPLACE)
-            .onUnmappableCharacter(CodingErrorAction.REPLACE)
-            .decode(ByteBuffer.wrap(bytes)).toString();
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                .decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException ignored) {
+            // decode() declares the checked exception even though REPLACE
+            // cannot throw it; new String() does the same replacement decoding.
+            return new String(bytes, StandardCharsets.UTF_8);
+        }
     }
 
     private byte[] readLimited(Uri uri, int limit) throws Exception {
