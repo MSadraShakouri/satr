@@ -96,6 +96,34 @@ async function pageGeometry(page: Page) {
         const over = content ? content.scrollHeight - content.clientHeight : 0;
         return over > 1 ? [{ page: i, over: Math.round(over) }] : [];
       }),
+      // A column that cannot be shown: the page content must not be a
+      // multi-column container, or a line that no longer fits the column is
+      // laid out — and clipped — beside the sheet, off the paper. That is the
+      // line Android's PDF used to lose at a page boundary.
+      columnLeaks: pages.flatMap((p, i) => {
+        const content = p.querySelector<HTMLElement>('.pagedjs_page_content');
+        const over = content ? content.scrollWidth - content.clientWidth : 0;
+        return over > 1 ? [{ page: i, over: Math.round(over) }] : [];
+      }),
+      // Any text laid out past the sheet's right-hand edge: it can only be
+      // seen by a page that does not exist.
+      offSheetText: pages.flatMap((p, i) => {
+        const sheet = p.querySelector<HTMLElement>('.pagedjs_sheet');
+        if (!sheet) return [];
+        const edge = sheet.getBoundingClientRect().right;
+        let worst = 0;
+        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const parent = node.parentElement;
+          if (!node.textContent?.trim() || !parent || parent.closest('.katex-mathml')) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const rect of range.getClientRects()) {
+            if (rect.height) worst = Math.max(worst, rect.right - edge);
+          }
+        }
+        return worst > 1 ? [{ page: i, over: Math.round(worst) }] : [];
+      }),
     };
   });
 }
@@ -112,6 +140,8 @@ for (const columns of [1, 2] as const) {
       expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
     }
     expect(geometry.overflowing).toEqual([]);
+    expect(geometry.columnLeaks).toEqual([]);
+    expect(geometry.offSheetText).toEqual([]);
     expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);
     // The laid-out pages still hold the whole note.
     const content = page.locator('.pagedjs_page_content');
@@ -122,6 +152,30 @@ for (const columns of [1, 2] as const) {
     expect(text.match(/Graphical exercise — sketch/g)?.length).toBe(2);
   });
 }
+
+test('app: a print WebView that lays text a hair taller keeps every line on the paper', async ({ page }) => {
+  // The print WebView is its own layout engine instance, and Android's A4
+  // (PrintPlugin.java) is never Paged.js's to the last fraction of a pixel,
+  // so its pages can come out a hair taller than the ones Paged.js measured.
+  // The page content used to be a fixed-height multi-column container: the
+  // line that no longer fitted its column was laid out in the next column —
+  // past the sheet's right edge, where the sheet's overflow: hidden and the
+  // paper both end. That is the line Android's PDF dropped at a page
+  // boundary. Make every text size 2% taller and check the surplus runs down
+  // the page instead.
+  const html = await printNative(page, homework, { columns: 1, direction: 'ltr', mathAlign: 'center' });
+  await openPrintDocument(page, html);
+  await page.addStyleTag({ content: 'html { font-size: 15.3px !important; }' });
+  const geometry = await pageGeometry(page);
+  expect(geometry.columnLeaks).toEqual([]);
+  expect(geometry.offSheetText).toEqual([]);
+  expect(geometry.pages).toBe(8);
+  const pdf = await page.pdf({ preferCSSPageSize: true });
+  expect(pdf.toString('latin1').match(/\/Type \/Page\b/g)?.length).toBe(8);
+  const content = page.locator('.pagedjs_page_content');
+  await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
+  await expect(content.locator('.math-display')).toHaveCount(64);
+});
 
 test('app: the document handed over is static and asks for the paper’s width', async ({ page }) => {
   const html = await printNative(page, homework, { columns: 1, direction: 'ltr', mathAlign: 'center' });
@@ -136,6 +190,13 @@ test('app: the document handed over is static and asks for the paper’s width',
   // their own 1in ones, and Paged.js's letter-sized @page must not shrink
   // the paper under them.
   expect(html).toMatch(/@page\s*\{\s*size:\s*210mm 297mm;\s*margin:\s*0/);
+  // An overfull page runs on down the paper: the sheet does not clip it, and
+  // the page content is plain flow with no second column to fall into (see
+  // the "a hair taller" test above for what that used to cost).
+  expect(html).toMatch(/\.pagedjs_sheet\s*\{\s*overflow:\s*visible\s*!important/);
+  expect(html).toMatch(/display:\s*flow-root\s*!important/);
+  expect(html).toMatch(/column-width:\s*auto\s*!important/);
+  expect(html).toMatch(/column-count:\s*auto\s*!important/);
   // The temporary font-scale override must never reach the print WebView.
   expect(html).not.toContain('--satr-font-scale-correction');
 });
@@ -153,7 +214,13 @@ test('app: a phone font scale changes neither the pages nor the output', async (
   for (const height of [...geometry.pageHeights, ...geometry.sheetHeights]) {
     expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
   }
-  expect(geometry.overflowing).toEqual([]);
+  // The pages hold more text than this emulated WebView renders: Android's
+  // text zoom would enlarge the measured layout by the same 1.3, but here
+  // nothing does, so the hand-over is genuinely taller than its boxes. It is
+  // exactly the situation the fix has to survive — the surplus must run down
+  // the page, never sideways off the sheet.
+  expect(geometry.columnLeaks).toEqual([]);
+  expect(geometry.offSheetText).toEqual([]);
   expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);
   const content = page.locator('.pagedjs_page_content');
   await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
