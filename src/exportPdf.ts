@@ -11,7 +11,8 @@
 // On the web the iframe is printed (the browser's dialog saves the PDF). In
 // the Android app the laid-out pages, with every font embedded, go to a
 // small native plugin (SatrPrint) that hands them to Android's print dialog,
-// as Markor does.
+// as Markor does. That WebView is sized like the phone's screen, so the copy
+// it gets is pinned to the real A4 geometry (see printDocumentHtml).
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import katexCss from 'katex/dist/katex.min.css?raw';
 import printCss from './print.css?raw';
@@ -22,7 +23,7 @@ import { loadSettings } from './settings';
 import { getSystemFontScale } from './native';
 import { keepHeadingWithContent } from './printHeadings';
 import { loadPrintOptions, printDirection, validPrintOptions, type PrintOptions } from './printOptions';
-import { assembleColumns, columnPageCss, COLUMN_WIDTH_PX } from './printColumns';
+import { assembleColumns, columnPageCss, COLUMN_WIDTH_PX, PAGE_HEIGHT_MM, PAGE_WIDTH_MM, PAGE_WIDTH_PX } from './printColumns';
 
 interface SatrPrintPlugin {
   print(options: { html: string; name: string }): Promise<void>;
@@ -144,7 +145,7 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
 
     if (Capacitor.isNativePlatform()) {
       doc.querySelectorAll('script').forEach((el) => el.remove());
-      await SatrPrint.print({ html: `<!doctype html>\n${doc.documentElement.outerHTML}`, name });
+      await SatrPrint.print({ html: printDocumentHtml(doc), name });
     } else {
       // The saved file takes its name from the frame's title.
       const title = document.title;
@@ -159,6 +160,50 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
     // copies the HTML, so the frame can go either way.
     setTimeout(() => frame.remove(), 1000);
   }
+}
+
+// The static document handed to the app's print WebView: Paged.js's pages,
+// every font embedded, laid out for paper and independent of the viewport
+// that WebView happens to have.
+//
+// Paged.js assumes the document is printed where the paper is the viewport,
+// which is true of the browser (it prints this same document inside the
+// export iframe) but not of the app:
+//
+//  - Its @media print rules tie html, body, .pagedjs_pages, .pagedjs_page and
+//    .pagedjs_sheet to 100% of the print viewport. The print WebView is sized
+//    like the phone's screen, so every sheet was clipped to the screen's
+//    height (.pagedjs_sheet is overflow: hidden) and the body was capped at
+//    its width: the bottom of each page, and anything past the screen's edge,
+//    never reached the paper. Pin the geometry Paged.js measured at instead.
+//  - Paged.js leaves the note's original HTML in a <template>; the pages hold
+//    the laid-out copy, so the template is dead weight in the string.
+//
+// The viewport meta asks that WebView to view the document at the paper's
+// width (PrintPlugin.java sets useWideViewPort), so nothing is scaled to fit
+// the paper either: one CSS pixel of layout is one CSS pixel of paper.
+function printDocumentHtml(doc: Document): string {
+  doc.querySelectorAll('template').forEach((el) => el.remove());
+  const geometry = doc.createElement('style');
+  geometry.textContent = `
+    /* A4, no margins: the pages carry their own 1in ones. Last word in the
+       cascade, so Paged.js's letter-sized @page cannot shrink the paper. */
+    @page { size: ${PAGE_WIDTH_MM}mm ${PAGE_HEIGHT_MM}mm; margin: 0; }
+    html, body {
+      width: auto !important; min-width: ${PAGE_WIDTH_PX}px !important; max-width: none !important;
+      height: auto !important; min-height: 0 !important; max-height: none !important;
+    }
+    .pagedjs_pages { height: auto !important; min-height: 0 !important; max-height: none !important; }
+    .pagedjs_page, .pagedjs_sheet {
+      height: ${PAGE_HEIGHT_MM}mm !important; min-height: 0 !important; max-height: none !important;
+    }
+  `;
+  doc.head.append(geometry);
+  const viewport = doc.createElement('meta');
+  viewport.setAttribute('name', 'viewport');
+  viewport.setAttribute('content', `width=${PAGE_WIDTH_PX}, initial-scale=1`);
+  doc.head.prepend(viewport);
+  return `<!doctype html>\n${doc.documentElement.outerHTML}`;
 }
 
 /** Temporary CSS for layout in the text-scaled app WebView. The matching

@@ -58,6 +58,10 @@ public class PrintPlugin extends Plugin {
             dropPrintView(printView);
             final WebView view = new WebView(getActivity());
             view.getSettings().setJavaScriptEnabled(false);
+            // The pages are laid out for paper: view the document at the
+            // paper's width, not the phone's, so nothing is scaled to fit it
+            // (src/exportPdf.ts sends a matching viewport meta).
+            view.getSettings().setUseWideViewPort(true);
             // A fixed size: the phone's font size setting doesn't scale the PDF.
             view.getSettings().setTextZoom(100);
             view.setWebViewClient(new WebViewClient() {
