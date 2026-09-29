@@ -74,6 +74,14 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
       `.math-display, .math-display .katex-display > .katex { text-align: ${mathAlign}; }
        .math-display .katex-display > .katex { white-space: normal; }`,
       options.columns === 2 ? columnPageCss : '',
+      // Android's print WebView can lay a line slightly taller than the
+      // measuring WebView. Keep a one-line reserve at the foot of every
+      // paginated column so its fixed-height page box cannot clip that line
+      // when Android writes the PDF. The browser path prints the measuring
+      // layout itself and does not need this safety space.
+      Capacitor.isNativePlatform()
+        ? `.pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content { height: calc(100% - var(--pagedjs-footnotes-height, 0px) - 32px) !important; }`
+        : '',
     ].map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n');
 
     // Hidden but laid out (display: none would stop both layout and print).

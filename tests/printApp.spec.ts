@@ -84,6 +84,13 @@ async function pageGeometry(page: Page) {
       bodyWidth: Math.round(document.body.getBoundingClientRect().width),
       pageHeights: pages.map((p) => Math.round(p.getBoundingClientRect().height)),
       sheetHeights: sheets.map((s) => Math.round(s.getBoundingClientRect().height)),
+      // The native hand-off leaves 32px below paginated text, so a tiny
+      // WebView font-metric difference cannot clip the last line on a sheet.
+      contentBottomGaps: pages.map((p) => {
+        const content = p.querySelector<HTMLElement>('.pagedjs_page_content');
+        const area = content?.parentElement;
+        return content && area ? Math.round(area.getBoundingClientRect().height - content.getBoundingClientRect().height) : 0;
+      }),
       overflowing: pages.flatMap((p, i) => {
         const content = p.querySelector<HTMLElement>('.pagedjs_page_content');
         const over = content ? content.scrollHeight - content.clientHeight : 0;
@@ -105,6 +112,7 @@ for (const columns of [1, 2] as const) {
       expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
     }
     expect(geometry.overflowing).toEqual([]);
+    expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);
     // The laid-out pages still hold the whole note.
     const content = page.locator('.pagedjs_page_content');
     await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
@@ -146,6 +154,7 @@ test('app: a phone font scale changes neither the pages nor the output', async (
     expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
   }
   expect(geometry.overflowing).toEqual([]);
+  expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);
   const content = page.locator('.pagedjs_page_content');
   await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
   await expect(content.locator('.math-display')).toHaveCount(64);
