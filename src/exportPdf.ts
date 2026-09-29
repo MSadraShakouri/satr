@@ -184,6 +184,11 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
 //    height (.pagedjs_sheet is overflow: hidden) and the body was capped at
 //    its width: the bottom of each page, and anything past the screen's edge,
 //    never reached the paper. Pin the geometry Paged.js measured at instead.
+//  - Its page content is a fixed-height multi-column container, and the print
+//    WebView's text metrics are not the measuring WebView's. A line that no
+//    longer fits its column drops into the next one, which lies past the
+//    sheet's right edge and past the paper: the line that went missing from
+//    Android's PDF at a page boundary. Hand it plain, unclipped flow instead.
 //  - Paged.js leaves the note's original HTML in a <template>; the pages hold
 //    the laid-out copy, so the template is dead weight in the string.
 //
@@ -204,6 +209,25 @@ function printDocumentHtml(doc: Document): string {
     .pagedjs_pages { height: auto !important; min-height: 0 !important; max-height: none !important; }
     .pagedjs_page, .pagedjs_sheet {
       height: ${PAGE_HEIGHT_MM}mm !important; min-height: 0 !important; max-height: none !important;
+    }
+    /* The print WebView lays these pages out itself: its text metrics, and
+       Android's A4 page box (PrintPlugin.java), are never Paged.js's to the
+       last fraction of a pixel. A page must therefore be able to give an
+       overfull line a little more room instead of slicing it off.
+
+       The line this used to lose was the page content's multi-column
+       container: a line that no longer fitted its column did not move down,
+       it moved into the next column, which begins past the sheet's right
+       edge — where the sheet's overflow: hidden and the paper both end. A
+       plain block formatting context keeps the box block-like (a child's top
+       margin still cannot collapse out of it, so the footnotes keep the
+       place Paged.js gave them) with no second column to escape into, and
+       an overfull sheet is no longer clipped. */
+    .pagedjs_sheet { overflow: visible !important; }
+    .pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content {
+      display: flow-root !important;
+      column-width: auto !important;
+      column-count: auto !important;
     }
   `;
   doc.head.append(geometry);
