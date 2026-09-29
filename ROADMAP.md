@@ -13,13 +13,17 @@ and the logic below are finished. The `android/` project exists (Capacitor 7, wi
 
 Editor
 - [x] CodeMirror editor: per-line RTL/LTR, line numbers, soft wrap, list continuation (Persian digits too)
-- [x] Live preview in the editor (Obsidian rule: syntax shows when the caret enters it): headings, emphasis, lists with a space rule, tasks, quotes, footnotes, links
+- [x] Live preview in the editor (Obsidian rule: syntax shows when the caret enters it): headings, emphasis, lists with a space rule, tasks, quotes, footnotes, links. Inside `$…$` / `$$…$$` source nothing is bold, struck or highlighted and no marker is revealed — a `**` there is just part of the formula (11)
 - [x] Inline file title that renames the note
-- [x] Tight character-level selection highlight, clipped between rows so neighbouring highlights never overlap; roomier 1.85 default line spacing
+- [x] Tight character-level selection highlight, clipped between rows so neighbouring highlights meet at the midpoint between them — no gap, no overlap; roomier 1.85 default line spacing. Select-all and widget-heavy lines stay robust: widgets are never painted (the file title included) and rows fall back to the caret geometry when text runs can't be measured (13)
 - [x] Keyboard toolbar 8px above the keyboard, scrolling like Obsidian's (undo/redo, heading, lists, to-do cycle, footnote, math, delete line, new line below, move line), and a round hide-keyboard button beside it
 - [x] Context-aware pairs: brackets, quotes, backticks, `$`, `*`, `_`, `=`, `~`, `%`; code, math, escapes and existing closers are distinguished. Keyboard and math toolbar share the same policy. `$$` on an empty line opens a math block; only tracked empty pairs are deleted together.
-- [x] No spell check, autocorrect or suggestions anywhere in the note (Obsidian's editor attributes)
-- [x] Math source styled like Obsidian (monospace, italic, accent `$`), never rendered while editing
+- [x] Markor's keyboard: word auto-correct and the suggestion strip on, no spell-check underlines (red squiggles) or writing-suggestions underlines anywhere in the note
+- [x] Math source styled like Obsidian (the content between the dollars is monospace, italic; the dollars themselves keep the note's font in the accent colour — a `$$`-only line is never monospace), never rendered while editing. Only a `$$ … $$` pair whose dollars sit on different lines is a display block (the empty writing line included); `$$$$` / `$$ $$` with nothing between and a lone unpaired `$$` are plain text
+- [x] Caret arrows walk mixed-direction lines in visual order and stop on both sides of an RTL/LTR junction — no jumping or doubling back at a boundary; shift+arrows extend with the same stepping (7)
+- [x] The line-number gutter sits on the note's majority side (which script has more strong letters, math and code ignored), right for Persian, left for English (10)
+- [x] Math digits (Settings → Editor): formulas show all their digits in one set — as typed, English, or Persian — in the preview and the PDF alike, and the note keeps the digits that were typed (5)
+- [x] Switching between editing and reading keeps the same place: the mapping measures the rendered math and table heights and re-measures as they settle (fonts, the Android grow-box pass, images), compensating the scroll (9)
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
 - [x] Wiki links `[[Note]]`, `[[Note|text]]`, `[[Note#Heading]]`: styled in the editor, tap to open, a popup of notes while typing `[[`; broken links dimmed in the reading view
 - [x] Images in the reading view and the PDF, centred and at most the text's width: `![alt](path)` relative to the note, `![[name.png]]` found anywhere by name (as Obsidian), optional size `|300` or `|300x200`; a dashed placeholder for a missing picture
@@ -30,7 +34,7 @@ Editor
 - [x] Keeps the caret clear of the keyboard without jumping or locking the scroll
 
 Preview
-- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking (at relations, and at spaces typed between words, including inside `\text`; never at + or −), inline math kept left to right inside Persian text, dollar signs in code left alone, code highlighting and copy, tables, footnotes in popovers, title on top
+- [x] Reading view: sections tagged with source lines, KaTeX with balanced math line breaking (first at the writer's line ends, then commas, then relations repeated on continued lines, then at spaces typed between words, including inside `\text`; never at + or −), inline math kept left to right inside Persian text, dollar signs in code left alone, code highlighting and copy, tables, footnotes in popovers, title on top. KaTeX's SVG signs (\vec arrow, stretchy brackets, roots) size in CSS ems so Android's text scaling moves them with their letters
 - [x] Edit/preview switch keeps the position; double-tap the preview to edit
 - [x] Rendered only when visible (about 14x faster typing on long notes)
 
@@ -38,7 +42,7 @@ Chrome
 - [x] Obsidian themes: exact neutral colours, light/dark/auto
 - [x] Floating top buttons and bottom bar with Obsidian's icons (in Obsidian's order: previous / next tab, find, new note, tabs, and the ≡ menu); they hide while scrolling down, with Obsidian's fade masks. The right drawer has no button, as in Obsidian (swipe from the right edge, or Ctrl/Cmd+Shift+F)
 - [x] Both drawers share one implementation of Obsidian's release physics (drag, fling, re-grab mid-animation, same look)
-- [x] Right drawer: outline and search in one view, built like the left drawer. A two-option pill (tap only) picks This note / All notes. This note: the outline, and while searching the matching headings with each match under its heading. All notes: every note with its outline, even before you type; searching narrows it to the same heading tree under each note. Each match shows its line number and up to seven lines of context. Regular expressions
+- [x] Right drawer: outline and search in one view, built like the left drawer. A two-option pill (tap only) picks This note / All notes. This note: the outline, and while searching the matching headings with each match under its heading. All notes: every note with its outline, even before you type; searching narrows it to the same heading tree under each note. Each match shows its line number and up to seven lines of context. The outline tree flips to the note's majority direction while every heading keeps its own. Regular expressions
 - [x] Tabs: every note opens in its own tab (an open note just switches to its tab); the bottom bar's arrows step through the tabs; switching never opens the keyboard and comes back where you were. A tab button with the count, the full-screen switcher (note previews in two columns, close, "+", "N tabs" menu, Done, press and hold a card to drag it to a new place), an empty tab page ("No file is open" with recent notes), swipe a card away to close, reopen closed tab, kept across restarts
 - [x] Left sidebar: filter by name (found files and folders, flat, with their folder); Obsidian-style file tree of the space (folders open in place, sorting, the open note highlighted — and only the open one: the tree is redrawn when the drawer opens if the note changed while it was closed), long-press menu (new note/folder, rename in place, move, delete, use as a space), floating action buttons. Every file opens
 - [x] "All files" walker (Markor-style): only the current folder, ".." to go up
@@ -152,6 +156,7 @@ Print
 
 - [x] Custom CSS you control in the print output
 - [x] ~~Your own page-setup dialog before handing off to Android's print~~ — decided against: straight to Android's dialog, as Markor
+- [x] ~~Spaces after inserted pairs (`$ | $`, `** | **`)~~ — decided against: typing leaves the caret between the pair with nothing added (16); the Markor keyboard's autocorrect brings its own word spacing (3)
 - [x] Math: KaTeX output with fonts embedded as data URIs in the print HTML
 - [ ] Mermaid export support postponed with Mermaid itself
 - [x] Images as data URIs

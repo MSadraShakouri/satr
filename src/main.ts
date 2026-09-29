@@ -11,6 +11,8 @@ import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } fr
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
+import { majorityDirection } from './direction';
+import { setMathDigits } from './math';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
@@ -59,8 +61,8 @@ app.innerHTML = `
         <button tabindex="-1" data-command="bullet" aria-label="Bulleted list"><svg viewBox="0 0 24 24"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></svg></button>
         <button tabindex="-1" data-command="ordered" aria-label="Numbered list"><svg viewBox="0 0 24 24"><path d="M10 12h11M10 18h11M10 6h11M4 10h2M4 6h1v4M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
         <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg></button>
-        <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
         <button tabindex="-1" data-command="math" aria-label="Math"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></button>
+        <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
         <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M10 11v6M14 11v6M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         <button tabindex="-1" data-command="lineBelow" aria-label="New line below"><svg viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/></svg></button>
         <button tabindex="-1" data-command="lineUp" aria-label="Move line up"><svg viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
@@ -475,7 +477,9 @@ function setMode(next: Mode, restoredLine?: number): void {
   if (mode === 'preview') {
     if (previewDirty) renderPreview();
     layoutMath(preview); // settle math line breaks before measuring positions
-    applyPreviewScroll(previewPane, preview, position);
+    // Switching only: the mapping re-measures the rendered math/table heights
+    // as they settle and compensates (src/scrollSync.ts).
+    applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true);
   } else {
     applyEditorScroll(editor.view, position, () => generation === viewGeneration);
     holdEditorPosition(position);
@@ -1413,6 +1417,7 @@ const sidebar = createRightSidebar(rightPanel, {
   notes: allNotes,
   currentPath: () => filePath,
   currentText: () => editor.getValue(),
+  noteDir: () => majorityDirection(editor.getValue()),
   scopeName: () => scopeName(currentScope()),
   onResult: (path, from, to) => {
     toggleOutline(false);
@@ -1456,6 +1461,8 @@ function applySettings(settings: Settings): void {
   document.body.classList.toggle('no-line-numbers', !settings.lineNumbers);
   editor.remeasure();
   setHighlightAll(settings.highlightAll);
+  setMathDigits(settings.mathDigits);
+  if (previewVisible()) renderPreview();
   toolbar.querySelectorAll<HTMLElement>('button[data-command]').forEach((b) => { b.hidden = settings.hiddenTools.includes(b.dataset.command!); });
   updateToolbarFades();
   renderMenuButton();

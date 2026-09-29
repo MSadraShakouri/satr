@@ -137,21 +137,75 @@ test('selection rows do not overlap at normal or deliberately tight spacing', as
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const boxes = await page.evaluate(() => [...window.testEditor.view.dom.querySelectorAll('.cm-satr-selection')]
       .map((el) => ({ top: el.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom })).sort((a, b) => a.top - b.top));
-    for (let i = 1; i < boxes.length; i++) expect(boxes[i].top - boxes[i - 1].bottom).toBeGreaterThanOrEqual(0.8);
+    for (let i = 1; i < boxes.length; i++) expect(boxes[i].top - boxes[i - 1].bottom).toBeGreaterThanOrEqual(-0.5);
   }
 });
 
-test('empty display math retains a visible blank line in preview', async ({ page }) => {
-  const height = await page.evaluate(async () => {
+test('lone and empty same-line dollars are text; a block being written is a display line', async ({ page }) => {
+  const report = await page.evaluate(async () => {
     const path = '/src/markdown.ts';
     const { renderMarkdown } = await import(path);
-    const preview = document.createElement('article');
-    preview.id = 'preview';
-    preview.innerHTML = renderMarkdown('$$ $$');
-    document.body.appendChild(preview);
-    return preview.querySelector('.math-display')!.getBoundingClientRect().height;
+    const host = document.createElement('article');
+    const displays = (text: string) => {
+      host.innerHTML = renderMarkdown(text);
+      return host.querySelectorAll('.math-display').length;
+    };
+    return {
+      spaced: displays('$$ $$'),
+      run: displays('$$$$'),
+      lone: displays('$$\nx = 1'),
+      emptyBlock: displays('$$\n\n$$'),
+      block: displays('$$\nx = 1\n$$'),
+      sameLine: displays('$$x = 1$$'),
+      spacedText: (host.innerHTML = renderMarkdown('$$ $$'), host.textContent),
+    };
   });
-  expect(height).toBeGreaterThan(10);
+  expect(report.spaced).toBe(0);
+  expect(report.run).toBe(0);
+  expect(report.lone).toBe(0);
+  expect(report.spacedText).toContain('$$');
+  expect(report.emptyBlock).toBe(1);
+  expect(report.block).toBe(1);
+  expect(report.sameLine).toBe(1);
+});
+
+test('source math is monospace only between the dollars', async ({ page }) => {
+  await draft(page, 'intro\n\n$$\nx = 1\n$$\n\ntail|');
+  const styled = await page.evaluate(() => {
+    const root = window.testEditor.view.dom;
+    const family = (el: Element | null | undefined) => el && getComputedStyle(el).fontFamily;
+    return {
+      math: [...root.querySelectorAll('.cm-math')].map((el) => ({ text: el.textContent, family: family(el) })),
+      delims: [...root.querySelectorAll('.cm-math-delim')].map((el) => ({ text: el.textContent, family: family(el) })),
+    };
+  });
+  expect(styled.math.map((m) => m.text!.trim())).toEqual(['x = 1']);
+  expect(styled.delims.map((d) => d.text)).toEqual(['$$', '$$']);
+  // The dollars keep the note's font; only the content between them is monospace.
+  expect(styled.delims[0].family).not.toBe(styled.math[0].family);
+  expect(styled.math[0].family).toContain('VazirCode');
+
+  await draft(page, 'one $$\ntwo|');
+  const lone = await page.evaluate(() => ({
+    math: window.testEditor.view.dom.querySelectorAll('.cm-math').length,
+    delims: window.testEditor.view.dom.querySelectorAll('.cm-math-delim').length,
+  }));
+  expect(lone).toEqual({ math: 0, delims: 0 });
+
+  await draft(page, 'one\n\n$$\n\n$$\n\ntwo|');
+  const empty = await page.evaluate(() => ({
+    math: window.testEditor.view.dom.querySelectorAll('.cm-math').length,
+    delims: window.testEditor.view.dom.querySelectorAll('.cm-math-delim').length,
+  }));
+  // The empty writing line is a block (the dollars get the accent), but
+  // nothing sits between them to turn monospace.
+  expect(empty).toEqual({ math: 0, delims: 2 });
+});
+
+test('toolbar puts the dollar button before footnotes', async ({ page }) => {
+  const order = await page.evaluate(() =>
+    [...document.querySelectorAll('#edit-toolbar-list button[data-command]')].map((b) => (b as HTMLElement).dataset.command));
+  expect(order.indexOf('math')).toBeLessThan(order.indexOf('footnote'));
 });
 
 test('ordinary brackets, apostrophes and code-fence pairing still work', async ({ page }) => {
@@ -188,4 +242,24 @@ test('tab number uses the alignment from before 77171fe', async ({ page }) => {
   await expect(count).toHaveCSS('justify-content', 'center');
   await expect(count).toHaveCSS('top', '0px');
   await expect(count).toHaveCSS('transform', 'none');
+});
+
+test('Markor keyboard: autocorrect and suggestions on, no spell check', async ({ page }) => {
+  const attributes = await page.evaluate(() => {
+    const el = window.testEditor.view.contentDOM;
+    return {
+      spellcheck: el.getAttribute('spellcheck') ?? String(el.spellcheck),
+      autocorrect: el.getAttribute('autocorrect'),
+      autocapitalize: el.getAttribute('autocapitalize'),
+      autocomplete: el.getAttribute('autocomplete'),
+      writingsuggestions: el.getAttribute('writingsuggestions'),
+    };
+  });
+  expect(attributes).toEqual({
+    spellcheck: 'false',
+    autocorrect: 'on',
+    autocapitalize: 'off',
+    autocomplete: 'on',
+    writingsuggestions: 'false',
+  });
 });

@@ -68,18 +68,32 @@ export function previewScroll(pane: HTMLElement, preview: HTMLElement): number {
   return passed;
 }
 
-export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number): void {
-  if (!(position > 0)) { scrollInstantly(pane, 0); return; }
-  const list = anchors(preview);
-  if (!list.length) return;
-  let target: number | null = null;
-  for (const el of list) {
-    const rect = el.getBoundingClientRect();
-    const line = Number(el.dataset.line);
-    const lines = Number(el.dataset.lines) || 1;
-    if (position < line) { target = rect.top; break; }
-    if (position < line + lines) { target = rect.top + (position - line) / lines * rect.height; break; }
-  }
-  if (target === null) target = list[list.length - 1].getBoundingClientRect().bottom;
-  scrollInstantly(pane, pane.scrollTop + target - pane.getBoundingClientRect().top);
+export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false): void {
+  const place = (): void => {
+    if (!isCurrent()) return;
+    if (!(position > 0)) { scrollInstantly(pane, 0); return; }
+    const list = anchors(preview);
+    if (!list.length) return;
+    let target: number | null = null;
+    for (const el of list) {
+      const rect = el.getBoundingClientRect();
+      const line = Number(el.dataset.line);
+      const lines = Number(el.dataset.lines) || 1;
+      if (position < line) { target = rect.top; break; }
+      if (position < line + lines) { target = rect.top + (position - line) / lines * rect.height; break; }
+    }
+    if (target === null) target = list[list.length - 1].getBoundingClientRect().bottom;
+    scrollInstantly(pane, pane.scrollTop + target - pane.getBoundingClientRect().top);
+  };
+  place();
+  if (!settle) return;
+  // Rendered math and tables are taller or shorter than their source lines,
+  // and the numbers move under us after the jump: KaTeX's fonts, the Android
+  // grow-box pass, lazy images. Measure the rendered heights again once
+  // they settle, and compensate the scroll with the new ones.
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    place();
+    window.setTimeout(place, 120);
+  }));
+  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(place));
 }

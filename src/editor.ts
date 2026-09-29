@@ -1,4 +1,4 @@
-import { sourceDirections } from './direction';
+import { sourceDirections, majorityDirection } from './direction';
 import { defaultKeymap, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
@@ -7,6 +7,7 @@ import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from
 import { collectHeadings, type Heading } from './outline';
 import { Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
@@ -139,6 +140,17 @@ const directionPlugin = ViewPlugin.fromClass(class {
     if (update.docChanged || update.viewportChanged) this.decorations = buildDirections(update.view);
   }
 }, { decorations: (value) => value.decorations });
+
+// The line-number gutter sits on the note's majority side (#10): right for a
+// mostly Persian note, left for a mostly English one. A class, not a bidi
+// override, so the scroller keeps its LTR scroll coordinates.
+const gutterSidePlugin = ViewPlugin.fromClass(class {
+  constructor(view: EditorView) { this.sync(view); }
+  update(update: ViewUpdate): void { if (update.docChanged) this.sync(update.view); }
+  sync(view: EditorView): void {
+    view.dom.classList.toggle('cm-satr-gutter-rtl', majorityDirection(view.state.doc.toString()) === 'rtl');
+  }
+});
 
 const digitMaps = {
   latin: '0123456789',
@@ -386,16 +398,17 @@ const titleField = StateField.define({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-// A plain keyboard everywhere, prose included: no spell check underlines,
-// no autocorrect, no word suggestions, no automatic capitals. Chromium on
-// Android turns the suggestion strip off only for autocomplete="off"
+// Markor's keyboard: word auto-correct and the suggestion strip stay on,
+// but there are no spell-check underlines in the note. Chromium on Android
+// turns the suggestion strip off for autocomplete="off"
 // (TYPE_TEXT_FLAG_NO_SUGGESTIONS) and drops auto-correct for
-// autocorrect="off". Without suggestions the keyboard also stops holding
-// the current word in composition, so "(", "`" and "$" pair up as soon as
-// they're typed. (The number row is Gboard's own choice and can't be
-// requested from a web page.)
+// autocorrect="off", so both are on here; only spellcheck (red squiggles)
+// and the browser's own writing-suggestions underlines are off. Trade-off:
+// with suggestions the keyboard holds the current word in composition, so
+// "(", "`" and "$" may pair up only once the word commits. (The number row
+// is Gboard's own choice and can't be requested from a web page.)
 const keyboardAttributes = EditorView.contentAttributes.of({
-  spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off', writingsuggestions: 'false',
+  spellcheck: 'false', autocorrect: 'on', autocapitalize: 'off', autocomplete: 'on', writingsuggestions: 'false',
 });
 
 // Brackets and quotes use CodeMirror's tracker. Markdown punctuation uses
@@ -439,7 +452,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -456,7 +469,7 @@ export class SatrEditor {
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
       ])),
       titleField,
-      rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      rtlLineDirection, directionsField, directionPlugin, gutterSidePlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:

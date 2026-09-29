@@ -25,18 +25,9 @@ function base(view: EditorView): { left: number; top: number } {
 type Row = { top: number; bottom: number; left: number; right: number };
 
 function glyphRows(view: EditorView, from: number, to: number): Row[] {
-  const start = view.domAtPos(from);
-  const end = view.domAtPos(to);
-  const range = document.createRange();
-  try {
-    range.setStart(start.node, start.offset);
-    range.setEnd(end.node, end.offset);
-  } catch {
-    return [];
-  }
   const rows: Row[] = [];
-  for (const rect of range.getClientRects()) {
-    if (rect.width <= 0 || rect.height <= 0) continue;
+  const add = (rect: { top: number; bottom: number; left: number; right: number } | null | undefined): void => {
+    if (!rect || rect.right <= rect.left || rect.bottom <= rect.top) return;
     const mid = (rect.top + rect.bottom) / 2;
     const row = rows.find((item) => mid > item.top && mid < item.bottom);
     if (row) {
@@ -46,6 +37,49 @@ function glyphRows(view: EditorView, from: number, to: number): Row[] {
       row.bottom = Math.max(row.bottom, rect.bottom);
     } else {
       rows.push({ top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right });
+    }
+  };
+  // Measure the selected TEXT one run at a time. Widgets (the file title,
+  // inline replacements) and any non-text node are walked past instead of
+  // being painted — or of failing the whole line when an endpoint lands in
+  // one and the range can't be built at all.
+  try {
+    const start = view.domAtPos(from);
+    const end = view.domAtPos(to);
+    const clamp = (node: Node, offset: number): number =>
+      node.nodeType === Node.TEXT_NODE ? Math.min(offset, (node.nodeValue ?? '').length) : offset;
+    const scope = document.createRange();
+    scope.setStart(start.node, clamp(start.node, start.offset));
+    scope.setEnd(end.node, clamp(end.node, end.offset));
+    const collect = (node: Text, fromOffset: number, toOffset: number): void => {
+      if (toOffset <= fromOffset) return;
+      if (node.parentElement?.closest('.cm-widget, .cm-file-title')) return;
+      const run = document.createRange();
+      run.setStart(node, fromOffset);
+      run.setEnd(node, toOffset);
+      for (const rect of run.getClientRects()) add(rect);
+    };
+    if (scope.commonAncestorContainer.nodeType === Node.TEXT_NODE) {
+      collect(scope.commonAncestorContainer as Text, clamp(start.node, start.offset), clamp(end.node, end.offset));
+    } else {
+      const walker = document.createTreeWalker(scope.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+        const inside = node === start.node || node === end.node
+          || scope.isPointInRange(node, 0) || scope.isPointInRange(node, node.length);
+        if (!inside) continue;
+        collect(node,
+          node === start.node ? clamp(node, start.offset) : 0,
+          node === end.node ? clamp(node, end.offset) : node.length);
+      }
+    }
+  } catch { /* the fallback below */ }
+  if (!rows.length) {
+    // No text geometry to measure (widgets only, or endpoints that refuse to
+    // resolve): the caret boxes at the two ends are the row boxes. A caret
+    // rect is zero-wide, so give it the width of the break marks.
+    for (const [pos, side] of [[from, 1], [to, -1]] as const) {
+      const rect = view.coordsAtPos(pos, side);
+      if (rect) add({ top: rect.top, bottom: rect.bottom, left: rect.left, right: Math.max(rect.right, rect.left + BREAK_WIDTH) });
     }
   }
   return rows;
@@ -95,14 +129,15 @@ function markers(view: EditorView): RectangleMarker[] {
   }
   // Font ascent/descent rectangles can exceed the CSS line pitch (especially
   // Vazirmatn, headings and Android text zoom). Padding those independently
-  // painted neighbouring rows twice. Clamp each box at the midpoint between
-  // row centres, leaving a 1px gap even at a deliberately tight line spacing.
+  // painted neighbouring rows would overlap them. Clamp each box at the
+  // midpoint between row centres, so neighbouring rows share that edge
+  // exactly: no gap between them, and no overlap either.
   const centres = [...new Set(boxes.map((b) => (b.top + b.bottom) / 2))].sort((a, b) => a - b);
   return boxes.map((box) => {
     const centre = (box.top + box.bottom) / 2;
     const i = centres.indexOf(centre);
-    const top = Math.max(box.top - PAD_Y, i > 0 ? (centres[i - 1] + centre) / 2 + 0.5 : -Infinity);
-    const bottom = Math.min(box.bottom + PAD_Y, i + 1 < centres.length ? (centre + centres[i + 1]) / 2 - 0.5 : Infinity);
+    const top = Math.max(box.top - PAD_Y, i > 0 ? (centres[i - 1] + centre) / 2 : -Infinity);
+    const bottom = Math.min(box.bottom + PAD_Y, i + 1 < centres.length ? (centre + centres[i + 1]) / 2 : Infinity);
     return new RectangleMarker(MARK, box.left - origin.left, top - origin.top, box.right - box.left, Math.max(0, bottom - top));
   });
 }

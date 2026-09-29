@@ -1,0 +1,81 @@
+// Caret motion across direction boundaries. In a mixed line like
+// «اب ABC د» the two sides of the RTL↔LTR junction are separate stops in
+// visual space, and each document position sitting on a junction renders on
+// one side or the other depending on which way the caret arrived. The stock
+// motion steps by position and then draws the caret at the default side, so
+// at a junction the caret jumps across the embedded run and doubles back.
+//
+// This walks the line's visual slots instead: every caret side that paints
+// somewhere is a stop; the stops are ordered by their x inside each visual
+// row (rows top to bottom, the row's own reading order deciding how they
+// chain at a soft wrap); and each stop remembers the position AND the side
+// the caret must take there, so it always paints where it just moved to.
+import { EditorSelection, Prec } from '@codemirror/state';
+import { Direction, keymap, type EditorView } from '@codemirror/view';
+
+type Stop = { pos: number; assoc: -1 | 1; x: number };
+
+// One stop per distinct caret slot (same visual row, same x). When a slot
+// hosts two boundary positions, the one chosen is the same one the eye is
+// next to: the smaller position on the slot's right face, the larger on its
+// left face — which is also the side typing will visibly change.
+function stopAt(stops: { pos: number; assoc: -1 | 1; x: number }[]): Stop {
+  const positions = [...new Set(stops.map((s) => s.pos))];
+  if (positions.length === 1) return { pos: positions[0], assoc: 1, x: stops[0].x };
+  const left = stops[0].assoc === -1;
+  const chosen = left
+    ? stops.reduce((a, b) => (a.pos <= b.pos ? a : b))
+    : stops.reduce((a, b) => (a.pos >= b.pos ? a : b));
+  return chosen;
+}
+
+/** The line's visual stops, in reading order for the line's base direction. */
+function lineStops(view: EditorView, head: number): Stop[] {
+  const line = view.state.doc.lineAt(head);
+  const samples: { pos: number; assoc: -1 | 1; x: number; top: number }[] = [];
+  for (let pos = line.from; pos <= line.to; pos += 1) {
+    for (const assoc of [-1, 1] as const) {
+      const rect = view.coordsAtPos(pos, assoc);
+      if (rect) samples.push({ pos, assoc, x: rect.left, top: rect.top });
+    }
+  }
+  // Group into visual rows (a soft-wrapped line has more than one).
+  const tops = [...new Set(samples.map((s) => Math.round(s.top)))].sort((a, b) => a - b);
+  const rowOf = (top: number): number => tops.findIndex((t) => Math.abs(t - top) <= 4);
+  const rows: (typeof samples)[] = tops.map(() => []);
+  for (const s of samples) rows[rowOf(s.top)].push(s);
+  const rtl = view.textDirectionAt(line.from) === Direction.RTL;
+  const stops: Stop[] = [];
+  for (const row of rows) {
+    const xs = [...new Set(row.map((s) => s.x))].sort((a, b) => a - b);
+    const rowStops = xs.map((x) => stopAt(row.filter((s) => Math.abs(s.x - x) <= 0.5)));
+    stops.push(...(rtl ? rowStops.reverse() : rowStops));
+  }
+  return stops;
+}
+
+function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
+  if (view.composing) return false;
+  const sel = view.state.selection.main;
+  const stops = lineStops(view, sel.head);
+  const rtl = view.textDirectionAt(view.state.doc.lineAt(sel.head).from) === Direction.RTL;
+  // Visual right is larger x: the next stop in an LTR line, the previous one
+  // in an RTL line (whose reading order runs right to left).
+  const step = dir === (rtl ? -1 : 1) ? 1 : -1;
+  const current = view.coordsAtPos(sel.head, sel.assoc || -1);
+  if (!current) return false;
+  const here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
+  const target = here < 0 ? null : stops[here + step];
+  if (!target) return false;
+  // Plain motion is a cursor at the stop, on the stop's side — the side is
+  // what paints the caret where the step visually landed. The range has to
+  // be wrapped in an EditorSelection, or the transaction drops its assoc.
+  const range = extend ? sel.extend(sel.anchor, target.pos, target.assoc) : EditorSelection.cursor(target.pos, target.assoc);
+  view.dispatch({ selection: EditorSelection.create([range]) });
+  return true;
+}
+
+export const caretMotion = Prec.highest(keymap.of([
+  { key: 'ArrowLeft', run: (view) => move(view, -1, false), shift: (view) => move(view, -1, true) },
+  { key: 'ArrowRight', run: (view) => move(view, 1, false), shift: (view) => move(view, 1, true) },
+]));

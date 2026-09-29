@@ -44,7 +44,7 @@ test('shared contextual policy: source lines and rendered blocks', async ({ page
   });
 });
 
-test('full-document inference ignores metadata, incomplete math and fenced headings', async ({ page }) => {
+test('full-document inference ignores metadata and fenced headings; a lone $$ is text', async ({ page }) => {
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const path = '/src/direction.ts';
@@ -54,13 +54,17 @@ test('full-document inference ignores metadata, incomplete math and fenced headi
       prefix: sourceDirections('---\ntitle: English\n---\n123\n\nفارسی')[3],
       long: sourceDirections('فارسی\n' + '\n'.repeat(350) + '123\nEnglish').at(-2),
       math: sourceDirections('فارسی\n\n$$\n# English\n123'),
+      matched: sourceDirections('فارسی\n\n$$\nx+y\n$$'),
       fence: sourceDirections('فارسی\n\n```\n# English\n```\n\n123\nEnglish').at(-2),
     };
   });
   expect(result.numbers).toEqual([null, null, null, null]);
   expect(result.prefix).toBe('rtl');
   expect(result.long).toBe('rtl');
-  expect(result.math.slice(2)).toEqual(['ltr', 'ltr', 'ltr']);
+  // A lone unpaired "$$" opens nothing: the text below it is ordinary prose
+  // and keeps its own direction (only a matched $$ … $$ pair is math).
+  expect(result.math.slice(2)).toEqual(['rtl', 'ltr', 'ltr']);
+  expect(result.matched.slice(2)).toEqual(['ltr', 'ltr', 'ltr']);
   expect(result.fence).toBe('rtl');
 });
 

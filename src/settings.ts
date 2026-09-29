@@ -14,6 +14,8 @@ export interface Settings {
   hiddenTools: string[];
   /** The ≡ button's quick action: a tap runs it, a long press opens the menu. '' = none. */
   quickAction: QuickAction;
+  /** Digits shown inside formulas (preview + PDF only; the note keeps what was typed). */
+  mathDigits: 'auto' | 'english' | 'persian';
   /** PDF page numbers, bottom centre. */
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
@@ -32,7 +34,7 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
 };
 const KEY = 'satr:settings';
 const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', pdfPageNumbers: 'persian', pdfCss: '' };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', pdfPageNumbers: 'persian', pdfCss: '' };
 
 export function loadSettings(): Settings {
   try {
@@ -128,6 +130,14 @@ export function openSettings(deps: SettingsDeps): void {
           <div class="setting-item-info"><div class="setting-item-name">Highlight every match</div><div class="setting-item-description">In find, not only the current one</div></div>
           ${toggle('highlightAll', settings.highlightAll)}
         </div>
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Math digits</div><div class="setting-item-description">Every digit in a formula, in the preview and the PDF. The note keeps the digits you typed.</div></div>
+          <select class="dropdown" data-select="mathDigits">
+            <option value="auto"${settings.mathDigits === 'auto' ? ' selected' : ''}>As typed</option>
+            <option value="english"${settings.mathDigits === 'english' ? ' selected' : ''}>English</option>
+            <option value="persian"${settings.mathDigits === 'persian' ? ' selected' : ''}>Persian</option>
+          </select>
+        </div>
       </div>
       <div class="setting-group-title">Navigation bar</div>
       <div class="setting-group">
@@ -219,9 +229,10 @@ export function openSettings(deps: SettingsDeps): void {
       savePrintOptions(notePath, printOptions);
       return;
     }
-    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"]');
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"]');
     if (!select) return;
-    settings.quickAction = select.value as QuickAction;
+    if (select.dataset.select === 'quickAction') settings.quickAction = select.value as QuickAction;
+    else settings.mathDigits = select.value as Settings['mathDigits'];
     commit();
   });
   el.addEventListener('click', (event) => {
