@@ -85,6 +85,7 @@ Chrome
 - [x] Fonts (Vazirmatn, Vazir Code, KaTeX) embedded as data URIs; Paged.js (≈500 KB) loads only when exporting
 - [x] The font-scale override used while measuring is an adopted stylesheet, never a `<style>`: Paged.js takes every style element out of the document and copies its text into the stylesheet it prints with, which once divided every font size in the PDF by the phone's scale and made it tiny
 - [x] Images embedded as data URIs, centred, never split across pages
+- [x] The pages handed to the app's print WebView are pinned to the A4 geometry Paged.js measured, and that WebView views them at the paper's width: Paged.js's own `@media print` rules tie `html`, `body`, `.pagedjs_pages`, `.pagedjs_page` and `.pagedjs_sheet` to 100% of the print viewport, and the print WebView has the phone's, so every sheet was clipped to the screen's height and the body was capped at its width — the bottom of each page, and in two-column mode the whole second column, never reached the paper. The browser's dialog was never affected (it prints the export iframe, which is A4-tall), which is why only the app's PDFs were cut. Paged.js's letter-sized `@page` is overridden with A4, no margins, as the last word in the cascade; the spent `<template>` and the scripts go out with the string
 - [ ] On-device check of the print path (fonts, links, page size), including the new two-column layout
 
 ### APK phase

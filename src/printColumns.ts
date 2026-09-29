@@ -11,6 +11,11 @@ const GAP_MM = 8;
 export const COLUMN_WIDTH_MM = (WIDTH_MM - 2 * MARGIN_MM - GAP_MM) / 2;
 export const COLUMN_WIDTH_PX = COLUMN_WIDTH_MM / 25.4 * 96;
 
+/** A4's own size: the geometry Paged.js paginated every page at (96 CSS px/in). */
+export const PAGE_WIDTH_MM = WIDTH_MM;
+export const PAGE_HEIGHT_MM = HEIGHT_MM;
+export const PAGE_WIDTH_PX = Math.round(WIDTH_MM / 25.4 * 96);
+
 // Last in the paginated CSS: only physical geometry is fixed in this mode.
 export const columnPageCss = `@page {
   size: ${COLUMN_WIDTH_MM}mm ${HEIGHT_MM}mm;
