@@ -1403,7 +1403,14 @@ function sidebarGoToLine(line: number): void {
 }
 const sidebar = createRightSidebar(rightPanel, {
   headings: () => editor.headings(),
-  currentLine: () => (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view)),
+  // The outline follows the line two thirds down the page, not the line at the
+  // very top: the heading you are reading is the one around the middle of the
+  // screen, not the one that has just left it (21).
+  currentLine: () => {
+    const pane = mode === 'preview' ? previewPane : editor.view.scrollDOM;
+    const anchor = pane.clientHeight * (2 / 3);
+    return mode === 'preview' ? previewScroll(previewPane, preview, anchor) : editorScroll(editor.view, anchor);
+  },
   onHeading: (line, path) => {
     toggleOutline(false);
     if (path && path !== filePath) {

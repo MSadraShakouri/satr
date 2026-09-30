@@ -105,12 +105,15 @@ See [ROADMAP.md](ROADMAP.md).
 ### Direction of numbers and other neutral text
 
 The note's majority — whichever script has more strong letters, with math and
-code ignored — puts the line-number gutter on that side and flips the outline
-tree. Arrow keys walk a mixed line in visual order and stop on both sides of
-an RTL/LTR junction, so the caret never jumps or doubles back at a boundary.
-Formulas can show all their digits in one set — English or Persian — in the
-preview and the PDF (Settings → Editor, "Math digits"); the note keeps the
-digits that were typed.
+code ignored — flips the outline tree (the line numbers stay on the left edge).
+Arrow keys walk a mixed line in visual order and stop on both sides of an
+RTL/LTR junction, so the caret never jumps or doubles back at a boundary; after
+typing, the caret keeps the line's side, not the side of the character just
+typed, so a number or an English word inside Persian text never turns the caret
+around. The outline marks the heading two thirds down the page, where you are
+reading, rather than the one that has just left the top edge. Formulas can show
+all their digits in one set — English or Persian — in the preview and the PDF
+(Settings → Editor, "Math digits"); the note keeps the digits that were typed.
 
 The editor caches whole-document context, rather than guessing from the visible
 lines. Preview and print use the same resolver over rendered prose (including
@@ -127,6 +130,9 @@ soft source newlines):
    headings inherit a parent heading; without a parent, they look into their own
    section before falling back to LTR. A new section never borrows a later
    heading's direction.
+5. A line with no strong letter of its own — a bare number, a date, a `#` or a
+   list marker — continues the line above it, so a new line is written in the
+   language you are writing in and a heading or a marker never turns it around.
 
 This controls paragraph direction/alignment, not character reversal. Math remains
 isolated LTR even inside an RTL paragraph or on an RTL-ordered PDF sheet.

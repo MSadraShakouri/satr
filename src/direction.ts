@@ -31,6 +31,22 @@ export function majorityDirection(markdown: string): TextDirection {
   return rtl > ltr ? 'rtl' : 'ltr';
 }
 
+// A line with no strong letter of its own continues the line above it: a new
+// line is written in the language you are writing in, and a `#`, a list
+// marker or a date never flips it. Only real prose proves otherwise — the
+// line's own first strong letter, once there is one, always wins.
+function withCarried(units: readonly DirectionUnit[]): DirectionUnit[] {
+  let carried: TextDirection | null = null;
+  return units.map((unit) => {
+    if (unit.excluded) return unit; // math, code and metadata never vote and never carry
+    if (unit.own) {
+      carried = unit.own;
+      return unit;
+    }
+    return carried ? { ...unit, own: carried } : unit;
+  });
+}
+
 export function resolveDirections(units: readonly DirectionUnit[]): TextDirection[] {
   const result: TextDirection[] = [];
   const headings: { level: number; dir: TextDirection }[] = [];
@@ -115,12 +131,13 @@ export function sourceDirections(markdown: string): TextDirection[] {
     const wasMath = !text.trim() && withoutSyntax(plainLines[index]).trim() !== '';
     return { own: explicit ?? strongDirection(text), heading, excluded: wasMath || indentedCode };
   });
+
   for (let i = 1; i < lines.length; i++) {
     if (!units[i].excluded && /^\s{0,3}(=+|-+)\s*$/.test(lines[i]) && lines[i - 1].trim() && !units[i - 1].excluded && !units[i - 1].heading) {
       units[i - 1].heading = lines[i].trim()[0] === '=' ? 1 : 2;
     }
   }
-  return resolveDirections(units);
+  return resolveDirections(withCarried(units));
 }
 
 const BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dt,dd,summary,caption,.md-prose-fragment';
@@ -157,7 +174,7 @@ export function applyReadingDirections(root: HTMLElement): void {
       excluded,
     }));
   });
-  const directions = resolveDirections(units);
+  const directions = resolveDirections(withCarried(units));
   leaves.forEach((el, index) => el.setAttribute('dir', ownDirections[index] ?? directions[starts[index]]));
   for (const el of [...root.querySelectorAll<HTMLElement>('li,blockquote,ul,ol,.md-section')].reverse()) {
     if (el.getAttribute('dir') === 'ltr' || el.getAttribute('dir') === 'rtl') continue;
