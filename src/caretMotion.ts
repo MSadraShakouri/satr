@@ -13,15 +13,20 @@
 import { EditorSelection, Prec } from '@codemirror/state';
 import { Direction, EditorView, ViewPlugin, keymap, type ViewUpdate } from '@codemirror/view';
 
-type Stop = { pos: number; assoc: -1 | 1; x: number };
+type Stop = { pos: number; assoc: -1 | 1; x: number; top: number };
 
 // One stop per distinct caret slot (same visual row, same x). When a slot
 // hosts two boundary positions, the one chosen is the same one the eye is
 // next to: the smaller position on the slot's right face, the larger on its
 // left face — which is also the side typing will visibly change.
-function stopAt(stops: { pos: number; assoc: -1 | 1; x: number }[]): Stop {
+function stopAt(stops: { pos: number; assoc: -1 | 1; x: number; top: number }[]): Stop {
   const positions = [...new Set(stops.map((s) => s.pos))];
-  if (positions.length === 1) return { pos: positions[0], assoc: 1, x: stops[0].x };
+  // A sample's assoc is the side that measured at this spot, so it is the
+  // side the caret must take to paint here again. It matters at a soft wrap,
+  // where the break position has two slots — the end of one row and the start
+  // of the next — and always asking for side +1 sent the caret back to the
+  // row it came from instead of stepping along the line (3).
+  if (positions.length === 1) return { pos: positions[0], assoc: stops[0].assoc, x: stops[0].x, top: stops[0].top };
   const left = stops[0].assoc === -1;
   const chosen = left
     ? stops.reduce((a, b) => (a.pos <= b.pos ? a : b))
@@ -64,7 +69,11 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   const step = dir === (rtl ? -1 : 1) ? 1 : -1;
   const current = view.coordsAtPos(sel.head, sel.assoc || -1);
   if (!current) return false;
-  const here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
+  // Match the stop on the caret's own visual row first: on a soft-wrapped
+  // line the same x exists once per row, and a wrong-row match would send the
+  // caret up or down instead of stepping along the row.
+  let here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5 && Math.abs(s.top - current.top) <= 4);
+  if (here < 0) here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
   const target = here < 0 ? null : stops[here + step];
   if (!target) return false;
   // Plain motion is a cursor at the stop, on the stop's side — the side is

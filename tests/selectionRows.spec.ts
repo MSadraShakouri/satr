@@ -189,3 +189,61 @@ test('select-all in the app selects every line and the native selection follows'
   expect(out.native).toContain('Last line');
   expect(out.native.length).toBeGreaterThan(50);
 });
+
+// Item 9: select-all must work every time, not just when the note already has
+// the focus. After a tap on the chrome (the site leaves the focus on the
+// page), Ctrl+A still means "the whole note" — while a field with its own
+// select-all (the find bar) keeps it.
+test('select-all works while the note itself is not focused, and never steals a field', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Heading one\n\nA paragraph of text here\n\nSecond paragraph\n\nLast line');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+  });
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
+  await page.locator('#app .cm-content').click({ position: { x: 20, y: 60 } });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+  // A tap on the chrome (the file title, the top bar) takes the focus away.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  const focused = await page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    return EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!.hasFocus;
+  });
+  expect(focused).toBe(false);
+
+  await page.keyboard.press('Control+a');
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const out = await page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    const main = view.state.selection.main;
+    return {
+      from: main.from,
+      to: main.to,
+      length: view.state.doc.length,
+      lines: view.state.doc.lines,
+      rows: document.querySelectorAll('#app .cm-satr-selection').length,
+      focused: view.hasFocus,
+      native: window.getSelection()?.toString() ?? '',
+    };
+  });
+  expect(out.from).toBe(0);
+  expect(out.to).toBe(out.length);
+  expect(out.rows).toBe(out.lines);
+  expect(out.focused).toBe(true);
+  expect(out.native).toContain('Last line');
+
+  // The find bar's own field keeps its select-all.
+  await page.keyboard.press('Control+f');
+  const input = page.locator('.document-search-input input').first();
+  await input.fill('Heading');
+  await page.keyboard.press('Control+a');
+  const kept = await page.evaluate(() => ({
+    active: (document.activeElement as HTMLElement | null)?.tagName,
+    inputValue: (document.activeElement as HTMLInputElement | null)?.value ?? '',
+  }));
+  expect(kept.active).toBe('INPUT');
+  expect(kept.inputValue).toBe('Heading');
+});

@@ -150,6 +150,10 @@ const directionPlugin = ViewPlugin.fromClass(class {
 // into focus or view as well.
 const gutterSidePlugin = ViewPlugin.fromClass(class {
   lastDir: 'ltr' | 'rtl' | null = null;
+  // The majority is cached per document text: sync() also runs on plain
+  // selection and focus changes, and counting the letters of a long note each
+  // time would be wasted work.
+  private lastDoc = '';
   private readonly editor: EditorView;
   constructor(view: EditorView) {
     this.editor = view;
@@ -166,10 +170,14 @@ const gutterSidePlugin = ViewPlugin.fromClass(class {
   }
   update(update: ViewUpdate): void { this.sync(update.view); }
   sync(view: EditorView): void {
-    const dir = majorityDirection(view.state.doc.toString());
-    if (dir === this.lastDir && view.dom.classList.contains('cm-satr-gutter-rtl') === (dir === 'rtl')) return;
-    this.lastDir = dir;
-    view.dom.classList.toggle('cm-satr-gutter-rtl', dir === 'rtl');
+    const doc = view.state.doc.toString();
+    if (doc !== this.lastDoc) {
+      this.lastDoc = doc;
+      this.lastDir = majorityDirection(doc);
+    }
+    if (this.lastDir === null) return;
+    if (view.dom.classList.contains('cm-satr-gutter-rtl') === (this.lastDir === 'rtl')) return;
+    view.dom.classList.toggle('cm-satr-gutter-rtl', this.lastDir === 'rtl');
   }
 });
 
@@ -607,6 +615,11 @@ export class SatrEditor {
     title.contentEditable = String(on);
     title.setAttribute('aria-readonly', String(!on));
     if (!on) title.blur();
+  }
+  /** Select the whole note, giving the editor the focus so copy works too. */
+  selectAll(): void {
+    this.view.focus();
+    this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
   }
   focusTitle(): void {
     const el = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
