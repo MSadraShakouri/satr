@@ -15,6 +15,7 @@ import { Highlight, highlightTag } from './highlightSyntax';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
+import { TapTracker, wordRangeAt, type Range } from './touchSelection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
@@ -623,6 +624,33 @@ const keyboardAttributes = EditorView.contentAttributes.of({
   spellcheck: 'false', autocorrect: 'on', autocapitalize: 'off', autocomplete: 'on', writingsuggestions: 'false',
 });
 
+// How the keyboard talks to the editor.
+//
+// CodeMirror 6.28+ hands text input to Chrome's EditContext API whenever the
+// browser has it, which on Android means every WebView from Chrome 121 on
+// (older ones don't have it at all, which is why the same phone could do one
+// thing and another phone another). EditContext takes the caret away from the
+// DOM selection and hands the keyboard its own window of text instead. That
+// window is fine while the keyboard is composing a word, and wrong the moment
+// the finger is involved: the keyboard is not told where a tap put the caret,
+// so the suggestion strip and the auto-correct bar never come back; a double
+// tap never reaches the editor as a selection, so there is no word to drag the
+// handles of; and "Select all" from the selection bar has nothing to act on.
+// The symptoms were all intermittent because they followed the WebView's
+// version, not the phone.
+//
+// The contenteditable path CodeMirror uses without EditContext is the one
+// Android has supported since forever: the keyboard, the selection handles,
+// the double tap and the selection bar all work on the DOM selection, which
+// is what drawSelection and the tight selection layer already keep in step.
+// So the app opts out. (Nothing else changes: the editor is a contenteditable
+// either way, and only Android ever took this branch.)
+(EditorView as unknown as { EDIT_CONTEXT?: boolean }).EDIT_CONTEXT = false;
+
+/** Whether the editor is asking the browser for the EditContext input path.
+ *  False on every platform, and the reason is in the note above. */
+export const usesEditContext = (EditorView as unknown as { EDIT_CONTEXT?: boolean }).EDIT_CONTEXT !== false;
+
 // Brackets and quotes use CodeMirror's tracker. Markdown punctuation uses
 // delimiterInput, which also understands existing math, code and escapes.
 const pairs = EditorState.languageData.of((state, pos) => [{
@@ -753,32 +781,80 @@ export class SatrEditor {
     let touchSelection: [number, number] = [0, 0];
     let touchMoved = false;
     let touchStartY = 0;
+    // Double tap selects the word under the finger, and a drag after it (the
+    // finger never lifted) selects more. The WebView does both itself when the
+    // caret lives in the DOM selection, so this only fills the gap for the
+    // browsers that don't: the fallback runs only while the selection is
+    // exactly what it was when the second finger went down, so whatever the
+    // browser selected itself always wins. The word itself is chosen by
+    // src/touchSelection.ts, the same rule a phone keyboard uses.
+    const taps = new TapTracker();
+    let dragWord: { word: Range; anchor: number; head: number } | null = null;
+    const wordAt = (x: number, y: number): Range | null => {
+      const pos = this.view.posAtCoords({ x, y });
+      return pos === null ? null : wordRangeAt(this.view.state.doc.toString(), pos);
+    };
+    const selectRange = (from: number, to: number): void => {
+      this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
+    };
+    // The browser's own word selection can land a frame or two after the lift,
+    // so the fallback waits for it before deciding the browser did nothing.
+    const selectWordIfUntouched = (pending: NonNullable<typeof dragWord>): void => {
+      const check = (): void => {
+        const { anchor, head } = this.view.state.selection.main;
+        if (anchor === pending.anchor && head === pending.head) selectRange(pending.word.from, pending.word.to);
+      };
+      window.requestAnimationFrame(check);
+      window.setTimeout(check, 120);
+    };
     this.view.contentDOM.addEventListener('touchstart', (event) => {
       window.clearTimeout(touchTimer);
       touching = true;
       touchMoved = false;
-      touchStartY = event.touches[0]?.clientY ?? 0;
+      const touch = event.touches[0];
+      touchStartY = touch?.clientY ?? 0;
       const { anchor, head } = this.view.state.selection.main;
       touchSelection = [anchor, head];
+      // A widget (the file name, a list bullet, a link) has no word of the
+      // note under it and brings its own editing; a second finger is not a tap.
+      const onWidget = (event.target as HTMLElement | null)?.closest('.cm-widget, .cm-file-title, .cm-gutters, .cm-tooltip');
+      const count = onWidget || !touch ? taps.cancel() : taps.start(event.timeStamp, touch.clientX, touchStartY, event.touches.length);
+      const word = count >= 2 ? wordAt(touch!.clientX, touchStartY) : null;
+      dragWord = word ? { word, anchor, head } : null;
     }, { passive: true });
     // A tap below the last line means "the end of the note", not the nearest
     // character under the finger: the empty room under the text is where the
-    // caret goes to the end and writing continues.
+    // caret goes to the end and writing continues. Only while that room is
+    // really there: a last line that is off screen has no room under it, and
+    // swallowing the tap there would take the browser's own selection — and
+    // with it the keyboard's — away from a tap on real text.
     this.view.scrollDOM.addEventListener('mousedown', (event) => {
       if (event.button !== 0) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest('.cm-gutters, .cm-widget, .cm-file-title, .cm-tooltip')) return;
       const end = this.view.coordsAtPos(this.view.state.doc.length, 1);
-      if (!end || event.clientY <= end.bottom) return;
+      if (!end) return;
+      const box = this.view.scrollDOM.getBoundingClientRect();
+      if (end.bottom < box.top || event.clientY <= end.bottom) return;
       event.preventDefault();
       this.view.dispatch({ selection: { anchor: this.view.state.doc.length }, scrollIntoView: false });
       this.view.focus();
     }, true);
     this.view.contentDOM.addEventListener('touchmove', (event) => {
-      if (Math.abs((event.touches[0]?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
+      const touch = event.touches[0];
+      if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
+      // Dragging after a double tap takes the selection with the finger, from
+      // the word the tap found to the word under the finger now.
+      if (!dragWord || !touch) return;
+      const to = wordAt(touch.clientX, touch.clientY);
+      if (!to) return;
+      selectRange(Math.min(dragWord.word.from, to.from), Math.max(dragWord.word.to, to.to));
     }, { passive: true });
     const release = (): void => {
       window.clearTimeout(touchTimer);
+      const word = dragWord;
+      dragWord = null;
+      if (word) selectWordIfUntouched(word);
       // Native selection handles keep adjusting for a moment after the lift.
       touchTimer = window.setTimeout(() => {
         touching = false;
@@ -790,7 +866,7 @@ export class SatrEditor {
       }, 350);
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
-    this.view.contentDOM.addEventListener('touchcancel', release, { passive: true });
+    this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; release(); }, { passive: true });
     // The keyboard opening shrinks the viewport by far more than an address
     // bar does; only that counts.
     let viewportHeight = window.visualViewport?.height ?? window.innerHeight;
