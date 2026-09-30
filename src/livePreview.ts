@@ -127,6 +127,11 @@ function build(view: EditorView): DecorationSet {
     const line = state.doc.lineAt(pos);
     return touches(line.from, line.to);
   };
+  // Inside `$…$` / `$$…$$` nothing is markdown: no marker is hidden, no
+  // element is styled (11). True when the node sits in a formula or spans
+  // into one (the parts of a split node stay source too, so nothing shifts).
+  const insideMath = (from: number, to: number): boolean =>
+    inMath(state, from) || inMath(state, Math.max(from, to - 1)) || overlapsMath(state, from, to);
   const out: Range<Decoration>[] = [];
   const hideMarkWithSpace = (from: number, to: number): void => {
     const lineEnd = state.doc.lineAt(from).to;
@@ -150,7 +155,7 @@ function build(view: EditorView): DecorationSet {
           case 'Highlight': {
             // Inside math source these are just characters of the formula:
             // `**` is never bold, never revealed or hidden (11).
-            if (inMath(state, node.from) || inMath(state, node.to - 1) || overlapsMath(state, node.from, node.to)) return;
+            if (insideMath(node.from, node.to)) return;
             if (touches(node.from, node.to)) return;
             const mark = node.name === 'Strikethrough' ? 'StrikethroughMark' : node.name === 'Highlight' ? 'HighlightMark' : 'EmphasisMark';
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
@@ -159,6 +164,8 @@ function build(view: EditorView): DecorationSet {
             return;
           }
           case 'InlineCode': {
+            // A backtick pair inside a formula is part of the formula, not code.
+            if (insideMath(node.from, node.to)) return;
             out.push(inlineCode.range(node.from, node.to));
             if (touches(node.from, node.to)) return false;
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
@@ -168,6 +175,7 @@ function build(view: EditorView): DecorationSet {
           }
           case 'Link': {
             // Only inline links: [text](url). Reference links stay as source.
+            if (insideMath(node.from, node.to)) return;
             const marks: { from: number; to: number; text: string }[] = [];
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
               if (child.name === 'LinkMark') marks.push({ from: child.from, to: child.to, text: state.sliceDoc(child.from, child.to) });
@@ -307,6 +315,7 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
         const start = line.from + match.index;
         const end = start + match[0].length;
         if (inCode(tree.resolveInner(start, 1).name)) continue;
+        if (inMath(state, start) || inMath(state, end - 1)) continue; // a formula, not a reference
         out.push(footref.range(start, end));
         out.push(footrefMark.range(start, start + 2));
         out.push(footrefMark.range(end - 1, end));

@@ -1,4 +1,4 @@
-import { MATH_OR_CODE } from './markdownSyntax';
+import { maskMathAndCode } from './mathScan';
 
 // One direction policy for source lines and rendered blocks. This sets the
 // paragraph base direction, NEVER a bidi override: dates/digits remain in
@@ -21,7 +21,7 @@ export function strongDirection(text: string): TextDirection | null {
  * and URLs don't vote. The line-number gutter and the outline tree follow
  * this. */
 export function majorityDirection(markdown: string): TextDirection {
-  const masked = markdown.replace(MATH_OR_CODE, (match: string) => match.replace(/[^\n]/g, ' '));
+  const masked = maskMathAndCode(markdown);
   let rtl = 0, ltr = 0;
   for (const ch of masked) {
     if (!/\p{L}/u.test(ch)) continue;
@@ -92,30 +92,28 @@ const withoutSyntax = (line: string): string => line
 export function sourceDirections(markdown: string): TextDirection[] {
   const source = markdown.replace(/\r\n?/g, '\n');
   const originalLines = source.split('\n');
-  const ignored = new Set<number>();
-  let cursor = 0, line = 0;
   const blank = (text: string) => text.replace(/[^\n]/g, ' ');
-  let masked = source.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, blank)
+  const plain = source.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, blank)
     .replace(/<!--[\s\S]*?-->/g, blank)
     .replace(/^ {0,3}\[(?!\^)[^\]]+\]:[^\n]*$/gm, blank);
-  masked = masked.replace(MATH_OR_CODE, (match: string, _a, _b, _c, display: string | undefined, inline: string | undefined, offset: number) => {
-    // "$$" with nothing between on one line and a lone unpaired "$$" are
-    // text, not math; an empty $$ … $$ block is still a math block.
-    if (display !== undefined && !display.trim() && !match.includes('\n')) return match;
-    if (inline !== undefined && !inline.trim()) return match;
-    line += source.slice(cursor, offset).split('\n').length - 1;
-    const lines = match.split('\n').length - 1;
-    for (let i = line; i <= line + lines; i++) ignored.add(i);
-    line += lines; cursor = offset + match.length;
-    return blank(match);
-  });
-  const lines = masked.split('\n');
+  // Math and code never vote; the shared scanner says where they are, so the
+  // editor, the preview and this agree on the same lines (src/mathScan.ts).
+  const hidden = maskMathAndCode(source);
+  const masked = [...plain];
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] !== '\n' && plain[i] !== ' ' && hidden[i] === ' ') masked[i] = ' ';
+  }
+  const maskedText = masked.join('');
+  const plainLines = plain.split('\n');
+  const lines = maskedText.split('\n');
   const units: DirectionUnit[] = lines.map((raw, index) => {
     const text = withoutSyntax(raw);
     const explicit = /<[a-z][^>]*\bdir\s*=\s*["'](rtl|ltr)["']/i.exec(raw)?.[1].toLowerCase() as TextDirection | undefined;
     const heading = /^\s{0,3}(#{1,6})(?:\s|$)/.exec(text)?.[1].length;
     const indentedCode = /^( {4}|\t)/.test(originalLines[index]) && (index === 0 || !originalLines[index - 1].trim() || /^( {4}|\t)/.test(originalLines[index - 1]));
-    return { own: explicit ?? strongDirection(text), heading, excluded: (ignored.has(index) && !text.trim()) || indentedCode };
+    // A line that was nothing but math or code is not prose: it never votes.
+    const wasMath = !text.trim() && withoutSyntax(plainLines[index]).trim() !== '';
+    return { own: explicit ?? strongDirection(text), heading, excluded: wasMath || indentedCode };
   });
   for (let i = 1; i < lines.length; i++) {
     if (!units[i].excluded && /^\s{0,3}(=+|-+)\s*$/.test(lines[i]) && lines[i - 1].trim() && !units[i - 1].excluded && !units[i - 1].heading) {

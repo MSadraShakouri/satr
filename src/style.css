@@ -836,6 +836,13 @@ body {
   width: 100%;
   margin-inline: 0;
 }
+/* The name sits on the note's side, with the line numbers: a Latin file name
+   in a Persian note goes to the right, as Obsidian's inline title does. The
+   text keeps its own direction (unicode-bidi: plaintext above), only the
+   line box is aligned. */
+.cm-editor.cm-satr-gutter-rtl .cm-file-name {
+  text-align: right;
+}
 .cm-file-name:focus {
   color: var(--text-normal);
 }

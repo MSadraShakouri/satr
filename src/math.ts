@@ -151,6 +151,13 @@ const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 // Break points, preferred in this order: the writer's own line ends, then
 // commas, then relations (which repeat on the next line), then the spaces
 // typed between words. The comma stays at the end of the line it breaks.
+//
+// A plain ( ) / [ ] group — and the visible braces \{ \} — is a step behind
+// all of those (BREAK_INSIDE is added to its break points' priority): a group
+// that fits is never broken, and a group too wide for the line can still
+// break inside itself at its own comma, relation or space instead of at
+// whatever atom the browser would otherwise split it at. Braces, \left…
+// \right and environments never break: their halves must render together.
 interface Cut { prio: number; rel: string; comma: boolean; prefix: string }
 const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', comma: false, prefix: '', ...fields });
 function mergeCuts(a: Cut, b: Cut): Cut {
@@ -213,13 +220,21 @@ function splitCuts(rawTex: string): Split | null {
     }
     termStart = to;
   };
-  let depth = 0;
+  const LAST = 4; // every top-level break point stays ahead of a break inside a group
+  let depth = 0; // braces, \left…\right and environments: never a break inside
+  let plain = 0; // plain ( ) [ ] (and \{ \}): a break inside is the last resort
   let i = 0;
   while (i < tex.length) {
     const c = tex[i];
+    // 0 = top level, 1 = inside a plain group (shifted by LAST), -1 = no break.
+    const level = depth > 0 ? -1 : plain > 0 ? 1 : 0;
+    const prio = (value: number): number => value + (level === 1 ? LAST : 0);
     if (c === '\\') {
       if (!LATIN.test(tex[i + 1] ?? '')) {
         if (tex[i + 1] === '\\' && depth === 0) return null; // manual line breaks: leave alone
+        // A visible brace is a delimiter of its own, not an escape to skip.
+        if (level === 0 && tex[i + 1] === '{') { plain += 1; i += 2; continue; }
+        if (level === 1 && tex[i + 1] === '}') { plain -= 1; i += 2; continue; }
         i += 2;
         continue;
       }
@@ -230,23 +245,23 @@ function splitCuts(rawTex: string): Split | null {
       if (name === 'right') { depth -= 1; i = skipDelimiter(tex, k); continue; }
       if (name === 'begin') { depth += 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
       if (name === 'end') { depth -= 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
-      if (depth === 0 && name === 'not') {
+      if (level >= 0 && name === 'not') {
         // \not= , \not\equiv ...
         let end = skipSpaces(tex, k);
         if (tex[end] === '\\') { end += 1; while (LATIN.test(tex[end] ?? '')) end += 1; } else end += 1;
-        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
-      if (depth === 0 && EXT_ARROWS.has(name)) {
+      if (level >= 0 && EXT_ARROWS.has(name)) {
         let end = skipGroup(tex, skipSpaces(tex, k), '[', ']');
         end = skipGroup(tex, skipSpaces(tex, end), '{', '}');
-        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
-      if (depth === 0 && RELATIONS.has(name)) {
-        cut(i, k, newCut(2, { rel: tex.slice(i, k) }));
+      if (level >= 0 && RELATIONS.has(name)) {
+        cut(i, k, newCut(prio(2), { rel: tex.slice(i, k) }));
         i = k;
         continue;
       }
@@ -254,34 +269,34 @@ function splitCuts(rawTex: string): Split | null {
       continue;
     }
     if (c === '{') { depth += 1; i += 1; continue; }
-    if (c === '}') { depth -= 1; i += 1; continue; }
-    if (c === '(') { depth += 1; i += 1; continue; }
-    if (c === ')' && depth > 0) { depth -= 1; i += 1; continue; }
-    if (c === '[') { depth += 1; i += 1; continue; }
-    if (c === ']' && depth > 0) { depth -= 1; i += 1; continue; }
-    if (c === '&' && depth === 0) return null; // alignment: leave alone
-    if (c === '\n' && depth === 0) {
-      cut(i, i + 1, newCut(0)); // the writer's own line end, preferred
+    if (c === '}') { if (depth > 0) depth -= 1; i += 1; continue; }
+    if (c === '(') { if (depth === 0) plain += 1; i += 1; continue; }
+    if (c === ')') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
+    if (c === '[') { if (depth === 0) plain += 1; i += 1; continue; }
+    if (c === ']') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
+    if (c === '&' && level >= 0) return null; // alignment: leave alone
+    if (c === '\n' && level >= 0) {
+      cut(i, i + 1, newCut(prio(0))); // the writer's own line end, preferred
       i += 1;
       continue;
     }
-    if (c === SPACE && depth === 0) {
-      cut(i, i + 1, newCut(3, { prefix: '\\ ' }));
+    if (c === SPACE && level >= 0) {
+      cut(i, i + 1, newCut(prio(3), { prefix: '\\ ' }));
       i += 1;
       continue;
     }
-    if (c === ',' && depth === 0) {
-      cut(i, i + 1, newCut(1, { comma: true }));
+    if (c === ',' && level >= 0) {
+      cut(i, i + 1, newCut(prio(1), { comma: true }));
       i += 1;
       continue;
     }
-    if (depth === 0 && c === ':' && tex[i + 1] === '=') {
-      cut(i, i + 2, newCut(2, { rel: ':=' }));
+    if (level >= 0 && c === ':' && tex[i + 1] === '=') {
+      cut(i, i + 2, newCut(prio(2), { rel: ':=' }));
       i += 2;
       continue;
     }
-    if (depth === 0 && (c === '=' || c === '<' || c === '>')) {
-      cut(i, i + 1, newCut(2, { rel: c }));
+    if (level >= 0 && (c === '=' || c === '<' || c === '>')) {
+      cut(i, i + 1, newCut(prio(2), { rel: c }));
       i += 1;
       continue;
     }

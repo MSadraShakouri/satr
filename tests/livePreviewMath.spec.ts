@@ -64,3 +64,40 @@ test('prose emphasis still renders outside math on the same line', async ({ page
   expect(report.starsHidden).toBe(true);
   expect(report.bold).toBe(true);
 });
+
+// Anything that would hide a marker or restyle text must leave a formula
+// alone: a link, a code span or a footnote reference in `$…$` is part of the
+// formula, not markdown (11).
+test('links, code spans and footnote references stay source inside math', async ({ page }) => {
+  await draft(page, 'far away| and $x [a](b)$ and $y `c`$ and $z[^1]$');
+  const report = await page.evaluate(() => {
+    const line = window.testEditor.view.dom.querySelector('.cm-line')!;
+    return {
+      text: line.textContent,
+      links: line.querySelectorAll('.cm-lp-link').length,
+      code: line.querySelectorAll('.cm-lp-inline-code').length,
+      footrefs: line.querySelectorAll('.cm-lp-footref').length,
+    };
+  });
+  expect(report.text).toContain('[a](b)');
+  expect(report.text).toContain('`c`');
+  expect(report.footrefs).toBe(0);
+  // The prose beside the formulas still renders normally.
+  expect(report.links).toBe(0);
+  expect(report.code).toBe(0);
+});
+
+test('prose links and code spans outside math still render', async ({ page }) => {
+  await draft(page, 'far away| [a](b) and `c`');
+  const report = await page.evaluate(() => {
+    const line = window.testEditor.view.dom.querySelector('.cm-line')!;
+    return {
+      text: line.textContent,
+      links: line.querySelectorAll('.cm-lp-link').length,
+      code: line.querySelectorAll('.cm-lp-inline-code').length,
+    };
+  });
+  expect(report.text).not.toContain('](');
+  expect(report.links).toBe(1);
+  expect(report.code).toBe(1);
+});

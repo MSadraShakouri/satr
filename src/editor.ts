@@ -142,12 +142,28 @@ const directionPlugin = ViewPlugin.fromClass(class {
 }, { decorations: (value) => value.decorations });
 
 // The line-number gutter sits on the note's majority side (#10): right for a
-// mostly Persian note, left for a mostly English one. A class, not a bidi
-// override, so the scroller keeps its LTR scroll coordinates. It must update
-// on any state change (tab switch, initial load), not only on typing.
+// mostly Persian note, left for a mostly English one, and the file name on top
+// follows it (style.css). A class, not a bidi override, so the scroller keeps
+// its LTR scroll coordinates. It must update on any state change (tab switch,
+// initial load), not only on typing — and, since a phone's WebView can restore
+// or re-lay out the page without a transaction, whenever the page comes back
+// into focus or view as well.
 const gutterSidePlugin = ViewPlugin.fromClass(class {
   lastDir: 'ltr' | 'rtl' | null = null;
-  constructor(view: EditorView) { this.sync(view); }
+  private readonly editor: EditorView;
+  constructor(view: EditorView) {
+    this.editor = view;
+    this.sync(view);
+    window.addEventListener('focus', this.resync);
+    document.addEventListener('visibilitychange', this.resync);
+  }
+  private readonly resync = (): void => {
+    if (this.editor.dom.isConnected) this.sync(this.editor);
+  };
+  destroy(): void {
+    window.removeEventListener('focus', this.resync);
+    document.removeEventListener('visibilitychange', this.resync);
+  }
   update(update: ViewUpdate): void { this.sync(update.view); }
   sync(view: EditorView): void {
     const dir = majorityDirection(view.state.doc.toString());

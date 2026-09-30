@@ -86,3 +86,64 @@ test('the outline tree flips with the note while rows keep their own direction',
   // Each heading row still runs in its own direction.
   expect(out.rows).toEqual(['auto', 'auto']);
 });
+
+// Items 5 and 6: the side must follow the note itself — on load and on every
+// file switch, with no typing involved — and the file name goes with it. A
+// phone's WebView can also restore the page without a transaction, so the
+// side is re-checked when the page regains focus or visibility.
+test('the file name follows the gutter side, without any typing', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { SatrEditor } = await import('/src/editor.ts');
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
+    document.body.appendChild(host);
+    const editor = new SatrEditor(host, () => {});
+    await document.fonts.ready;
+    const read = () => {
+      const dom = host.querySelector<HTMLElement>('.cm-editor')!;
+      const name = host.querySelector<HTMLElement>('.cm-file-name');
+      return { rtl: dom.classList.contains('cm-satr-gutter-rtl'), align: name ? getComputedStyle(name).textAlign : null };
+    };
+    editor.setValue('این یک متن فارسی است');
+    const persian = read();
+    // A file switch is setTitle + setValue, with no keystroke in between.
+    editor.setTitle('English note');
+    editor.setValue('This note is English');
+    const english = read();
+    editor.setTitle('یادداشت فارسی');
+    editor.setValue('و یک سطر دیگر فارسی');
+    const back = read();
+    return { persian, english, back };
+  });
+  expect(report.persian).toEqual({ rtl: true, align: 'right' });
+  expect(report.english).toEqual({ rtl: false, align: 'start' });
+  expect(report.back).toEqual({ rtl: true, align: 'right' });
+});
+
+test('a gutter side lost while the page was away comes back on focus', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { SatrEditor } = await import('/src/editor.ts');
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
+    document.body.appendChild(host);
+    const editor = new SatrEditor(host, () => {});
+    await document.fonts.ready;
+    editor.setValue('این یک متن فارسی است\n\nو سطر دوم');
+    const dom = host.querySelector<HTMLElement>('.cm-editor')!;
+    // The platform drops the class (page restored in the background).
+    dom.classList.remove('cm-satr-gutter-rtl');
+    const lost = dom.classList.contains('cm-satr-gutter-rtl');
+    window.dispatchEvent(new Event('focus'));
+    const afterFocus = dom.classList.contains('cm-satr-gutter-rtl');
+    dom.classList.remove('cm-satr-gutter-rtl');
+    document.dispatchEvent(new Event('visibilitychange'));
+    const afterVisible = dom.classList.contains('cm-satr-gutter-rtl');
+    editor.setValue('Now an English note');
+    const english = dom.classList.contains('cm-satr-gutter-rtl');
+    return { lost, afterFocus, afterVisible, english };
+  });
+  expect(report.lost).toBe(false);
+  expect(report.afterFocus).toBe(true);
+  expect(report.afterVisible).toBe(true);
+  expect(report.english).toBe(false);
+});

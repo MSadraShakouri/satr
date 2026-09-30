@@ -202,3 +202,55 @@ test('a comma wins over an equal sign when both can break', async ({ page }) => 
   expect(report.starts).toEqual([false, false, true]);
   expect(report.commaEndsLine).toBe(true);
 });
+
+// A group in plain parentheses is a step behind every other break point: it
+// is never broken while the line can hold it, and a group too wide for the
+// line breaks inside itself at its own commas or relations instead of at
+// whatever atom the browser would otherwise split (8).
+test('an overwide group breaks at its own punctuation, never at an arbitrary atom', async ({ page }) => {
+  const tex = String.raw`g(\alpha, \beta, \gamma, \delta, \epsilon, \zeta, \eta, \theta, \iota, \kappa) = \lambda, \mu, \nu, \xi, o, \pi, \rho, \sigma`;
+  const report = await page.evaluate(async (tex) => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const read = (width: number) => {
+      const host = document.createElement('article');
+      host.style.cssText = `position:fixed;inset:0 auto auto 0;width:${width}px;background:white;font-size:18px;`;
+      host.innerHTML = renderMath(tex, true);
+      document.body.appendChild(host);
+      layoutMath(host);
+      const box = host.querySelector<HTMLElement>('.math-display')!;
+      const flow = box.querySelector<HTMLElement>('.math-flow')!;
+      const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
+      const text = (unit: HTMLElement) => (unit.querySelector(unit.classList.contains('is-line-start') ? '.math-cont' : '.math-plain')?.textContent ?? '').trim();
+      const lines: string[] = [];
+      units.forEach((unit, index) => {
+        if (index === 0 || unit.classList.contains('is-line-start')) lines.push('');
+        lines[lines.length - 1] += text(unit);
+      });
+      const out = {
+        wrapped: flow.classList.contains('is-wrapped'),
+        overwide: units.filter((unit) => unit.classList.contains('is-overwide')).length,
+        lineCount: lines.length,
+        lines,
+        balanced: (lines.join('').match(/\(/g) ?? []).length === (lines.join('').match(/\)/g) ?? []).length,
+        overflow: Math.round(box.scrollWidth - box.clientWidth),
+      };
+      host.remove();
+      return out;
+    };
+    return { narrow: read(200), wide: read(1600) };
+  }, tex);
+  // Wide enough: one line, nothing is split — the group's own break points
+  // are not used just because they exist.
+  expect(report.wide.wrapped).toBe(false);
+  expect(report.wide.lineCount).toBe(1);
+  expect(report.wide.overwide).toBe(0);
+  // Narrow: the group breaks, but only at its own commas and the relation.
+  expect(report.narrow.wrapped).toBe(true);
+  expect(report.narrow.lineCount).toBeGreaterThanOrEqual(2);
+  expect(report.narrow.overwide).toBe(0);
+  expect(report.narrow.overflow).toBeLessThanOrEqual(1);
+  expect(report.narrow.lines.slice(0, -1).every((line) => line.endsWith(','))).toBe(true);
+  expect(report.narrow.balanced).toBe(true);
+  expect(report.narrow.lines.join(' ')).toContain('κ');
+});
