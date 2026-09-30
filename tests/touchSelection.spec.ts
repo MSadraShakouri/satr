@@ -17,7 +17,9 @@ declare global { interface Window { testEditor: SatrEditor } }
 // doesn't do by itself.
 const NOTE = 'the quick brown fox jumps over the lazy dog\nسلام دنیا زیباست و این خط فارسی است\nsecond line with several words in it';
 
-type Step = { action: 'down' | 'up' | 'move'; at: number; wait?: number; on?: string };
+/** One finger step: a document position to put the finger on, optionally
+ *  offset from it (dx / dy), so a drag can be diagonal. */
+type Step = { action: 'down' | 'up' | 'move'; at: number; wait?: number; on?: string; dx?: number; dy?: number };
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -44,8 +46,8 @@ async function gesture(page: Page, steps: Step[]) {
       if (step.wait) await new Promise((r) => window.setTimeout(r, step.wait));
       const rect = view.coordsAtPos(step.at);
       if (!rect) throw new Error(`position ${step.at} is not on screen`);
-      const x = rect.left + 1;
-      const y = (rect.top + rect.bottom) / 2;
+      const x = rect.left + 1 + (step.dx ?? 0);
+      const y = (rect.top + rect.bottom) / 2 + (step.dy ?? 0);
       // The event lands on the editor (or on a widget when that is the point
       // of the test); the position under the finger is read from the
       // coordinates, as it is in the app.
@@ -90,6 +92,21 @@ test('a double tap then a drag selects from the word to the word under the finge
   ]);
   expect(report.text).toBe(NOTE.slice(4, 25));
   expect(report.anchor).toBe(4);
+});
+
+test('a scroll is not a tap: a tap right after it does not select a word', async ({ page }) => {
+  // Scrolling and then tapping quickly used to arrive as a double tap: the
+  // scroll left its starting point recorded as a tap, and the real tap landed
+  // inside the double tap window (320ms, 30px), so a word was selected out of
+  // two gestures that never belonged together. A scroll is not a tap.
+  const report = await gesture(page, [
+    { action: 'down', at: 6 },
+    { action: 'move', at: 6, dy: -50 }, // 50px up the page: a scroll, not a tap
+    { action: 'up', at: 6, dy: -50 },
+    { action: 'down', at: 6, wait: 120 }, // well inside DOUBLE_TAP_MS of the scroll
+    { action: 'up', at: 6 },
+  ]);
+  expect(report.text).toBe('');
 });
 
 test('what the browser selected itself is never taken away from the writer', async ({ page }) => {

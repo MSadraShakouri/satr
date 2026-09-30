@@ -842,7 +842,10 @@ export class SatrEditor {
     }, true);
     this.view.contentDOM.addEventListener('touchmove', (event) => {
       const touch = event.touches[0];
-      if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
+      if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) {
+        touchMoved = true;
+        taps.cancel(); // a scroll is not a tap
+      }
       // Dragging after a double tap takes the selection with the finger, from
       // the word the tap found to the word under the finger now.
       if (!dragWord || !touch) return;
@@ -854,6 +857,8 @@ export class SatrEditor {
       window.clearTimeout(touchTimer);
       const word = dragWord;
       dragWord = null;
+      // A gesture that moved was not a tap, whatever it did to the selection.
+      if (touchMoved) taps.cancel();
       if (word) selectWordIfUntouched(word);
       // Native selection handles keep adjusting for a moment after the lift.
       touchTimer = window.setTimeout(() => {
