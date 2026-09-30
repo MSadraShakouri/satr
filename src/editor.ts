@@ -332,6 +332,20 @@ const listNumbering = EditorState.transactionFilter.of((tr) => {
   return [tr, { changes, sequential: true, annotations: listRenumber.of(true) }];
 });
 
+/** An item with nothing written on it yet: its marker (a to-do box counts)
+ *  and nothing else. */
+const EMPTY_ITEM_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])([ \t]+(\[[ xX]\])?)?[ \t]*$/;
+
+/** Are these two markers the same list continuing? Numbers may differ — the
+ *  writer's own spacing is theirs — but the kind and the delimiter must hold. */
+function sameKind(one: string, other: string): boolean {
+  const first = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(one);
+  const second = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(other);
+  if (first && second) return first[2] === second[2];
+  if (first || second) return false;
+  return one === other;
+}
+
 function continueOnEnter(view: EditorView): boolean {
   const { state } = view;
   const selection = state.selection.main;
@@ -346,6 +360,16 @@ function continueOnEnter(view: EditorView): boolean {
     return true;
   }
   const ordered = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(marker);
+  // An item already sits empty on the next line, waiting for its text: Enter
+  // moves into it rather than making a second empty one and pushing every
+  // number below it. Only a line of the same kind — same indent, same marker,
+  // same delimiter — is the list continuing, and only from the line's end.
+  const nextLine = line.number < state.doc.lines ? state.doc.line(line.number + 1) : null;
+  const waiting = nextLine ? EMPTY_ITEM_LINE.exec(nextLine.text) : null;
+  if (waiting && selection.head === line.to && waiting[1] === indent && sameKind(waiting[2], marker)) {
+    view.dispatch({ selection: { anchor: nextLine!.from + nextLine!.text.length } });
+    return true;
+  }
   const parsed = ordered ? parseListNumber(ordered[1]) : null;
   const next = parsed ? `${formatListNumber(parsed.number + 1, parsed.alphabet)}${ordered?.[2] ?? '.'}` : marker;
   // A to-do line continues with a to-do line, and the box is always empty:

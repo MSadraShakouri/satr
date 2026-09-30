@@ -260,3 +260,52 @@ test('undo puts the numbering back with the edit', async ({ page }) => {
   expect(after.numbered).toBe('1. a\n2. \n3. b\n4. c');
   expect(after.undone).toBe(text);
 });
+
+// The writer's list can already hold an item with nothing written on it. Enter
+// moves into that item — the caret lands where the text goes — instead of
+// making a second empty one and pushing every number below it (15).
+test('Enter uses an empty item already waiting below', async ({ page }) => {
+  const withWaiting = await page.evaluate(async ({ text }) => {
+    const ed = window.testEditor;
+    ed.setValue(text);
+    // The end of "1. a".
+    ed.setSelection(4, 4);
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    ed.view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 40));
+    const key = { text: ed.getValue(), caret: ed.getSelection()[0] };
+    ed.setValue(text);
+    ed.setSelection(4, 4);
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    ed.run('lineBelow');
+    await new Promise((r) => setTimeout(r, 40));
+    return { key, button: { text: ed.getValue(), caret: ed.getSelection()[0] } };
+  }, { text: '1. a\n2. \n3. c' });
+  // Nothing is written and nothing below moves: the empty item was waiting.
+  expect(withWaiting.key.text).toBe('1. a\n2. \n3. c');
+  expect(withWaiting.key.caret).toBe(8);
+  // The button is the same chain.
+  expect(withWaiting.button.text).toBe(withWaiting.key.text);
+  expect(withWaiting.button.caret).toBe(withWaiting.key.caret);
+  // The writer's own number on that line is left alone.
+  const other = '1. a\n5. \n6. c';
+  const kept = await edit(page, other, at(other, 1, 'end'), 'enter');
+  expect(kept.text).toBe(other);
+  expect(kept.caret).toBe(8);
+  // A waiting to-do box is used the same way.
+  const todo = '1. [x] a\n2. [ ] \n3. c';
+  const box = await edit(page, todo, at(todo, 1, 'end'), 'enter');
+  expect(box.text).toBe(todo);
+  expect(box.caret).toBe(todo.indexOf('\n') + 1 + '2. [ ] '.length);
+  // A different kind of marker, or another indent, is not this list: Enter
+  // continues the list it is on.
+  const mixed = '1. a\n- \n3. c';
+  expect((await edit(page, mixed, at(mixed, 1, 'end'), 'enter')).text).toBe('1. a\n2. \n- \n3. c');
+  const nested = '1. a\n    2. \n3. c';
+  expect((await edit(page, nested, at(nested, 1, 'end'), 'enter')).text).toBe('1. a\n2. \n    2. \n3. c');
+  // And Enter on the empty item itself still leaves the list.
+  const leaving = '1. a\n2. \n3. c';
+  expect((await edit(page, leaving, at(leaving, 2, 'end'), 'enter')).text).toBe('1. a\n\n2. c');
+});
