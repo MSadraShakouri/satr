@@ -133,30 +133,114 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
   }
 }
 
-/** KaTeX sizes its SVG signs — the \vec arrow, stretchy brackets, roots — in
- * em, as width/height *attributes* (only the accent's width is also an inline
- * style). Android's WebView scales text, but a length that only lives in an
- * SVG presentation attribute did not follow the system font scale there: the
- * letters grew and the drawn signs stayed put, so \vec{u} ended up touching
- * its letter while the same page is fine on the web and in print.
- *
- * The fix is to carry the same numbers into CSS, in em — the units are kept,
- * so a sign always grows with the text it belongs to, whatever scales it
- * (system font scale, 200% zoom, print at a fixed size). Nothing is measured
- * or frozen in px: a value computed at one font size went stale as soon as
- * the text zoom changed, which is what made the app worse.
- *
- * Nothing else about KaTeX's geometry changes: an SVG is absolutely
- * positioned inside its box, so the em value cannot disturb the layout, and
- * for the 400em-wide slice drawings (roots, stretchy arrows) the parent is
- * overflow-hidden — 400em/400000 and 1.08em/1080 are the same scale, so the
- * visible slice is pixel-for-pixel what it was. */
+// KaTeX's drawn signs — the \vec arrow, stretchy brackets, roots, \overline —
+// are SVG, and KaTeX gives each one a size in em as a presentation
+// *attribute* (width="0.471em"). Android's WebView scales text (its text zoom
+// follows Configuration.fontScale, like Obsidian's), and a length that lives
+// only in an SVG presentation attribute did not always follow it there: the
+// letters grew, the signs stayed put, and \vec{u} ended up with its arrow
+// touching the letter. The same page is fine on the web and in print, and so
+// is the PDF, which the app hands to a print WebView pinned at setTextZoom(100).
+//
+// The sign is therefore sized in three steps, and only the last two are here
+// at all on a browser where the first one already works:
+//
+//  1. Carry the same numbers into CSS, in em — the units are kept, so a sign
+//     always grows with the text it belongs to, whatever scales it (system
+//     font scale, 200% zoom, print at a fixed size). Nothing is frozen in px:
+//     a value computed at one font size goes stale the moment the text zoom
+//     changes, which is what made the app worse.
+//
+//  2. *Check* it, against the formula's own text. KaTeX's strut is an
+//     inline-block whose height KaTeX wrote in em and the engine draws with
+//     the same letters beside it, so its painted height is one em, measured.
+//     If the sign is not that big, its box is not following the text: give it
+//     the size in px, written as an inline !important so it beats whatever
+//     the WebView insists on. It is measured again on the next pass (re-render,
+//     font load, resize, system font scale change), never left to go stale.
+//
+//  3. If even that is ignored — some WebViews lay a sign out from the
+//     attribute whatever the style says — scale the drawing itself, so the
+//     arrow is the size of the letter it belongs to. A transform on an
+//     absolutely positioned SVG cannot disturb the layout around it.
+//
+// Nothing else about KaTeX's geometry changes: an SVG is absolutely
+// positioned inside its box, so none of this moves anything else, and for the
+// 400em-wide slice drawings (roots, stretchy arrows) the parent is
+// overflow-hidden — 400em/400000 and 1.08em/1080 are the same scale, so the
+// visible slice is pixel-for-pixel what it was. That is also why only the
+// height is measured: a 400em box is clipped to whatever the formula wanted,
+// and its size was never the thing on screen.
+
+/** A size KaTeX wrote in em, as a number; null for anything else. */
+export function emSize(value: string | null): number | null {
+  if (!value) return null;
+  const match = /^\s*(\d*\.?\d+)em\s*$/.exec(value);
+  return match ? Number(match[1]) : null;
+}
+
+/** How far a sign may be from the size its own em asks for before it counts
+ * as "the text is not being followed" (subpixel rounding, and the fractions
+ * of a px that font sizes carry, are well inside this). */
+const SIGN_TOLERANCE = 0.02;
+
+export function signSizeCorrection(expected: number, painted: number): { px: number; scale: number } | null {
+  if (!(expected > 0) || !(painted > 0)) return null;
+  if (Math.abs(painted - expected) <= expected * SIGN_TOLERANCE) return null;
+  return { px: expected, scale: expected / painted };
+}
+
+/** One em in CSS px, as this browser actually draws this formula's text. The
+ * strut is the reference: KaTeX wrote its height in em, and the engine draws
+ * it with the letters around it. Null when the formula isn't laid out (a
+ * hidden preview pane), so nothing is measured in vain. */
+function paintedEm(katex: HTMLElement): number | null {
+  const strut = katex.querySelector<HTMLElement>('.strut');
+  const em = strut ? emSize(strut.style.height) : null;
+  const height = strut ? strut.getBoundingClientRect().height : 0;
+  if (em !== null && height > 0.01) return height / em;
+  const size = parseFloat(katex.ownerDocument.defaultView?.getComputedStyle(katex).fontSize ?? '');
+  return size > 0 ? size : null;
+}
+
 export function normalizeKatexSvg(root: HTMLElement): void {
-  const EM = /^\s*\d*\.?\d+em\s*$/;
-  for (const svg of root.querySelectorAll<SVGElement>('svg')) {
+  for (const katex of root.querySelectorAll<HTMLElement>('.katex')) {
+    const signs = [...katex.querySelectorAll<SVGElement>('svg')];
+    if (!signs.length) continue;
     for (const side of ['width', 'height'] as const) {
-      const value = svg.getAttribute(side);
-      if (value && EM.test(value)) svg.style.setProperty(side, value);
+      for (const svg of signs) {
+        // The value goes over exactly as KaTeX wrote it, so the CSS says
+        // what the attribute said (1.0800em stays 1.0800em).
+        const value = svg.getAttribute(side);
+        if (emSize(value) !== null) svg.style.setProperty(side, value!);
+      }
+    }
+    // Steps 2 and 3 need the formula on screen to measure against; the sizes
+    // above are already right everywhere else, and a hidden pane is laid out
+    // the moment it is shown (main.ts re-runs the layout then).
+    if (!katex.getClientRects().length) continue;
+    const em = paintedEm(katex);
+    if (em === null) continue;
+    for (const svg of signs) {
+      svg.style.removeProperty('transform');
+      svg.style.removeProperty('transform-origin');
+      let scale = 1;
+      for (const side of ['width', 'height'] as const) {
+        const value = emSize(svg.getAttribute(side));
+        // A 400em slice (a root, a stretchy arrow) is clipped to what the
+        // formula wanted: that box was never the thing on screen, so its
+        // width is left alone — only the height that cuts the slice matters.
+        if (value === null || (side === 'width' && value >= 100)) continue;
+        const correction = signSizeCorrection(value * em, svg.getBoundingClientRect()[side]);
+        if (!correction) continue;
+        svg.style.setProperty(side, `${correction.px}px`, 'important');
+        const after = signSizeCorrection(correction.px, svg.getBoundingClientRect()[side]);
+        if (after) scale = after.scale;
+      }
+      if (scale !== 1) {
+        svg.style.setProperty('transform', `scale(${scale.toFixed(4)})`, 'important');
+        svg.style.setProperty('transform-origin', 'left top', 'important');
+      }
     }
   }
 }
