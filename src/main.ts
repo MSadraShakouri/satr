@@ -1474,7 +1474,9 @@ editor.view.dom.addEventListener('input', refreshOutlineSoon);
 // drawer, as Obsidian's. The theme is chosen there.
 function applySettings(settings: Settings): void {
   const root = document.documentElement.style;
-  root.setProperty('--note-font-size', `${settings.fontSize}px`);
+  // The Settings size is a base: the phone's font scale (--system-font-scale,
+  // src/native.ts) applies on top, as it does to the rest of the sheet.
+  root.setProperty('--note-font-size', `calc(${settings.fontSize}px * var(--system-font-scale))`);
   root.setProperty('--note-line-height', String(settings.lineHeight));
   editor.setLineNumbers(settings.lineNumbers);
   document.body.classList.toggle('no-line-numbers', !settings.lineNumbers);

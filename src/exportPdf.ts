@@ -20,7 +20,6 @@ import { loadImages } from './images';
 import { renderMarkdown } from './markdown';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
-import { getSystemFontScale } from './native';
 import { keepHeadingWithContent } from './printHeadings';
 import { loadPrintOptions, printDirection, validPrintOptions, type PrintOptions } from './printOptions';
 import { assembleColumns, columnPageCss, COLUMN_WIDTH_PX, PAGE_HEIGHT_MM, PAGE_WIDTH_MM, PAGE_WIDTH_PX } from './printColumns';
@@ -48,17 +47,14 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
   if (busy) return;
   busy = true;
   const frame = document.createElement('iframe');
-  let scaleCorrection: { remove(): void } | null = null;
   try {
     const settings = loadSettings();
     options = validPrintOptions(options);
     const hasMath = /\$/.test(markdown);
-    const [fonts, pagedJs, systemScale] = await Promise.all([
+    const [fonts, pagedJs] = await Promise.all([
       embeddedFonts(hasMath),
       import('../node_modules/pagedjs/dist/paged.polyfill.min.js?raw').then((m) => m.default),
-      Capacitor.isNativePlatform() ? getSystemFontScale() : Promise.resolve(1),
     ]);
-    const printScale = Math.min(3, Math.max(0.5, systemScale));
     const body = printableBody(renderMarkdown(markdown));
     await loadImages(body, notePath); // embedded as data: URLs before paging
     const dir = printDirection(body, options.direction);
@@ -102,24 +98,11 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
     if (!win || !doc) throw new Error('No print frame');
     await doc.fonts.ready;
 
-    // Paged.js measures in this app WebView before the fixed-scale native
-    // print WebView receives the pages. Android's default text zoom follows
-    // Configuration.fontScale, so temporarily divide every absolute font
-    // size by that scale while measuring. Remove this override before
-    // serializing: the final HTML then contains the original 100% CSS and
-    // PrintPlugin renders it with setTextZoom(100).
-    //
-    // The override must never reach the printed document: Paged.js's
-    // Previewer.removeStyles() takes every plain <style> out of the document
-    // and copies its text into a stylesheet of its own, so a plain <style>
-    // override could not be removed any more. That leak was the bug behind
-    // "the PDF is tiny now": the printed copy divided every font size by the
-    // phone's font scale, and PrintPlugin renders at setTextZoom(100).
-    // applyFontScaleCorrection() keeps the override out of the document.
-    if (Capacitor.isNativePlatform() && Math.abs(printScale - 1) > 0.001) {
-      scaleCorrection = applyFontScaleCorrection(doc, fontScaleCorrectionCss(printScale, settings.pdfCss));
-      await doc.fonts.ready;
-    }
+    // Both WebViews are pinned at 100% text zoom now (SystemBarsPlugin.java,
+    // PrintPlugin.java): the phone's font scale lives in the app's own CSS
+    // (--system-font-scale, src/style.css) and never reaches this measuring
+    // frame or the pages handed to the print WebView, so there is nothing to
+    // cancel here.
 
     // Wrap long formulas at the page's width, as on screen.
     if (hasMath) {
@@ -138,18 +121,7 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
     await win.PagedPolyfill.preview();
     if (options.columns === 2) assembleColumns(doc, dir, settings.pdfPageNumbers);
     numberFootnotes(doc);
-    // The native print WebView is pinned at 100%; send it the unscaled source
-    // CSS rather than the temporary, inverse-fontScale layout override.
-    scaleCorrection?.remove();
-    scaleCorrection = null;
     script.remove();
-
-    // Last line of defence: if a copy of the override did land in the
-    // document after all (a browser without adoptedStyleSheets, a future
-    // Paged.js), it must not reach the print WebView at 100%.
-    doc.querySelectorAll('style').forEach((style) => {
-      if (style.textContent?.includes('--satr-font-scale-correction')) style.remove();
-    });
 
     if (Capacitor.isNativePlatform()) {
       doc.querySelectorAll('script').forEach((el) => el.remove());
@@ -236,47 +208,6 @@ function printDocumentHtml(doc: Document): string {
   viewport.setAttribute('content', `width=${PAGE_WIDTH_PX}, initial-scale=1`);
   doc.head.prepend(viewport);
   return `<!doctype html>\n${doc.documentElement.outerHTML}`;
-}
-
-/** Temporary CSS for layout in the text-scaled app WebView. The matching
- * unscaled CSS stays in the document and is what gets printed. The custom
- * property is a marker, in case a copy of this CSS is ever found somewhere. */
-function fontScaleCorrectionCss(scale: number, customCss: string): string {
-  const adjustedCustomCss = customCss.replace(/(font-size\s*:\s*)([^;{}]+)(;?)/gi, (_all, prefix: string, value: string, end: string) => {
-    const adjusted = value.replace(/(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(px|pt|pc|in|cm|mm|q)\b/gi,
-      (_unit, amount: string, unit: string) => `${Number(amount) / scale}${unit}`);
-    return `${prefix}${adjusted}${end}`;
-  });
-  return `
-    html { --satr-font-scale-correction: 1; font-size: ${15 / scale}px !important; }
-    @page { @bottom-center { font-size: ${12 / scale}pt !important; } }
-    .pagedjs_margin-bottom-center { font-size: ${12 / scale}pt !important; }
-    ${adjustedCustomCss}
-  `;
-}
-
-/** Applies the temporary override to the measuring frame, out of reach of the
- *  page it will serialize. An adopted stylesheet is used where there is one:
- *  it takes part in layout like any other, but it is not a <style> element,
- *  so Paged.js's style collection doesn't copy it and it is never serialized.
- *  Older WebViews (no adoptedStyleSheets) get a marked <style>, which
- *  Paged.js leaves alone and remove() takes back out before printing. */
-function applyFontScaleCorrection(doc: Document, css: string): { remove(): void } {
-  const view = doc.defaultView as (Window & { CSSStyleSheet?: typeof CSSStyleSheet }) | null;
-  try {
-    const Sheet = view?.CSSStyleSheet;
-    if (Sheet && 'adoptedStyleSheets' in doc) {
-      const sheet = new Sheet();
-      sheet.replaceSync(css);
-      doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
-      return { remove: () => { doc.adoptedStyleSheets = doc.adoptedStyleSheets.filter((s) => s !== sheet); } };
-    }
-  } catch { /* fall through to the marked style element */ }
-  const style = doc.createElement('style');
-  style.setAttribute('data-pagedjs-ignore', 'true');
-  style.textContent = css;
-  doc.head.appendChild(style);
-  return { remove: () => style.remove() };
 }
 
 // The reading view's HTML, readied for paper: no copy buttons, wiki links as

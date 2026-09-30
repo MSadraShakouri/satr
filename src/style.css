@@ -11,8 +11,14 @@
   font-display: swap;
 }
 :root {
+  /* Android's font scale, reported by SystemBarsPlugin. Chrome's default
+     textZoom would scale the glyphs without touching the em context, which
+     breaks every KaTeX sign and offset; instead the whole sheet derives from
+     this, so the em an SVG resolves is the size of the letter beside it. */
+  --system-font-scale: 1;
+  font-size: calc(16px * var(--system-font-scale));
   /* Note text, from Settings (src/settings.ts). */
-  --note-font-size: 16px;
+  --note-font-size: calc(16px * var(--system-font-scale));
   --note-line-height: 1.85;
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
   /* Obsidian's typography (app.css :root / body), same names and values:
@@ -303,7 +309,7 @@ button:focus-visible {
   transform: scale(0.93);
 }
 .sidebar-button {
-  font-size: 2rem;
+  font-size: 32px; /* 2rem: an icon, not text, so it does not scale */
 }
 .workspace {
   position: relative;
@@ -871,9 +877,10 @@ body {
   scrollbar-gutter: stable;
 }
 /* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
-   active-line highlight. Their line boxes use unitless multipliers: Android
-   WebView text zoom scales text, but not a px line-height. Room for three
-   digits is reserved so the text doesn't jump at line 10 or 100. */
+   active-line highlight. Their line boxes use unitless multipliers, so they
+   follow the note's text: the glyphs grow with the system font scale (a px
+   line-height would not). Room for three digits is reserved so the text
+   doesn't jump at line 10 or 100. */
 .cm-gutters {
   background: transparent !important;
   border: 0 !important;
@@ -1094,7 +1101,8 @@ body {
   width: 100%;
   color: var(--text-muted);
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
-  font-size: 12px;
+  /* text in the note: it follows the system font scale, like the code beside it */
+  font-size: calc(12px * var(--system-font-scale));
   text-align: end;
 }
 .cm-lp-link {

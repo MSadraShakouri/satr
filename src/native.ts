@@ -34,17 +34,6 @@ export function systemBars(): Pick<SystemBarsPlugin, 'hide' | 'show'> | undefine
   return isNative() ? SystemBars : undefined;
 }
 
-/** Android's current system font scale, used only to normalize PDF pagination. */
-export async function getSystemFontScale(): Promise<number> {
-  if (!isNative()) return 1;
-  try {
-    const scale = (await SystemBars.get()).fontScale;
-    return typeof scale === 'number' && Number.isFinite(scale) && scale > 0 ? scale : 1;
-  } catch {
-    return 1;
-  }
-}
-
 let lastSystemFontScale = 1;
 function applyInsets(insets: Insets): void {
   const root = document.documentElement.style;
@@ -52,11 +41,17 @@ function applyInsets(insets: Insets): void {
     const value = insets[side];
     if (typeof value === 'number') root.setProperty(`--safe-area-inset-${side}`, `${Math.round(value * 10) / 10}px`);
   }
-  if (typeof insets.fontScale === 'number' && Number.isFinite(insets.fontScale) && insets.fontScale > 0
-    && Math.abs(insets.fontScale - lastSystemFontScale) > 0.001) {
-    const previous = lastSystemFontScale;
-    lastSystemFontScale = insets.fontScale;
-    window.dispatchEvent(new CustomEvent('satr:font-scale-change', { detail: { scale: insets.fontScale, previous } }));
+  // The phone's font scale, for CSS to read (src/style.css). The WebView itself
+  // is pinned to 100% text zoom (SystemBarsPlugin.java): Android's textZoom
+  // scales the glyphs but not the CSS em context, which every KaTeX sign and
+  // offset is laid out in.
+  if (typeof insets.fontScale === 'number' && Number.isFinite(insets.fontScale) && insets.fontScale > 0) {
+    root.setProperty('--system-font-scale', String(insets.fontScale));
+    if (Math.abs(insets.fontScale - lastSystemFontScale) > 0.001) {
+      const previous = lastSystemFontScale;
+      lastSystemFontScale = insets.fontScale;
+      window.dispatchEvent(new CustomEvent('satr:font-scale-change', { detail: { scale: insets.fontScale, previous } }));
+    }
   }
 }
 
