@@ -121,3 +121,30 @@ test('the printed list keeps the writer’s number', async ({ page }) => {
     { start: '4', persian: false, label: null },
   ]);
 });
+
+// A Persian phrase in a formula is a phrase on paper too: its words read right
+// to left across the printed page, inside a formula that stays left to right.
+test('a Persian phrase in a printed formula reads right to left', async ({ page }) => {
+  await print(page, 'نمودار: $v = \\text{سلام دنیا}$', { columns: 1, direction: 'rtl', mathAlign: 'center' });
+  const order = await page.evaluate(() => {
+    const run = [...document.querySelectorAll<HTMLElement>('.pagedjs_page_content .katex .text')]
+      .find((el) => el.getBoundingClientRect().width > 0 && (el.textContent ?? '').includes('سلام'));
+    if (!run) return null;
+    const walker = document.createTreeWalker(run, NodeFilter.SHOW_TEXT);
+    let node: Text | null = null;
+    for (let next = walker.nextNode(); next; next = walker.nextNode()) {
+      if (next instanceof Text && next.data.includes('سلام') && /[\s\u00a0]/.test(next.data)) { node = next; break; }
+    }
+    if (!node) return null;
+    const at = node.data.search(/[\s\u00a0]/);
+    const box = (from: number, to: number) => {
+      const range = document.createRange();
+      range.setStart(node!, from);
+      range.setEnd(node!, to);
+      return range.getBoundingClientRect();
+    };
+    return { text: node.data, first: box(0, at).left, second: box(at + 1, node.data.length).left };
+  });
+  expect(order, 'the phrase is on the page').not.toBeNull();
+  expect(order!.first, `${order!.text} reads right to left`).toBeGreaterThan(order!.second);
+});

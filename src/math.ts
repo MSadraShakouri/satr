@@ -106,6 +106,11 @@ function liftTextBreaks(tex: string): string {
 }
 
 function liftTextCommand(name: string, inner: string): string {
+  // A Persian phrase is one run of words in the reading order: handing the
+  // browser its words as separate boxes would lay them out left to right
+  // (\text{سلام دنیا} read backwards). The phrase stays in one atom, and the
+  // bidi algorithm inside it reads it right to left.
+  if (PERSIAN_LETTER.test(inner)) return `\\${name}{${inner}}`;
   const lifted = liftTextBreaks(inner);
   const parts: string[] = [];
   let depth = 0;
@@ -281,6 +286,13 @@ function splitCuts(rawTex: string): Split | null {
       continue;
     }
     if (c === SPACE && level >= 0) {
+      // A space between two Persian letters is inside a phrase, not between
+      // terms: a break there would leave the words to be ordered left to
+      // right.
+      if (PERSIAN_LETTER.test(tex[i - 1] ?? '') && PERSIAN_LETTER.test(tex[i + 1] ?? '')) {
+        i += 1;
+        continue;
+      }
       cut(i, i + 1, newCut(prio(3), { prefix: '\\ ' }));
       i += 1;
       continue;
@@ -326,6 +338,8 @@ const PERSIAN_CHAR = '[\\u0620-\\u065F\\u0670\\u0671-\\u06D3\\u06D5\\u06D6-\\u06
 // A run is a letter, more letters, and the `\ ` markers between them: it must
 // start and end with a letter, so a lone space marker — a break point of its
 // own — is never wrapped.
+/** One Persian (or Arabic-script) character. */
+const PERSIAN_LETTER = new RegExp(PERSIAN_CHAR);
 const PERSIAN_RUN = new RegExp(`${PERSIAN_CHAR}(?:${PERSIAN_CHAR}|\\\\ )*${PERSIAN_CHAR}|${PERSIAN_CHAR}`, 'g');
 const TEXT_COMMAND = /\\(?:text|mbox|hbox|textnormal|textrm|textsf|texttt|operatorname|textsuperscript|textsubscript)\b\s*\{/g;
 

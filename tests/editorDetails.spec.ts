@@ -306,3 +306,65 @@ test('the new-line button is Enter at the end of the line', async ({ page }) => 
   // making one, it just never makes an empty line under a list item.
   expect(report['hello'].button.text).toBe('hello\n');
 });
+
+// A Persian phrase inside a formula is a phrase, not a run of maths atoms: its
+// words must read right to left as a whole. Handing the browser the words as
+// separate boxes laid them out left to right (23).
+test('a Persian phrase in a formula keeps its word order, right to left', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const host = document.createElement('div');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;width:520px;';
+    host.style.setProperty('display', 'block', 'important');
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const read = (tex: string, first: string, second: string) => {
+      host.innerHTML = renderMath(tex, false);
+      layoutMath(host);
+      const run = [...host.querySelectorAll<HTMLElement>('.katex .text')]
+        .find((el) => el.getBoundingClientRect().width > 0 && (el.textContent ?? '').includes(first + ' ') || (el.textContent ?? '').includes(`${first}\u00a0`));
+      if (!run) return { found: false };
+      const walker = document.createTreeWalker(run, NodeFilter.SHOW_TEXT);
+      let node: Text | null = null;
+      for (let next = walker.nextNode(); next; next = walker.nextNode()) {
+        if (next instanceof Text && next.data.includes(first) && /[\s\u00a0]/.test(next.data)) { node = next; break; }
+      }
+      if (!node) return { found: false };
+      const at = node.data.search(/[\s\u00a0]/);
+      const box = (from: number, to: number) => {
+        const range = document.createRange();
+        range.setStart(node!, from);
+        range.setEnd(node!, to);
+        return range.getBoundingClientRect();
+      };
+      const one = box(0, at);
+      const two = box(at + 1, node.data.length);
+      return { found: true, text: node.data, firstLeft: one.left, secondLeft: two.left, runs: host.querySelectorAll('.katex .text').length };
+    };
+    return {
+      explicit: read(String.raw`v = \text{سلام دنیا}`, 'سلام', 'دنیا'),
+      bare: read(String.raw`v = سلام دنیا`, 'سلام', 'دنیا'),
+      inFraction: read(String.raw`v = \frac{سلام دنیا}{2}`, 'سلام', 'دنیا'),
+      mixed: read(String.raw`x = \text{سلام hello}`, 'سلام', 'hello'),
+      latin: (() => {
+        host.innerHTML = renderMath(String.raw`v = \text{hello world}`, false);
+        layoutMath(host);
+        const word = (value: string) => [...host.querySelectorAll<HTMLElement>('.katex .text')]
+          .filter((el) => el.getBoundingClientRect().width > 0 && (el.textContent ?? '').includes(value))
+          .map((el) => el.getBoundingClientRect().left)[0];
+        return { found: true, firstLeft: word('hello')!, secondLeft: word('world')! };
+      })(),
+    };
+  });
+  for (const name of ['explicit', 'bare', 'inFraction', 'mixed'] as const) {
+    const entry = report[name];
+    expect(entry.found, `${name}: the phrase stays in one piece`).toBe(true);
+    // The first word of the phrase sits to the RIGHT of the second one.
+    expect(entry.firstLeft, `${name}: ${entry.text} reads right to left`).toBeGreaterThan(entry.secondLeft!);
+  }
+  // A Latin text command is still a left-to-right phrase, and still offers its
+  // own words as break points (two atoms, in reading order).
+  expect(report.latin.firstLeft).toBeLessThan(report.latin.secondLeft!);
+});
