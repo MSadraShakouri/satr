@@ -1102,6 +1102,17 @@ body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* Characters the parser took for markdown markers but that are not markdown —
+   a pair of dollars parked around prose (`$**$ foo $**$`). The markdown
+   parser has already styled them (bold, struck, highlighted); this puts the
+   source back the way the writer typed it (7). */
+.cm-lp-plain,
+.cm-lp-plain * {
+  font-weight: 400 !important;
+  font-style: normal !important;
+  text-decoration: none !important;
+  background: none !important;
+}
 /* Footnotes (Obsidian: span.cm-footref, .HyperMD-footnote) */
 .cm-lp-footref {
   position: relative;

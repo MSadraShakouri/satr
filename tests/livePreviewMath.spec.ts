@@ -109,3 +109,38 @@ test('prose links and code spans outside math still render', async ({ page }) =>
   expect(report.links).toBe(1);
   expect(report.code).toBe(1);
 });
+
+// Two formulas can hand the parser two marker-shaped characters to pair
+// *across* the prose between them: `$*$ foo foo foo $*$` parses as emphasis,
+// and the italic landed on every foo. A marker inside a formula is not a
+// marker — the whole node is the parser's artefact — so the prose between the
+// formulas stays prose and the source stays as typed (2).
+test('a marker pair parked inside the formulas leaves the prose between them plain', async ({ page }) => {
+  await draft(page, 'far away|$*$ foo foo foo $*$ and $**$ bar bar $**$ and $~~$ baz $~~$');
+  const report = await page.evaluate(() => {
+    const line = window.testEditor.view.dom.querySelector('.cm-line')!;
+    const runs: { text: string; italic: string; weight: number; strike: boolean }[] = [];
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!(node.textContent ?? '').trim()) continue;
+      if (node.parentElement?.closest('.cm-math')) continue;
+      const style = getComputedStyle(node.parentElement!);
+      runs.push({
+        text: (node.textContent ?? '').trim(),
+        italic: style.fontStyle,
+        weight: Number(style.fontWeight),
+        strike: style.textDecorationLine.includes('line-through'),
+      });
+    }
+    return { text: line.textContent ?? '', runs };
+  });
+  // Nothing is hidden: the markers are characters of the formula.
+  expect(report.text).toBe('far away$*$ foo foo foo $*$ and $**$ bar bar $**$ and $~~$ baz $~~$');
+  const prose = report.runs.filter((run) => /foo|bar|baz|and/.test(run.text));
+  expect(prose.map((run) => run.text).join(' ')).toContain('foo foo foo');
+  for (const run of prose) {
+    expect(run.italic).toBe('normal');
+    expect(run.weight).toBeLessThan(600);
+    expect(run.strike).toBe(false);
+  }
+});
