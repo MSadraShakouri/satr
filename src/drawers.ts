@@ -12,6 +12,8 @@
 // open, swiping closed and tapping the backdrop feel the same on the left
 // and on the right.
 
+import { isDraggingSelection } from './touchState';
+
 export type Side = 'left' | 'right';
 
 const MOVE_DEADLINE_MS = 200;
@@ -173,6 +175,8 @@ export function initDrawers(options: DrawerOptions) {
     id = -1;
   }
   document.addEventListener('touchstart', (event) => {
+    // The editor is extending a text selection with this finger: not a swipe.
+    if (isDraggingSelection()) return;
     if (id !== -1 || event.touches.length !== 1) return;
     const touch = event.touches[0] as Touch & { touchType?: string };
     if (touch.touchType === 'stylus') return;
@@ -199,6 +203,9 @@ export function initDrawers(options: DrawerOptions) {
     if (event.touches.length !== 1) { abort(); return; }
     const touch = [...event.touches].find((item) => item.identifier === id);
     if (!touch) return;
+    // The editor is extending a text selection with this finger: the drag
+    // belongs to the note, whatever its direction.
+    if (isDraggingSelection()) return;
     const now = performance.now();
     const dx = touch.clientX - startX;
     const dy = touch.clientY - startY;

@@ -94,6 +94,59 @@ test('a double tap then a drag selects from the word to the word under the finge
   expect(report.anchor).toBe(4);
 });
 
+/** The app's drawers, with the app's own body classes (src/main.ts), so a
+ *  drag the drawer steals shows up exactly as it does on the phone. They are
+ *  laid out as the phone lays them out: a fixed 300px panel, 5% past its edge
+ *  when closed, which is what the drawer reads its position from. */
+async function initDrawersForTest(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const { initDrawers } = await import('/src/drawers.ts');
+    const panel = (side: 'left' | 'right'): HTMLElement => {
+      const el = document.createElement('div');
+      el.style.cssText = `position:fixed;top:0;${side}:0;width:300px;height:100%;`
+        + `transform:translate3d(${side === 'left' ? '-105%' : '105%'},0,0)`;
+      document.body.appendChild(el);
+      return el;
+    };
+    const backdrop = document.createElement('div');
+    backdrop.style.cssText = 'position:fixed;inset:0';
+    const workspace = document.createElement('div');
+    document.body.append(backdrop, workspace);
+    initDrawers({
+      panels: { left: panel('left'), right: panel('right') },
+      movers: [workspace],
+      backdrop,
+      classes: { left: 'files-open', right: 'outline-open' },
+    });
+  });
+}
+
+test('a drag that extends a selection opens no drawer', async ({ page }) => {
+  // The drawer listens on document in the capture phase, and reads the DOM
+  // selection to tell a swipe from a selection drag — but a finger that is
+  // still extending a selection may not have painted that selection yet, so a
+  // diagonal drag used to slide the workspace open and fight the selection.
+  await initDrawersForTest(page);
+  const report = await gesture(page, [
+    ...tap(6),
+    { action: 'down', at: 6 },
+    // Diagonal, and past the drawer's 4px horizontal threshold.
+    { action: 'move', at: 20, dx: 30, dy: 12 },
+    { action: 'move', at: 25, dx: 44, dy: 18 },
+    { action: 'up', at: 25, dx: 44, dy: 18 },
+  ]);
+  // The finger's drag extended the selection, from the word the tap found.
+  expect(report.text.startsWith('quick')).toBe(true);
+  expect(report.text.length).toBeGreaterThan('quick'.length);
+  // A drawer that had engaged would have settled by now (SETTLE_MS, 200ms).
+  await page.waitForTimeout(300);
+  const open = await page.evaluate(() => ({
+    files: document.body.classList.contains('files-open'),
+    outline: document.body.classList.contains('outline-open'),
+  }));
+  expect(open).toEqual({ files: false, outline: false });
+});
+
 test('a scroll is not a tap: a tap right after it does not select a word', async ({ page }) => {
   // Scrolling and then tapping quickly used to arrive as a double tap: the
   // scroll left its starting point recorded as a tap, and the real tap landed
