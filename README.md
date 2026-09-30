@@ -108,9 +108,9 @@ The note's majority — whichever script has more strong letters, with math and
 code ignored — flips the outline tree (the line numbers stay on the left edge).
 Arrow keys walk a mixed line in visual order and stop on both sides of an
 RTL/LTR junction, so the caret never jumps or doubles back at a boundary; after
-typing, the caret keeps the line's side, not the side of the character just
-typed, so a number or an English word inside Persian text never turns the caret
-around. The outline marks the heading two thirds down the page, where you are
+any edit the caret keeps the line's side, not the side of the character just
+typed or deleted, so a number or an English word inside Persian text never
+turns the caret around and the caret never moves back and forth within a line. The outline marks the heading two thirds down the page, where you are
 reading, rather than the one that has just left the top edge. Formulas can show
 all their digits in one set — English or Persian — in the preview and the PDF
 (Settings → Editor, "Math digits"); the note keeps the digits that were typed.

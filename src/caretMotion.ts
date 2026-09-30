@@ -10,7 +10,7 @@
 // row (rows top to bottom, the row's own reading order deciding how they
 // chain at a soft wrap); and each stop remembers the position AND the side
 // the caret must take there, so it always paints where it just moved to.
-import { EditorSelection, Prec } from '@codemirror/state';
+import { EditorSelection, EditorState, Prec, Transaction } from '@codemirror/state';
 import { Direction, EditorView, ViewPlugin, keymap, type ViewUpdate } from '@codemirror/view';
 
 type Stop = { pos: number; assoc: -1 | 1; x: number; top: number };
@@ -84,30 +84,43 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   return true;
 }
 
-// After typing, the caret keeps the LINE's direction, not the direction of
-// the character that was just typed. The forward side (assoc +1) is exactly
-// that: in a right-to-left line it paints at the left of the text the line
-// just grew — even when the last thing typed was a digit or an English word —
-// and in a left-to-right line at its right. Picking the side from the typed
-// character instead moved the caret to the other side of a number inside
-// Persian text, so the next keystroke looked like it went the wrong way (3, 17).
-const bidiCaretPlugin = ViewPlugin.fromClass(class {
-  update(update: ViewUpdate): void {
-    const main = update.state.selection.main;
-    if (!update.docChanged || !main.empty || main.assoc === 1) return;
-    const tr = update.transactions.find((t) => t.docChanged);
-    if (!tr?.isUserEvent('input.type')) return;
-    const range = EditorSelection.cursor(main.head, 1);
-    window.requestAnimationFrame(() => {
-      if (update.view.state.selection.main.head !== main.head) return;
-      if (update.view.state.selection.main.assoc === 1) return;
-      update.view.dispatch({ selection: EditorSelection.create([range]) });
-    });
-  }
+// The caret follows the line, never the run it happens to sit next to.
+//
+// A bidi position on a run boundary has two visual homes — one on each side of
+// the run — and which one is picked is the "side" (assoc) of the selection.
+// When that side is re-derived from what was just typed, a digit or an English
+// word inside Persian text throws the caret over to the other side of what is
+// being written: within one line it goes right, then left, then right again
+// (3, 17). The writer asked for the one rule the phone's own text fields
+// follow: take the side from the LINE — from its first letter — and keep it,
+// whatever is being typed.
+//
+// Side `+1` is that side. It means "forward along the paragraph's own flow",
+// and the line's direction is what sets the paragraph's direction here, so in
+// a Persian line it paints at the left of the text the line just grew and in
+// an English line at its right — the same place every keystroke, whether the
+// key was a Persian letter, a digit, a space or a Latin letter.
+//
+// Applied in the same transaction as the edit (a filter, not a follow-up
+// dispatch), so the caret never paints one frame on the wrong side. Only a
+// single collapsed caret is touched: a selection keeps its own ends, and the
+// filter leaves deliberate movement alone, because it only looks at
+// transactions that changed the document. Composing text is left alone
+// entirely: the keyboard owns the caret while a word is still being composed.
+const lineSide = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
+  const main = tr.newSelection.main;
+  if (!main.empty || main.assoc === 1) return tr;
+  if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
+  // `sequential` so the head is read in the coordinates of the edit, not of
+  // the document before it. Wrapped in EditorSelection.create, because a bare
+  // SelectionRange in a spec is flattened to a plain cursor and loses its side.
+  const side = EditorSelection.create([EditorSelection.cursor(main.head, 1)]);
+  return [tr, { selection: side, sequential: true }];
 });
 
 export const caretMotion = [
-  bidiCaretPlugin,
+  lineSide,
   Prec.highest(keymap.of([
     { key: 'ArrowLeft', run: (view) => move(view, -1, false), shift: (view) => move(view, -1, true) },
     { key: 'ArrowRight', run: (view) => move(view, 1, false), shift: (view) => move(view, 1, true) },

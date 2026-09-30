@@ -5,10 +5,12 @@ declare global { interface Window { testEditor: SatrEditor } }
 
 // Items 17 and 18: a line has ONE direction, and the caret lives in it.
 //
-// 17 — the caret keeps the line's side while typing: in a Persian line the
-//      caret stays left of the text it just grew, even when the last thing
-//      typed was a digit or an English word, so the next keystroke always
-//      lands where it looked like it would.
+// 17 — the caret keeps the LINE's side, always: the side comes from the
+//      line's first letter and never from the character just typed, so within
+//      one line the caret never doubles back. In a Persian line it stays left
+//      of the text the line just grew — through digits, spaces and English
+//      words alike — and in an English line right of it, the way a phone's own
+//      text fields behave.
 // 18 — a new line continues the line above it (a `#`, a list marker or a
 //      date never flips it), and a line's direction is only re-decided when
 //      real prose of the other language appears in it.
@@ -37,8 +39,8 @@ async function typeAt(page: import('@playwright/test').Page, before: string, tex
 }
 
 async function caret(page: import('@playwright/test').Page) {
-  // The caret's side is settled a frame after the input (it is a selection,
-  // not part of the typed transaction), so read after that frame.
+  // The side is part of the edit's own transaction now, but CodeMirror draws
+  // the caret on its next measure pass, so read a frame later.
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   return page.evaluate(() => {
     const view = window.testEditor.view;
@@ -87,11 +89,65 @@ test('an English line keeps its caret on the right, even after a Persian word', 
   await page.keyboard.insertText('ش');
   const persian = await caret(page);
   expect(await page.evaluate(() => window.testEditor.getValue())).toBe('hello xش');
-  // An LTR line keeps the caret on the right of what it grew.
+  // An LTR line keeps the caret on the right of what it grew — the Persian
+  // letter does not carry the caret over to the run's own side.
   for (const [name, state] of [['Latin', first], ['Persian word', persian]] as const) {
     if (!state.split) continue;
     expect(state.x, name).toBe(state.max);
   }
+});
+
+// The rule the writer asked for, as a property: within one line the caret
+// never goes right and left. Typed one key at a time, a mixed Persian line's
+// caret moves leftwards only, and an English line's rightwards only — for
+// digits, spaces, Latin words and a Backspace across a Latin run alike.
+test('typing a mixed line never doubles the caret back', async ({ page }) => {
+  const walk = async (before: string, keys: string[]) => {
+    await page.evaluate(({ before }) => {
+      const pos = before.indexOf('|');
+      window.testEditor.setValue(before.replace('|', ''));
+      window.testEditor.setSelection(pos);
+      window.testEditor.focus();
+    }, { before });
+    await page.waitForTimeout(50);
+    const seen: { key: string; text: string; x: number; assoc: number }[] = [];
+    for (const key of keys) {
+      if (key === '\b') await page.keyboard.press('Backspace');
+      else await page.keyboard.insertText(key);
+      const state = await page.evaluate(() => {
+        const view = window.testEditor.view;
+        const sel = view.state.selection.main;
+        const rect = view.coordsAtPos(sel.head, sel.assoc);
+        return { x: rect ? rect.left : NaN, assoc: sel.assoc, text: view.state.doc.toString() };
+      });
+      seen.push({ key, ...state });
+    }
+    return seen;
+  };
+
+  const xs = (states: { x: number }[]) => JSON.stringify(states.map((s) => Math.round(s.x)));
+  const persian = await walk('سلام |', ['خ', '5', '6', ' ', 'h', 'e', 'l', 'l', 'o', ' ', 'ب', '\b', 'ی']);
+  expect(persian.at(-1)!.text).toBe('سلام خ56 hello ی'); // the Backspace ate the ب
+  // Insertions only: the caret walks left, never back to the right. (A
+  // deletion is allowed to move it — the line is shorter now — but the side
+  // below must still hold through it.)
+  let last = persian[0];
+  for (const state of persian) {
+    // The deletion step is the new baseline, not a move to be judged.
+    if (state.key !== '\b') expect(state.x, `after ${JSON.stringify(state.key)}: ${xs(persian)}`).toBeLessThanOrEqual(last.x + 0.5);
+    last = state;
+  }
+  // Every keystroke leaves the caret on the line's side, never on a run's.
+  expect(persian.map((s) => s.assoc)).toEqual(persian.map(() => 1));
+
+  const english = await walk('hello |', ['x', '1', '2', ' ', 'ش', 'ط', ' ', 'y']);
+  expect(english.at(-1)!.text).toBe('hello x12 شط y');
+  last = english[0];
+  for (const state of english) {
+    expect(state.x, `after ${JSON.stringify(state.key)}: ${xs(english)}`).toBeGreaterThanOrEqual(last.x - 0.5);
+    last = state;
+  }
+  expect(english.map((s) => s.assoc)).toEqual(english.map(() => 1));
 });
 
 test('a line with no letters of its own continues the line above it', async ({ page }) => {
