@@ -41,7 +41,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - Brackets, quotes, `$`, `*`, `_`, `=` and backticks pair up and wrap a selection.
   - `$$` then `$$` opens a math block. A lone `$$` or `$$$$` with nothing between is just text. Only a `$$ … $$` pair whose dollars sit on different lines is a display block; the empty writing line counts as math.
   - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font in the accent colour. A line holding only `$$` never turns monospace, and a pair a heading, a list, a quote or a fence broke is plain text on both sides — editor and reading view read the same rule.
-  - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text. The space auto-correct adds after a word is dropped before `)`, `]`, `...` and the rest of the closing punctuation, so a bracket stays next to the word it belongs to; a space you type yourself is always kept.
+  - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text. Spaces are never second-guessed: what you type (or what the keyboard's auto-correct sends) goes in as it is, before a `)` as anywhere else.
 - **Fast start.** The last screen appears at once, before the app's code has loaded.
 
 Open [demo.md](demo.md) in Satr to see all of it. It's also the first note in a fresh browser install.

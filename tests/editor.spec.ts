@@ -264,32 +264,22 @@ test('Markor keyboard: autocorrect and suggestions on, no spell check', async ({
   });
 });
 
-// The Markor keyboard auto-corrects and its commits carry the space it adds
-// after a word. Before a closing bracket that space would push the bracket
-// away from the word; a space the writer types themselves is never touched (10).
-test('auto-corrected word spacing stops before brackets, typed spaces do not', async ({ page }) => {
-  // A typed space before a closing bracket is the writer's own: keep it.
-  await draft(page, 'word|)');
-  await page.keyboard.insertText(' ');
-  expect(await contents(page)).toBe('word |)');
-  await draft(page, 'word|]');
-  await page.keyboard.insertText(' ');
-  expect(await contents(page)).toBe('word |]');
-
-  // An auto-correct commit (the whole word with its trailing space) keeps the
-  // word and drops the space the keyboard added.
-  await draft(page, '|)');
-  await page.keyboard.insertText('word ');
-  expect(await contents(page)).toBe('word|)');
-  await draft(page, '|...');
-  await page.keyboard.insertText('word ');
-  expect(await contents(page)).toBe('word|...');
-  await draft(page, '|،');
-  await page.keyboard.insertText('word ');
-  expect(await contents(page)).toBe('word|،');
-
-  // Anywhere else the auto-corrected space is ordinary text.
-  await draft(page, '| end');
-  await page.keyboard.insertText('word ');
-  expect(await contents(page)).toBe('word | end');
+// No rule second-guesses a space: what the writer types, or what the
+// keyboard's auto-correct sends, goes in as it is — before `)` as anywhere
+// else. (A rule that dropped the space in front of a closing bracket was
+// removed; the user's call: it was more trouble than it was worth.)
+test('spaces go in as typed, before brackets and everywhere else', async ({ page }) => {
+  for (const [before, inserted, after] of [
+    ['word|)', ' ', 'word |)'],
+    ['word|]', ' ', 'word |]'],
+    ['word|...', ' ', 'word |...'],
+    ['word|،', ' ', 'word |،'],
+    ['|)', 'word ', 'word |)'],
+    ['|...', 'word ', 'word |...'],
+    ['| end', 'word ', 'word | end'],
+  ] as const) {
+    await draft(page, before);
+    await page.keyboard.insertText(inserted);
+    expect(await contents(page), `${before} + ${JSON.stringify(inserted)}`).toBe(after);
+  }
 });

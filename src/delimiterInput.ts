@@ -138,26 +138,13 @@ export function deleteDelimiterPair(view: EditorView): boolean {
   return true;
 }
 
-// A closing bracket or punctuation the auto-corrected word must not push away:
-// "foo|)" stays "foo|)", never "foo |)" and never "foo ...".
-const WANTS_NO_SPACE_BEFORE = /^[)\]}>».,;:!?،؛…]/;
-
+// Spaces are never second-guessed: whatever the writer or the keyboard sends
+// goes in as typed, before a `)` or anywhere else. (A rule that ate the space
+// in front of a closing bracket lived here; it was more trouble than it was
+// worth — a space before `)` is usually wanted, and never surprising.)
 const input = EditorView.inputHandler.of((view, from, to, text) => {
   if (view.composing || view.state.readOnly || from !== view.state.selection.main.from || to !== view.state.selection.main.to) return false;
   if (/^(\${1,2}|\*{1,3}|_{1,3}|~{1,2}|={1,2}|%{1,2})$/.test(text)) return insertDelimiter(view, text);
-  // The keyboard's auto-correct commits the whole word together with the space
-  // it adds after it. When a closing bracket, punctuation or an ellipsis sits
-  // right after the caret, that auto-corrected space is not wanted — drop it.
-  // A space the writer types is a single-character input and is always left
-  // alone: "foo |)" stays possible (10).
-  if (text.length > 1 && text.endsWith(' ') && from === to) {
-    const after = view.state.sliceDoc(to, to + 3);
-    if (WANTS_NO_SPACE_BEFORE.test(after) || after.startsWith('...')) {
-      const inserted = text.slice(0, -1);
-      view.dispatch({ changes: { from, to, insert: inserted }, selection: { anchor: from + inserted.length }, userEvent: 'input.type', scrollIntoView: true });
-      return true;
-    }
-  }
   if (text === ' ' && from === to) {
     const pair = view.state.field(pairs).find((p) => p.mark.length === 1 && p.mark !== '$' && p.from + 1 === from && p.to - 1 === to);
     if (pair) {
