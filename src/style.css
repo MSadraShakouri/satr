@@ -1284,10 +1284,11 @@ body {
 /* ---- Math source (src/mathSource.ts) ----
    Not rendered while editing, but clearly not prose either — Obsidian's
    source math (.cm-s-obsidian span.cm-math / .cm-formatting-math): the
-   monospace font at code size, italic, with the dollar signs in the accent
-   colour. Only the things between the dollars are monospace; the dollars
-   themselves keep the note's font. Math reads left to right, also inside
-   Persian text. */
+   monospace font at code size, italic. Only the things between the dollars
+   are monospace; the dollars themselves keep the note's font and colour —
+   they must not take the accent (they turned blue, and the note's own blue
+   accent made them read as a link rather than as punctuation). Math reads
+   left to right, also inside Persian text. */
 .cm-math {
   font-family: var(--font-monospace);
   font-style: italic;
@@ -1296,7 +1297,7 @@ body {
   unicode-bidi: isolate;
 }
 .cm-math-delim {
-  color: var(--text-accent);
+  color: inherit;
 }
 /* Inside math source nothing is bold, struck or highlighted — a `**`, `~~`
    or `==` is just part of the formula (11). Beats the parser's own emphasis

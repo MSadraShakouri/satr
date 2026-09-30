@@ -174,15 +174,24 @@ test('source math is monospace only between the dollars', async ({ page }) => {
   const styled = await page.evaluate(() => {
     const root = window.testEditor.view.dom;
     const family = (el: Element | null | undefined) => el && getComputedStyle(el).fontFamily;
+    const colour = (el: Element | null | undefined) => el && getComputedStyle(el).color;
+    const line = root.querySelector('.cm-line');
     return {
       math: [...root.querySelectorAll('.cm-math')].map((el) => ({ text: el.textContent, family: family(el) })),
-      delims: [...root.querySelectorAll('.cm-math-delim')].map((el) => ({ text: el.textContent, family: family(el) })),
+      delims: [...root.querySelectorAll('.cm-math-delim')].map((el) => ({ text: el.textContent, family: family(el), colour: colour(el) })),
+      prose: colour(line),
+      accent: getComputedStyle(root).getPropertyValue('--text-accent').trim(),
+      accentRgb: getComputedStyle(root).getPropertyValue('--accent-rgb').trim(),
     };
   });
   expect(styled.math.map((m) => m.text!.trim())).toEqual(['x = 1']);
   expect(styled.delims.map((d) => d.text)).toEqual(['$$', '$$']);
-  // The dollars keep the note's font; only the content between them is monospace.
+  // The dollars keep the note's font and its colour; only the content between
+  // them is monospace. They never take the accent: the accent is blue, and a
+  // blue dollar sign reads like a link rather than like punctuation (1).
   expect(styled.delims[0].family).not.toBe(styled.math[0].family);
+  expect(styled.delims.every((d) => d.colour === styled.prose)).toBe(true);
+  expect(styled.delims.every((d) => d.colour !== `rgb(${styled.accentRgb.split(',').map((n) => n.trim()).join(', ')})`)).toBe(true);
   expect(styled.math[0].family).toContain('VazirCode');
 
   await draft(page, 'one $$\ntwo|');
@@ -197,8 +206,8 @@ test('source math is monospace only between the dollars', async ({ page }) => {
     math: window.testEditor.view.dom.querySelectorAll('.cm-math').length,
     delims: window.testEditor.view.dom.querySelectorAll('.cm-math-delim').length,
   }));
-  // The empty writing line is a block (the dollars get the accent), but
-  // nothing sits between them to turn monospace.
+  // The empty writing line is a block, but nothing sits between the dollars
+  // to turn monospace.
   expect(empty).toEqual({ math: 0, delims: 2 });
 });
 

@@ -71,6 +71,10 @@ test('the reading view renders a broken pair as the markdown it is', async ({ pa
         items: host.querySelectorAll('li').length,
         quotes: host.querySelectorAll('blockquote').length,
         text: host.textContent ?? '',
+        // A placeholder the render step forgot to fill would sit in the page as
+        // an empty block: that is how a "broken pair becomes one display block"
+        // would look (1).
+        placeholders: host.querySelectorAll('[data-satr-math]').length,
       };
     };
     return {
@@ -81,6 +85,9 @@ test('the reading view renders a broken pair as the markdown it is', async ({ pa
       block: render('$$\nx = 1\n$$'),
       empty: render('$$\n\n$$'),
       sameLine: render('$$x = 1$$'),
+      unclosed: render('$$\nx = 1'),
+      unclosedThenPair: render('$$\na\n$$\nb\n$$'),
+      dollarsOnly: render('$$\n$$\n$$'),
       lone: render('one $$ two'),
       run: render('$$$$'),
       spaced: render('$$ $$'),
@@ -99,6 +106,17 @@ test('the reading view renders a broken pair as the markdown it is', async ({ pa
   expect(report.block.displays).toBe(1);
   expect(report.empty.displays).toBe(1);
   expect(report.sameLine.displays).toBe(1);
+  // An opener that never closes is text too — it must not become a block on
+  // its own, and a pair that closes after it is still a block of its own.
+  for (const unclosed of [report.unclosed, report.unclosedThenPair]) {
+    expect(unclosed.text).toContain('$$');
+    expect(unclosed.placeholders).toBe(0);
+  }
+  expect(report.unclosed.displays).toBe(0);
+  expect(report.unclosedThenPair.displays).toBe(1);
+  expect(report.dollarsOnly.displays).toBe(1);
+  // No render ever leaves an unfilled placeholder behind.
+  for (const one of Object.values(report)) expect(one.placeholders).toBe(0);
   // Lone and empty same-line dollars, and prices, are text.
   expect(report.lone.displays).toBe(0);
   expect(report.run.displays).toBe(0);
