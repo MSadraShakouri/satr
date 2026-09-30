@@ -141,45 +141,10 @@ const directionPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-// The line-number gutter sits on the note's majority side (#10): right for a
-// mostly Persian note, left for a mostly English one, and the file name on top
-// follows it (style.css). A class, not a bidi override, so the scroller keeps
-// its LTR scroll coordinates. It must update on any state change (tab switch,
-// initial load), not only on typing — and, since a phone's WebView can restore
-// or re-lay out the page without a transaction, whenever the page comes back
-// into focus or view as well.
-const gutterSidePlugin = ViewPlugin.fromClass(class {
-  lastDir: 'ltr' | 'rtl' | null = null;
-  // The majority is cached per document text: sync() also runs on plain
-  // selection and focus changes, and counting the letters of a long note each
-  // time would be wasted work.
-  private lastDoc = '';
-  private readonly editor: EditorView;
-  constructor(view: EditorView) {
-    this.editor = view;
-    this.sync(view);
-    window.addEventListener('focus', this.resync);
-    document.addEventListener('visibilitychange', this.resync);
-  }
-  private readonly resync = (): void => {
-    if (this.editor.dom.isConnected) this.sync(this.editor);
-  };
-  destroy(): void {
-    window.removeEventListener('focus', this.resync);
-    document.removeEventListener('visibilitychange', this.resync);
-  }
-  update(update: ViewUpdate): void { this.sync(update.view); }
-  sync(view: EditorView): void {
-    const doc = view.state.doc.toString();
-    if (doc !== this.lastDoc) {
-      this.lastDoc = doc;
-      this.lastDir = majorityDirection(doc);
-    }
-    if (this.lastDir === null) return;
-    if (view.dom.classList.contains('cm-satr-gutter-rtl') === (this.lastDir === 'rtl')) return;
-    view.dom.classList.toggle('cm-satr-gutter-rtl', this.lastDir === 'rtl');
-  }
-});
+// The line numbers keep the left edge, always: a gutter that changed sides
+// with the note's language was more to explain than it was worth, and it
+// moved under the reader's eyes while a note drifted towards another
+// language. (The right sidebar's outline still reads the note's majority.)
 
 const digitMaps = {
   latin: '0123456789',
@@ -498,14 +463,16 @@ export class SatrEditor {
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
       ])),
       titleField,
-      rtlLineDirection, directionsField, directionPlugin, gutterSidePlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:
       // selecting near the bottom then made CodeMirror jump the page at once,
       // because it counted the space the keyboard was about to cover as
       // hidden. The caret is brought up gently afterwards instead (below).
-      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
+      // Room under the last line: enough to bring it up past the middle of the
+      // screen and keep writing at the bottom.
+      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) + 96 })),
       headingFolding,
       wikiLinks,
       EditorView.lineWrapping,
@@ -530,6 +497,9 @@ export class SatrEditor {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) options?.onSelection?.(update.state.selection.main.head);
+        // A line made with Enter puts the caret on the line below the one on
+        // screen; bring it in, exactly as typing a character does.
+        if (update.transactions.some((tr) => tr.isUserEvent('input.enter'))) revealSoon(0);
         if (update.transactions.some((tr) => tr.effects.some((e) => e.is(foldEffect) || e.is(unfoldEffect)))) options?.onFold?.();
       }),
     ];
@@ -573,6 +543,19 @@ export class SatrEditor {
       const { anchor, head } = this.view.state.selection.main;
       touchSelection = [anchor, head];
     }, { passive: true });
+    // A tap below the last line means "the end of the note", not the nearest
+    // character under the finger: the empty room under the text is where the
+    // caret goes to the end and writing continues.
+    this.view.scrollDOM.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.cm-gutters, .cm-widget, .cm-file-title, .cm-tooltip')) return;
+      const end = this.view.coordsAtPos(this.view.state.doc.length, 1);
+      if (!end || event.clientY <= end.bottom) return;
+      event.preventDefault();
+      this.view.dispatch({ selection: { anchor: this.view.state.doc.length }, scrollIntoView: false });
+      this.view.focus();
+    }, true);
     this.view.contentDOM.addEventListener('touchmove', (event) => {
       if (Math.abs((event.touches[0]?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
     }, { passive: true });

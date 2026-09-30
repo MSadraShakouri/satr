@@ -229,7 +229,10 @@ export function renderMarkdown(source: string): string {
   const spans = scanMath(withoutFrontMatter);
   const math = spans.map((span) => renderMath(withoutFrontMatter.slice(span.from + span.delim, span.to - span.delim), span.display));
   const withMathPlaceholders = splitMath(withoutFrontMatter, spans);
-  const normalizedLists = markPageBreaks(withMathPlaceholders).replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, _number: string, punctuation: string) => `${indent}1${punctuation} `);
+  // A list marker the writer typed keeps its own number — `۲.` becomes `2.`
+  // for the parser's sake (the digits are only transliterated), never `1.`:
+  // a single `2.` is the writer's 2, in the preview and in the PDF alike.
+  const normalizedLists = markPageBreaks(withMathPlaceholders).replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, number: string, punctuation: string) => `${indent}${latinDigits(number)}${punctuation} `);
   const { text: normalizedTables, origin } = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
 
@@ -283,7 +286,9 @@ export function renderMarkdown(source: string): string {
   document.querySelectorAll('ol').forEach((list, index) => {
     if (orderedStyles[index] !== 'persian') return;
     list.classList.add('persian-ordered');
-    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(itemIndex + 1)));
+    // The list's own start is the writer's first number, not always one.
+    const start = Number(list.getAttribute('start') ?? '1') || 1;
+    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(start + itemIndex)));
   });
   document.querySelectorAll('table').forEach((table, tableIndex) => {
     const firstRow = table.querySelector<HTMLTableRowElement>('thead tr');
@@ -335,6 +340,13 @@ function markPageBreaks(source: string): string {
     if (/^\s*<([a-z0-9]+)[^>]*>\s*(<\/\1>)?\s*$/i.test(line)) return PAGE_BREAK_DIV;
     return wants[2].toLowerCase() === 'before' ? `${PAGE_BREAK_DIV}${line.trimStart()}` : `${line}${PAGE_BREAK_DIV}`;
   }).join('\n');
+}
+
+function latinDigits(value: string): string {
+  return value.replace(/[۰-۹٠-٩]/g, (digit) => {
+    const persian = '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit);
+    return String(persian >= 0 ? persian : '٠١٢٣٤٥٦٧٨٩'.indexOf(digit));
+  });
 }
 
 function toPersian(number: number): string {

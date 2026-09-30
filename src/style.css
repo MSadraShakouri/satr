@@ -542,6 +542,12 @@ body {
 .math-flow.is-wrapped:not(.is-display) > .math-unit {
   padding-block: 0.15em;
 }
+/* A prose run inside a formula (\text{…}, \textbf{…}) follows its own
+   language: Persian reads right to left inside the formula, while the
+   formula itself stays left to right (plaintext is the CSS of dir="auto"). */
+.preview-pane .katex .text {
+  unicode-bidi: plaintext;
+}
 .math-display {
   margin: 1em 0;
   text-align: center;
@@ -836,13 +842,6 @@ body {
   width: 100%;
   margin-inline: 0;
 }
-/* The name sits on the note's side, with the line numbers: a Latin file name
-   in a Persian note goes to the right, as Obsidian's inline title does. The
-   text keeps its own direction (unicode-bidi: plaintext above), only the
-   line box is aligned. */
-.cm-editor.cm-satr-gutter-rtl .cm-file-name {
-  text-align: right;
-}
 .cm-file-name:focus {
   color: var(--text-normal);
 }
@@ -883,10 +882,7 @@ body {
   font-variant-numeric: tabular-nums;
   line-height: calc(var(--note-line-height) * 1.25);
 }
-/* The gutter follows the note's majority direction: on the right for a
-   mostly Persian note. The scroller keeps its direction, so its scroll
-   coordinates (and the selection layer) don't flip with it. */
-.cm-editor.cm-satr-gutter-rtl .cm-gutters { order: 2; left: auto; right: 0; }
+/* The line numbers stay on the left, whatever the note's language. */
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement {
   min-width: calc(3ch + 18px);
   padding: 0 7px 0 11px;
