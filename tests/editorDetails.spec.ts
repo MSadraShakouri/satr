@@ -5,7 +5,8 @@ declare global { interface Window { testEditor: SatrEditor } }
 
 // The small, day-to-day details of the note: list numbers the writer typed,
 // the direction of a \text run inside a formula, the room under the last
-// line, a tap below the text, and Enter bringing the new line into view.
+// line, a tap below the text, Enter bringing the new line into view, and the
+// toolbar's new-line button behaving exactly like Enter at the line's end.
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -58,6 +59,77 @@ test('the writer’s own list number is kept, in both digit sets', async ({ page
   // And a list that goes 1, 2 keeps counting as before.
   expect(report.list.start).toBe(1);
   expect(report.list.items).toBe(2);
+});
+
+// A Persian word in a formula is Persian: it reads right to left (and upright)
+// even without `\text{…}`, wherever it sits — a fraction's argument, a root, a
+// plain run — while the formula around it stays left to right (23).
+test('every Persian run in a formula reads right to left, the formula LTR', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { renderMath } = await import('/src/math.ts');
+    const { layoutMath } = await import('/src/mathLayout.ts');
+    const host = document.createElement('div');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;width:520px;';
+    host.style.setProperty('display', 'block', 'important');
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const read = (tex: string) => {
+      host.innerHTML = renderMath(tex, false);
+      layoutMath(host);
+      const runs = [...host.querySelectorAll<HTMLElement>('.katex .text')];
+      const textNode = (run: HTMLElement): Text | null => {
+        const walker = document.createTreeWalker(run, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node instanceof Text && node.data.trim().length > 0) return node;
+        }
+        return null;
+      };
+      const directions = runs.map((run) => {
+        // A line-broken formula keeps two forms of each unit (plain and
+        // continued) and hides one of them, so only the visible form has
+        // rectangles to measure.
+        if (run.getBoundingClientRect().width <= 0) return null;
+        const text = textNode(run);
+        if (!text) return null;
+        const first = document.createRange();
+        first.setStart(text, 0);
+        first.setEnd(text, 1);
+        const last = document.createRange();
+        last.setStart(text, text.length - 1);
+        last.setEnd(text, text.length);
+        return {
+          text: text.data,
+          bidi: getComputedStyle(run).unicodeBidi,
+          firstX: first.getBoundingClientRect().left,
+          lastX: last.getBoundingClientRect().left,
+        };
+      }).filter(Boolean);
+      const flow = host.querySelector<HTMLElement>('.math-flow') ?? host.querySelector('.katex');
+      return { runs: directions, flowDirection: flow ? getComputedStyle(flow).direction : null };
+    };
+    return {
+      plain: read(String.raw`سرعت`),
+      withMath: read(String.raw`سرعت = \frac{d}{t}`),
+      inFraction: read(String.raw`v = \frac{سلام}{2}`),
+      inRoot: read(String.raw`\sqrt{سلام}`),
+      explicitText: read(String.raw`x = \text{سلام} + 1`),
+      latin: read(String.raw`v = \frac{d}{t}`),
+      mixed: read(String.raw`x = 2 \text{ و } y`),
+    };
+  });
+  for (const name of ['plain', 'withMath', 'inFraction', 'inRoot', 'explicitText', 'mixed'] as const) {
+    const entry = report[name];
+    expect(entry.runs.length, name).toBeGreaterThan(0);
+    for (const run of entry.runs) {
+      expect(run!.bidi, `${name}: dir="auto"`).toBe('plaintext');
+      expect(run!.firstX, `${name}: ${run!.text} reads right to left`).toBeGreaterThan(run!.lastX);
+    }
+    expect(entry.flowDirection, `${name}: the formula stays LTR`).toBe('ltr');
+  }
+  // A formula with no Persian at all is left exactly as it was.
+  expect(report.latin.runs.length).toBe(0);
+  expect(report.latin.flowDirection).toBe('ltr');
 });
 
 test('a Persian \\text run inside a formula reads right to left, the formula LTR', async ({ page }) => {
@@ -125,6 +197,56 @@ test('there is room under the last line, and Enter brings the new line into view
   expect(visible).toBe(true);
 });
 
+// The room under the note is for scrolling by hand: the view must not spend it
+// while typing. At the end of a note the caret walks down through the room
+// instead of the page chasing it; in the middle of a note, where the next
+// lines are already below the caret, nothing moves at all.
+test('typing does not spend the room under the note', async ({ page }) => {
+  await page.evaluate(() => {
+    const outer = window.testEditor.view.dom.parentElement as HTMLElement;
+    outer.style.height = '420px';
+  });
+  const measure = async (lines: string[]) => {
+    await setText(page, lines.join('\n'));
+    await page.evaluate(async () => {
+      const view = window.testEditor.view;
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+      view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
+      await new Promise((r) => requestAnimationFrame(r));
+    });
+    const start = await page.evaluate(() => ({
+      top: window.testEditor.view.scrollDOM.scrollTop,
+      line: window.testEditor.view.defaultLineHeight,
+    }));
+    for (let i = 0; i < 4; i += 1) {
+      await page.keyboard.insertText('typing a line of prose');
+      await page.waitForTimeout(120);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(150);
+    }
+    const end = await page.evaluate(() => {
+      const view = window.testEditor.view;
+      const caret = view.coordsAtPos(view.state.selection.main.head, 1)!;
+      const box = view.scrollDOM.getBoundingClientRect();
+      return { top: view.scrollDOM.scrollTop, visible: caret.top < box.bottom && caret.bottom > box.top, gap: box.bottom - caret.top };
+    });
+    return { moved: end.top - start.top, line: start.line, ...end };
+  };
+  // At the end of the note: the four lines cost about four lines of scrolling,
+  // not the extra room as well, and the caret never leaves the view.
+  const atEnd = await measure(Array.from({ length: 24 }, (_, i) => `line ${i}`));
+  expect(atEnd.moved, `scrolled ${atEnd.moved}px for 4 lines`).toBeLessThanOrEqual(atEnd.line * 6);
+  expect(atEnd.visible).toBe(true);
+  // The room is still there to scroll into by hand.
+  expect(atEnd.gap).toBeGreaterThan(atEnd.line);
+
+  // In the middle of a note the next lines are already below the caret, so
+  // adding a line moves nothing at all.
+  const middle = await measure(Array.from({ length: 60 }, (_, i) => `line ${i}`));
+  expect(middle.moved, `scrolled ${middle.moved}px with lines below`).toBeLessThanOrEqual(2);
+  expect(middle.visible).toBe(true);
+});
+
 test('a tap below the last line puts the caret at the end of the note', async ({ page }) => {
   await setText(page, 'first line\nsecond line\nthird');
   const box = await page.evaluate(() => {
@@ -138,4 +260,49 @@ test('a tap below the last line puts the caret at the end of the note', async ({
   await page.waitForTimeout(120);
   const head = await page.evaluate(() => window.testEditor.view.state.selection.main.head);
   expect(head).toBe(await page.evaluate(() => window.testEditor.view.state.doc.length));
+});
+
+// The toolbar's "new line below" is Enter at the end of the line — not an
+// empty line under the text. It continues a list with the writer's own number,
+// carries a to-do line's checkbox, continues a quote, and reveals the marker
+// the way Enter does. Run against the real Enter key for every case, so the
+// button and the key can never drift apart.
+test('the new-line button is Enter at the end of the line', async ({ page }) => {
+  const drafts = ['hello', '- item', '1. item', '۲. دوم', '- [x] done', '- [ ] open', '> quoted', '# title', '3. third'];
+  const report = await page.evaluate(async (drafts) => {
+    const run = async (text: string, how: 'key' | 'button') => {
+      window.testEditor.setValue(text);
+      window.testEditor.setSelection(text.length);
+      window.testEditor.focus();
+      await new Promise((r) => setTimeout(r, 40));
+      if (how === 'button') window.testEditor.run('lineBelow');
+      else {
+        const view = window.testEditor.view;
+        // The keymap's own Enter chain, exactly as the key runs it.
+        const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+        view.contentDOM.dispatchEvent(event);
+      }
+      await new Promise((r) => setTimeout(r, 40));
+      return { text: window.testEditor.getValue(), selection: window.testEditor.getSelection() };
+    };
+    const out: Record<string, unknown> = {};
+    for (const draft of drafts) {
+      out[draft] = { key: await run(draft, 'key'), button: await run(draft, 'button') };
+    }
+    return out;
+  }, drafts);
+  for (const [draft, both] of Object.entries(report) as Array<[string, { key: { text: string; selection: [number, number] }; button: { text: string; selection: [number, number] } }]>) {
+    expect(both.button.text, `${draft}: the button and Enter agree`).toBe(both.key.text);
+    expect(both.button.selection, `${draft}: the caret lands where Enter leaves it`).toEqual(both.key.selection);
+  }
+  // And the behaviour itself, spelled out: the writer's number continues, the
+  // checkbox is carried, and the caret is ready to write the next item.
+  expect(report['1. item'].button.text).toBe('1. item\n2. ');
+  expect(report['۲. دوم'].button.text).toBe('۲. دوم\n۳. ');
+  expect(report['- [x] done'].button.text).toBe('- [x] done\n- [x] ');
+  expect(report['- [ ] open'].button.text).toBe('- [ ] open\n- [ ] ');
+  expect(report['> quoted'].button.text).toBe('> quoted\n> ');
+  // A plain line gets a plain new line — the button is not forbidden from
+  // making one, it just never makes an empty line under a list item.
+  expect(report['hello'].button.text).toBe('hello\n');
 });

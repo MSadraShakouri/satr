@@ -40,7 +40,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
 - **Typing like Obsidian:**
   - Brackets, quotes, `$`, `*`, `_`, `=` and backticks pair up and wrap a selection.
   - `$$` then `$$` opens a math block. A lone `$$` or `$$$$` with nothing between is just text. Only a `$$ … $$` pair whose dollars sit on different lines is a display block; the empty writing line counts as math.
-  - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font and colour — never the accent, which made them read as links. A line holding only `$$` never turns monospace, and a pair a heading, a list, a quote or a fence broke is plain text on both sides — editor and reading view read the same rule.
+  - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font in the accent colour (they mark a formula's edges at a glance). A line holding only `$$` never turns monospace, and a pair a heading, a list, a quote or a fence broke is plain text on both sides — editor and reading view read the same rule.
   - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text. Spaces are never second-guessed: what you type (or what the keyboard's auto-correct sends) goes in as it is, before a `)` as anywhere else.
 - **Fast start.** The last screen appears at once, before the app's code has loaded.
 
@@ -135,4 +135,6 @@ soft source newlines):
    language you are writing in and a heading or a marker never turns it around.
 
 This controls paragraph direction/alignment, not character reversal. Math remains
-isolated LTR even inside an RTL paragraph or on an RTL-ordered PDF sheet.
+isolated LTR even inside an RTL paragraph or on an RTL-ordered PDF sheet; a
+Persian word written inside a formula reads right to left there, whether it sits
+in `\text{…}` or bare in the middle of the expression.

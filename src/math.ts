@@ -314,8 +314,51 @@ function splitCuts(rawTex: string): Split | null {
   return terms.length > 1 ? { terms, cuts } : null;
 }
 
+// A Persian word inside a formula is Persian, not a sequence of maths
+// variables: left to itself KaTeX lays the letters out left to right as
+// separate italics, which is unreadable. Every Persian run outside a text
+// command is therefore wrapped in `\text{…}` — upright, and read right to
+// left by the `.katex .text` rule in the stylesheet — while the formula around
+// it stays left to right (23). Runs already inside `\text{}` (or another text
+// command) are left alone; `\ ` is the marker for a space the writer typed,
+// which is a plain space again inside text mode.
+const PERSIAN_CHAR = '[\\u0620-\\u065F\\u0670\\u0671-\\u06D3\\u06D5\\u06D6-\\u06ED\\u06EE-\\u06EF\\u06FA-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF\\u200C\\u200D]';
+// A run is a letter, more letters, and the `\ ` markers between them: it must
+// start and end with a letter, so a lone space marker — a break point of its
+// own — is never wrapped.
+const PERSIAN_RUN = new RegExp(`${PERSIAN_CHAR}(?:${PERSIAN_CHAR}|\\\\ )*${PERSIAN_CHAR}|${PERSIAN_CHAR}`, 'g');
+const TEXT_COMMAND = /\\(?:text|mbox|hbox|textnormal|textrm|textsf|texttt|operatorname|textsuperscript|textsubscript)\b\s*\{/g;
+
+/** [from, to) of every group argument of a text command in `tex`. */
+function textRanges(tex: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  TEXT_COMMAND.lastIndex = 0;
+  for (let match = TEXT_COMMAND.exec(tex); match; match = TEXT_COMMAND.exec(tex)) {
+    const open = match.index + match[0].length - 1;
+    let depth = 1;
+    for (let at = open + 1; at < tex.length; at += 1) {
+      if (tex[at] === '\\') { at += 1; continue; }
+      if (tex[at] === '{') depth += 1;
+      else if (tex[at] === '}') {
+        depth -= 1;
+        if (!depth) { ranges.push([open + 1, at]); break; }
+      }
+    }
+  }
+  return ranges;
+}
+
+function persianTextRuns(tex: string): string {
+  if (!PERSIAN_RUN.test(tex)) return tex;
+  PERSIAN_RUN.lastIndex = 0;
+  const inside = textRanges(tex);
+  const isText = (at: number): boolean => inside.some(([from, to]) => at >= from && at < to);
+  return tex.replace(PERSIAN_RUN, (run: string, offset: number) =>
+    isText(offset) ? run : `\\text{${run.replace(/\\ /g, ' ')}}`);
+}
+
 const render = (tex: string, displayMode = false): string =>
-  katex.renderToString(tex, { displayMode, throwOnError: false });
+  katex.renderToString(persianTextRuns(tex), { displayMode, throwOnError: false });
 
 // Math digit display (Settings → Editor): formulas can be shown with one
 // digit set all through — including \text, \texttt and \tag — without the

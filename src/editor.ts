@@ -1,5 +1,5 @@
 import { sourceDirections, majorityDirection } from './direction';
-import { defaultKeymap, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
@@ -22,7 +22,7 @@ import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: 'var(--note-line-height)' },
-  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) 50vh', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) calc(50vh + 96px)', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });
@@ -181,6 +181,25 @@ function continueOnEnter(view: EditorView): boolean {
     view.dispatch({ changes: { from: selection.head, insert: insertion }, selection: { anchor: cursor }, userEvent: 'input.enter' });
     return true;
 }
+
+// The Enter chain, in the keymap's own order (see the keymap below). The
+// toolbar's "new line below" runs exactly this at the line's end, so the
+// button and the key can never drift apart.
+function enterAtCaret(view: EditorView): boolean {
+  return enterDisplayMath(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+}
+
+/** The toolbar's "new line below": Enter at the end of the line. The caret
+ *  moves there first, so a list continues — the writer's own number, or a
+ *  to-do line's checkbox — and no empty line appears under the text. */
+function lineBelow(view: EditorView): boolean {
+  const { state } = view;
+  const end = state.doc.lineAt(state.selection.main.head).to;
+  if (state.selection.main.head !== end) view.dispatch({ selection: { anchor: end } });
+  return enterAtCaret(view);
+}
+
+const toolbarOverrides: Record<string, (view: EditorView) => boolean> = { lineBelow };
 
 function selectedLines(view: EditorView) {
   const selection = view.state.selection.main;
@@ -472,7 +491,7 @@ export class SatrEditor {
       // hidden. The caret is brought up gently afterwards instead (below).
       // Room under the last line: enough to bring it up past the middle of the
       // screen and keep writing at the bottom.
-      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) + 96 })),
+      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
       headingFolding,
       wikiLinks,
       EditorView.lineWrapping,
@@ -675,7 +694,7 @@ export class SatrEditor {
   /** Run a keyboard-toolbar command by name. */
   run(command: string): boolean {
     if (this.isReadOnly) return false;
-    const fn = toolbarCommands[command];
+    const fn = toolbarOverrides[command] ?? toolbarCommands[command];
     return fn ? fn(this.view) : false;
   }
   findNext(): void { findNext(this.view); }

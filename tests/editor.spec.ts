@@ -186,12 +186,13 @@ test('source math is monospace only between the dollars', async ({ page }) => {
   });
   expect(styled.math.map((m) => m.text!.trim())).toEqual(['x = 1']);
   expect(styled.delims.map((d) => d.text)).toEqual(['$$', '$$']);
-  // The dollars keep the note's font and its colour; only the content between
-  // them is monospace. They never take the accent: the accent is blue, and a
-  // blue dollar sign reads like a link rather than like punctuation (1).
+  // The dollars keep the note's font and take the accent colour — that blue
+  // is what marks a formula's edges at a glance in the source. Only the
+  // content between them is monospace.
   expect(styled.delims[0].family).not.toBe(styled.math[0].family);
-  expect(styled.delims.every((d) => d.colour === styled.prose)).toBe(true);
-  expect(styled.delims.every((d) => d.colour !== `rgb(${styled.accentRgb.split(',').map((n) => n.trim()).join(', ')})`)).toBe(true);
+  const accent = `rgb(${styled.accentRgb.split(',').map((n) => n.trim()).join(', ')})`;
+  expect(styled.delims.every((d) => d.colour === accent)).toBe(true);
+  expect(styled.delims.every((d) => d.colour !== styled.prose)).toBe(true);
   expect(styled.math[0].family).toContain('VazirCode');
 
   await draft(page, 'one $$\ntwo|');

@@ -102,13 +102,16 @@ function escaped(text: string, at: number): boolean {
 
 /** The closing dollar of a one-line `$…$`, or -1. Content must be real text,
  * may not contain a dollar, and a digit after the closer ("$5 and $10") is a
- * price, not math. */
-function inlineClose(text: string, from: number): number {
-  for (let j = from; j < text.length; j += 1) {
-    if (text[j] !== '$' || escaped(text, j)) continue;
-    if (text[j - 1] === '$' || text[j + 1] === '$') return -1; // a $$ run
-    if (!text.slice(from, j).trim()) return -1;
-    return /[\d$]/.test(text[j + 1] ?? '') ? -1 : j;
+ * price, not math. `masked` finds the delimiters (a `$` inside a code span is
+ * not one, and offsets hold), while the content itself is judged from the
+ * original line: a backtick pair inside a formula is part of the formula, not
+ * code, so the masking must not make the pair look empty. */
+function inlineClose(masked: string, from: number, source: string): number {
+  for (let j = from; j < masked.length; j += 1) {
+    if (masked[j] !== '$' || escaped(masked, j)) continue;
+    if (masked[j - 1] === '$' || masked[j + 1] === '$') return -1; // a $$ run
+    if (!source.slice(from, j).trim()) return -1;
+    return /[\d$]/.test(masked[j + 1] ?? '') ? -1 : j;
   }
   return -1;
 }
@@ -150,7 +153,7 @@ export function scanMath(source: string): MathSpan[] {
         continue;
       }
       if (open >= 0) continue; // inside a display pair: only its close counts
-      const close = inlineClose(text, at + 1);
+      const close = inlineClose(text, at + 1, lines[n]);
       if (close < 0) continue;
       spans.push({ from: lineStart + at, to: lineStart + close + 1, delim: 1, display: false });
       at = close;
