@@ -348,10 +348,13 @@ function continueOnEnter(view: EditorView): boolean {
   const ordered = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(marker);
   const parsed = ordered ? parseListNumber(ordered[1]) : null;
   const next = parsed ? `${formatListNumber(parsed.number + 1, parsed.alphabet)}${ordered?.[2] ?? '.'}` : marker;
-    const insertion = `\n${indent}${next} ${(task ?? '')}`;
-    const cursor = selection.head + insertion.length;
-    view.dispatch({ changes: { from: selection.head, insert: insertion }, selection: { anchor: cursor }, userEvent: 'input.enter' });
-    return true;
+  // A to-do line continues with a to-do line, and the box is always empty:
+  // the item below a finished one is a new thing to do, whatever the line
+  // above it says (the writer's request).
+  const insertion = `\n${indent}${next} ${task ? '[ ] ' : ''}`;
+  const cursor = selection.head + insertion.length;
+  view.dispatch({ changes: { from: selection.head, insert: insertion }, selection: { anchor: cursor }, userEvent: 'input.enter' });
+  return true;
 }
 
 // The Enter chain, in the keymap's own order (see the keymap below). The

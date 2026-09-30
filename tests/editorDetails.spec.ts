@@ -299,7 +299,9 @@ test('the new-line button is Enter at the end of the line', async ({ page }) => 
   // checkbox is carried, and the caret is ready to write the next item.
   expect(report['1. item'].button.text).toBe('1. item\n2. ');
   expect(report['۲. دوم'].button.text).toBe('۲. دوم\n۳. ');
-  expect(report['- [x] done'].button.text).toBe('- [x] done\n- [x] ');
+  // A to-do line continues with a to-do line — and the new box is empty, the
+  // item below a finished one being a new thing to do (13).
+  expect(report['- [x] done'].button.text).toBe('- [x] done\n- [ ] ');
   expect(report['- [ ] open'].button.text).toBe('- [ ] open\n- [ ] ');
   expect(report['> quoted'].button.text).toBe('> quoted\n> ');
   // A plain line gets a plain new line — the button is not forbidden from

@@ -77,9 +77,12 @@ test('Enter numbers the new item, and the items after it follow it', async ({ pa
   // And the delimiter the writer used.
   const paren = '1) a\n2) b';
   expect((await edit(page, paren, at(paren, 1, 'end'), 'enter')).text).toBe('1) a\n2) \n3) b');
-  // A task list keeps its boxes.
+  // A task list keeps its boxes, and a new box is always empty — the item
+  // under a finished one is a new thing to do (13).
   const tasks = '1. [ ] a\n2. [ ] b';
   expect((await edit(page, tasks, at(tasks, 1, 'end'), 'enter')).text).toBe('1. [ ] a\n2. [ ] \n3. [ ] b');
+  const tasksDone = '1. [x] a\n2. [ ] b';
+  expect((await edit(page, tasksDone, at(tasksDone, 1, 'end'), 'enter')).text).toBe('1. [x] a\n2. [ ] \n3. [ ] b');
   // A row that already counts on its own does not move.
   const running = '1. a\n2. b\n3. c';
   expect((await edit(page, running, at(running, 3, 'end'), 'enter')).text).toBe('1. a\n2. b\n3. c\n4. ');
@@ -124,6 +127,38 @@ test('deleting a whole item shifts the items after it down by one', async ({ pag
   // numbers.
   const apart = '1. a\n2. b\n\n3. c';
   expect((await edit(page, apart, at(apart, 2), 'deleteLine')).text).toBe('1. a\n\n3. c');
+});
+
+// A list's numbers are its own: a blank line (or prose) between two lists is
+// the end of the first, and an item leaving brings the numbers *down*, never
+// up (15).
+test('a blank line ends the run, and an item leaving moves the numbers down', async ({ page }) => {
+  const apart = '1. a\n2. b\n\n3. c';
+  expect((await edit(page, apart, at(apart, 2, 'end'), 'enter')).text).toBe('1. a\n2. b\n3. \n\n3. c');
+  const gap = '6. a\n\n8. b';
+  expect((await edit(page, gap, at(gap, 1, 'end'), 'enter')).text).toBe('6. a\n7. \n\n8. b');
+  const spaces = '1. a\n  \n3. c';
+  expect((await edit(page, spaces, at(spaces, 1, 'end'), 'enter')).text).toBe('1. a\n2. \n  \n3. c');
+  const prose = '1. a\n2. b\nprose\n5. c\n6. d';
+  expect((await edit(page, prose, at(prose, 2, 'end'), 'enter')).text).toBe('1. a\n2. b\n3. \nprose\n5. c\n6. d');
+  // Pressing Enter twice at the end of an item leaves the list: the marker is
+  // dropped, and the items below come down — the empty item is not a new item
+  // that pushes them up.
+  const twice = await page.evaluate(async ({ text, caret }) => {
+    const ed = window.testEditor;
+    ed.setValue(text);
+    ed.setSelection(caret, caret);
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    ed.view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 40));
+    const once = ed.getValue();
+    ed.view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 40));
+    return { once, twice: ed.getValue() };
+  }, { text: '1. a\n2. b\n3. c', caret: 4 });
+  expect(twice.once).toBe('1. a\n2. \n3. b\n4. c');
+  expect(twice.twice).toBe('1. a\n\n2. b\n3. c');
 });
 
 test('a line that leaves the list brings the numbers down, a line edited in place does not', async ({ page }) => {
