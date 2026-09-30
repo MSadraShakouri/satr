@@ -160,93 +160,145 @@ function formatListNumber(number: number, alphabet: keyof typeof digitMaps): str
   return String(number).split('').map((digit) => digitMaps[alphabet][Number(digit)]).join('');
 }
 
-// Automatic numbering for ordered lists (the writer's request): pressing
-// Enter on an item numbers it (continueOnEnter) and shifts the items *after*
-// it up by one, and deleting a whole item shifts the items after it down by
-// one. Nothing else renumbers anything — typing, pasting and opening a note
-// keep their numbers — and a run stops at a blank line, prose or another
-// marker (two lists separated by a blank line are two lists). A nested list
-// numbers itself and is stepped over, and the digits keep the set they were
-// written in, so a Persian list stays Persian.
+// Automatic numbering for ordered lists (the writer's request). Two moments
+// touch the writer's numbers, and only those two:
+//
+// * Enter on an item writes the new item after the item above it (that is
+//   continueOnEnter), and then lifts the items *below* only as far as they
+//   need to go: each one has to be bigger than the one above it, so `6.` then
+//   Enter gives `7.` and an `8.` under it stays `8.` — it already fits — while
+//   `1. 2. 3.` becomes `1. 2. 3. 4.`
+//
+// * A line that leaves the list — deleted whole, joined to the line above,
+//   or emptied — brings the items below it down by the number of items that
+//   went. Editing an item's text, or its marker, without the line going, moves
+//   nothing.
+//
+// Everything else keeps its numbers: typing, pasting and opening a note never
+// renumber anything, and a blank line, prose or another marker ends the run
+// (two lists separated by a blank line are two lists). A nested list numbers
+// itself and is stepped over; the digits keep the set they were written in, so
+// a Persian list stays Persian.
 const listRenumber = Annotation.define<boolean>();
 const ITEM_LINE = /^([ \t]*)([0-9۰-۹٠-٩]+)([.)])([ \t])/;
+// A line the writer is taking apart: the whole item, "2." with its text gone,
+// or "2" with the marker half-deleted. Only a line that holds nothing else.
+const STRUCK_ITEM = /^([ \t]*)([0-9۰-۹٠-٩]+)([.)])?([ \t]*)$/;
 
-function firstItemMarker(text: string): { indent: string; delimiter: string } | null {
-  for (const line of text.split('\n')) {
-    const match = ITEM_LINE.exec(line);
-    if (match) return { indent: match[1], delimiter: match[3] };
-  }
-  return null;
+interface Marker { indent: string; delimiter: string }
+
+function itemMarker(line: string): Marker | null {
+  const match = ITEM_LINE.exec(line);
+  return match ? { indent: match[1], delimiter: match[3] } : null;
 }
 
-/** The item lines one Enter made: a new item's marker on a line of its own.
- *  A marker written by hand, a pasted list or a note being loaded are not
- *  Enter, and none of them renumber anything. */
-function insertedItems(text: string): { count: number; marker: { indent: string; delimiter: string } | null } {
+/** The item one Enter made: a new item's marker on a line of its own, and the
+ *  number it was given. A marker written by hand, a pasted list or a note
+ *  being loaded are not Enter, and none of them renumber anything. */
+function insertedItem(text: string): { marker: Marker | null; number: number } {
   const lines = text.split('\n');
-  if (lines.length > 2 || !text.includes('\n')) return { count: 0, marker: null };
-  const items = lines.filter((line) => ITEM_LINE.test(line));
-  return { count: items.length, marker: items.length ? firstItemMarker(text) : null };
+  if (lines.length > 2 || !text.includes('\n')) return { marker: null, number: 0 };
+  const line = lines.find((one) => ITEM_LINE.test(one));
+  if (!line) return { marker: null, number: 0 };
+  const match = ITEM_LINE.exec(line)!;
+  return { marker: { indent: match[1], delimiter: match[3] }, number: parseListNumber(match[2]).number };
 }
 
-/** Item lines a deletion took whole, and the marker to match the run after
- *  them against. The line has to go *and* the break on one side of it:
- *  deleting only the text of "2. b" leaves an empty line, and deleting only
- *  the break above it joins it to the line before — neither takes the item
- *  out of the list. */
-function removedItems(doc: Text, fromA: number, toA: number): { count: number; marker: { indent: string; delimiter: string } | null } {
+/** The item lines one change took out of the list, and the marker to match the
+ *  run after them against. A line goes when the whole line went, when the
+ *  writer emptied it, or when its break was deleted and the line above had
+ *  text to absorb it (Backspace at the line's start). */
+function removedItems(tr: { changes: { mapPos: (pos: number, assoc: number) => number }; startState: EditorState; newDoc: { lineAt: (pos: number) => { text: string } } }, fromA: number, toA: number): { count: number; marker: Marker | null; emptied: boolean } {
+  const before = tr.startState.doc;
+  const after = tr.newDoc as unknown as EditorState['doc'];
   let count = 0;
-  let marker: { indent: string; delimiter: string } | null = null;
-  const first = doc.lineAt(fromA);
-  const last = doc.lineAt(toA);
+  let marker: Marker | null = null;
+  let emptied = false;
+  const first = before.lineAt(fromA);
+  const last = before.lineAt(toA);
+  const leftBehind = after.lineAt(Math.min(tr.changes.mapPos(toA, -1), after.length));
   for (let n = first.number; n <= last.number; n += 1) {
-    const line = doc.line(n);
+    const line = before.line(n);
     if (fromA > line.from || toA < line.to) continue;
-    if (fromA === line.from && toA === line.to) continue;
-    const match = ITEM_LINE.exec(line.text);
+    // A line that went takes its item with it, text and all. A line still
+    // standing counts only when the writer emptied it — a replacement (a
+    // selection typed over) leaves text behind and moves nothing.
+    const gone = toA > line.to || fromA < line.from;
+    const match = leftBehind.text.trim() && !gone
+      ? null
+      : ITEM_LINE.exec(line.text) ?? STRUCK_ITEM.exec(line.text);
     if (!match) continue;
     count += 1;
-    marker = marker ?? { indent: match[1], delimiter: match[3] };
+    if (!gone) emptied = true;
+    marker = marker ?? { indent: match[1], delimiter: match[3] ?? '.' };
   }
-  return { count, marker };
+  // One break deleted: the line below moved up into the line above. The item
+  // is gone only if that line had text of its own — a line joining an empty
+  // line is the same item one line higher.
+  if (toA - fromA === 1 && before.sliceString(fromA, toA) === '\n') {
+    const above = before.lineAt(fromA);
+    const below = above.number < before.lines ? before.line(above.number + 1) : null;
+    if (below && above.text.trim() && ITEM_LINE.test(below.text)) {
+      const match = ITEM_LINE.exec(below.text)!;
+      if (!marker) marker = { indent: match[1], delimiter: match[3] };
+      count += 1;
+    }
+  }
+  return { count, marker, emptied };
 }
 
 /** The first line starting at or after `pos`: the line a deletion left
  *  behind. A deletion can end on the break before the next line — the app's
  *  own delete-line takes the break *above* the line it removes — so the line
  *  holding `pos` is not always the line to start at. */
-function lineAtOrAfter(doc: Text, pos: number): number {
+function lineAtOrAfter(doc: EditorState['doc'], pos: number): number {
   const line = doc.lineAt(pos);
   return line.from >= pos ? line.number : line.number + 1;
 }
 
 const listNumbering = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged || tr.annotation(listRenumber)) return tr;
-  const before = tr.startState.doc;
+  // A paste or a drop is the writer's own material: whatever numbers came with
+  // it are kept (insertedItem would otherwise read a pasted newline plus item
+  // as an Enter).
+  if (tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop')) return tr;
   // What the edit did to the list: the first change that added or removed an
   // item decides, and the run after it is the one to renumber.
-  const plan = ((): { delta: number; marker: { indent: string; delimiter: string } | null; from: number } => {
-    let delta = 0;
-    let marker: { indent: string; delimiter: string } | null = null;
-    let from = -1;
-    tr.changes.iterChanges((fromA, toA, _fromB, toB, inserted) => {
-      if (delta !== 0) return;
-      if (inCode(tr.startState, fromA) || inMath(tr.startState, fromA)) return;
-      const added = insertedItems(inserted.toString());
-      const gone = removedItems(before, fromA, toA);
-      if (!added.count && !gone.count) return;
-      delta = added.count - gone.count;
-      marker = added.count ? added.marker : gone.marker;
-      // The run begins after the item that was just made, or at the line the
-      // deletion left behind.
-      from = added.count ? tr.newDoc.lineAt(toB).number + 1 : lineAtOrAfter(tr.newDoc, toB);
-    });
-    return { delta, marker, from };
-  })();
-  if (!plan.delta || !plan.marker || plan.from < 1) return tr;
-  const { delta, marker, from } = plan;
+  const plan: { kind: 'add' | 'remove' | null; marker: Marker | null; number: number; count: number; from: number } =
+    { kind: null, marker: null, number: 0, count: 0, from: -1 };
+  tr.changes.iterChanges((fromA, toA, _fromB, toB, inserted) => {
+    if (plan.kind) return;
+    if (inCode(tr.startState, fromA) || inMath(tr.startState, fromA)) return;
+    const added = insertedItem(inserted.toString());
+    if (added.marker) {
+      plan.kind = 'add';
+      plan.marker = added.marker;
+      plan.number = added.number;
+      // The run begins after the item that was just made.
+      plan.from = tr.newDoc.lineAt(toB).number + 1;
+      return;
+    }
+    const gone = removedItems(tr, fromA, toA);
+    if (!gone.count || !gone.marker) return;
+    plan.kind = 'remove';
+    plan.marker = gone.marker;
+    plan.count = gone.count;
+    // …or at the line the deletion left behind. A line the writer emptied is
+    // still standing, and holds nothing: the run begins under it.
+    plan.from = lineAtOrAfter(tr.newDoc, toB);
+    if (gone.emptied && plan.from <= tr.newDoc.lines && !tr.newDoc.line(plan.from).text.trim()) plan.from += 1;
+  });
+  if (!plan.kind || !plan.marker || plan.from < 1) return tr;
+  const kind = plan.kind;
+  const marker = plan.marker as Marker;
+  const count = plan.count;
+  const from = plan.from;
   const doc = tr.newDoc;
   const changes: { from: number; to: number; insert: string }[] = [];
+  // The number of the last item seen at the list's own level: the next one has
+  // to be bigger than it (an insertion lifts the run), or is moved down with
+  // it (a removal shifts the run).
+  let previous = plan.number;
   for (let n = from; n <= doc.lines; n += 1) {
     const line = doc.line(n);
     // A blank line ends the list, and so does a formula: two lists with air
@@ -265,13 +317,16 @@ const listNumbering = EditorState.transactionFilter.of((tr) => {
     if (depth > marker.indent.length) continue;
     if (depth < marker.indent.length || match[3] !== marker.delimiter) break;
     const parsed = parseListNumber(match[2]);
-    const next = parsed.number + delta;
-    if (next < 1) break;
-    changes.push({
-      from: line.from + match[1].length,
-      to: line.from + match[1].length + match[2].length,
-      insert: formatListNumber(next, parsed.alphabet),
-    });
+    let wanted = kind === 'add' ? Math.max(parsed.number, previous + 1) : parsed.number - count;
+    if (wanted < 1) break;
+    if (wanted !== parsed.number) {
+      changes.push({
+        from: line.from + match[1].length,
+        to: line.from + match[1].length + match[2].length,
+        insert: formatListNumber(wanted, parsed.alphabet),
+      });
+    }
+    previous = wanted;
   }
   if (!changes.length) return tr;
   return [tr, { changes, sequential: true, annotations: listRenumber.of(true) }];
