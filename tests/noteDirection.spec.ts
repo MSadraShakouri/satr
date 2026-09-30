@@ -22,38 +22,6 @@ test('the note majority decides, math and code do not vote', async ({ page }) =>
   expect(out.code).toBe('rtl');
 });
 
-test('the line-number gutter sits on the note majority side', async ({ page }) => {
-  const report = await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
-    const host = document.createElement('div');
-    host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
-    document.body.appendChild(host);
-    const editor = new SatrEditor(host, () => {});
-    await document.fonts.ready;
-    const read = () => {
-      const dom = host.querySelector<HTMLElement>('.cm-editor')!;
-      const gutters = dom.querySelector<HTMLElement>('.cm-gutters')!;
-      return {
-        rtlClass: dom.classList.contains('cm-satr-gutter-rtl'),
-        left: getComputedStyle(gutters).left,
-        right: getComputedStyle(gutters).right,
-      };
-    };
-    editor.setValue('این یک متن فارسی است');
-    const persian = read();
-    editor.setValue('This note is English');
-    const english = read();
-    return { persian, english };
-  });
-  // Persian note: the gutter flips to the right.
-  expect(report.persian.rtlClass).toBe(true);
-  expect(report.persian.right).toBe('0px');
-  expect(report.persian.left).toBe('auto');
-  // English note: back to the left.
-  expect(report.english.rtlClass).toBe(false);
-  expect(report.english.right).toBe('auto');
-});
-
 test('the outline tree flips with the note while rows keep their own direction', async ({ page }) => {
   const out = await page.evaluate(async () => {
     const { createRightSidebar } = await import('/src/rightSidebar.ts');

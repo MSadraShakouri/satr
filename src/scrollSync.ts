@@ -17,8 +17,10 @@ function textBlock(block: BlockInfo): BlockInfo {
   return Array.isArray(block.type) ? block.type.find((part) => part.type === BlockType.Text) ?? block : block;
 }
 
-export function editorScroll(view: EditorView): number {
-  const top = view.scrollDOM.getBoundingClientRect().top;
+/** The fractional line at the top edge of the editor, or — with an anchor —
+ * at `anchor` pixels below it (the outline reads the line two thirds down). */
+export function editorScroll(view: EditorView, anchor = 0): number {
+  const top = view.scrollDOM.getBoundingClientRect().top + anchor;
   const height = top - view.documentTop;
   if (height <= 0) return 0;
   const block = view.elementAtHeight(height);
@@ -61,8 +63,10 @@ function anchors(preview: HTMLElement): HTMLElement[] {
   return [...preview.querySelectorAll<HTMLElement>('[data-line]')];
 }
 
-export function previewScroll(pane: HTMLElement, preview: HTMLElement): number {
-  const top = pane.getBoundingClientRect().top;
+/** The fractional source line at the top edge of the pane, or — with an
+ * anchor — at `anchor` pixels below it. */
+export function previewScroll(pane: HTMLElement, preview: HTMLElement, anchor = 0): number {
+  const top = pane.getBoundingClientRect().top + anchor;
   const list = anchors(preview);
   let passed = 0;
   for (const [index, el] of list.entries()) {

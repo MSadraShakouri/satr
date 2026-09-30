@@ -84,7 +84,7 @@ test('KaTeX SVG signs carry their em sizes in CSS so they scale with the text', 
     const measure = () => {
       const arrow = host.querySelector<SVGElement>('.accent-body svg')!.getBoundingClientRect();
       const u = host.querySelector('.mord.mathnormal')!.getBoundingClientRect();
-      return { arrowOverLetter: arrow.width / u.width, letterWidth: u.width };
+      return { arrowOverLetter: arrow.width / u.width, arrowWidth: arrow.width, arrowHeight: arrow.height, letterWidth: u.width };
     };
     const at16 = measure();
     host.style.fontSize = '32px';
@@ -97,7 +97,11 @@ test('KaTeX SVG signs carry their em sizes in CSS so they scale with the text', 
     if (s.attrWidth) expect(s.width).toBe(s.attrWidth);
     if (s.attrHeight) expect(s.height).toBe(s.attrHeight);
   }
-  // The vec arrow keeps its proportion over the letter at any text size.
+  // The letters grow with the text, and so do the drawn signs: the arrow is
+  // the same size relative to its letter at any text size, and it really got
+  // bigger (that is the Android system font scale's job on a phone).
   expect(report.at32.letterWidth / report.at16.letterWidth).toBeGreaterThan(1.9);
+  expect(report.at32.arrowWidth / report.at16.arrowWidth).toBeGreaterThan(1.9);
+  expect(report.at32.arrowHeight / report.at16.arrowHeight).toBeGreaterThan(1.9);
   expect(Math.abs(report.at32.arrowOverLetter - report.at16.arrowOverLetter)).toBeLessThan(0.01);
 });

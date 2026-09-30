@@ -6,9 +6,9 @@ A Markdown editor for Android that writes Persian and English side by side. It l
 
 ## What it does
 
-- **Both directions in one note.** Prose follows its first strong letter. Numbers and dates infer their direction from surrounding prose, using the same policy in the editor, reading view and PDF. Math and literal code stay LTR and never influence neighbouring prose.
-- **Live preview while editing**, with Obsidian's rule: the Markdown syntax shows only on the line you're editing. There's also a separate reading view (double-tap it to edit). Switching between the two keeps the same place: the mapping measures the rendered formulas and tables and compensates. Inside `$…$` or `$$…$$` nothing is ever bold, struck or highlighted — a `**` in a formula is just part of the formula.
-- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, break first at the writer's own line ends, then at commas (which stay put), then at those relations — repeated on the next line — and last at spaces you typed between words, including words inside `\text{...}` and the other text commands. Overwide display formulas in print can also use KaTeX’s own operator breaks to fit the column. A display formula is as tall as its content, including a large fraction; the Android preview grows the box to what actually painted instead of clipping it to the font strut. The drawn signs (the vector arrow, stretchy brackets, roots) scale with the system font size exactly like the letters, as in the PDF. The source is never changed.
+- **Both directions in one note.** Prose follows its first strong letter. Numbers and dates infer their direction from surrounding prose, using the same policy in the editor, reading view and PDF. Math and literal code stay LTR and never influence neighbouring prose. The line numbers keep the left edge; only the right sidebar's outline reads the note's majority.
+- **Live preview while editing**, with Obsidian's rule: the Markdown syntax shows only on the line you're editing. There's also a separate reading view (double-tap it to edit). Switching between the two keeps the same place: the mapping measures the rendered formulas and tables and compensates. Inside `$…$` or `$$…$$` nothing is Markdown at all — a `**` is never bold, a `[a](b)` never becomes a link, `` `c` `` never becomes code and a `[^1]` never becomes a footnote reference: every one of them is just a character of the formula, in the editor and in the reading view alike.
+- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, break first at the writer's own line ends, then at commas (which stay put), then at those relations — repeated on the next line — and last at spaces you typed between words, including words inside `\text{...}` and the other text commands. A Persian phrase is the one exception: its words stay a single run, so they read right to left instead of being handed to the page one word at a time, which would lay them out left to right. A group in plain parentheses or brackets is a step behind all of those: it is never broken while the line can hold it, and a group too wide for the line breaks inside itself at its own commas and relations rather than at whatever atom the browser would otherwise split. Overwide display formulas in print can also use KaTeX’s own operator breaks to fit the column. A display formula is as tall as its content, including a large fraction; the Android preview grows the box to what actually painted instead of clipping it to the font strut. The drawn signs (the vector arrow, stretchy brackets, roots) scale with the system font size exactly like the letters, as in the PDF. The source is never changed.
 - **Obsidian's Markdown:**
   - `[[wiki links]]`, with a picker while you type
   - `![[image embeds]]` with `|300` sizes
@@ -40,8 +40,11 @@ A Markdown editor for Android that writes Persian and English side by side. It l
 - **Typing like Obsidian:**
   - Brackets, quotes, `$`, `*`, `_`, `=` and backticks pair up and wrap a selection.
   - `$$` then `$$` opens a math block. A lone `$$` or `$$$$` with nothing between is just text. Only a `$$ … $$` pair whose dollars sit on different lines is a display block; the empty writing line counts as math.
-  - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font in the accent colour.
-  - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text.
+  - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font in the accent colour (they mark a formula's edges at a glance). A line holding only `$$` never turns monospace, and a pair a heading, a list, a quote or a fence broke is plain text on both sides — editor and reading view read the same rule.
+  - A Markdown character inside a formula belongs to the formula, so it never pairs with one in another formula: in `$*$ foo foo foo $*$` the foos are prose between two formulas and stay in the note's own font.
+  - A new to-do box is always empty, whatever the line above it says. And when the line under an item is already an empty item, Enter moves into that one instead of making a second empty item and pushing the numbers below.
+  - Ordered lists number themselves while you write. Enter on an item numbers the new one after the item above it, and the numbers below move only as far as they must (`6.` then Enter gives `7.`, and an `8.` under it stays `8.`; `1. 2. 3.` becomes `1. 2. 3. 4.`). A line that leaves the list — deleted, joined to the line above, or emptied — brings the numbers below it down, checked on every edit, so Backspace and a selection work like the toolbar's delete-line. Editing an item's text moves nothing. A blank line, prose or another list ends the run, nested items number themselves and are stepped over, and a note you open or a list you paste keeps the numbers it came with.
+  - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text. Spaces are never second-guessed: what you type (or what the keyboard's auto-correct sends) goes in as it is, before a `)` as anywhere else.
 - **Fast start.** The last screen appears at once, before the app's code has loaded.
 
 Open [demo.md](demo.md) in Satr to see all of it. It's also the first note in a fresh browser install.
@@ -105,12 +108,15 @@ See [ROADMAP.md](ROADMAP.md).
 ### Direction of numbers and other neutral text
 
 The note's majority — whichever script has more strong letters, with math and
-code ignored — puts the line-number gutter on that side and flips the outline
-tree. Arrow keys walk a mixed line in visual order and stop on both sides of
-an RTL/LTR junction, so the caret never jumps or doubles back at a boundary.
-Formulas can show all their digits in one set — English or Persian — in the
-preview and the PDF (Settings → Editor, "Math digits"); the note keeps the
-digits that were typed.
+code ignored — flips the outline tree (the line numbers stay on the left edge).
+Arrow keys walk a mixed line in visual order and stop on both sides of an
+RTL/LTR junction, so the caret never jumps or doubles back at a boundary; after
+any edit the caret keeps the line's side, not the side of the character just
+typed or deleted, so a number or an English word inside Persian text never
+turns the caret around and the caret never moves back and forth within a line. The outline marks the heading two thirds down the page, where you are
+reading, rather than the one that has just left the top edge. Formulas can show
+all their digits in one set — English or Persian — in the preview and the PDF
+(Settings → Editor, "Math digits"); the note keeps the digits that were typed.
 
 The editor caches whole-document context, rather than guessing from the visible
 lines. Preview and print use the same resolver over rendered prose (including
@@ -127,6 +133,12 @@ soft source newlines):
    headings inherit a parent heading; without a parent, they look into their own
    section before falling back to LTR. A new section never borrows a later
    heading's direction.
+5. A line with no strong letter of its own — a bare number, a date, a `#` or a
+   list marker — continues the line above it, so a new line is written in the
+   language you are writing in and a heading or a marker never turns it around.
 
 This controls paragraph direction/alignment, not character reversal. Math remains
-isolated LTR even inside an RTL paragraph or on an RTL-ordered PDF sheet.
+isolated LTR even inside an RTL paragraph or on an RTL-ordered PDF sheet; a
+Persian phrase written inside a formula reads right to left there, word by word —
+whether it sits in `\text{…}` or bare in the middle of the expression, in a
+fraction's argument or under a root.

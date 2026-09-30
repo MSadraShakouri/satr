@@ -106,6 +106,11 @@ function liftTextBreaks(tex: string): string {
 }
 
 function liftTextCommand(name: string, inner: string): string {
+  // A Persian phrase is one run of words in the reading order: handing the
+  // browser its words as separate boxes would lay them out left to right
+  // (\text{سلام دنیا} read backwards). The phrase stays in one atom, and the
+  // bidi algorithm inside it reads it right to left.
+  if (PERSIAN_LETTER.test(inner)) return `\\${name}{${inner}}`;
   const lifted = liftTextBreaks(inner);
   const parts: string[] = [];
   let depth = 0;
@@ -151,6 +156,13 @@ const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 // Break points, preferred in this order: the writer's own line ends, then
 // commas, then relations (which repeat on the next line), then the spaces
 // typed between words. The comma stays at the end of the line it breaks.
+//
+// A plain ( ) / [ ] group — and the visible braces \{ \} — is a step behind
+// all of those (BREAK_INSIDE is added to its break points' priority): a group
+// that fits is never broken, and a group too wide for the line can still
+// break inside itself at its own comma, relation or space instead of at
+// whatever atom the browser would otherwise split it at. Braces, \left…
+// \right and environments never break: their halves must render together.
 interface Cut { prio: number; rel: string; comma: boolean; prefix: string }
 const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', comma: false, prefix: '', ...fields });
 function mergeCuts(a: Cut, b: Cut): Cut {
@@ -213,13 +225,21 @@ function splitCuts(rawTex: string): Split | null {
     }
     termStart = to;
   };
-  let depth = 0;
+  const LAST = 4; // every top-level break point stays ahead of a break inside a group
+  let depth = 0; // braces, \left…\right and environments: never a break inside
+  let plain = 0; // plain ( ) [ ] (and \{ \}): a break inside is the last resort
   let i = 0;
   while (i < tex.length) {
     const c = tex[i];
+    // 0 = top level, 1 = inside a plain group (shifted by LAST), -1 = no break.
+    const level = depth > 0 ? -1 : plain > 0 ? 1 : 0;
+    const prio = (value: number): number => value + (level === 1 ? LAST : 0);
     if (c === '\\') {
       if (!LATIN.test(tex[i + 1] ?? '')) {
         if (tex[i + 1] === '\\' && depth === 0) return null; // manual line breaks: leave alone
+        // A visible brace is a delimiter of its own, not an escape to skip.
+        if (level === 0 && tex[i + 1] === '{') { plain += 1; i += 2; continue; }
+        if (level === 1 && tex[i + 1] === '}') { plain -= 1; i += 2; continue; }
         i += 2;
         continue;
       }
@@ -230,23 +250,23 @@ function splitCuts(rawTex: string): Split | null {
       if (name === 'right') { depth -= 1; i = skipDelimiter(tex, k); continue; }
       if (name === 'begin') { depth += 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
       if (name === 'end') { depth -= 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
-      if (depth === 0 && name === 'not') {
+      if (level >= 0 && name === 'not') {
         // \not= , \not\equiv ...
         let end = skipSpaces(tex, k);
         if (tex[end] === '\\') { end += 1; while (LATIN.test(tex[end] ?? '')) end += 1; } else end += 1;
-        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
-      if (depth === 0 && EXT_ARROWS.has(name)) {
+      if (level >= 0 && EXT_ARROWS.has(name)) {
         let end = skipGroup(tex, skipSpaces(tex, k), '[', ']');
         end = skipGroup(tex, skipSpaces(tex, end), '{', '}');
-        cut(i, end, newCut(2, { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end) }));
         i = end;
         continue;
       }
-      if (depth === 0 && RELATIONS.has(name)) {
-        cut(i, k, newCut(2, { rel: tex.slice(i, k) }));
+      if (level >= 0 && RELATIONS.has(name)) {
+        cut(i, k, newCut(prio(2), { rel: tex.slice(i, k) }));
         i = k;
         continue;
       }
@@ -254,34 +274,41 @@ function splitCuts(rawTex: string): Split | null {
       continue;
     }
     if (c === '{') { depth += 1; i += 1; continue; }
-    if (c === '}') { depth -= 1; i += 1; continue; }
-    if (c === '(') { depth += 1; i += 1; continue; }
-    if (c === ')' && depth > 0) { depth -= 1; i += 1; continue; }
-    if (c === '[') { depth += 1; i += 1; continue; }
-    if (c === ']' && depth > 0) { depth -= 1; i += 1; continue; }
-    if (c === '&' && depth === 0) return null; // alignment: leave alone
-    if (c === '\n' && depth === 0) {
-      cut(i, i + 1, newCut(0)); // the writer's own line end, preferred
+    if (c === '}') { if (depth > 0) depth -= 1; i += 1; continue; }
+    if (c === '(') { if (depth === 0) plain += 1; i += 1; continue; }
+    if (c === ')') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
+    if (c === '[') { if (depth === 0) plain += 1; i += 1; continue; }
+    if (c === ']') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
+    if (c === '&' && level >= 0) return null; // alignment: leave alone
+    if (c === '\n' && level >= 0) {
+      cut(i, i + 1, newCut(prio(0))); // the writer's own line end, preferred
       i += 1;
       continue;
     }
-    if (c === SPACE && depth === 0) {
-      cut(i, i + 1, newCut(3, { prefix: '\\ ' }));
+    if (c === SPACE && level >= 0) {
+      // A space between two Persian letters is inside a phrase, not between
+      // terms: a break there would leave the words to be ordered left to
+      // right.
+      if (PERSIAN_LETTER.test(tex[i - 1] ?? '') && PERSIAN_LETTER.test(tex[i + 1] ?? '')) {
+        i += 1;
+        continue;
+      }
+      cut(i, i + 1, newCut(prio(3), { prefix: '\\ ' }));
       i += 1;
       continue;
     }
-    if (c === ',' && depth === 0) {
-      cut(i, i + 1, newCut(1, { comma: true }));
+    if (c === ',' && level >= 0) {
+      cut(i, i + 1, newCut(prio(1), { comma: true }));
       i += 1;
       continue;
     }
-    if (depth === 0 && c === ':' && tex[i + 1] === '=') {
-      cut(i, i + 2, newCut(2, { rel: ':=' }));
+    if (level >= 0 && c === ':' && tex[i + 1] === '=') {
+      cut(i, i + 2, newCut(prio(2), { rel: ':=' }));
       i += 2;
       continue;
     }
-    if (depth === 0 && (c === '=' || c === '<' || c === '>')) {
-      cut(i, i + 1, newCut(2, { rel: c }));
+    if (level >= 0 && (c === '=' || c === '<' || c === '>')) {
+      cut(i, i + 1, newCut(prio(2), { rel: c }));
       i += 1;
       continue;
     }
@@ -299,8 +326,53 @@ function splitCuts(rawTex: string): Split | null {
   return terms.length > 1 ? { terms, cuts } : null;
 }
 
+// A Persian word inside a formula is Persian, not a sequence of maths
+// variables: left to itself KaTeX lays the letters out left to right as
+// separate italics, which is unreadable. Every Persian run outside a text
+// command is therefore wrapped in `\text{…}` — upright, and read right to
+// left by the `.katex .text` rule in the stylesheet — while the formula around
+// it stays left to right (23). Runs already inside `\text{}` (or another text
+// command) are left alone; `\ ` is the marker for a space the writer typed,
+// which is a plain space again inside text mode.
+const PERSIAN_CHAR = '[\\u0620-\\u065F\\u0670\\u0671-\\u06D3\\u06D5\\u06D6-\\u06ED\\u06EE-\\u06EF\\u06FA-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF\\u200C\\u200D]';
+// A run is a letter, more letters, and the `\ ` markers between them: it must
+// start and end with a letter, so a lone space marker — a break point of its
+// own — is never wrapped.
+/** One Persian (or Arabic-script) character. */
+const PERSIAN_LETTER = new RegExp(PERSIAN_CHAR);
+const PERSIAN_RUN = new RegExp(`${PERSIAN_CHAR}(?:${PERSIAN_CHAR}|\\\\ )*${PERSIAN_CHAR}|${PERSIAN_CHAR}`, 'g');
+const TEXT_COMMAND = /\\(?:text|mbox|hbox|textnormal|textrm|textsf|texttt|operatorname|textsuperscript|textsubscript)\b\s*\{/g;
+
+/** [from, to) of every group argument of a text command in `tex`. */
+function textRanges(tex: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  TEXT_COMMAND.lastIndex = 0;
+  for (let match = TEXT_COMMAND.exec(tex); match; match = TEXT_COMMAND.exec(tex)) {
+    const open = match.index + match[0].length - 1;
+    let depth = 1;
+    for (let at = open + 1; at < tex.length; at += 1) {
+      if (tex[at] === '\\') { at += 1; continue; }
+      if (tex[at] === '{') depth += 1;
+      else if (tex[at] === '}') {
+        depth -= 1;
+        if (!depth) { ranges.push([open + 1, at]); break; }
+      }
+    }
+  }
+  return ranges;
+}
+
+function persianTextRuns(tex: string): string {
+  if (!PERSIAN_RUN.test(tex)) return tex;
+  PERSIAN_RUN.lastIndex = 0;
+  const inside = textRanges(tex);
+  const isText = (at: number): boolean => inside.some(([from, to]) => at >= from && at < to);
+  return tex.replace(PERSIAN_RUN, (run: string, offset: number) =>
+    isText(offset) ? run : `\\text{${run.replace(/\\ /g, ' ')}}`);
+}
+
 const render = (tex: string, displayMode = false): string =>
-  katex.renderToString(tex, { displayMode, throwOnError: false });
+  katex.renderToString(persianTextRuns(tex), { displayMode, throwOnError: false });
 
 // Math digit display (Settings → Editor): formulas can be shown with one
 // digit set all through — including \text, \texttt and \tag — without the

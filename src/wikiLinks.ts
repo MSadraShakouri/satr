@@ -9,6 +9,7 @@ import { autocompletion, type Completion, type CompletionContext, type Completio
 import { syntaxTree } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, MatchDecorator, ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import { inMath, overlapsMath } from './mathSource';
 
 export interface WikiLinkRuntime {
   names(): string[];
@@ -31,6 +32,8 @@ const decorator = new MatchDecorator({
   regexp: LINK,
   decorate(add, from, to, match, view) {
     if (inCode(view, from)) return;
+    // Inside `$…$` brackets are formula characters, never a link (11).
+    if (inMath(view.state, from) || overlapsMath(view.state, from, to)) return;
     const open = from + match[1].length + 2;
     add(from, open, bracketMark);
     if (to - 2 > open) add(open, to - 2, textMark);

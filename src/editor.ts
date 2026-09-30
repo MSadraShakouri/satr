@@ -1,11 +1,11 @@
 import { sourceDirections, majorityDirection } from './direction';
-import { defaultKeymap, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
-import { Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
@@ -22,7 +22,7 @@ import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: 'var(--note-line-height)' },
-  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) 50vh', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) calc(50vh + 96px)', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });
@@ -141,21 +141,10 @@ const directionPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-// The line-number gutter sits on the note's majority side (#10): right for a
-// mostly Persian note, left for a mostly English one. A class, not a bidi
-// override, so the scroller keeps its LTR scroll coordinates. It must update
-// on any state change (tab switch, initial load), not only on typing.
-const gutterSidePlugin = ViewPlugin.fromClass(class {
-  lastDir: 'ltr' | 'rtl' | null = null;
-  constructor(view: EditorView) { this.sync(view); }
-  update(update: ViewUpdate): void { this.sync(update.view); }
-  sync(view: EditorView): void {
-    const dir = majorityDirection(view.state.doc.toString());
-    if (dir === this.lastDir && view.dom.classList.contains('cm-satr-gutter-rtl') === (dir === 'rtl')) return;
-    this.lastDir = dir;
-    view.dom.classList.toggle('cm-satr-gutter-rtl', dir === 'rtl');
-  }
-});
+// The line numbers keep the left edge, always: a gutter that changed sides
+// with the note's language was more to explain than it was worth, and it
+// moved under the reader's eyes while a note drifted towards another
+// language. (The right sidebar's outline still reads the note's majority.)
 
 const digitMaps = {
   latin: '0123456789',
@@ -169,6 +158,192 @@ function parseListNumber(value: string): { number: number; alphabet: keyof typeo
 }
 function formatListNumber(number: number, alphabet: keyof typeof digitMaps): string {
   return String(number).split('').map((digit) => digitMaps[alphabet][Number(digit)]).join('');
+}
+
+// Automatic numbering for ordered lists (the writer's request). Two moments
+// touch the writer's numbers, and only those two:
+//
+// * Enter on an item writes the new item after the item above it (that is
+//   continueOnEnter), and then lifts the items *below* only as far as they
+//   need to go: each one has to be bigger than the one above it, so `6.` then
+//   Enter gives `7.` and an `8.` under it stays `8.` — it already fits — while
+//   `1. 2. 3.` becomes `1. 2. 3. 4.`
+//
+// * A line that leaves the list — deleted whole, joined to the line above,
+//   or emptied — brings the items below it down by the number of items that
+//   went. Editing an item's text, or its marker, without the line going, moves
+//   nothing.
+//
+// Everything else keeps its numbers: typing, pasting and opening a note never
+// renumber anything, and a blank line, prose or another marker ends the run
+// (two lists separated by a blank line are two lists). A nested list numbers
+// itself and is stepped over; the digits keep the set they were written in, so
+// a Persian list stays Persian.
+const listRenumber = Annotation.define<boolean>();
+const ITEM_LINE = /^([ \t]*)([0-9۰-۹٠-٩]+)([.)])([ \t])/;
+// A line the writer is taking apart: the whole item, "2." with its text gone,
+// or "2" with the marker half-deleted. Only a line that holds nothing else.
+const STRUCK_ITEM = /^([ \t]*)([0-9۰-۹٠-٩]+)([.)])?([ \t]*)$/;
+
+interface Marker { indent: string; delimiter: string }
+
+function itemMarker(line: string): Marker | null {
+  const match = ITEM_LINE.exec(line);
+  return match ? { indent: match[1], delimiter: match[3] } : null;
+}
+
+/** The item one Enter made: a new item's marker on a line of its own, and the
+ *  number it was given. A marker written by hand, a pasted list or a note
+ *  being loaded are not Enter, and none of them renumber anything. */
+function insertedItem(text: string): { marker: Marker | null; number: number } {
+  const lines = text.split('\n');
+  if (lines.length > 2 || !text.includes('\n')) return { marker: null, number: 0 };
+  const line = lines.find((one) => ITEM_LINE.test(one));
+  if (!line) return { marker: null, number: 0 };
+  const match = ITEM_LINE.exec(line)!;
+  return { marker: { indent: match[1], delimiter: match[3] }, number: parseListNumber(match[2]).number };
+}
+
+/** The item lines one change took out of the list, and the marker to match the
+ *  run after them against. A line goes when the whole line went, when the
+ *  writer emptied it, or when its break was deleted and the line above had
+ *  text to absorb it (Backspace at the line's start). */
+function removedItems(tr: { changes: { mapPos: (pos: number, assoc: number) => number }; startState: EditorState; newDoc: { lineAt: (pos: number) => { text: string } } }, fromA: number, toA: number): { count: number; marker: Marker | null; emptied: boolean } {
+  const before = tr.startState.doc;
+  const after = tr.newDoc as unknown as EditorState['doc'];
+  let count = 0;
+  let marker: Marker | null = null;
+  let emptied = false;
+  const first = before.lineAt(fromA);
+  const last = before.lineAt(toA);
+  const leftBehind = after.lineAt(Math.min(tr.changes.mapPos(toA, -1), after.length));
+  for (let n = first.number; n <= last.number; n += 1) {
+    const line = before.line(n);
+    if (fromA > line.from || toA < line.to) continue;
+    // A line that went takes its item with it, text and all. A line still
+    // standing counts only when the writer emptied it — a replacement (a
+    // selection typed over) leaves text behind and moves nothing.
+    const gone = toA > line.to || fromA < line.from;
+    const match = leftBehind.text.trim() && !gone
+      ? null
+      : ITEM_LINE.exec(line.text) ?? STRUCK_ITEM.exec(line.text);
+    if (!match) continue;
+    count += 1;
+    if (!gone) emptied = true;
+    marker = marker ?? { indent: match[1], delimiter: match[3] ?? '.' };
+  }
+  // One break deleted: the line below moved up into the line above. The item
+  // is gone only if that line had text of its own — a line joining an empty
+  // line is the same item one line higher.
+  if (toA - fromA === 1 && before.sliceString(fromA, toA) === '\n') {
+    const above = before.lineAt(fromA);
+    const below = above.number < before.lines ? before.line(above.number + 1) : null;
+    if (below && above.text.trim() && ITEM_LINE.test(below.text)) {
+      const match = ITEM_LINE.exec(below.text)!;
+      if (!marker) marker = { indent: match[1], delimiter: match[3] };
+      count += 1;
+    }
+  }
+  return { count, marker, emptied };
+}
+
+/** The first line starting at or after `pos`: the line a deletion left
+ *  behind. A deletion can end on the break before the next line — the app's
+ *  own delete-line takes the break *above* the line it removes — so the line
+ *  holding `pos` is not always the line to start at. */
+function lineAtOrAfter(doc: EditorState['doc'], pos: number): number {
+  const line = doc.lineAt(pos);
+  return line.from >= pos ? line.number : line.number + 1;
+}
+
+const listNumbering = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.annotation(listRenumber)) return tr;
+  // A paste or a drop is the writer's own material: whatever numbers came with
+  // it are kept (insertedItem would otherwise read a pasted newline plus item
+  // as an Enter).
+  if (tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop')) return tr;
+  // What the edit did to the list: the first change that added or removed an
+  // item decides, and the run after it is the one to renumber.
+  const plan: { kind: 'add' | 'remove' | null; marker: Marker | null; number: number; count: number; from: number } =
+    { kind: null, marker: null, number: 0, count: 0, from: -1 };
+  tr.changes.iterChanges((fromA, toA, _fromB, toB, inserted) => {
+    if (plan.kind) return;
+    if (inCode(tr.startState, fromA) || inMath(tr.startState, fromA)) return;
+    const added = insertedItem(inserted.toString());
+    if (added.marker) {
+      plan.kind = 'add';
+      plan.marker = added.marker;
+      plan.number = added.number;
+      // The run begins after the item that was just made.
+      plan.from = tr.newDoc.lineAt(toB).number + 1;
+      return;
+    }
+    const gone = removedItems(tr, fromA, toA);
+    if (!gone.count || !gone.marker) return;
+    plan.kind = 'remove';
+    plan.marker = gone.marker;
+    plan.count = gone.count;
+    // …or at the line the deletion left behind. A line the writer emptied is
+    // still standing, and holds nothing: the run begins under it.
+    plan.from = lineAtOrAfter(tr.newDoc, toB);
+    if (gone.emptied && plan.from <= tr.newDoc.lines && !tr.newDoc.line(plan.from).text.trim()) plan.from += 1;
+  });
+  if (!plan.kind || !plan.marker || plan.from < 1) return tr;
+  const kind = plan.kind;
+  const marker = plan.marker as Marker;
+  const count = plan.count;
+  const from = plan.from;
+  const doc = tr.newDoc;
+  const changes: { from: number; to: number; insert: string }[] = [];
+  // The number of the last item seen at the list's own level: the next one has
+  // to be bigger than it (an insertion lifts the run), or is moved down with
+  // it (a removal shifts the run).
+  let previous = plan.number;
+  for (let n = from; n <= doc.lines; n += 1) {
+    const line = doc.line(n);
+    // A blank line ends the list, and so does a formula: two lists with air
+    // between them, or a formula holding numbered lines, are left alone.
+    if (!line.text.trim() || inMath(tr.state, line.from)) break;
+    const match = ITEM_LINE.exec(line.text);
+    if (!match) {
+      // Indented text belongs to the item above it; anything else at the
+      // list's own level ends the run.
+      if (/^[ \t]/.test(line.text)) continue;
+      break;
+    }
+    const depth = match[1].length;
+    // A nested list numbers itself; it does not stand between the items of
+    // the list it hangs under.
+    if (depth > marker.indent.length) continue;
+    if (depth < marker.indent.length || match[3] !== marker.delimiter) break;
+    const parsed = parseListNumber(match[2]);
+    let wanted = kind === 'add' ? Math.max(parsed.number, previous + 1) : parsed.number - count;
+    if (wanted < 1) break;
+    if (wanted !== parsed.number) {
+      changes.push({
+        from: line.from + match[1].length,
+        to: line.from + match[1].length + match[2].length,
+        insert: formatListNumber(wanted, parsed.alphabet),
+      });
+    }
+    previous = wanted;
+  }
+  if (!changes.length) return tr;
+  return [tr, { changes, sequential: true, annotations: listRenumber.of(true) }];
+});
+
+/** An item with nothing written on it yet: its marker (a to-do box counts)
+ *  and nothing else. */
+const EMPTY_ITEM_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])([ \t]+(\[[ xX]\])?)?[ \t]*$/;
+
+/** Are these two markers the same list continuing? Numbers may differ — the
+ *  writer's own spacing is theirs — but the kind and the delimiter must hold. */
+function sameKind(one: string, other: string): boolean {
+  const first = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(one);
+  const second = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(other);
+  if (first && second) return first[2] === second[2];
+  if (first || second) return false;
+  return one === other;
 }
 
 function continueOnEnter(view: EditorView): boolean {
@@ -185,13 +360,45 @@ function continueOnEnter(view: EditorView): boolean {
     return true;
   }
   const ordered = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(marker);
+  // An item already sits empty on the next line, waiting for its text: Enter
+  // moves into it rather than making a second empty one and pushing every
+  // number below it. Only a line of the same kind — same indent, same marker,
+  // same delimiter — is the list continuing, and only from the line's end.
+  const nextLine = line.number < state.doc.lines ? state.doc.line(line.number + 1) : null;
+  const waiting = nextLine ? EMPTY_ITEM_LINE.exec(nextLine.text) : null;
+  if (waiting && selection.head === line.to && waiting[1] === indent && sameKind(waiting[2], marker)) {
+    view.dispatch({ selection: { anchor: nextLine!.from + nextLine!.text.length } });
+    return true;
+  }
   const parsed = ordered ? parseListNumber(ordered[1]) : null;
   const next = parsed ? `${formatListNumber(parsed.number + 1, parsed.alphabet)}${ordered?.[2] ?? '.'}` : marker;
-    const insertion = `\n${indent}${next} ${(task ?? '')}`;
-    const cursor = selection.head + insertion.length;
-    view.dispatch({ changes: { from: selection.head, insert: insertion }, selection: { anchor: cursor }, userEvent: 'input.enter' });
-    return true;
+  // A to-do line continues with a to-do line, and the box is always empty:
+  // the item below a finished one is a new thing to do, whatever the line
+  // above it says (the writer's request).
+  const insertion = `\n${indent}${next} ${task ? '[ ] ' : ''}`;
+  const cursor = selection.head + insertion.length;
+  view.dispatch({ changes: { from: selection.head, insert: insertion }, selection: { anchor: cursor }, userEvent: 'input.enter' });
+  return true;
 }
+
+// The Enter chain, in the keymap's own order (see the keymap below). The
+// toolbar's "new line below" runs exactly this at the line's end, so the
+// button and the key can never drift apart.
+function enterAtCaret(view: EditorView): boolean {
+  return enterDisplayMath(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+}
+
+/** The toolbar's "new line below": Enter at the end of the line. The caret
+ *  moves there first, so a list continues — the writer's own number, or a
+ *  to-do line's checkbox — and no empty line appears under the text. */
+function lineBelow(view: EditorView): boolean {
+  const { state } = view;
+  const end = state.doc.lineAt(state.selection.main.head).to;
+  if (state.selection.main.head !== end) view.dispatch({ selection: { anchor: end } });
+  return enterAtCaret(view);
+}
+
+const toolbarOverrides: Record<string, (view: EditorView) => boolean> = { lineBelow };
 
 function selectedLines(view: EditorView) {
   const selection = view.state.selection.main;
@@ -457,7 +664,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -474,13 +681,15 @@ export class SatrEditor {
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
       ])),
       titleField,
-      rtlLineDirection, directionsField, directionPlugin, gutterSidePlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:
       // selecting near the bottom then made CodeMirror jump the page at once,
       // because it counted the space the keyboard was about to cover as
       // hidden. The caret is brought up gently afterwards instead (below).
+      // Room under the last line: enough to bring it up past the middle of the
+      // screen and keep writing at the bottom.
       EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
       headingFolding,
       wikiLinks,
@@ -506,6 +715,9 @@ export class SatrEditor {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) options?.onSelection?.(update.state.selection.main.head);
+        // A line made with Enter puts the caret on the line below the one on
+        // screen; bring it in, exactly as typing a character does.
+        if (update.transactions.some((tr) => tr.isUserEvent('input.enter'))) revealSoon(0);
         if (update.transactions.some((tr) => tr.effects.some((e) => e.is(foldEffect) || e.is(unfoldEffect)))) options?.onFold?.();
       }),
     ];
@@ -549,6 +761,19 @@ export class SatrEditor {
       const { anchor, head } = this.view.state.selection.main;
       touchSelection = [anchor, head];
     }, { passive: true });
+    // A tap below the last line means "the end of the note", not the nearest
+    // character under the finger: the empty room under the text is where the
+    // caret goes to the end and writing continues.
+    this.view.scrollDOM.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.cm-gutters, .cm-widget, .cm-file-title, .cm-tooltip')) return;
+      const end = this.view.coordsAtPos(this.view.state.doc.length, 1);
+      if (!end || event.clientY <= end.bottom) return;
+      event.preventDefault();
+      this.view.dispatch({ selection: { anchor: this.view.state.doc.length }, scrollIntoView: false });
+      this.view.focus();
+    }, true);
     this.view.contentDOM.addEventListener('touchmove', (event) => {
       if (Math.abs((event.touches[0]?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
     }, { passive: true });
@@ -591,6 +816,11 @@ export class SatrEditor {
     title.contentEditable = String(on);
     title.setAttribute('aria-readonly', String(!on));
     if (!on) title.blur();
+  }
+  /** Select the whole note, giving the editor the focus so copy works too. */
+  selectAll(): void {
+    this.view.focus();
+    this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
   }
   focusTitle(): void {
     const el = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
@@ -663,7 +893,7 @@ export class SatrEditor {
   /** Run a keyboard-toolbar command by name. */
   run(command: string): boolean {
     if (this.isReadOnly) return false;
-    const fn = toolbarCommands[command];
+    const fn = toolbarOverrides[command] ?? toolbarCommands[command];
     return fn ? fn(this.view) : false;
   }
   findNext(): void { findNext(this.view); }

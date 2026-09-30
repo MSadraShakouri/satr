@@ -542,6 +542,12 @@ body {
 .math-flow.is-wrapped:not(.is-display) > .math-unit {
   padding-block: 0.15em;
 }
+/* A prose run inside a formula (\text{…}, \textbf{…}) follows its own
+   language: Persian reads right to left inside the formula, while the
+   formula itself stays left to right (plaintext is the CSS of dir="auto"). */
+.preview-pane .katex .text {
+  unicode-bidi: plaintext;
+}
 .math-display {
   margin: 1em 0;
   text-align: center;
@@ -876,10 +882,7 @@ body {
   font-variant-numeric: tabular-nums;
   line-height: calc(var(--note-line-height) * 1.25);
 }
-/* The gutter follows the note's majority direction: on the right for a
-   mostly Persian note. The scroller keeps its direction, so its scroll
-   coordinates (and the selection layer) don't flip with it. */
-.cm-editor.cm-satr-gutter-rtl .cm-gutters { order: 2; left: auto; right: 0; }
+/* The line numbers stay on the left, whatever the note's language. */
 .cm-editor .cm-gutters .cm-lineNumbers .cm-gutterElement {
   min-width: calc(3ch + 18px);
   padding: 0 7px 0 11px;
@@ -1099,6 +1102,17 @@ body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* Characters the parser took for markdown markers but that are not markdown —
+   a pair of dollars parked around prose (`$**$ foo $**$`). The markdown
+   parser has already styled them (bold, struck, highlighted); this puts the
+   source back the way the writer typed it (7). */
+.cm-lp-plain,
+.cm-lp-plain * {
+  font-weight: 400 !important;
+  font-style: normal !important;
+  text-decoration: none !important;
+  background: none !important;
+}
 /* Footnotes (Obsidian: span.cm-footref, .HyperMD-footnote) */
 .cm-lp-footref {
   position: relative;
@@ -1284,7 +1298,8 @@ body {
    monospace font at code size, italic, with the dollar signs in the accent
    colour. Only the things between the dollars are monospace; the dollars
    themselves keep the note's font. Math reads left to right, also inside
-   Persian text. */
+   Persian text. A pair that never closes is not math at all, so its dollars
+   get no accent (src/mathScan.ts). */
 .cm-math {
   font-family: var(--font-monospace);
   font-style: italic;
@@ -1295,9 +1310,10 @@ body {
 .cm-math-delim {
   color: var(--text-accent);
 }
-/* Inside math source nothing is bold, struck or highlighted — a `**`, `~~`
-   or `==` is just part of the formula (11). Beats the parser's own emphasis
-   styles on nested spans. */
+/* Inside math source nothing is styled as prose — a `**`, `~~`, `==`,
+   `[text](url)` or a backtick pair is just part of the formula (7, 11). Beats
+   both the live preview's own decorations and the syntax highlighter's theme,
+   which colours links with the accent and gives inline code the code font. */
 .cm-math,
 .cm-math *,
 .cm-editor .cm-content .cm-math,
@@ -1308,6 +1324,16 @@ body {
   font-style: italic !important;
   text-decoration: none !important;
   background: none !important;
+  opacity: 1 !important;
+}
+/* Inherit, not a fixed value: only the descendants — the formula's own font
+   and colour are what they inherit from, so writing these on `.cm-math` too
+   would hand the monospace back to the note's prose font. */
+.cm-math *,
+.cm-editor .cm-content .cm-math *,
+.cm-editor .cm-line .cm-math * {
+  font-family: inherit !important;
+  color: inherit !important;
 }
 
 /* ---- Bottom bar (no keyboard) ----

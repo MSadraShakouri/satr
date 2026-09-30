@@ -26,15 +26,15 @@ async function draft(page: Page, text: string, caret = 0) {
 // The stepwise combinator: press a motion key one step at a time and record
 // where the caret is, logically and visually.
 async function walk(page: Page, key: string, steps: number) {
-  const out: { pos: number; x: number }[] = [];
+  const out: { pos: number; x: number; top: number }[] = [];
   for (let i = 0; i < steps; i += 1) {
     await page.keyboard.press(key);
     out.push(await page.evaluate(() => {
       const e = window.testEditor;
-      const view = (e as unknown as { view: { state: { selection: { main: { head: number; assoc: number } } }; coordsAtPos(pos: number, side?: number): { left: number } | null } }).view;
+      const view = (e as unknown as { view: { state: { selection: { main: { head: number; assoc: number } } }; coordsAtPos(pos: number, side?: number): { left: number; top: number } | null } }).view;
       const sel = view.state.selection.main;
       const rect = view.coordsAtPos(sel.head, sel.assoc);
-      return { pos: sel.head, x: Math.round(rect?.left ?? -1), assoc: sel.assoc, px: rect?.left };
+      return { pos: sel.head, x: Math.round(rect?.left ?? -1), top: Math.round(rect?.top ?? -1), assoc: sel.assoc, px: rect?.left };
     }));
   }
   return out;
@@ -79,4 +79,31 @@ test('shift+arrows extend the selection with the same stepping', async ({ page }
   for (let i = 1; i < steps.length; i += 1) expect(steps[i].x, JSON.stringify(steps)).toBeGreaterThan(steps[i - 1].x);
   const sel = await page.evaluate(() => window.testEditor.getSelection());
   expect(sel).toEqual([8, 2]); // anchor stays at 8, the head walks back to 2
+});
+
+// A line wider than the editor wraps into several visual rows, and the same x
+// exists on every row. A step must stay on the caret's own row: matching a
+// stop by x alone sent the caret up or down instead of along the line (3).
+test('a wrapped line is walked row by row, never jumping to another row', async ({ page }) => {
+  // Narrow the editor so the long mixed line wraps into several visual rows.
+  await page.evaluate(() => {
+    const host = window.testEditor.view.dom.parentElement as HTMLElement;
+    host.style.width = '260px';
+    host.style.right = 'auto';
+  });
+  // An English line (LTR base) with Persian runs: the caret walks rightwards
+  // along each row and on into the next one below.
+  await draft(page, 'abc ابج def abc ابج def abc ابج def abc ابج def abc');
+  const right = await walk(page, 'ArrowRight', 40);
+  const tops = right.map((s) => s.top);
+  // The walk really crossed rows (otherwise the test proves nothing)…
+  expect(new Set(tops).size).toBeGreaterThan(1);
+  // …and when it did, it went downwards only: matching a stop by x alone
+  // found the same x on the row above and sent the caret back up.
+  for (let i = 1; i < tops.length; i += 1) expect(tops[i], JSON.stringify(right)).toBeGreaterThanOrEqual(tops[i - 1] - 2);
+  // Coming back, the rows are crossed upwards only.
+  const left = await walk(page, 'ArrowLeft', 40);
+  const back = left.map((s) => s.top);
+  for (let i = 1; i < back.length; i += 1) expect(back[i], JSON.stringify(left)).toBeLessThanOrEqual(back[i - 1] + 2);
+  expect(new Set(back).size).toBeGreaterThan(1);
 });

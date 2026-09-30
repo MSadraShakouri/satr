@@ -1,4 +1,4 @@
-import { MATH_OR_CODE } from './markdownSyntax';
+import { scanMath, type MathSpan } from './mathScan';
 import { applyReadingDirections } from './direction';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -181,6 +181,28 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (char) =
 
 const newlines = (text: string): number => text.split('\n').length - 1;
 
+// Math, from the same spans the editor styles (src/mathScan.ts): each formula
+// becomes a placeholder that marked() passes through untouched — its tex is
+// never read as markdown — and the rendered KaTeX goes back in after the
+// sanitizer, so nothing in a formula is bold, struck or linked. A display
+// formula keeps the lines it spanned, so the source line of everything below
+// it holds. Text math never turned out to be (a lone `$$`, a pair a heading
+// broke) is left alone and reads as the ordinary markdown it is.
+function splitMath(source: string, spans: readonly MathSpan[]): string {
+  if (!spans.length) return source;
+  let out = '';
+  let cursor = 0;
+  spans.forEach((span, id) => {
+    out += source.slice(cursor, span.from);
+    out += span.display
+      // Keep the lines the formula spanned, so everything below it keeps its number.
+      ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(source.slice(span.from, span.to)))}`
+      : `<span data-satr-math="${id}"></span>`;
+    cursor = span.to;
+  });
+  return out + source.slice(cursor);
+}
+
 // The preview is rendered in sections, one per top-level markdown block, each
 // tagged with the source lines it came from (data-line / data-lines) — the
 // same model as Obsidian's reading view. Lists are tagged per item. Editor and
@@ -201,26 +223,21 @@ export function renderMarkdown(source: string): string {
     if (marker && !previousWasOrdered) orderedStyles.push(/[۰-۹٠-٩]/.test(marker[1]) ? 'persian' : 'latin');
     previousWasOrdered = Boolean(marker);
   });
-  const normalizedLists = markPageBreaks(withoutFrontMatter).replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, _number: string, punctuation: string) => `${indent}1${punctuation} `);
+  // Math first: the placeholders hold no markdown, and the transforms below
+  // (page breaks, list markers, table separators) only ever look at the
+  // lines' text, so the reading view and the editor agree on every formula.
+  const spans = scanMath(withoutFrontMatter);
+  const math = spans.map((span) => renderMath(withoutFrontMatter.slice(span.from + span.delim, span.to - span.delim), span.display));
+  const withMathPlaceholders = splitMath(withoutFrontMatter, spans);
+  // A list marker the writer typed keeps its own number — `۲.` becomes `2.`
+  // for the parser's sake (the digits are only transliterated), never `1.`:
+  // a single `2.` is the writer's 2, in the preview and in the PDF alike.
+  const normalizedLists = markPageBreaks(withMathPlaceholders).replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, number: string, punctuation: string) => `${indent}${latinDigits(number)}${punctuation} `);
   const { text: normalizedTables, origin } = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
-  const math: string[] = [];
-  // Code comes first in the pattern and is kept as it is: dollar signs in a
-  // fenced block or in `code` are text, not math.
-  const withMathPlaceholders = normalizedTables.replace(MATH_OR_CODE, (full: string, _i: string, _f: string, _t: string, display: string | undefined, inline: string | undefined) => {
-    if (display === undefined && inline === undefined) return full;
-    // "$$" with nothing between on one line ("$$$$", "$$ $$") is plain text;
-    // an empty $$ … $$ block on its own lines is the block being written and
-    // stays a (blank) display line.
-    if (!(display ?? inline ?? '').trim() && (inline !== undefined || !full.includes('\n'))) return full;
-    const isDisplay = display !== undefined;
-    const id = math.push(renderMath(display ?? inline ?? '', isDisplay)) - 1;
-    // Keep the newlines the formula spanned, so later lines keep their numbers.
-    return isDisplay ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(full))}` : `<span data-satr-math="${id}"></span>`;
-  });
 
-  footnotes = { defs: collectFootnotes(withMathPlaceholders), order: [], uses: new Map(), inline: 0 };
-  const tokens = marked.lexer(withMathPlaceholders);
+  footnotes = { defs: collectFootnotes(normalizedTables), order: [], uses: new Map(), inline: 0 };
+  const tokens = marked.lexer(normalizedTables);
   const sections: Array<{ html: string; token: Token; start: number; end: number }> = [];
   let line = 0;
   for (const token of tokens) {
@@ -269,7 +286,9 @@ export function renderMarkdown(source: string): string {
   document.querySelectorAll('ol').forEach((list, index) => {
     if (orderedStyles[index] !== 'persian') return;
     list.classList.add('persian-ordered');
-    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(itemIndex + 1)));
+    // The list's own start is the writer's first number, not always one.
+    const start = Number(list.getAttribute('start') ?? '1') || 1;
+    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(start + itemIndex)));
   });
   document.querySelectorAll('table').forEach((table, tableIndex) => {
     const firstRow = table.querySelector<HTMLTableRowElement>('thead tr');
@@ -321,6 +340,13 @@ function markPageBreaks(source: string): string {
     if (/^\s*<([a-z0-9]+)[^>]*>\s*(<\/\1>)?\s*$/i.test(line)) return PAGE_BREAK_DIV;
     return wants[2].toLowerCase() === 'before' ? `${PAGE_BREAK_DIV}${line.trimStart()}` : `${line}${PAGE_BREAK_DIV}`;
   }).join('\n');
+}
+
+function latinDigits(value: string): string {
+  return value.replace(/[۰-۹٠-٩]/g, (digit) => {
+    const persian = '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit);
+    return String(persian >= 0 ? persian : '٠١٢٣٤٥٦٧٨٩'.indexOf(digit));
+  });
 }
 
 function toPersian(number: number): string {

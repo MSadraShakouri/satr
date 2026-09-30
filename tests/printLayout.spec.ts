@@ -102,3 +102,49 @@ test('footnotes number across both columns of a sheet', async ({ page }) => {
   expect(calls).toEqual(['1', '2']);
   await expect(page.locator('.footnote-number')).toHaveText(['1.', '2.']);
 });
+
+// The writer's numbers are the writer's: a list that starts at 2 prints as 2,
+// a Persian list keeps Persian digits, and a stray "4." is still the 4th item
+// (the preview and the print agree, and neither normalises anything).
+test('the printed list keeps the writer’s number', async ({ page }) => {
+  const markdown = '2. second\n\nprose\n\n۲. دوم\n\nprose\n\n٣. ثالث\n\nprose\n\n4.';
+  await print(page, markdown, { columns: 1, direction: 'ltr', mathAlign: 'center' });
+  const lists = await page.locator('.pagedjs_page_content ol').evaluateAll((els) => els.map((el) => ({
+    start: el.getAttribute('start'),
+    persian: el.classList.contains('persian-ordered'),
+    label: el.querySelector(':scope > li')?.getAttribute('data-persian-number') ?? null,
+  })));
+  expect(lists).toEqual([
+    { start: '2', persian: false, label: null },
+    { start: '2', persian: true, label: '۲' },
+    { start: '3', persian: true, label: '۳' },
+    { start: '4', persian: false, label: null },
+  ]);
+});
+
+// A Persian phrase in a formula is a phrase on paper too: its words read right
+// to left across the printed page, inside a formula that stays left to right.
+test('a Persian phrase in a printed formula reads right to left', async ({ page }) => {
+  await print(page, 'نمودار: $v = \\text{سلام دنیا}$', { columns: 1, direction: 'rtl', mathAlign: 'center' });
+  const order = await page.evaluate(() => {
+    const run = [...document.querySelectorAll<HTMLElement>('.pagedjs_page_content .katex .text')]
+      .find((el) => el.getBoundingClientRect().width > 0 && (el.textContent ?? '').includes('سلام'));
+    if (!run) return null;
+    const walker = document.createTreeWalker(run, NodeFilter.SHOW_TEXT);
+    let node: Text | null = null;
+    for (let next = walker.nextNode(); next; next = walker.nextNode()) {
+      if (next instanceof Text && next.data.includes('سلام') && /[\s\u00a0]/.test(next.data)) { node = next; break; }
+    }
+    if (!node) return null;
+    const at = node.data.search(/[\s\u00a0]/);
+    const box = (from: number, to: number) => {
+      const range = document.createRange();
+      range.setStart(node!, from);
+      range.setEnd(node!, to);
+      return range.getBoundingClientRect();
+    };
+    return { text: node.data, first: box(0, at).left, second: box(at + 1, node.data.length).left };
+  });
+  expect(order, 'the phrase is on the page').not.toBeNull();
+  expect(order!.first, `${order!.text} reads right to left`).toBeGreaterThan(order!.second);
+});

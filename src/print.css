@@ -257,6 +257,10 @@ tr {
 .math-flow.is-wrapped:not(.is-display) > .math-unit {
   padding-block: 0.15em;
 }
+/* A prose run inside a formula follows its own language, as on screen. */
+.katex .text {
+  unicode-bidi: plaintext;
+}
 .math-display {
   margin: 0.8em 0;
   text-align: center;

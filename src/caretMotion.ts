@@ -10,18 +10,23 @@
 // row (rows top to bottom, the row's own reading order deciding how they
 // chain at a soft wrap); and each stop remembers the position AND the side
 // the caret must take there, so it always paints where it just moved to.
-import { EditorSelection, Prec } from '@codemirror/state';
+import { EditorSelection, EditorState, Prec, Transaction } from '@codemirror/state';
 import { Direction, EditorView, ViewPlugin, keymap, type ViewUpdate } from '@codemirror/view';
 
-type Stop = { pos: number; assoc: -1 | 1; x: number };
+type Stop = { pos: number; assoc: -1 | 1; x: number; top: number };
 
 // One stop per distinct caret slot (same visual row, same x). When a slot
 // hosts two boundary positions, the one chosen is the same one the eye is
 // next to: the smaller position on the slot's right face, the larger on its
 // left face — which is also the side typing will visibly change.
-function stopAt(stops: { pos: number; assoc: -1 | 1; x: number }[]): Stop {
+function stopAt(stops: { pos: number; assoc: -1 | 1; x: number; top: number }[]): Stop {
   const positions = [...new Set(stops.map((s) => s.pos))];
-  if (positions.length === 1) return { pos: positions[0], assoc: 1, x: stops[0].x };
+  // A sample's assoc is the side that measured at this spot, so it is the
+  // side the caret must take to paint here again. It matters at a soft wrap,
+  // where the break position has two slots — the end of one row and the start
+  // of the next — and always asking for side +1 sent the caret back to the
+  // row it came from instead of stepping along the line (3).
+  if (positions.length === 1) return { pos: positions[0], assoc: stops[0].assoc, x: stops[0].x, top: stops[0].top };
   const left = stops[0].assoc === -1;
   const chosen = left
     ? stops.reduce((a, b) => (a.pos <= b.pos ? a : b))
@@ -64,7 +69,11 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   const step = dir === (rtl ? -1 : 1) ? 1 : -1;
   const current = view.coordsAtPos(sel.head, sel.assoc || -1);
   if (!current) return false;
-  const here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
+  // Match the stop on the caret's own visual row first: on a soft-wrapped
+  // line the same x exists once per row, and a wrong-row match would send the
+  // caret up or down instead of stepping along the row.
+  let here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5 && Math.abs(s.top - current.top) <= 4);
+  if (here < 0) here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
   const target = here < 0 ? null : stops[here + step];
   if (!target) return false;
   // Plain motion is a cursor at the stop, on the stop's side — the side is
@@ -75,107 +84,43 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   return true;
 }
 
-const RTL_RE = /[\u0590-\u08FF\u200F\uFB50-\uFDFF\uFE70-\uFEFF]/;
-
-function isRtlChar(ch: string): boolean {
-  return RTL_RE.test(ch);
-}
-
-// After typing at a bidi junction the caret's assoc is still the one it had
-// before the insert, so the caret paints on the old visual side and the next
-// keystroke feels like it goes the wrong way. Fix the assoc to the side of
-// the just-typed character's visual end.
-const bidiCaretPlugin = ViewPlugin.fromClass(class {
-  lastHead = 0;
-  lastAssoc: -1 | 1 = -1;
-  constructor(view: EditorView) {
-    this.lastHead = view.state.selection.main.head;
-    this.lastAssoc = (view.state.selection.main.assoc as -1 | 1) || -1;
-  }
-  update(update: ViewUpdate): void {
-    const main = update.state.selection.main;
-    const prevMain = update.startState.selection.main;
-    // Only after a single-cursor input that inserted exactly one char (or a
-    // short word) at the caret.
-    if (!update.docChanged || !main.empty || update.state.selection.ranges.length !== 1) {
-      this.lastHead = main.head;
-      this.lastAssoc = (main.assoc as -1 | 1) || -1;
-      return;
-    }
-    const tr = update.transactions.find((t) => t.docChanged);
-    const userEvent = (tr?.annotation as any)?.type ? '' : (tr as any)?.isUserEvent?.('input.type') ? 'input' : '';
-    // Heuristic: if the transaction is an input and head moved forward by 1..2,
-    // treat the char before head as the typed char.
-    const inserted = main.head - prevMain.head;
-    if (inserted <= 0 || inserted > 4) {
-      this.lastHead = main.head;
-      this.lastAssoc = (main.assoc as -1 | 1) || -1;
-      return;
-    }
-    const before = update.state.sliceDoc(Math.max(0, main.head - inserted), main.head);
-    if (!before) {
-      this.lastHead = main.head;
-      this.lastAssoc = (main.assoc as -1 | 1) || -1;
-      return;
-    }
-    const lastChar = before[before.length - 1];
-    if (!lastChar) {
-      this.lastHead = main.head;
-      this.lastAssoc = (main.assoc as -1 | 1) || -1;
-      return;
-    }
-    // Check if we are at a bidi boundary (two visual positions for same pos).
-    const view = update.view;
-    const left = view.coordsAtPos(main.head, -1);
-    const right = view.coordsAtPos(main.head, 1);
-    if (!left || !right || Math.abs(left.left - right.left) < 1) {
-      this.lastHead = main.head;
-      this.lastAssoc = (main.assoc as -1 | 1) || -1;
-      return;
-    }
-    // Choose assoc whose x is on the visual end of the typed char.
-    // LTR char: visual end is to the right (larger x in LTR base), RTL char:
-    // visual end is to the left (smaller x). Use the char's own direction.
-    const rtlTyped = isRtlChar(lastChar);
-    // For mixed lines, the base direction matters, but the simplest robust
-    // rule is: after typing, keep the caret on the side where the typed char
-    // sits visually. The typed char's visual span is between coords of
-    // (head-1) and head. Pick the head assoc that is farther in typing dir.
-    const headLeftX = left.left;
-    const headRightX = right.left;
-    // Estimate typed char's center x from its start positions.
-    const prevLeft = view.coordsAtPos(main.head - 1, -1);
-    const prevRight = view.coordsAtPos(main.head - 1, 1);
-    const charX = prevLeft && prevRight ? (prevLeft.left + prevRight.left) / 2 : prevLeft?.left ?? prevRight?.left ?? headLeftX;
-    // If typed RTL, we want caret x < charX (to the left visually in LTR base
-    // after an RTL run). If LTR, caret x > charX.
-    let desiredAssoc: -1 | 1;
-    if (rtlTyped) {
-      desiredAssoc = headLeftX < headRightX ? (headLeftX < charX ? -1 : 1) : (headRightX < charX ? 1 : -1);
-      // Fallback: pick smaller x for RTL
-      if (headLeftX !== headRightX) desiredAssoc = headLeftX < headRightX ? -1 : 1;
-    } else {
-      desiredAssoc = headLeftX > headRightX ? -1 : 1;
-      if (headLeftX !== headRightX) desiredAssoc = headLeftX > headRightX ? -1 : 1;
-    }
-    // Only dispatch if assoc would change.
-    if (desiredAssoc !== main.assoc) {
-      const range = EditorSelection.cursor(main.head, desiredAssoc);
-      // Defer to avoid recursive update during the same frame.
-      window.requestAnimationFrame(() => {
-        if (view.state.selection.main.head === main.head) {
-          view.dispatch({ selection: EditorSelection.create([range]) });
-        }
-      });
-    }
-    this.lastHead = main.head;
-    this.lastAssoc = desiredAssoc;
-    void userEvent;
-  }
+// The caret follows the line, never the run it happens to sit next to.
+//
+// A bidi position on a run boundary has two visual homes — one on each side of
+// the run — and which one is picked is the "side" (assoc) of the selection.
+// When that side is re-derived from what was just typed, a digit or an English
+// word inside Persian text throws the caret over to the other side of what is
+// being written: within one line it goes right, then left, then right again
+// (3, 17). The writer asked for the one rule the phone's own text fields
+// follow: take the side from the LINE — from its first letter — and keep it,
+// whatever is being typed.
+//
+// Side `+1` is that side. It means "forward along the paragraph's own flow",
+// and the line's direction is what sets the paragraph's direction here, so in
+// a Persian line it paints at the left of the text the line just grew and in
+// an English line at its right — the same place every keystroke, whether the
+// key was a Persian letter, a digit, a space or a Latin letter.
+//
+// Applied in the same transaction as the edit (a filter, not a follow-up
+// dispatch), so the caret never paints one frame on the wrong side. Only a
+// single collapsed caret is touched: a selection keeps its own ends, and the
+// filter leaves deliberate movement alone, because it only looks at
+// transactions that changed the document. Composing text is left alone
+// entirely: the keyboard owns the caret while a word is still being composed.
+const lineSide = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
+  const main = tr.newSelection.main;
+  if (!main.empty || main.assoc === 1) return tr;
+  if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
+  // `sequential` so the head is read in the coordinates of the edit, not of
+  // the document before it. Wrapped in EditorSelection.create, because a bare
+  // SelectionRange in a spec is flattened to a plain cursor and loses its side.
+  const side = EditorSelection.create([EditorSelection.cursor(main.head, 1)]);
+  return [tr, { selection: side, sequential: true }];
 });
 
 export const caretMotion = [
-  bidiCaretPlugin,
+  lineSide,
   Prec.highest(keymap.of([
     { key: 'ArrowLeft', run: (view) => move(view, -1, false), shift: (view) => move(view, -1, true) },
     { key: 'ArrowRight', run: (view) => move(view, 1, false), shift: (view) => move(view, 1, true) },

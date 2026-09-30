@@ -133,41 +133,31 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
   }
 }
 
-/** KaTeX sizes its SVG signs (the \vec arrow, stretchy brackets, roots) with
- * em values in width/height attributes. Android's WebView applies the system
- * font scale to CSS text sizes but not to SVG attribute lengths, so the signs
- * stopped scaling while the letters grew (the vec ended up touching its
- * letter). On the web at scale 1 this is invisible; on Android with a large
- * system font it makes \vec{u} overlap. The fix mirrors the em attributes
- * into CSS px values computed from the parent's *scaled* font size, so the
- * SVG grows exactly like the surrounding text. At scale 1 the px value is
- * geometrically identical to the original em, so the attributes stay as
- * fallbacks and print (which is fixed-scale) is unchanged. */
+/** KaTeX sizes its SVG signs — the \vec arrow, stretchy brackets, roots — in
+ * em, as width/height *attributes* (only the accent's width is also an inline
+ * style). Android's WebView scales text, but a length that only lives in an
+ * SVG presentation attribute did not follow the system font scale there: the
+ * letters grew and the drawn signs stayed put, so \vec{u} ended up touching
+ * its letter while the same page is fine on the web and in print.
+ *
+ * The fix is to carry the same numbers into CSS, in em — the units are kept,
+ * so a sign always grows with the text it belongs to, whatever scales it
+ * (system font scale, 200% zoom, print at a fixed size). Nothing is measured
+ * or frozen in px: a value computed at one font size went stale as soon as
+ * the text zoom changed, which is what made the app worse.
+ *
+ * Nothing else about KaTeX's geometry changes: an SVG is absolutely
+ * positioned inside its box, so the em value cannot disturb the layout, and
+ * for the 400em-wide slice drawings (roots, stretchy arrows) the parent is
+ * overflow-hidden — 400em/400000 and 1.08em/1080 are the same scale, so the
+ * visible slice is pixel-for-pixel what it was. */
 export function normalizeKatexSvg(root: HTMLElement): void {
+  const EM = /^\s*\d*\.?\d+em\s*$/;
   for (const svg of root.querySelectorAll<SVGElement>('svg')) {
-    const parent = svg.parentElement as HTMLElement | null;
-    if (!parent) continue;
-    const parentFont = parseFloat(getComputedStyle(parent).fontSize);
-    if (!Number.isFinite(parentFont) || parentFont <= 0) continue;
-    const parseEm = (v: string | null): number | null => {
-      if (!v) return null;
-      const m = /^\s*([\d.]+)em\s*$/.exec(v);
-      return m ? parseFloat(m[1]) : null;
-    };
-    // Prefer the attribute (KaTeX's intended size), fallback to inline style
-    // that is already em (e.g. \vec has style="width:0.471em").
-    const wAttr = svg.getAttribute('width');
-    const hAttr = svg.getAttribute('height');
-    const wStyle = svg.style.getPropertyValue('width');
-    const hStyle = svg.style.getPropertyValue('height');
-    const wEm = parseEm(wAttr) ?? parseEm(wStyle);
-    const hEm = parseEm(hAttr) ?? parseEm(hStyle);
-    if (wEm !== null) svg.style.setProperty('width', `${wEm * parentFont}px`);
-    if (hEm !== null) svg.style.setProperty('height', `${hEm * parentFont}px`);
-    // For sqrt and other stretchy symbols the SVG is intentionally 400em
-    // wide with a slice viewBox; its parent (.hide-tail) is overflow-hidden
-    // and only 0.853em wide. Setting width to px based on parent font keeps
-    // the slice geometry but scaled.
+    for (const side of ['width', 'height'] as const) {
+      const value = svg.getAttribute(side);
+      if (value && EM.test(value)) svg.style.setProperty(side, value);
+    }
   }
 }
 

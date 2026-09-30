@@ -8,7 +8,8 @@
 // source for now.
 import { syntaxTree } from '@codemirror/language';
 import type { Range } from '@codemirror/state';
-import { inMath, overlapsMath } from './mathSource';
+import { inMath, mathSpans, overlapsMath } from './mathSource';
+import { spansHold } from './mathScan';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNodeRef } from '@lezer/common';
 import { editFootnote, findDefinition } from './footnoteDialog';
@@ -46,6 +47,9 @@ const taskDone = Decoration.mark({ class: 'cm-lp-task is-checked' });
 const listHidden = Decoration.mark({ class: 'cm-lp-list-hidden' });
 const rule = Decoration.replace({ widget: new RuleWidget() });
 const inlineCode = Decoration.mark({ class: 'cm-lp-inline-code' });
+// Neutralises markdown styling the parser applies to characters that are not
+// markdown at all (see the Emphasis case below).
+const plainText = Decoration.mark({ class: 'cm-lp-plain' });
 const linkText = Decoration.mark({ class: 'cm-lp-link' });
 const doneText = Decoration.mark({ class: 'cm-lp-task-done' });
 // Quote lines get a hanging indent the width of their "> " prefix, so wrapped
@@ -127,6 +131,11 @@ function build(view: EditorView): DecorationSet {
     const line = state.doc.lineAt(pos);
     return touches(line.from, line.to);
   };
+  // Inside `$…$` / `$$…$$` nothing is markdown: no marker is hidden, no
+  // element is styled (11). True when the node sits in a formula or spans
+  // into one (the parts of a split node stay source too, so nothing shifts).
+  const insideMath = (from: number, to: number): boolean =>
+    inMath(state, from) || inMath(state, Math.max(from, to - 1)) || overlapsMath(state, from, to);
   const out: Range<Decoration>[] = [];
   const hideMarkWithSpace = (from: number, to: number): void => {
     const lineEnd = state.doc.lineAt(from).to;
@@ -148,17 +157,43 @@ function build(view: EditorView): DecorationSet {
           case 'StrongEmphasis':
           case 'Strikethrough':
           case 'Highlight': {
+            const mark = node.name === 'Strikethrough' ? 'StrikethroughMark' : node.name === 'Highlight' ? 'HighlightMark' : 'EmphasisMark';
+            const marks: { from: number; to: number }[] = [];
+            for (let child = node.node.firstChild; child; child = child.nextSibling) {
+              if (child.name === mark) marks.push({ from: child.from, to: child.to });
+            }
+            // A pair of dollar signs can hand the parser two *marker-shaped*
+            // characters to pair across prose: `$**$ foo $**$` reads as a
+            // `<strong>` whose markers sit inside two formulas, and the theme
+            // then bolds the prose between them (the dollars as well). A
+            // marker that is really inside a formula is not a marker, so the
+            // whole node is an artefact of the parser: nothing is hidden (the
+            // source stays as typed) and nothing outside a formula keeps the
+            // styling it borrowed (7).
+            const spans = state.field(mathSpans, false) ?? [];
+            const artefact = marks.some((one) => spansHold(spans, one.from) || spansHold(spans, Math.max(one.from, one.to - 1)));
+            if (artefact) {
+              let at = node.from;
+              for (const span of spans) {
+                const from = span.from + span.delim;
+                const to = span.to - span.delim;
+                if (to <= at || from >= node.to) continue;
+                if (from > at) out.push(plainText.range(at, Math.min(from, node.to)));
+                at = Math.max(at, to);
+              }
+              if (at < node.to) out.push(plainText.range(at, node.to));
+              return;
+            }
             // Inside math source these are just characters of the formula:
             // `**` is never bold, never revealed or hidden (11).
-            if (inMath(state, node.from) || inMath(state, node.to - 1) || overlapsMath(state, node.from, node.to)) return;
+            if (insideMath(node.from, node.to)) return;
             if (touches(node.from, node.to)) return;
-            const mark = node.name === 'Strikethrough' ? 'StrikethroughMark' : node.name === 'Highlight' ? 'HighlightMark' : 'EmphasisMark';
-            for (let child = node.node.firstChild; child; child = child.nextSibling) {
-              if (child.name === mark) out.push(hidden.range(child.from, child.to));
-            }
+            for (const one of marks) out.push(hidden.range(one.from, one.to));
             return;
           }
           case 'InlineCode': {
+            // A backtick pair inside a formula is part of the formula, not code.
+            if (insideMath(node.from, node.to)) return;
             out.push(inlineCode.range(node.from, node.to));
             if (touches(node.from, node.to)) return false;
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
@@ -168,6 +203,7 @@ function build(view: EditorView): DecorationSet {
           }
           case 'Link': {
             // Only inline links: [text](url). Reference links stay as source.
+            if (insideMath(node.from, node.to)) return;
             const marks: { from: number; to: number; text: string }[] = [];
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
               if (child.name === 'LinkMark') marks.push({ from: child.from, to: child.to, text: state.sliceDoc(child.from, child.to) });
@@ -307,6 +343,7 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
         const start = line.from + match.index;
         const end = start + match[0].length;
         if (inCode(tree.resolveInner(start, 1).name)) continue;
+        if (inMath(state, start) || inMath(state, end - 1)) continue; // a formula, not a reference
         out.push(footref.range(start, end));
         out.push(footrefMark.range(start, start + 2));
         out.push(footrefMark.range(end - 1, end));

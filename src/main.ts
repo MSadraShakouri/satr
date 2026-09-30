@@ -1403,7 +1403,14 @@ function sidebarGoToLine(line: number): void {
 }
 const sidebar = createRightSidebar(rightPanel, {
   headings: () => editor.headings(),
-  currentLine: () => (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view)),
+  // The outline follows the line two thirds down the page, not the line at the
+  // very top: the heading you are reading is the one around the middle of the
+  // screen, not the one that has just left it (21).
+  currentLine: () => {
+    const pane = mode === 'preview' ? previewPane : editor.view.scrollDOM;
+    const anchor = pane.clientHeight * (2 / 3);
+    return mode === 'preview' ? previewScroll(previewPane, preview, anchor) : editorScroll(editor.view, anchor);
+  },
   onHeading: (line, path) => {
     toggleOutline(false);
     if (path && path !== filePath) {
@@ -1438,7 +1445,19 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     toggleOutline(true);
     sidebar.focusSearch();
+    return;
   }
+  // Select all, also when the note itself hasn't got the focus (a tap on the
+  // file title, the drawers, the tab strip, the toolbar...): the note is what
+  // "all" means on this screen. Fields with their own select-all (the find
+  // bar, settings) keep theirs, and the reading view keeps the browser's own.
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'a') return;
+  if (mode === 'preview') return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+  if (editor.view.hasFocus) return; // the editor's own keymap has it
+  event.preventDefault();
+  editor.selectAll();
 });
 editor.view.scrollDOM.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });
 previewPane.addEventListener('scroll', () => { if (outlineOpen()) sidebar.markCurrent(); }, { passive: true });

@@ -64,3 +64,83 @@ test('prose emphasis still renders outside math on the same line', async ({ page
   expect(report.starsHidden).toBe(true);
   expect(report.bold).toBe(true);
 });
+
+// Anything that would hide a marker or restyle text must leave a formula
+// alone: a link, a code span or a footnote reference in `$…$` is part of the
+// formula, not markdown (11).
+test('links, code spans and footnote references stay source inside math', async ({ page }) => {
+  await draft(page, 'far away| and $x [a](b)$ and $y `c`$ and $z[^1]$');
+  const report = await page.evaluate(() => {
+    const line = window.testEditor.view.dom.querySelector('.cm-line')!;
+    const math = [...line.querySelectorAll('.cm-math')];
+    return {
+      text: line.textContent,
+      links: line.querySelectorAll('.cm-lp-link').length,
+      code: line.querySelectorAll('.cm-lp-inline-code').length,
+      footrefs: line.querySelectorAll('.cm-lp-footref').length,
+      // The theme still colours the parser's link/code tokens inside the
+      // formula (the markdown parser does not know it is inside dollars), so
+      // the formula must win over it: one colour, one font, everywhere in it.
+      families: [...new Set(math.flatMap((m) => [m, ...m.querySelectorAll('*')].map((el) => getComputedStyle(el).fontFamily)))],
+      colours: [...new Set(math.flatMap((m) => [m, ...m.querySelectorAll('*')].map((el) => getComputedStyle(el).color)))],
+    };
+  });
+  expect(report.text).toContain('[a](b)');
+  expect(report.text).toContain('`c`');
+  expect(report.footrefs).toBe(0);
+  // The prose beside the formulas still renders normally.
+  expect(report.links).toBe(0);
+  expect(report.code).toBe(0);
+  expect(report.families.length).toBe(1);
+  expect(report.colours.length).toBe(1);
+});
+
+test('prose links and code spans outside math still render', async ({ page }) => {
+  await draft(page, 'far away| [a](b) and `c`');
+  const report = await page.evaluate(() => {
+    const line = window.testEditor.view.dom.querySelector('.cm-line')!;
+    return {
+      text: line.textContent,
+      links: line.querySelectorAll('.cm-lp-link').length,
+      code: line.querySelectorAll('.cm-lp-inline-code').length,
+    };
+  });
+  expect(report.text).not.toContain('](');
+  expect(report.links).toBe(1);
+  expect(report.code).toBe(1);
+});
+
+// Two formulas can hand the parser two marker-shaped characters to pair
+// *across* the prose between them: `$*$ foo foo foo $*$` parses as emphasis,
+// and the italic landed on every foo. A marker inside a formula is not a
+// marker — the whole node is the parser's artefact — so the prose between the
+// formulas stays prose and the source stays as typed (2).
+test('a marker pair parked inside the formulas leaves the prose between them plain', async ({ page }) => {
+  await draft(page, 'far away|$*$ foo foo foo $*$ and $**$ bar bar $**$ and $~~$ baz $~~$');
+  const report = await page.evaluate(() => {
+    const line = window.testEditor.view.dom.querySelector('.cm-line')!;
+    const runs: { text: string; italic: string; weight: number; strike: boolean }[] = [];
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!(node.textContent ?? '').trim()) continue;
+      if (node.parentElement?.closest('.cm-math')) continue;
+      const style = getComputedStyle(node.parentElement!);
+      runs.push({
+        text: (node.textContent ?? '').trim(),
+        italic: style.fontStyle,
+        weight: Number(style.fontWeight),
+        strike: style.textDecorationLine.includes('line-through'),
+      });
+    }
+    return { text: line.textContent ?? '', runs };
+  });
+  // Nothing is hidden: the markers are characters of the formula.
+  expect(report.text).toBe('far away$*$ foo foo foo $*$ and $**$ bar bar $**$ and $~~$ baz $~~$');
+  const prose = report.runs.filter((run) => /foo|bar|baz|and/.test(run.text));
+  expect(prose.map((run) => run.text).join(' ')).toContain('foo foo foo');
+  for (const run of prose) {
+    expect(run.italic).toBe('normal');
+    expect(run.weight).toBeLessThan(600);
+    expect(run.strike).toBe(false);
+  }
+});
