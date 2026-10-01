@@ -136,10 +136,54 @@ test('the editor asks the browser for its contenteditable input, not EditContext
   expect(kind.contentEditable).toBe('true');
 });
 
+// The rule the whole file exists for, from the other side: **the note moves to
+// a caret only when a character is about to go there** — Enter, and the
+// keyboard opening. A focus is not a reason, and neither is a tap. This test is
+// the regression test for the glide that used to run on `focus`: it fired on
+// every app open, refresh, tab switch, link tap and WebView re-focus, and it
+// pulled the note to a caret the writer had scrolled away from.
+test('a focus never moves the note, however it arrives', async ({ page }) => {
+  const long = Array.from({ length: 120 }, (_, i) => `line ${i} of a note long enough to scroll`).join('\n');
+  await mount(page, long);
+  const report = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    const scroller = view.scrollDOM;
+    scroller.scrollTop = 600;
+    view.contentDOM.blur();
+    await new Promise((r) => window.setTimeout(r, 60));
+    const before = scroller.scrollTop;
+    // The caret stays where the writer left it (the top of the note) while the
+    // note is scrolled far below it — exactly the state a checkbox tap, an
+    // app coming back, or a refresh found the note in.
+    view.contentDOM.focus();
+    await new Promise((r) => window.setTimeout(r, 800));
+    return { before, after: scroller.scrollTop, focused: view.hasFocus };
+  });
+  expect(report.before).toBe(600);
+  expect(report.after).toBe(600);
+  expect(report.focused).toBe(true);
+});
+
+test('Enter still brings the caret into view: typing is what the reveal is for', async ({ page }) => {
+  const long = Array.from({ length: 120 }, (_, i) => `line ${i} of a note long enough to scroll`).join('\n');
+  await mount(page, long);
+  await page.evaluate(() => {
+    window.testEditor.view.scrollDOM.scrollTop = 0;
+    window.testEditor.setSelection(window.testEditor.view.state.doc.length);
+    window.testEditor.focus();
+  });
+  const before = await page.evaluate(() => window.testEditor.view.scrollDOM.scrollTop);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(700); // the reveal is a short smooth scroll
+  const after = await page.evaluate(() => window.testEditor.view.scrollDOM.scrollTop);
+  expect(after).toBeGreaterThan(before + 100);
+});
+
 test('a scroll is never undone by the editor’s own caret glide', async ({ page }) => {
-  // The reveal still runs for a caret a tap placed — but a gesture that moved
-  // the note must never move it again (\"double tap scroll is very
-  // unreliable\" was this glide, 350ms after the finger).
+  // A gesture that moved the note never moves it again: there is no glide of
+  // ours on a finger lift any more, so this is now a floor rather than a fix
+  // (\"double tap scroll is very unreliable\" was that glide, 350ms after the
+  // finger was up).
   const long = Array.from({ length: 120 }, (_, i) => `line ${i} of a note long enough to scroll`).join('\n');
   await mount(page, long);
   const report = await page.evaluate(async () => {

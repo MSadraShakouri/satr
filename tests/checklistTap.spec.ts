@@ -1,11 +1,16 @@
 // Tapping a rendered checkbox: it toggles, and nothing else moves.
 //
 // Reported: "tapping a checkbox returns back to caret position, shouldn't do
-// that" and "checkbox hit box is small". Both come from the same place — the
-// marker is a 17px box drawn over the "[ ]" text of the line, and a tap on it
-// was handled as a tap on text: the WebView placed a caret on the marker (and
-// the editor's focus handler then glided the view back to the caret's line),
-// while the box itself was the only thing that could be hit.
+// that", "checking a checkbox shouldn't open keyboard" and "checkbox hit box
+// is small". The first two came from the same place: a tap on the marker was
+// handled as a tap on text, the WebView placed a caret on it, and the editor's
+// own focus handler *glided the view back to the caret* — the caret being
+// wherever the writer had last left it, which is why the note "returned".
+//
+// That glide is gone (src/editor.ts: the note moves to a caret only for Enter
+// and for the keyboard opening), so there is nothing here to hold, mute or put
+// back. A tick now claims the tap, flips the box, and lets the note's focus go
+// — which is also what keeps a keyboard from opening behind it.
 import { expect, test, type Page } from '@playwright/test';
 import type { SatrEditor } from '../src/editor';
 
@@ -126,13 +131,13 @@ test('the tappable area is the box and the line around it, and stops at the text
   expect(above.taskLine).toBe('- [ ] a task to tick');
 });
 
-test('a tick holds the note still, whatever else moves it', async ({ page }) => {
-  // The reveal's quiet window (touchState) covers the editor's own glide; what
-  // it cannot cover is a WebView that focuses the editable on the tap and
-  // brings the caret into view for itself, or the keyboard's own scroll. Those
-  // move the note with nobody to blame, so a tick holds the scroller for a
-  // moment and puts back whatever it finds moved — and the reader's own next
-  // finger releases the hold at once, so a scroll that was asked for stands.
+test('a tick moves nothing, and nothing is forced back', async ({ page }) => {
+  // No hold, no put-back, no mute: nothing in the app scrolls for a caret (or
+  // for a focus) any more, so the note simply stays where it is, and whatever
+  // the platform does afterwards is left alone rather than undone. This is the
+  // regression test for what used to happen — a tick followed by the
+  // WebView's own re-focus glided the note to the old caret (measured at up to
+  // 1688px), and a scroll pin then fought the platform for 700ms.
   await mount(page, 40);
   const report = await page.evaluate(async () => {
     const view = window.testEditor.view;
@@ -155,19 +160,19 @@ test('a tick holds the note still, whatever else moves it', async ({ page }) => 
     fire('touchend', y);
     await new Promise((r) => window.setTimeout(r, 80));
     const ticked = window.testEditor.getValue().includes('- [x] a task to tick');
-    // What a WebView's own focus does a moment later: the note jumps to the caret.
+    const focused = view.hasFocus;
+    // What a WebView can still do a moment later: scroll, and move the
+    // selection onto the marker. The app is a spectator: neither is undone.
     scroller.scrollTop = 260;
-    await new Promise((r) => window.setTimeout(r, 160));
-    const held = scroller.scrollTop;
-    // The reader's own finger: the hold lets go at once.
-    fire('touchstart', y);
-    scroller.scrollTop = 90;
-    await new Promise((r) => window.setTimeout(r, 160));
-    return { ticked, held, afterReader: scroller.scrollTop };
+    const task = view.state.doc.line(4);
+    view.dispatch({ selection: { anchor: task.from + task.text.indexOf('[') } });
+    await new Promise((r) => window.setTimeout(r, 200));
+    return { ticked, focused, left: scroller.scrollTop, caret: view.state.selection.main.head };
   });
   expect(report.ticked).toBe(true);
-  expect(report.held).toBe(0);
-  expect(report.afterReader).toBe(90);
+  expect(report.focused).toBe(false); // the focus let go: no keyboard can open behind it
+  expect(report.left).toBe(260); // not held, not put back
+  expect(report.caret).toBeGreaterThan(0); // the platform's own caret is left as it is
 });
 
 test('a finger that moves is scrolling, not ticking', async ({ page }) => {
@@ -177,13 +182,11 @@ test('a finger that moves is scrolling, not ticking', async ({ page }) => {
   expect(report.taskLine).toBe('- [ ] a task to tick');
 });
 
-// The same complaint as the note moving, one step smaller: "tapping a checkbox
-// returns back to caret position". The app claims the tap and places no caret,
-// but a WebView that focuses the editable anyway puts its own caret where the
-// finger was — on the marker, several characters back — a moment after the
-// finger is up. For the same window the scroller is held, the caret is held
-// too, and the writer's own next touch or key ends the hold.
-test('the WebView\'s own caret after a tick is put back, and typing is never fought', async ({ page }) => {
+// The writer's own caret is not the app's to move: a tick does not place one
+// (the tap is claimed) and does not put one back either. The writer's caret
+// stays exactly where it was, and the *view* — not the caret — is what no
+// longer moves, because nothing in the app scrolls for a caret on its own.
+test('a tick leaves the writer\'s caret alone and moves nothing', async ({ page }) => {
   await mount(page, 6);
   const box = await page.evaluate(async () => {
     const view = window.testEditor.view;
@@ -192,9 +195,11 @@ test('the WebView\'s own caret after a tick is put back, and typing is never fou
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const target = document.elementFromPoint(x, y)!;
-    // The writer's caret, away from the task line, and then the tap.
+    // The writer's caret, away from the task line, and the note scrolled to it.
     const elsewhere = view.state.doc.line(6).from;
     window.testEditor.setSelection(elsewhere);
+    window.testEditor.focus();
+    const top = view.scrollDOM.scrollTop;
     for (const type of ['touchstart', 'touchend']) {
       const touch = new Touch({ identifier: 1, target, clientX: x, clientY: y });
       const live = type !== 'touchend';
@@ -203,15 +208,11 @@ test('the WebView\'s own caret after a tick is put back, and typing is never fou
         touches: live ? [touch] : [], targetTouches: live ? [touch] : [], changedTouches: [touch],
       }));
     }
-    // ... and then the platform's own reaction, which is a bare selection
-    // move onto the marker's `[` — exactly what a focus-following caret looks
-    // like on the checkbox the finger ticked.
-    const task = view.state.doc.line(4);
-    view.dispatch({ selection: { anchor: task.from + task.text.indexOf('[') } });
-    await new Promise((r) => window.setTimeout(r, 200));
-    return { head: view.state.selection.main.head, wanted: elsewhere, text: window.testEditor.getValue() };
+    await new Promise((r) => window.setTimeout(r, 300));
+    return { head: view.state.selection.main.head, wanted: elsewhere, top, after: view.scrollDOM.scrollTop, text: window.testEditor.getValue() };
   });
   expect(box.head).toBe(box.wanted);
+  expect(box.after).toBe(box.top);
   expect(box.text).toContain('- [x] a task to tick');
 });
 

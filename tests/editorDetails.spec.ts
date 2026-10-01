@@ -371,14 +371,15 @@ test('a Persian phrase in a formula keeps its word order, right to left', async 
   expect(report.latin.firstLeft).toBeLessThan(report.latin.secondLeft!);
 });
 
-// What brings the caret into view, and what must not. A focus arriving on its
-// own is not a reason for the note to move: the WebView re-focuses the
-// editable region by itself (a checkbox tapped further down the note, a link,
-// the keyboard restarting), and the focus handler used to glide the view back
-// to the caret each time — measured at up to 1688px of jump for a tap the
-// writer never meant as a caret placement. A caret that actually moved still
-// comes into view.
-test('a focus on its own does not drag the note back to the caret', async ({ page }) => {
+// What brings the caret into view, and what must not: **only typing** — Enter
+// and the keyboard opening (see the reveal in src/editor.ts). A focus arriving
+// on its own is not a reason for the note to move (the WebView re-focuses the
+// editable by itself: a checkbox tapped further down the note, a link, the
+// keyboard restarting, the app coming back) and neither is a caret placed by
+// code, which is what a restored session or a platform-placed caret is. Both
+// used to glide the view back to the caret — measured at up to 1688px of jump
+// for a tap the writer never meant as a caret placement.
+test('nothing but typing brings the caret into view: not a focus, not a caret placed by code', async ({ page }) => {
   await page.evaluate(() => {
     const outer = window.testEditor.view.dom.parentElement as HTMLElement;
     outer.style.height = '420px';
@@ -395,18 +396,35 @@ test('a focus on its own does not drag the note back to the caret', async ({ pag
   });
   expect(away, `the view moved to ${away}`).toBeGreaterThan(1500);
 
-  // And the same focus, after the caret really moved, does bring it in.
+  // And the same focus with the caret sent to the top by code: still nothing.
+  // (A caret the *writer* moves by typing is the next test's subject.)
   const afterMove = await page.evaluate(async () => {
     const view = window.testEditor.view;
     view.contentDOM.blur();
     view.dispatch({ selection: { anchor: 0 } });
     view.contentDOM.focus();
-    await new Promise((r) => setTimeout(r, 1500)); // a glide, not a jump
-    const caret = view.coordsAtPos(0)!;
+    await new Promise((r) => setTimeout(r, 800));
+    return view.scrollDOM.scrollTop;
+  });
+  expect(afterMove, `the view moved to ${afterMove}`).toBeGreaterThan(1500);
+
+  // Typing does: with the caret at the top of the note and the view far down,
+  // a typed character brings it into sight — the reveal that is left.
+  const typed = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    view.dispatch({ selection: { anchor: 0 }, scrollIntoView: false });
+    await new Promise((r) => setTimeout(r, 60));
+    return view.scrollDOM.scrollTop;
+  });
+  await page.keyboard.type('x');
+  await page.waitForTimeout(700);
+  const settled = await page.evaluate(() => {
+    const view = window.testEditor.view;
+    const caret = view.coordsAtPos(view.state.selection.main.head)!;
     const box = view.scrollDOM.getBoundingClientRect();
     return { top: view.scrollDOM.scrollTop, visible: caret.top >= box.top - 1 && caret.top < box.bottom };
   });
-  expect(afterMove.visible, `caret at ${afterMove.top}px`).toBe(true);
+  expect(settled.visible, `typed at ${settled.top}px, started at ${typed}`).toBe(true);
 });
 
 // A command that selects the whole note is not a reason to glide either: the

@@ -16,7 +16,6 @@ import { Highlight, highlightTag } from './highlightSyntax';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
-import { isCaretRevealSuppressed, suppressCaretReveal } from './touchState';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
@@ -781,9 +780,9 @@ export class SatrEditor {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) {
-          selectionMoved = true;
           // (The selection is the platform's: the app neither makes one nor
-          // marks one as its own any more — see the touch block below.)
+          // marks one as its own any more — and nothing here brings a
+          // caret into view on its own; see the reveal below.)
           options?.onSelection?.(update.state.selection.main.head, update.state.selection.main.from, update.state.selection.main.to);
         }
         // A line made with Enter puts the caret on the line below the one on
@@ -793,22 +792,38 @@ export class SatrEditor {
       }),
     ];
     this.view = new EditorView({ state: EditorState.create({ extensions }), parent });
-    // When the keyboard opens, or the caret is placed by touch, glide the
-    // caret into the part of the screen the keyboard and toolbar leave
-    // visible — a short smooth scroll, only if it is actually hidden, and
-    // only once the keyboard has finished resizing the page.
-    // Whether the caret has been somewhere new since the last time the view
-    // brought it into sight. A focus is not a reason to move on its own: the
-    // WebView re-focuses the editable region by itself — a checkbox tap, a
-    // link, a keyboard restart — and gliding back to a caret the writer had
-    // scrolled away from (measured: up to 1688px) is the opposite of what they
-    // asked for. The paths that mean it — a tap, Enter, the keyboard opening —
-    // each move the selection or say so explicitly.
-    let selectionMoved = true;
+    // Bringing the caret into view, and when the note is allowed to do it.
+    //
+    // The rule is the writer's own: **the note moves to a caret only when a
+    // character is about to go there.** Two things that means — Enter (the
+    // next line's caret, being written on), and the keyboard opening (a shrink
+    // of far more than an address bar's, so the writer is about to type and
+    // whatever the keyboard now covers has to come out from under it). That is
+    // all that calls the reveal below.
+    //
+    // Everything that used to call it, and why it does not any more:
+    //
+    //   * **A focus.** The WebView focuses the editable by itself — a checkbox
+    //     tap, a link, a keyboard restart, the app coming back — and a glide
+    //     from there pulled the note to a caret the writer had scrolled away
+    //     from (measured: up to 1688px), on a gesture that had nothing to do
+    //     with the caret. The same trigger ran on app open and on a refresh,
+    //     where the note has a *saved* position and the caret is not it.
+    //   * **A finger lifting.** A caret a tap placed is under the finger that
+    //     placed it, so it is already in sight; if a keyboard rises over it,
+    //     the keyboard's own shrink (above) brings it back. What the lift's
+    //     glide did in practice was move the note 350ms after a double tap the
+    //     reader had already scrolled away from.
+    //
+    // CodeMirror's own scrolling is unaffected and is the good half of it: it
+    // asks for a scroll only when a transaction asks (`scrollIntoView` is
+    // opt-in — `@codemirror/state`'s `!!spec.scrollIntoView` — and its
+    // DOM-change path, the one that adopts a caret the platform placed,
+    // dispatches with `scrollIntoView: false`). Jumps the reader asks for (an
+    // outline line, a search hit) request their own scroll explicitly and do
+    // not go through the reveal at all.
     const revealCaret = (): void => {
       if (!this.view.hasFocus || touching) return;
-      if (isCaretRevealSuppressed()) return; // a widget tap just happened: nothing moves
-      selectionMoved = false; // this pass is the reveal for wherever the caret is now
       const coords = this.view.coordsAtPos(this.view.state.selection.main.head);
       if (!coords) return;
       const box = this.view.scrollDOM.getBoundingClientRect();
@@ -824,21 +839,7 @@ export class SatrEditor {
       window.clearTimeout(revealTimer);
       revealTimer = window.setTimeout(() => window.requestAnimationFrame(revealCaret), delay);
     };
-    // Only after something that moved the caret or opened the keyboard —
-    // never after a scroll, and never for a selection (the platform's handles
-    // are where the reader looks; the note must not glide to their head).
-    // (Revealing on every finger lift, and on every viewport resize, pulled
-    // the view back to the caret each time you tried to scroll away from it;
-    // Chrome's address bar resizes the viewport as you scroll.)
-    this.view.contentDOM.addEventListener('focus', () => { if (selectionMoved) revealSoon(160); });
-    this.markCaretSettled = () => { selectionMoved = false; };
     let touchTimer: number | undefined;
-    let touchSelection: [number, number] = [0, 0];
-    let touchMoved = false;
-    let touchStartY = 0;
-    // The note's own position when a finger went down: a gesture that moved
-    // the note must never move it again (see the reveal at the end of it).
-    let touchScrollTop = 0;
     // The selection is the platform's. There is no word-finding, no tap
     // counting, no drag of our own and nothing prevented here at all: double
     // tap, long press, the handles, the action mode and dragging a selection
@@ -846,16 +847,11 @@ export class SatrEditor {
     // touch handling of its own either (its only long-press helper belongs to
     // the file list, not the note), and whose viewport forbids the zoom that
     // used to make the same gestures ambiguous here. What this block still
-    // does is watch, so the editor's own caret glide never fights a scroll.
-    this.view.contentDOM.addEventListener('touchstart', (event) => {
+    // does is say when a finger is on the note, so the one reveal above never
+    // runs under a hand that is still on the glass.
+    this.view.contentDOM.addEventListener('touchstart', () => {
       window.clearTimeout(touchTimer);
       touching = true;
-      touchMoved = false;
-      const touch = event.touches[0];
-      touchStartY = touch?.clientY ?? 0;
-      touchScrollTop = this.view.scrollDOM.scrollTop;
-      const { anchor, head } = this.view.state.selection.main;
-      touchSelection = [anchor, head];
     }, { passive: true });
     // A tap below the last line means "the end of the note", not the nearest
     // character under the finger: the empty room under the text is where the
@@ -875,35 +871,14 @@ export class SatrEditor {
       this.view.dispatch({ selection: { anchor: this.view.state.doc.length }, scrollIntoView: false });
       this.view.focus();
     }, true);
-    // Passive, and it only watches: a finger that travelled is a scroll (or a
-    // selection drag), and either way the note may move — so a reveal that was
-    // queued for a tap is dropped, and the reveal below never fires for a
-    // gesture that moved.
-    this.view.contentDOM.addEventListener('touchmove', (event) => {
-      const touch = event.touches[0];
-      if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) {
-        touchMoved = true;
-        window.clearTimeout(revealTimer);
-      }
-    }, { passive: true });
+    // A finger that travelled is a scroll or a selection drag, and either way
+    // the note is the reader's — the reveal above is not for gestures, so
+    // there is nothing here to call off.
     const release = (): void => {
       window.clearTimeout(touchTimer);
-      // Native selection handles keep adjusting for a moment after the lift.
-      touchTimer = window.setTimeout(() => {
-        touching = false;
-        const { anchor, head } = this.view.state.selection.main;
-        const selectionChanged = anchor !== touchSelection[0] || head !== touchSelection[1];
-        // A gesture that scrolled the note never moves it again ("double tap
-        // scroll is very unreliable": the reveal used to glide the note back
-        // to the word, 350ms after the finger was up, when the reader was
-        // already somewhere else). And a *selection* is never a reason to
-        // move at all — the platform shows the handles and brings its own menu
-        // for those, and pulling the view to the selection's head is the one
-        // thing a double tap must not do. Only a caret placed by a tap is
-        // brought into sight, and only if the note has not moved since.
-        const scrolled = this.view.scrollDOM.scrollTop !== touchScrollTop;
-        if (selectionChanged && !scrolled && anchor === head && !touchMoved) revealSoon(0);
-      }, 350);
+      // Native selection handles keep adjusting for a moment after the lift;
+      // the note is free again once the platform has settled.
+      touchTimer = window.setTimeout(() => { touching = false; }, 350);
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
     this.view.contentDOM.addEventListener('touchcancel', () => { window.clearTimeout(touchTimer); touching = false; }, { passive: true });
@@ -946,10 +921,6 @@ export class SatrEditor {
       const main = this.view.state.selection.main;
       if (main.from === 0 && main.to === this.view.state.doc.length) return;
       this.view.dispatch({ selection: wholeNote(), userEvent: 'select.pointer' });
-      // Nothing to bring into view: the whole note is selected. (The head is
-      // at the note's end, so a reveal here would glide the reader to the
-      // bottom, of all places, after a command that did not move them at all.)
-      selectionMoved = false;
     };
     // Where fingers and keys were last busy. A touch selection belongs to the
     // finger that made it, a keyboard extension to the key that made it; a
@@ -1107,8 +1078,9 @@ export class SatrEditor {
   /** Select the whole note, giving the editor the focus so copy works too. */
   selectAll(): void {
     this.view.focus();
-    this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
-    this.markCaretSettled?.(); // the whole note is selected: nothing to bring into view
+    // Nothing to bring into view: the whole note is selected, and its head is
+    // at the note's end — a scroll for it would take the reader to the bottom.
+    this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length }, scrollIntoView: false });
   }
   focusTitle(): void {
     const el = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
@@ -1177,11 +1149,14 @@ export class SatrEditor {
    *  to see. */
   setSelection(anchor: number, head = anchor, keepStill = false): void {
     const max = this.view.state.doc.length;
+    // Never a scroll request: a position the app places (a restored caret, a
+    // saved session, a tab that comes back) is not a reason to move the note —
+    // the note is already where the reader left it, and the jumps they ask for
+    // (an outline line, a search hit) request their own scroll.
     this.view.dispatch({
       selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) },
-      scrollIntoView: keepStill ? false : undefined,
+      scrollIntoView: keepStill ? false : false,
     });
-    this.markCaretSettled?.(); // placed without scrolling, on purpose
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
   openFind(replace = false): void { openFind(this.view, replace && !this.isReadOnly); }
@@ -1216,7 +1191,6 @@ export class SatrEditor {
       selection: EditorSelection.cursor(to),
       effects: [searchFlash.of({ from, to }), EditorView.scrollIntoView(from, { y: 'center' })],
     });
-    this.markCaretSettled?.(); // centred on purpose
     window.clearTimeout(this.flashTimer);
     this.flashTimer = window.setTimeout(() => {
       if (this.view.state.field(searchFlashField, false)) this.view.dispatch({ effects: searchFlash.of(null) });
@@ -1245,8 +1219,4 @@ export class SatrEditor {
     this.view.destroy();
   }
   private cleanupSelectionAdoption?: () => void;
-  /** Set by the constructor: says the caret needs no bringing into view, so a
-   *  focus that follows (a select-all's own) is not a reason to glide —
-   *  see the focus reveal above. */
-  private markCaretSettled?: () => void;
 }
