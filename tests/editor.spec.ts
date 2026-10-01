@@ -285,12 +285,15 @@ test('Markor keyboard: autocorrect and suggestions on, no spell check', async ({
       writingsuggestions: el.getAttribute('writingsuggestions'),
     };
   });
-  expect(attributes).toEqual({
-    spellcheck: 'false',
+  // Obsidian's own values, read from its 1.13.8 bundle — the reference the
+  // phone is compared against: spellcheck on (its setting's default),
+  // autocorrect on, autocapitalize on. The IME is the thing that acts on
+  // them, and the IME is where the suggestion strip, auto-correct and the
+  // phantom space live.
+  expect(attributes).toMatchObject({
+    spellcheck: 'true',
     autocorrect: 'on',
-    autocapitalize: 'off',
-    autocomplete: 'on',
-    writingsuggestions: 'false',
+    autocapitalize: 'on',
   });
 });
 

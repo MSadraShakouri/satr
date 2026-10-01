@@ -1,6 +1,6 @@
 package com.msadrashakouri.satr;
 
-import android.app.ActionMode;
+import android.view.ActionMode;
 import android.util.AttributeSet;
 import android.content.Context;
 import android.view.Menu;
@@ -25,11 +25,13 @@ import com.getcapacitor.CapacitorWebView;
  * The callback is not replaced, only wrapped: the platform's own Copy, Cut,
  * Paste and Select all are the ones the reader expects, and they stay exactly
  * as they were — {@link #onCreateActionMode} builds the menu first through the
- * original callback and the item is appended to it. Long presses raise this
- * bar with the item in it; the app's own double tap and drag make a selection
- * the WebView did not make, which Android draws no bar for at all — those get
- * Satr's own bar instead (src/selectionBar.ts), which carries the same "Line"
- * as its first button and the selection's two handles with it.
+ * original callback and the item is appended to it.
+ *
+ * That bar, with that one item in it, is the only selection menu the app has:
+ * the selection itself is the WebView's (Obsidian's is the same — its editor
+ * ships no touch handling of its own, and its Android build registers no
+ * selection plugin), so the double tap, the drag, the handles, the long press
+ * and this bar all come from the platform, and the page adds nothing on top.
  */
 public class SatrWebView extends CapacitorWebView {
 
@@ -76,10 +78,10 @@ public class SatrWebView extends CapacitorWebView {
         @Override
         public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
             if (item.getItemId() == LINE_ITEM_ID) {
-                // The page grows the selection to the whole line (or lines) it
-                // touches, and then says so itself — its own bar is kept out of
-                // the way for a selection the platform made (src/main.ts), so
-                // this bar stays the one on screen.
+                // The page grows the selection to the whole line (or lines)
+                // it touches. The bar stays up and follows the new selection —
+                // it is the platform's own, so it re-reads the selection it
+                // was raised for.
                 evaluateJavascript("window.satrSelectionAction&&window.satrSelectionAction('line')", null);
                 return true;
             }

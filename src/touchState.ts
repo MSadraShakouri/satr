@@ -1,14 +1,23 @@
-// A shared flag: the editor is mid-gesture extending a selection with the
-// finger still down. The drawer's capture-phase listeners check this before
-// they engage, because at that moment the DOM selection may not yet reflect
-// what the finger is doing, and the drawer would otherwise steal a diagonal
-// drag as a workspace swipe.
-
-let draggingSelection = false;
-
-export const beginSelectionDrag = (): void => { draggingSelection = true; };
-export const endSelectionDrag = (): void => { draggingSelection = false; };
-export const isDraggingSelection = (): boolean => draggingSelection;
+// Whether a gesture is a selection's rather than the workspace's.
+//
+// The selection is the platform's now (see the touch block in src/editor.ts):
+// the app neither makes one nor knows when a drag is extending one, so the
+// flag this used to be is answered from the document instead. The drawer's
+// capture-phase listeners ask before they engage, because a horizontal drag
+// over the note that is extending a selection must not be read as a workspace
+// swipe. Only a selection standing *in the editor* counts: a selection that
+// belongs to the reading view is not a reason to refuse the drawer.
+//
+// (No whitespace here is a real difference: a drag inside the note is the
+// platform's, and the platform's own handles are on screen for it.)
+export function isDraggingSelection(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+  const anchor = selection.anchorNode;
+  const content = document.querySelector('.cm-content');
+  if (!anchor || !content) return false;
+  return content.contains(anchor.nodeType === Node.ELEMENT_NODE ? anchor : anchor.parentNode);
+}
 
 // A widget tap — a checkbox, a wiki link, a footnote — is not a caret
 // placement. The WebView can blur and refocus the editable region when such a
@@ -54,41 +63,7 @@ export function holdScrollStill(el: HTMLElement, ms = 700): void {
 }
 
 
-// The same idea for a drag that is extending a selection: the note must not
-// move under the finger, but the gesture must stay the *platform's* — a drag
-// that turns vertical has to scroll, and a scroll the browser never started
-// cannot be resumed half-way. So nothing is prevented; the scroller is pinned
-// for as long as the drag is an extend, and let go the moment it becomes a
-// scroll (src/editor.ts's touchmove). Pinning writes the position back on
-// every frame, so the browser's own pan continues to work — it just has
-// nothing to move until the pin is gone.
-let pin: { el: HTMLElement; top: number; left: number; frame: number } | null = null;
-
-export function pinScrollStill(el: HTMLElement): void {
-  if (pin?.el === el) return;
-  unpinScrollStill();
-  pin = { el, top: el.scrollTop, left: el.scrollLeft, frame: 0 };
-  const step = (): void => {
-    if (!pin) return;
-    if (pin.el.scrollTop !== pin.top) pin.el.scrollTop = pin.top;
-    if (pin.el.scrollLeft !== pin.left) pin.el.scrollLeft = pin.left;
-    pin.frame = window.requestAnimationFrame(step);
-  };
-  pin.frame = window.requestAnimationFrame(step);
-}
-
-export function unpinScrollStill(): void {
-  if (!pin) return;
-  window.cancelAnimationFrame(pin.frame);
-  pin = null;
-}
-
 // The reader taking over ends the hold: a new finger, a wheel, a key.
 for (const type of ['touchstart', 'pointerdown', 'wheel', 'keydown']) {
   window.addEventListener(type, releaseScrollHold, { capture: true, passive: true });
-}
-// A second finger, a wheel or a key during a drag means the reader is doing
-// something else: the pin goes (the drag's own release unpins too).
-for (const type of ['wheel', 'keydown']) {
-  window.addEventListener(type, unpinScrollStill, { capture: true, passive: true });
 }

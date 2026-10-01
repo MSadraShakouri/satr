@@ -18,7 +18,6 @@ import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { showNotice, type NoticeHandle } from './notice';
 import { shortenPathIn } from './pathShort';
-import { createSelectionBar, type SelectionBar, type SelectionAction } from './selectionBar';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
@@ -465,7 +464,6 @@ function update(): void {
   saveTimer = window.setTimeout(saveNow, 700);
 }
 splitView.addEventListener('change', () => { if (splitView.matches && previewDirty) renderPreview(); });
-let selectionBar: SelectionBar | null = null;
 function setMode(next: Mode, restoredLine?: number): void {
   if (restoredLine === undefined) releaseHold();
   const generation = viewGeneration;
@@ -474,7 +472,6 @@ function setMode(next: Mode, restoredLine?: number): void {
   const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view));
   mode = next;
   document.body.dataset.mode = mode;
-  selectionBar?.hide(); // the bar belongs to the editing view
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
   previewButton.innerHTML = mode === 'edit' ? bookIcon : penIcon;
   previewButton.setAttribute('aria-label', mode === 'edit' ? 'Open preview' : 'Return to editor');
@@ -498,7 +495,7 @@ function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   autoSpace: loadSettings().spaceAfterPunctuation,
-  onSelection: () => { rememberViewSoon(); syncSelectionBar(); },
+  onSelection: () => { rememberViewSoon(); },
   onFold: () => { applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
   linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
   openLink: (target, heading) => openLink(target, heading),
@@ -1484,145 +1481,35 @@ function find(replace = false): void {
 }
 document.querySelector('#nav-find')!.addEventListener('click', () => find(false));
 
-// Android's own selection bar can ask for the same thing ours does: a "Line"
-// item is appended to the WebView's selection menu in Java
+// Android's own selection bar can ask for the same one action the toolbar has:
+// a "Line" item is appended to the WebView's selection menu in Java
 // (android/…/SatrWebView.java), the way Markor's whole-line selection is a
 // menu item there, and this is the page's half of it. The selection it makes
-// is the platform's, not the app's, so the app's own bar stays out of the way
-// and Android's menu remains the one on screen.
+// is the platform's, and the platform's own bar is the only menu over it —
+// the app has none of its own any more (see the note over the touch block in
+// src/editor.ts).
 declare global { interface Window { satrSelectionAction?: (action: string) => void } }
 window.satrSelectionAction = (action: string): void => {
   if (action !== 'line') return;
   if (mode !== 'edit') setMode('edit');
-  editor.expandToLines(false);
-  syncSelectionBar();
+  editor.expandToLines();
 };
 
-// ---- The phone's own selection bar (src/selectionBar.ts) ----
-// Android's selection bar appears for a selection the platform made itself.
-// Satr's double tap finds the word on its own (src/touchSelection.ts), and a
-// WebView will not show its bar for a selection it did not make, so the app
-// brings the same actions — and Markor's "Line" — in its own bar, over the
-// finger's selection. Touch devices only: on the desktop the keyboard and the
-// mouse already have every one of these.
-const touchDevice = (): boolean => navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
-function syncSelectionBar(): void {
-  if (!selectionBar) return;
-  const [anchor, head] = editor.getSelection();
-  const from = Math.min(anchor, head);
-  const to = Math.max(anchor, head);
-  if (!touchDevice() || mode !== 'edit' || to <= from) { selectionBar.hide(); return; }
-  // One menu at a time, and the platform's comes first. The platform draws
-  // its bar and its handles for a selection *it* made from a gesture it
-  // recognised — a long press in the app, a double click or a drag of its own
-  // on the site — and beside those ours was two pop-ups at once ("site-native
-  // and Android pop-up showing at the same time"). Ours is for the selections
-  // the platform did not make, which are exactly the app's own: the word a
-  // double tap found, the range a drag extended, Line, Select all.
-  if (!editor.selectionFromApp) { selectionBar.hide(); return; }
-  // The Line step survives its own syncs and dies with any other selection.
-  if (lineSteps && !((from === lineSteps.after[0] && to === lineSteps.after[1])
-    || (from === lineSteps.before[0] && to === lineSteps.before[1]))) lineSteps = null;
-  selectionBar.show(from, to);
-}
-async function copySelectionText(text: string): Promise<void> {
-  try { await navigator.clipboard.writeText(text); } catch { document.execCommand('copy'); }
-}
-async function pasteIntoNote(): Promise<void> {
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) editor.insertText(text);
-  } catch {
-    showNotice('Clipboard access was refused — long-press the note to paste', 4000);
-  }
-}
-// Line is a step, not a destination: a second press gives the finger's own
-// selection back (Markor's ☰ is likewise how you get the whole line, and the
-// way back matters as much as the way in). The pair is dropped the moment the
-// selection is anything but one of the two.
-let lineSteps: { before: [number, number]; after: [number, number] } | null = null;
-
-selectionBar = createSelectionBar({
-  anchor: (from, to) => {
-    const head = editor.view.coordsAtPos(from, 1);
-    if (!head) return null;
-    const tail = editor.view.coordsAtPos(to, -1) ?? head;
-    return {
-      top: Math.min(head.top, tail.top),
-      bottom: Math.max(head.bottom, tail.bottom),
-      left: Math.min(head.left, tail.left),
-      right: Math.max(head.right, tail.right),
-    };
-  },
-  point: (pos, side) => {
-    const rect = editor.view.coordsAtPos(pos, side);
-    return rect ? { x: side > 0 ? rect.left : rect.right, y: rect.bottom } : null;
-  },
-  handle: (edge, x, y) => {
-    const pos = editor.view.posAtCoords({ x, y }, false);
-    if (pos === null) return;
-    const [anchor, head] = editor.getSelection();
-    const from = Math.min(anchor, head);
-    const to = Math.max(anchor, head);
-    // An end may not cross the other: a handle dragged past its opposite end
-    // would make the selection vanish under the finger, and there is nowhere
-    // for a finger to go that means "the other way round".
-    if (edge === 'start') editor.setSelection(Math.min(pos, to), to, false);
-    else editor.setSelection(from, Math.max(pos, from), false);
-    syncSelectionBar();
-  },
-  run: (action: SelectionAction) => {
-    if (action === 'line') {
-      const [anchor, head] = editor.getSelection();
-      const from = Math.min(anchor, head);
-      const to = Math.max(anchor, head);
-      const step = lineSteps;
-      if (step && step.after[0] === from && step.after[1] === to) {
-        editor.setSelection(step.before[0], step.before[1]);
-        lineSteps = null;
-      } else {
-        editor.expandToLines();
-        const [a2, h2] = editor.getSelection();
-        const after: [number, number] = [Math.min(a2, h2), Math.max(a2, h2)];
-        // A press that changed nothing (the selection was whole lines to
-        // begin with) is not a step to come back from.
-        lineSteps = after[0] === from && after[1] === to ? null : { before: [from, to], after };
-      }
-      syncSelectionBar();
-      return;
-    }
-    if (action === 'all') { editor.selectAll(); syncSelectionBar(); return; }
-    if (action === 'paste') { void pasteIntoNote(); return; }
-    const text = window.getSelection()?.toString() ?? '';
-    if (!text) return;
-    void copySelectionText(text);
-    if (action === 'cut') { editor.insertText(''); selectionBar?.hide(); }
-  },
-});
-// The bar follows the note (a scroll moves the selection under it) and gets
-// out of the way when the reader leaves the note for the chrome.
-editor.view.scrollDOM.addEventListener('scroll', () => {
-  if (!selectionBar?.visible) return;
-  const [anchor, head] = editor.getSelection();
-  selectionBar.reposition(Math.min(anchor, head), Math.max(anchor, head));
-}, { passive: true });
-// A tap on the bar is never a tap on the note. On the phone the editable
-// keeps its focus while the reader is editing, and a tap that reaches it — or
-// a WebView that re-focuses it for its own reasons — brings the keyboard back
-// up behind the menu: "pressing the hamburger sometimes triggers the keyboard".
-// The bar lets the note's focus go instead. Blur only, never focus: the caret,
-// the selection and the scroll all stay where the writer left them, and every
-// button here (find, new tab, tabs, menu) brings its own focus if it needs one.
+// A press on the bottom bar is never a press on the note. On the phone the
+// editable keeps its focus while the reader is editing, and a tap that reaches
+// it — or a WebView that re-focuses it for its own reasons — brings the
+// keyboard back up behind the menu: "pressing the hamburger sometimes triggers
+// the keyboard". The bar lets the note's focus go instead. Blur only, never
+// focus: the caret, the selection and the scroll all stay where the writer
+// left them, and every button here (find, new tab, tabs, menu) brings its own
+// focus if it needs one.
 const navbar = document.querySelector<HTMLElement>('#navbar')!;
 navbar.addEventListener('pointerdown', (event) => {
-  selectionBar?.hide();
   // A finger, and only a finger: a mouse keeps the note focused, because on a
   // desktop the focus is what the writer is typing into and the keyboard that
   // this protects against does not exist there.
   if (event.pointerType === 'touch') editor.blur();
 });
-// The keyboard's own toolbar and the tab strip are the same kind of chrome.
-document.querySelector<HTMLElement>('.mobile-tabbar')?.addEventListener('pointerdown', () => selectionBar?.hide());
 
 // ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
 const rightPanel = document.querySelector<HTMLElement>('#right-panel')!;
@@ -2089,7 +1976,6 @@ const drawers = initDrawers({
   backdrop: document.querySelector<HTMLElement>('#backdrop')!,
   classes: { left: 'files-open', right: 'outline-open' },
   onOpening: (side) => {
-    selectionBar?.hide();
     closePopover();
     restoreNavigation();
     (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down

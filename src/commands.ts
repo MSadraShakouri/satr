@@ -145,8 +145,9 @@ export function insertMath(view: EditorView): boolean {
 /** Markor's "expand selection of cursor to whole line", as one action: every
  *  line the selection (or the caret) touches becomes selected whole, so a line
  *  can be copied, cut or replaced without dragging handles to its ends. It
- *  lives in the keyboard toolbar — the floating selection bar has the same
- *  action as its "Line", and Markor's own bar is where the idea comes from. */
+ *  lives in the keyboard toolbar, and Android's own selection bar gets the same
+ *  item as "Line" (android/…/SatrWebView.java) — which is where Markor's bar
+ *  carries it too. */
 export function selectWholeLines(view: EditorView): boolean {
   const lines = touchedLines(view);
   if (!lines.length) return false;

@@ -16,8 +16,7 @@ import { Highlight, highlightTag } from './highlightSyntax';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
-import { TapTracker, wordRangeAt, type Range } from './touchSelection';
-import { beginSelectionDrag, endSelectionDrag, isCaretRevealSuppressed, pinScrollStill, unpinScrollStill } from './touchState';
+import { isCaretRevealSuppressed, suppressCaretReveal } from './touchState';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
@@ -613,17 +612,25 @@ const titleField = StateField.define({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-// Markor's keyboard: word auto-correct and the suggestion strip stay on,
-// but there are no spell-check underlines in the note. Chromium on Android
+// The keyboard's own attributes, taken from Obsidian's editor — the page
+// whose keyboard behaviour the phone is compared against. Its CM6 view sets
+// exactly these on the content element (read out of the 1.13.8 bundle):
+//
+//   contentAttributes.of({ spellcheck: String(getConfig("spellcheck")),
+//                          autocorrect: "on", autocapitalize: "on",
+//                          contenteditable: "true" })
+//
+// `spellcheck` is Obsidian's own setting and is **on by default**; Chromium
 // turns the suggestion strip off for autocomplete="off"
 // (TYPE_TEXT_FLAG_NO_SUGGESTIONS) and drops auto-correct for
-// autocorrect="off", so both are on here; only spellcheck (red squiggles)
-// and the browser's own writing-suggestions underlines are off. Trade-off:
-// with suggestions the keyboard holds the current word in composition, so
-// "(", "`" and "$" may pair up only once the word commits. (The number row
-// is Gboard's own choice and can't be requested from a web page.)
+// autocorrect="off", so both stay on here too. These attributes are what the
+// IME reads to decide whether it is looking at prose — and the IME is where
+// the suggestion strip, auto-correct, the weak space and the phantom space
+// live, none of which the page can see or imitate (see
+// /home/user/phantom-space-research.md). Matching the reference exactly is
+// therefore the whole trick; there is nothing app-side to "implement".
 const keyboardAttributes = EditorView.contentAttributes.of({
-  spellcheck: 'false', autocorrect: 'on', autocapitalize: 'off', autocomplete: 'on', writingsuggestions: 'false',
+  spellcheck: 'true', autocorrect: 'on', autocapitalize: 'on',
 });
 
 // How the keyboard talks to the editor.
@@ -775,17 +782,8 @@ export class SatrEditor {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) {
           selectionMoved = true;
-          // Whose selection this is. The app's own paths (a double tap's word,
-          // a drag that extends it, Line, Select all) announce themselves just
-          // before they dispatch; anything else — the platform's own double
-          // tap, a long press, a mouse drag — is the reader's or the engine's,
-          // and on the site the engine brings its own menu for those. The
-          // selection bar uses this to avoid standing next to the platform's
-          // own (src/main.ts).
-          const main = update.state.selection.main;
-          this.selectionFromApp = this.appSelection !== null
-            && this.appSelection.anchor === main.anchor && this.appSelection.head === main.head;
-          this.appSelection = this.selectionFromApp ? this.appSelection : null;
+          // (The selection is the platform's: the app neither makes one nor
+          // marks one as its own any more — see the touch block below.)
           options?.onSelection?.(update.state.selection.main.head, update.state.selection.main.from, update.state.selection.main.to);
         }
         // A line made with Enter puts the caret on the line below the one on
@@ -827,10 +825,11 @@ export class SatrEditor {
       revealTimer = window.setTimeout(() => window.requestAnimationFrame(revealCaret), delay);
     };
     // Only after something that moved the caret or opened the keyboard —
-    // never after a scroll. (Revealing on every finger lift, and on every
-    // viewport resize, pulled the view back to the caret each time you tried
-    // to scroll away from it; Chrome's address bar resizes the viewport as
-    // you scroll.)
+    // never after a scroll, and never for a selection (the platform's handles
+    // are where the reader looks; the note must not glide to their head).
+    // (Revealing on every finger lift, and on every viewport resize, pulled
+    // the view back to the caret each time you tried to scroll away from it;
+    // Chrome's address bar resizes the viewport as you scroll.)
     this.view.contentDOM.addEventListener('focus', () => { if (selectionMoved) revealSoon(160); });
     this.markCaretSettled = () => { selectionMoved = false; };
     let touchTimer: number | undefined;
@@ -840,40 +839,14 @@ export class SatrEditor {
     // The note's own position when a finger went down: a gesture that moved
     // the note must never move it again (see the reveal at the end of it).
     let touchScrollTop = 0;
-    // Double tap selects the word under the finger, and a drag after it (the
-    // finger never lifted) selects more. The WebView does both itself when the
-    // caret lives in the DOM selection, so this only fills the gap for the
-    // browsers that don't: the fallback runs only while the selection is
-    // exactly what it was when the second finger went down, so whatever the
-    // browser selected itself always wins. The word itself is chosen by
-    // src/touchSelection.ts, the same rule a phone keyboard uses.
-    const taps = new TapTracker();
-    // What the finger is doing after a double tap, decided by the first
-    // movement it makes: 'undecided' (the finger has not moved far enough to
-    // say), 'extend' (a drag, the selection follows it) or 'scroll' (a scroll,
-    // the page follows it and the selection stays where it is). Deciding here
-    // is what lets a double tap be followed by a scroll: the note used to
-    // preventDefault every move once the tap had found a word, so the page
-    // could not be scrolled at all until the finger was lifted.
-    let dragWord: { word: Range; anchor: number; head: number; x: number; y: number; mode: 'undecided' | 'extend' | 'scroll' } | null = null;
-    const wordAt = (x: number, y: number): Range | null => {
-      const pos = this.view.posAtCoords({ x, y });
-      return pos === null ? null : wordRangeAt(this.view.state.doc.toString(), pos);
-    };
-    const selectRange = (from: number, to: number): void => {
-      this.markAppSelection(from, to);
-      this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
-    };
-    // The browser's own word selection can land a frame or two after the lift,
-    // so the fallback waits for it before deciding the browser did nothing.
-    const selectWordIfUntouched = (pending: NonNullable<typeof dragWord>): void => {
-      const check = (): void => {
-        const { anchor, head } = this.view.state.selection.main;
-        if (anchor === pending.anchor && head === pending.head) selectRange(pending.word.from, pending.word.to);
-      };
-      window.requestAnimationFrame(check);
-      window.setTimeout(check, 120);
-    };
+    // The selection is the platform's. There is no word-finding, no tap
+    // counting, no drag of our own and nothing prevented here at all: double
+    // tap, long press, the handles, the action mode and dragging a selection
+    // are the WebView's, exactly as they are in Obsidian — whose editor has no
+    // touch handling of its own either (its only long-press helper belongs to
+    // the file list, not the note), and whose viewport forbids the zoom that
+    // used to make the same gestures ambiguous here. What this block still
+    // does is watch, so the editor's own caret glide never fights a scroll.
     this.view.contentDOM.addEventListener('touchstart', (event) => {
       window.clearTimeout(touchTimer);
       touching = true;
@@ -883,13 +856,6 @@ export class SatrEditor {
       touchScrollTop = this.view.scrollDOM.scrollTop;
       const { anchor, head } = this.view.state.selection.main;
       touchSelection = [anchor, head];
-      // A widget (the file name, a list bullet, a link) has no word of the
-      // note under it and brings its own editing; a second finger is not a tap.
-      const onWidget = (event.target as HTMLElement | null)?.closest('.cm-widget, .cm-file-title, .cm-gutters, .cm-tooltip');
-      const count = onWidget || !touch ? taps.cancel() : taps.start(event.timeStamp, touch.clientX, touchStartY, event.touches.length);
-      const word = count >= 2 ? wordAt(touch!.clientX, touchStartY) : null;
-      dragWord = word ? { word, anchor, head, x: touch!.clientX, y: touchStartY, mode: 'undecided' } : null;
-      if (dragWord) beginSelectionDrag();
     }, { passive: true });
     // A tap below the last line means "the end of the note", not the nearest
     // character under the finger: the empty room under the text is where the
@@ -909,83 +875,38 @@ export class SatrEditor {
       this.view.dispatch({ selection: { anchor: this.view.state.doc.length }, scrollIntoView: false });
       this.view.focus();
     }, true);
-    // Not passive, so a drag that extends a selection can keep the page still
-    // (below); everything that is not such a drag passes through untouched.
+    // Passive, and it only watches: a finger that travelled is a scroll (or a
+    // selection drag), and either way the note may move — so a reveal that was
+    // queued for a tap is dropped, and the reveal below never fires for a
+    // gesture that moved.
     this.view.contentDOM.addEventListener('touchmove', (event) => {
       const touch = event.touches[0];
       if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) {
         touchMoved = true;
-        taps.cancel(); // a scroll is not a tap
+        window.clearTimeout(revealTimer);
       }
-      // A finger that moved after a double tap is either extending the
-      // selection or scrolling the note — and the two must not fight. The
-      // first movement decides: mostly sideways is a drag (the selection
-      // follows the finger, the page stays still); mostly up or down is a
-      // scroll (the page follows the finger, the selection stays put, and
-      // nothing is prevented). Until then nothing is prevented either, so a
-      // scroll never loses its first few pixels to the tap.
-      if (!dragWord || !touch) return;
-      const dx = touch.clientX - dragWord.x;
-      const dy = touch.clientY - dragWord.y;
-      // The decision can be revisited, and only in one direction: a drag that
-      // starts sideways is an extend, but if the finger then travels up or
-      // down — which is what a reader who wants to scroll does, a moment after
-      // a double tap — it becomes a scroll, and the platform takes the gesture
-      // back. Deciding once meant a single sideways sample at the start could
-      // make the note unscrollable for the rest of the drag: "double tap
-      // select can't scroll".
-      if (dragWord.mode === 'undecided') {
-        if (Math.abs(dx) > 10 && Math.abs(dx) >= Math.abs(dy)) dragWord.mode = 'extend';
-        else if (Math.abs(dy) > 10) dragWord.mode = 'scroll';
-      } else if (dragWord.mode === 'extend') {
-        if (Math.abs(dy) > 24 && Math.abs(dy) >= Math.abs(dx) + 8) dragWord.mode = 'scroll';
-      }
-      if (dragWord.mode === 'scroll') {
-        unpinScrollStill();
-        endSelectionDrag(); // the note may scroll: the drawer keeps its distance
-        window.clearTimeout(revealTimer); // a scroll cancels a reveal that was queued
-        return;
-      }
-      if (dragWord.mode !== 'extend') return;
-      beginSelectionDrag();
-      // The finger is extending the selection: the note must not move under it
-      // — but nothing is prevented, because a prevented touch is a touch the
-      // platform has given up on, and a scroll that was never started cannot
-      // be resumed. The scroller is pinned instead (touchState.pinScrollStill):
-      // the browser pans, the pin puts the note back, and if this drag turns
-      // vertical the pin is dropped and that same pan carries on.
-      pinScrollStill(this.view.scrollDOM);
-      const to = wordAt(touch.clientX, touch.clientY);
-      if (!to) return;
-      selectRange(Math.min(dragWord.word.from, to.from), Math.max(dragWord.word.to, to.to));
-    }, { passive: false });
+    }, { passive: true });
     const release = (): void => {
       window.clearTimeout(touchTimer);
-      const word = dragWord?.mode === 'scroll' ? null : dragWord; // a scroll is not a word selection
-      dragWord = null;
-      unpinScrollStill(); // the drag is over, whatever it was
-      endSelectionDrag(); // the finger is up: the drawer may act again
-      // A gesture that moved was not a tap, whatever it did to the selection.
-      if (touchMoved) taps.cancel();
-      if (word) selectWordIfUntouched(word);
       // Native selection handles keep adjusting for a moment after the lift.
       touchTimer = window.setTimeout(() => {
         touching = false;
         const { anchor, head } = this.view.state.selection.main;
         const selectionChanged = anchor !== touchSelection[0] || head !== touchSelection[1];
-        // A gesture that scrolled the note never moves it again. The selection
-        // it made is the double tap's word, so a reveal here — 350ms after the
-        // finger is up, when the reader is already somewhere else — used to
-        // glide the note back to the selected word: "double tap scroll is very
-        // unreliable". Measured on the scroller, not guessed: if the note is
-        // not where the gesture found it, the reader has taken it somewhere and
-        // it stays there.
+        // A gesture that scrolled the note never moves it again ("double tap
+        // scroll is very unreliable": the reveal used to glide the note back
+        // to the word, 350ms after the finger was up, when the reader was
+        // already somewhere else). And a *selection* is never a reason to
+        // move at all — the platform shows the handles and brings its own menu
+        // for those, and pulling the view to the selection's head is the one
+        // thing a double tap must not do. Only a caret placed by a tap is
+        // brought into sight, and only if the note has not moved since.
         const scrolled = this.view.scrollDOM.scrollTop !== touchScrollTop;
-        if (selectionChanged && !scrolled && (!touchMoved || anchor !== head)) revealSoon(0);
+        if (selectionChanged && !scrolled && anchor === head && !touchMoved) revealSoon(0);
       }, 350);
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
-    this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; unpinScrollStill(); endSelectionDrag(); release(); }, { passive: true });
+    this.view.contentDOM.addEventListener('touchcancel', () => { window.clearTimeout(touchTimer); touching = false; }, { passive: true });
 
     // "Select all" from Android's own selection bar is the one command that
     // rides on the DOM selection instead of the keyboard: it dispatches no
@@ -1168,13 +1089,6 @@ export class SatrEditor {
     });
   }
   getValue(): string { return this.view.state.doc.toString(); }
-  /** Where the current selection came from (see the update listener). */
-  selectionFromApp = false;
-  private appSelection: { anchor: number; head: number } | null = null;
-  /** Say that the selection about to be dispatched is the app's own. */
-  private markAppSelection(anchor: number, head: number): void {
-    this.appSelection = { anchor, head };
-  }
   setTitle(base: string): void { this.view.dispatch({ effects: setTitleEffect.of(base) }); }
   setReadOnly(on: boolean): void {
     if (on) this.closeFind();
@@ -1193,7 +1107,6 @@ export class SatrEditor {
   /** Select the whole note, giving the editor the focus so copy works too. */
   selectAll(): void {
     this.view.focus();
-    this.markAppSelection(0, this.view.state.doc.length);
     this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
     this.markCaretSettled?.(); // the whole note is selected: nothing to bring into view
   }
@@ -1242,21 +1155,15 @@ export class SatrEditor {
     const { anchor, head } = this.view.state.selection.main;
     return [anchor, head];
   }
-  /** Grow the selection to the whole line or lines it touches (Markor's
-   *  "expand selection of cursor to whole line", and what the phone's
-   *  selection bar's Line button asks for). An empty selection grows to the
-   *  line the caret is on. */
-  /** Grow the selection to the whole line or lines it touches. `own` says
-   *  whether this selection is the app's (its own bar and handles follow it) —
-   *  Android's own bar asks for the line too and keeps its own selection, in
-   *  which case the app must not also put a bar on screen. */
-  expandToLines(own = true): void {
+  /** Grow the selection to the whole line or lines it touches — Markor's
+   *  whole-line action, on the toolbar and behind the "Line" item Android's own
+   *  selection bar gets (android/…/SatrWebView.java). */
+  expandToLines(): void {
     const { doc, selection } = this.view.state;
     const main = selection.main;
     const from = doc.lineAt(main.from).from;
     const to = doc.lineAt(main.to).to;
     if (from === main.from && to === main.to) return;
-    if (own) this.markAppSelection(from, to);
     this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
   }
   /** Replace the selection (or insert at the caret) — paste, and the cut that
@@ -1265,13 +1172,11 @@ export class SatrEditor {
     if (this.isReadOnly) return;
     this.view.dispatch(this.view.state.replaceSelection(text), { userEvent: 'input.paste' });
   }
-  /** Put the caret back without focusing (no keyboard) and without scrolling. */
-  /** Put the caret (or a selection) somewhere. `keepStill` is for a finger
-   *  that is already moving the selection itself — a handle being dragged
-   *  (src/selectionBar.ts): the note must not scroll along with it. */
+  /** Put the caret (or a selection) somewhere. `keepStill` places it without
+   *  scrolling — the note must not move for a position the reader did not ask
+   *  to see. */
   setSelection(anchor: number, head = anchor, keepStill = false): void {
     const max = this.view.state.doc.length;
-    this.markAppSelection(Math.min(anchor, max), Math.min(head, max));
     this.view.dispatch({
       selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) },
       scrollIntoView: keepStill ? false : undefined,
@@ -1297,9 +1202,9 @@ export class SatrEditor {
     this.view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: topOffset }) });
   }
   /** Land on a range without selecting it — a search result. The caret goes
-   *  *after* the hit: a selection is what raises the phone's selection bar and
-   *  puts handles over the line, and the reader tapped a result to see where
-   *  the word is, not to have it half-selected. The ring (the find bar's own
+   *  *after* the hit: a real selection is what raises the phone's own selection
+   *  bar and puts handles over the line, and the reader tapped a result to see
+   *  where the word is, not to have it half-selected. The ring (the find bar's own
    *  match highlight) says where the hit is, for a few seconds or until the
    *  reader types, taps or selects anything. No focus, so no keyboard. */
   flashRange(from: number, to: number, ms = 4000): void {

@@ -37,7 +37,22 @@
 // in front of it.
 //
 // Code is left alone: in a code span or a fenced block a comma is a comma.
-import { EditorState, type Extension } from '@codemirror/state';
+//
+// And the keyboard's own words are left alone too. While an IME is holding a
+// word — the suggestion strip's composition — the space is the keyboard's
+// business and nobody else's: a space put into the document from underneath a
+// live composition is what a WebView shows as spaces breaking, characters
+// repeating and the strip losing the word (an app-side edit during
+// `insertCompositionText` and the composition's own text fight over the same
+// range). A composed character already carries the keyboard's own spacing in
+// the committed text when the keyboard thinks one is owed (the "phantom"
+// space of /home/user/phantom-space-research.md is inserted by the IME as part
+// of the commit — the app sees two characters arrive, not one), so there is
+// nothing left for this rule to add in that case; it steps aside and the
+// keyboard is the one Obsidian leaves it to as well (Obsidian has no such code
+// at all — its bundle contains no space state of any kind).
+import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { inCode, inMath } from './mathSource';
 
 /** The signs that end something: sentence punctuation in both scripts. A
@@ -86,14 +101,39 @@ export function spaceAfterSign(state: EditorState, at: number, typed: string): b
   return true;
 }
 
+/** Whether an IME is composing right now. `compositionstart` fires before the
+ *  first composed character reaches the document and `compositionend` after
+ *  the last one, so the window between them is exactly "the keyboard is holding
+ *  a word". (CodeMirror's own `input.type.compose` marks the same characters,
+ *  but the two disagree about the *final* commit of a composition, so both
+ *  answers are read — see the rule below.) */
+const setComposing = StateEffect.define<boolean>();
+const composing = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(setComposing)) return effect.value;
+    return value;
+  },
+});
+
 /** The rule as an editor extension. `on` reads the setting each time, so the
  *  same extension can be reconfigured rather than rebuilt. */
 export function autoSpace(on: () => boolean): Extension {
-  return EditorState.transactionFilter.of((tr) => {
+  return [
+    composing,
+    EditorView.domEventHandlers({
+      compositionstart: (_event, view) => { view.dispatch({ effects: setComposing.of(true) }); return false; },
+      compositionend: (_event, view) => { view.dispatch({ effects: setComposing.of(false) }); return false; },
+    }),
+    EditorState.transactionFilter.of((tr) => {
     // NB: a filter that returns an empty array *cancels* the transaction — the
     // keystroke would be swallowed whole. Passing a transaction on is done by
     // returning it.
     if (!on() || !tr.isUserEvent('input.type') || tr.selection === null) return tr;
+    // A character an IME is still holding — see the note at the top of the
+    // file. Its space, if one is owed, is already in the committed text.
+    if (tr.startState.field(composing, false)) return tr;
+    if (tr.isUserEvent('input.type.compose')) return tr;
     if (tr.newDoc.length !== tr.startState.doc.length + 1) return tr;
     if (!tr.startState.selection.main.empty) return tr; // typing over a selection is a replacement
     let at = -1;
@@ -111,5 +151,6 @@ export function autoSpace(on: () => boolean): Extension {
     // document the first one made — without it the space lands wherever `at`
     // means in the document before the letter, i.e. somewhere else entirely.
     return [tr, { changes: { from: at, insert: ' ' }, sequential: true, userEvent: 'input.type', scrollIntoView: false }];
-  });
+    }),
+  ];
 }

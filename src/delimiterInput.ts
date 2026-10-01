@@ -165,6 +165,17 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
     const block = displayBlock(state, from, to);
     if (block) return block;
   }
+  // Three backticks in one input event are the same fence the third press
+  // makes: the run ends there, no closing half is inserted, and Enter opens
+  // the writing line inside it. (The generic rule below would have made six —
+  // ``` ```|``` ``` — which the markdown parser then quietly cuts back to
+  // three, leaving Enter with nothing that looks like an opening fence: "triple
+  // backticks newline does not automatically insert". A keyboard that delivers
+  // the three at once — a fast typist, a swipe, a clipboard-like IME commit —
+  // takes this path where a press at a time took the pair-growing one.)
+  if (mark === '`' && text.length === 3 && !pair) {
+    return { changes: { from, to, insert: '```' }, range: EditorSelection.cursor(from + 3) };
+  }
   // A run that arrives in one input event (a fast keyboard, a swiped word):
   // the same result as a press at a time — `==|==`, `~~|~~`, `` ``|`` ``.
   if (mark !== '$' && text.length > 1 && text === mark.repeat(text.length) && text.length <= runCap(mark)) {

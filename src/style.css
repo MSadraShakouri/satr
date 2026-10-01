@@ -876,17 +876,14 @@ body {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
-/* The note hands a gesture it is not using back to the page — a double tap's
-   drag, when the finger goes up or down, is a scroll. What claimed it instead
-   was the engine's own double tap: Chrome and the Android WebView both keep
-   double-tap-to-zoom (and double-tap *drag* zoom) on unless the page says
-   otherwise, and that gesture is exactly this one — a tap, then a drag. The
-   page looked like it could not be scrolled after a double tap at all, or
-   scrolled and zoomed at once. `manipulation` is the page saying otherwise:
-   panning and pinch zoom stay, the double tap stops being a zoom. */
-.cm-content {
-  touch-action: manipulation;
-}
+/* The note is the platform's to scroll and to select, and the page gets out
+   of the way of both: no `touch-action` override — Obsidian sets none on its
+   editor either (its only `manipulation` rules are on buttons) — because the
+   double-tap zoom that made the same gesture ambiguous is forbidden in the
+   viewport meta instead (index.html: `user-scalable=no`, `maximum-scale=1`),
+   exactly as Obsidian forbids it. With the zoom gone, the engine's own double
+   tap word selection, drag-to-extend, handles and action mode are all that is
+   left, and none of them is the app's to imitate. */
 /* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
    active-line highlight. Their line boxes use unitless multipliers, so they
    follow the note's text: the glyphs grow with the system font scale (a px
@@ -3324,105 +3321,6 @@ textarea,
   font-family: var(--font-monospace);
   font-size: 0.75rem;
 }
-/* The phone's own selection bar (src/selectionBar.ts): a raised pill over the
-   finger's selection with the actions Android's own bar would carry, plus
-   Markor's Line. Placed by the module (translate3d), so nothing here positions
-   it. */
-.selection-bar {
-  position: fixed;
-  z-index: 45;
-  top: 0;
-  left: 0;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 44px;
-  padding: 0 6px;
-  border-radius: 44px;
-  background: var(--raised-background);
-  backdrop-filter: var(--raised-blur);
-  -webkit-backdrop-filter: var(--raised-blur);
-  box-shadow: var(--shadow-xs), var(--raised-edge);
-  transform: translate3d(0, 0, 0);
-  transition: opacity 0.12s ease-out;
-}
-.selection-bar[hidden] {
-  display: none;
-}
-.selection-bar button {
-  height: 34px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 34px;
-  background: transparent;
-  color: var(--text-normal);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  white-space: nowrap;
-  -webkit-tap-highlight-color: transparent;
-}
-.selection-bar button:active {
-  background: var(--background-modifier-hover);
-}
-/* The selection's two handles, under its two ends. The platform draws its own
-   only for a selection it made from a gesture of its own; these are the same
-   two grips for the selections the app made (a double tap's word, a drag, a
-   line), so a selection can be adjusted instead of started over. They hang
-   below the line so a thumb does not cover what it is adjusting, and each one
-   swallows the finger's own scrolling — the drag is the handle's, not the
-   note's. */
-.selection-handles {
-  position: fixed;
-  z-index: 46;
-  inset: 0;
-  pointer-events: none;
-}
-.selection-handles[hidden] {
-  display: none;
-}
-.selection-handle {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  pointer-events: auto;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  transform: translate3d(0, 0, 0);
-}
-.selection-handle span {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text-accent, var(--interactive-accent));
-  box-shadow: 0 0 0 2px var(--background-primary), var(--shadow-xs);
-}
-.selection-handle span::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  width: 2px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--text-accent, var(--interactive-accent));
-}
-.selection-handle[data-edge="start"] span::after {
-  inset-inline-end: 3px;
-}
-.selection-handle[data-edge="end"] span::after {
-  inset-inline-start: 3px;
-}
-.selection-handle.is-dragging span {
-  box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 6px var(--background-modifier-hover);
-}
-
 /* The ≡ button with a quick action: the action's icon and a small
    chevrons-up-down flair (hold for the menu), as Obsidian's. */
 #nav-menu {

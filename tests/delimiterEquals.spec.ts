@@ -147,3 +147,23 @@ test('a quote inside a bracket makes a pair, and anywhere else is one quote', as
   await page.keyboard.type('"');
   expect(await state(page)).toEqual({ text: 'he said ""', anchor: 10, head: 10 });
 });
+
+// Three backticks delivered in one input event — a fast typist, a swipe, an IME
+// that commits the run at once — are the same fence the third press makes: the
+// run ends there and Enter opens the writing line inside it. (Before this, the
+// one-event run made six backticks, no opening fence Enter could see, and the
+// markdown parser quietly cut them back to three: "triple backticks newline
+// does not automatically insert".)
+test('three backticks in one event open the same fence the third press opens', async ({ page }) => {
+  await mount(page);
+  await page.keyboard.insertText('```');
+  expect(await state(page)).toEqual({ text: '```', anchor: 3, head: 3 });
+  await page.keyboard.press('Enter');
+  expect(await state(page)).toEqual({ text: '```\n\n```', anchor: 4, head: 4 });
+});
+
+test('two backticks in one event still make the pair, as two presses do', async ({ page }) => {
+  await mount(page);
+  await page.keyboard.insertText('``');
+  expect(await state(page)).toEqual({ text: '````', anchor: 2, head: 2 });
+});

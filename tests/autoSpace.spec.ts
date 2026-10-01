@@ -117,3 +117,40 @@ test('the setting turns the whole rule off', async ({ page }) => {
   await page.keyboard.type('!again');
   expect(await value(page)).toBe('hello,world! again');
 });
+
+// The keyboard's own words are left alone: while an IME is composing — and for
+// the characters CodeMirror marks as a composition — this rule steps aside.
+// A space inserted into the document from underneath a live composition is
+// what a WebView shows as spaces breaking and words repeating, and the space
+// the keyboard owes is already in the text the keyboard commits.
+test('nothing is inserted while the keyboard is holding a word', async ({ page }) => {
+  await mount(page, 'hello,', 6);
+  await page.evaluate(() => window.testEditor.view.contentDOM.dispatchEvent(new CompositionEvent('compositionstart')));
+  await page.evaluate(() => {
+    const view = window.testEditor.view;
+    view.dispatch({ changes: { from: 6, insert: 'w' }, selection: { anchor: 7 }, userEvent: 'input.type.compose' });
+  });
+  expect(await value(page)).toBe('hello,w');
+  await page.evaluate(() => window.testEditor.view.contentDOM.dispatchEvent(new CompositionEvent('compositionend')));
+  // The composition is over; the next plain character is this rule's again.
+  await page.evaluate(() => {
+    const view = window.testEditor.view;
+    view.dispatch({ changes: { from: 7, insert: '!' }, selection: { anchor: 8 }, userEvent: 'input.type' });
+  });
+  await page.evaluate(() => {
+    const view = window.testEditor.view;
+    view.dispatch({ changes: { from: 8, insert: 'o' }, selection: { anchor: 9 }, userEvent: 'input.type' });
+  });
+  // The plain `!` is a sign like any other, so the rule is back on duty for
+  // the letter after it — the composition only suspended it.
+  expect(await value(page)).toBe('hello,w! o');
+});
+
+test('a composed character is left alone even without an open composition', async ({ page }) => {
+  await mount(page, 'hello,', 6);
+  await page.evaluate(() => {
+    const view = window.testEditor.view;
+    view.dispatch({ changes: { from: 6, insert: 'w' }, selection: { anchor: 7 }, userEvent: 'input.type.compose' });
+  });
+  expect(await value(page)).toBe('hello,w');
+});
