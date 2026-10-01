@@ -259,10 +259,13 @@ export function enterCodeFence(view: EditorView): boolean {
   // ordinary newline after it, never a new block. (The opening line of a
   // block, and a lone fence, are *not* inside one.)
   if (inCode(state, line.from)) return false;
-  // The closing fence repeats the opening line, language and all — what the
-  // markdown keymap's own fence continuation does.
+  // The closing fence is bare: the info string belongs to the opening line
+  // only (a `py` on the closing fence is not a language, it is text the writer
+  // never typed — "Inserts another ```py at the bottom, it shouldn't repeat
+  // the py part of it"). The fence itself repeats, indent and all, so a block
+  // inside a list stays inside it.
   const open = `${indent}${fence}${info}`;
-  const close = `${indent}${fence}${info}`;
+  const close = `${indent}${fence}`;
   view.dispatch({
     changes: { from: line.from, to: line.to, insert: `${open}\n${indent}\n${close}` },
     selection: EditorSelection.cursor(line.from + open.length + 1 + indent.length),

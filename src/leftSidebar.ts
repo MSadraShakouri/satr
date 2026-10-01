@@ -559,6 +559,15 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       rowOf(path)?.classList.add('is-active');
       renderedPath = deps.currentPath(); // drawn, marks and all
     },
+    /** Open a folder in the tree and bring it into view — the search's folder
+     *  rows (src/rightSidebar.ts, the new tab's search) and nothing else. The
+     *  folder and every folder above it open, so the row is really on screen. */
+    openFolder(path: string): void {
+      const stop = scope.kind === 'space' ? scope.space.path : '';
+      for (let dir = path; dir && dir !== stop; dir = dirname(dir)) expanded.add(dir);
+      saveExpanded();
+      void render().then(() => rowOf(path)?.scrollIntoView({ block: 'center' }));
+    },
     /** Bring the open note into view, redrawing first when the tree is older
      *  than the note it should mark (a tab closed, a file opened from another
      *  app, a rename): a stale highlight should never be what you see. */

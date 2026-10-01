@@ -31,7 +31,7 @@ import { dropSnapshot, keepSnapshots } from './snapshot';
 import { ensureFileAccess, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot } from './spaces';
-import { backend, DEFAULT_FOLDER, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
+import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
 
 type Mode = 'edit' | 'preview';
 // The first note in a fresh browser: the demo (demo.md, at the top of the repo).
@@ -1263,9 +1263,18 @@ async function renderEmptyTab(): Promise<void> {
 }
 emptyTab.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  const folder = target.closest<HTMLElement>('[data-hit-folder]');
+  if (folder) {
+    toggleFiles(true);
+    leftSidebar.openFolder(folder.dataset.hitFolder!);
+    return;
+  }
   const hit = target.closest<HTMLElement>('[data-hit-note]');
   if (hit) {
-    openEmptyHit(hit.dataset.hitNote!, Number(hit.dataset.hitFrom ?? 0), Number(hit.dataset.hitTo ?? 0));
+    // A name row has no hit to show: it opens the note at its remembered place
+    // (the content rows carry from/to and land on the line that matched).
+    if (hit.dataset.hitFrom === undefined) { void openFile(hit.dataset.hitNote!); return; }
+    openEmptyHit(hit.dataset.hitNote!, Number(hit.dataset.hitFrom), Number(hit.dataset.hitTo));
     return;
   }
   const recent = target.closest<HTMLElement>('[data-path]');
@@ -1287,6 +1296,9 @@ let emptyQuery = '';
 let emptySearchRun = 0;
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"/><circle cx="11" cy="11" r="8"/></svg>';
 const EMPTY_HITS_MAX = 60;
+/** Name matches (files, folders) the new tab's search shows before the lines. */
+const EMPTY_NAMES_MAX = 12;
+const EMPTY_FOLDERS_MAX = 8;
 async function runEmptySearch(): Promise<void> {
   const mine = ++emptySearchRun;
   const results = emptyTab.querySelector<HTMLElement>('.empty-state-results')!;
@@ -1301,6 +1313,24 @@ async function runEmptySearch(): Promise<void> {
   if (mine !== emptySearchRun) return;
   const folders = await folderLabels(notes.map((note) => note.path));
   if (mine !== emptySearchRun) return;
+  // The same query is a finder as well as a grep ("one search act as both"):
+  // notes whose *name* matches, and folders whose name or path does. Both come
+  // from the note list that is already here — no extra read — and a folder is
+  // only offered while it holds notes, which is what a search over notes can
+  // know.
+  const nameFiles = notes.filter((note) => stem(note.path).toLocaleLowerCase().includes(needle))
+    .map((note) => note.path).sort((a, b) => a.localeCompare(b)).slice(0, EMPTY_NAMES_MAX);
+  const dirs = new Set<string>();
+  for (const note of notes) {
+    for (let dir = dirname(note.path); dir; dir = dirname(dir)) dirs.add(dir);
+  }
+  const nameFolders = [...dirs]
+    .filter((dir) => dir.toLocaleLowerCase().includes(needle) || basename(dir).toLocaleLowerCase().includes(needle))
+    .sort((a, b) => a.localeCompare(b)).slice(0, EMPTY_FOLDERS_MAX);
+  // A folder row says its own name, then the path *above* it — the label of the
+  // parent, shortened, or nothing where the folder sits at the search's top.
+  const dirLabels = await folderPathLabels([...new Set(nameFolders.map((dir) => dirname(dir)))]);
+  if (mine !== emptySearchRun) return;
   for (const note of notes) {
     if (hits.length >= EMPTY_HITS_MAX) break;
     let from = 0;
@@ -1314,12 +1344,29 @@ async function runEmptySearch(): Promise<void> {
     }
   }
   const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-  results.innerHTML = hits.length
-    ? hits.map((hit) => `<button type="button" class="empty-state-hit" data-hit-note="${escapeText(hit.path)}" data-hit-from="${hit.from}" data-hit-to="${hit.to}">`
+  const mark = (text: string): string => escapeText(text).replace(pattern, (m) => `<span class="search-result-file-matched-text">${escapeText(m)}</span>`);
+  const named = nameFiles.length + nameFolders.length;
+  const nameGroup = named
+    ? `<div class="empty-state-group"><div class="empty-state-group-title">Files and folders</div>`
+      + nameFiles.map((path) => `<button type="button" class="empty-state-hit" data-hit-note="${escapeText(path)}">`
+        + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${mark(stem(path))}</span>`
+        + (folders.get(path) ? `<span class="search-result-file-path" dir="auto">${escapeText(folders.get(path)!)}</span>` : '')
+        + `</span></button>`).join('')
+      + nameFolders.map((dir) => `<button type="button" class="empty-state-hit" data-hit-folder="${escapeText(dir)}">`
+        + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${mark(basename(dir))}</span>`
+        + (dirLabels.get(dirname(dir)) ? `<span class="search-result-file-path" dir="auto">${escapeText(dirLabels.get(dirname(dir))!)}</span>` : '')
+        + `</span></button>`).join('')
+      + `</div>`
+    : '';
+  const contentGroup = hits.length
+    ? `<div class="empty-state-group"><div class="empty-state-group-title">In notes</div>`
+      + hits.map((hit) => `<button type="button" class="empty-state-hit" data-hit-note="${escapeText(hit.path)}" data-hit-from="${hit.from}" data-hit-to="${hit.to}">`
       + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${escapeText(stem(hit.path))}</span>`
       + (hit.folder ? `<span class="search-result-file-path" dir="auto">${escapeText(hit.folder)}</span>` : '')
       + `</span><span class="empty-state-hit-line" dir="auto">${escapeText(hit.text.trimStart()).replace(pattern, (m) => `<span class="search-result-file-matched-text">${escapeText(m)}</span>`)}</span></button>`).join('')
-    : '<div class="pane-empty">No results</div>';
+      + `</div>`
+    : '';
+  results.innerHTML = nameGroup + contentGroup || '<div class="pane-empty">No results</div>';
 }
 
 /** Open a new-tab search hit: the note, at the hit, the way a sidebar result
@@ -1458,7 +1505,28 @@ navMenu.addEventListener('click', () => {
   if (quick) noteAction(quick).run();
   else showNoteMenu();
 });
+// One magnifier, one meaning per state — see the note where the click is
+// wired below. It is defined here because renderNavButtons runs at startup.
+// The same magnifier in a tab with no note in it is the *search*: there is no
+// note to find in, and the new tab's own search field is right there in the
+// page (a full search of the whole scope, results inline — "the search icon
+// should exist in new tab and do a full scope search"). So the one button has
+// one meaning per state: find in the note, or focus the search field.
+const findButton = document.querySelector<HTMLButtonElement>('#nav-find')!;
+const emptySearchField = (): HTMLInputElement | null => emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field');
+function syncFindButton(): void {
+  findButton.setAttribute('aria-label', document.body.classList.contains('is-empty-tab') ? 'Search notes' : 'Find in note');
+}
+findButton.addEventListener('click', () => {
+  if (document.body.classList.contains('is-empty-tab')) {
+    const field = emptySearchField();
+    if (field) { field.focus(); field.select?.(); return; }
+  }
+  find(false);
+});
+
 function renderNavButtons(): void {
+  syncFindButton();
   navBack.disabled = activeTab <= 0;
   navForward.disabled = activeTab >= tabs.length - 1;
   navTabsCount.textContent = String(tabs.length);
@@ -1479,7 +1547,6 @@ function find(replace = false): void {
   if (mode !== 'edit') setMode('edit');
   editor.openFind(replace);
 }
-document.querySelector('#nav-find')!.addEventListener('click', () => find(false));
 
 // Android's own selection bar can ask for the same one action the toolbar has:
 // a "Line" item is appended to the WebView's selection menu in Java
@@ -1531,7 +1598,9 @@ async function allNotes(): Promise<{ path: string; text: string }[]> {
 
 /** What each note's folder is called in a list: the path shortened the way
  *  the drawers' own paths are (src/pathShort.ts), each folder read once. */
-async function folderLabels(paths: readonly string[]): Promise<Map<string, string>> {
+/** The shortened label of each of these folders (src/pathShort.ts), each
+ *  folder's own listing read once. A folder whose listing fails stays whole. */
+async function folderPathLabels(dirs: readonly string[]): Promise<Map<string, string>> {
   const names = new Map<string, readonly string[] | null>();
   const nameLookup = async (dir: string): Promise<readonly string[] | null> => {
     if (!names.has(dir)) {
@@ -1540,12 +1609,15 @@ async function folderLabels(paths: readonly string[]): Promise<Map<string, strin
     return names.get(dir)!;
   };
   const out = new Map<string, string>();
-  for (const path of paths) {
-    const dir = dirname(path);
+  for (const dir of dirs) {
     if (out.has(dir)) continue;
     out.set(dir, dir ? await shortenPathIn(dir, nameLookup, { anchor: false }) : '');
   }
-  return new Map(paths.map((path) => [path, out.get(dirname(path)) ?? dirname(path)]));
+  return out;
+}
+async function folderLabels(paths: readonly string[]): Promise<Map<string, string>> {
+  const labels = await folderPathLabels([...new Set(paths.map((path) => dirname(path)))]);
+  return new Map(paths.map((path) => [path, labels.get(dirname(path)) ?? dirname(path)]));
 }
 function sidebarGoToLine(line: number): void {
   ownScroll(400);
@@ -1591,6 +1663,15 @@ const sidebar = createRightSidebar(rightPanel, {
   // (src/pathShort.ts). Null where the app cannot list the folder.
   folderNames: async (dir) => {
     try { return (await backend.list(dir)).map((entry) => entry.name); } catch { return null; }
+  },
+  // A folder a search named: the file panel, opened at that folder. There is
+  // no note to open (a folder is not one), and the drawer's tree is the only
+  // place a folder can be shown — so the panel comes out and the tree opens
+  // down to it.
+  onFolder: (path) => {
+    toggleOutline(false);
+    toggleFiles(true);
+    leftSidebar.openFolder(path);
   },
   onResult: (path, from, to) => {
     toggleOutline(false);

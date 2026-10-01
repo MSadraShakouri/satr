@@ -136,3 +136,79 @@ test('a query that matches nothing says so, and clearing it brings the actions b
   await expect(page.locator('#empty-tab [data-act="new"]')).toBeVisible();
   await expect(page.locator('#empty-tab .empty-state-results')).toBeHidden();
 });
+
+// The bottom row's magnifier has one meaning per state: with a note open it
+// finds in the note, and in a new tab — where there is no note to find in — it
+// is the *search*, focusing the field that is already in the page. (Reported:
+// "search icon in bottom row doesn't exist in site" — it was hidden while the
+// tab was empty, and the new tab's own field was the only way in.)
+test('in a new tab the bottom magnifier is the search, and it focuses the field', async ({ page }) => {
+  await boot(page, false);
+  const find = page.locator('#nav-find');
+  await expect(find).toBeVisible(); // a note is open: find in note
+  await expect(find).toHaveAttribute('aria-label', 'Find in note');
+  await page.locator('#nav-new').click();
+  await expect(find).toBeVisible(); // still there, meaning something else
+  await expect(find).toHaveAttribute('aria-label', 'Search notes');
+  await find.click();
+  await expect(page.locator('#empty-tab .empty-state-search-field')).toBeFocused();
+  // Still the page's own search: no sidebar.
+  expect(await page.evaluate(() => document.body.classList.contains('outline-open'))).toBe(false);
+});
+
+test('with a note open the same button still finds in the note', async ({ page }) => {
+  await boot(page, false);
+  await page.locator('#nav-find').click();
+  const field = page.locator('.document-search-input input');
+  await expect(field).toBeVisible();
+  await expect(field).toBeFocused();
+});
+
+// The search is a finder too: a note's own name, and the folders above it, are
+// matched as well as the text inside them ("one search act as both grep and
+// find"). Both groups come from the note list the search already has.
+test('a new-tab search matches names and folders, above the line hits', async ({ page }) => {
+  await boot(page, false);
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab .empty-state-search-field').fill('alpha');
+  const groups = page.locator('#empty-tab .empty-state-group');
+  await expect(groups).toHaveCount(2); // files and folders, then the lines
+  await expect(groups.first().locator('.empty-state-group-title')).toHaveText('Files and folders');
+  await expect(groups.nth(1).locator('.empty-state-group-title')).toHaveText('In notes');
+  const named = groups.first().locator('.empty-state-hit');
+  await expect(named).toHaveCount(1);
+  await expect(named.first().locator('.empty-state-recent-name')).toHaveText('alpha');
+  // And a folder by its name.
+  await page.locator('#empty-tab .empty-state-search-field').fill('Physics');
+  const folderRow = page.locator('#empty-tab [data-hit-folder]');
+  await expect(folderRow).toHaveCount(1);
+  await expect(folderRow.locator('.empty-state-recent-name')).toHaveText('Physics');
+});
+
+test('a name row opens the note, and a folder row opens the folder', async ({ page }) => {
+  await boot(page, false);
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab .empty-state-search-field').fill('alpha');
+  await page.locator('#empty-tab [data-hit-note]').first().click();
+  await expect(page.locator('#app .cm-file-name')).toHaveText('alpha');
+
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab .empty-state-search-field').fill('Physics');
+  await page.locator('#empty-tab [data-hit-folder]').click();
+  // The file panel, opened at that folder: the row is on screen and expanded.
+  await expect(page.locator('body')).toHaveClass(/files-open/);
+  await expect(page.locator('#file-panel .tree-item-self[data-path="Notes/Physics"]')).toBeVisible();
+});
+
+// A folder row's second line is the path *above* it, not the folder again: the
+// name is already on the row (a folder called Accounting read
+// "Accounting  N/U/Se/Accounting" for one build of this).
+test('a folder row says its name once, then where it sits', async ({ page }) => {
+  await boot(page, false);
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab .empty-state-search-field').fill('Physics');
+  const row = page.locator('#empty-tab [data-hit-folder]');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('.empty-state-recent-name')).toHaveText('Physics');
+  await expect(row.locator('.search-result-file-path')).toHaveText('Notes');
+});

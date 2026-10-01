@@ -118,7 +118,10 @@ test('Enter inside an empty fence opens the block', async ({ page }) => {
   await mount(page);
   await page.keyboard.type('```js');
   await page.keyboard.press('Enter');
-  expect(await state(page)).toEqual({ text: '```js\n\n```js', anchor: 6, head: 6 });
+  // The block's closing fence is bare: the info string is the opening line's,
+  // and only the opening line's ("Inserts another ```py at the bottom, it
+  // shouldn't repeat the py part of it").
+  expect(await state(page)).toEqual({ text: '```js\n\n```', anchor: 6, head: 6 });
 });
 
 test('a fence that is being closed is not re-opened by Enter', async ({ page }) => {

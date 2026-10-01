@@ -2713,10 +2713,12 @@ textarea,
 }
 .is-empty-tab .editor-pane,
 .is-empty-tab .preview-pane,
-.is-empty-tab #preview-toggle,
-.is-empty-tab #nav-find {
+.is-empty-tab #preview-toggle {
   visibility: hidden;
 }
+/* #nav-find stays: in a new tab the magnifier is the *search* (it focuses the
+   field in the page — src/main.ts). Hiding it was why "the search icon in the
+   bottom row doesn't exist" in a new tab. */
 .empty-state-container {
   width: min(480px, calc(100% - 40px));
   margin: auto 20px;
@@ -2846,6 +2848,23 @@ textarea,
 .empty-state-results {
   margin-top: 24px;
   text-align: start;
+}
+/* The new tab's search results, in two groups: files and folders first (the
+   finder), then the lines that matched (the grep). */
+.empty-state-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  text-align: start;
+}
+.empty-state-group-title {
+  padding: 6px 12px 2px;
+  color: var(--text-faint);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .empty-state-hit {
   display: flex;
@@ -3128,6 +3147,29 @@ textarea,
 }
 .nav-filter-name,
 .nav-filter-path,
+/* The search's own finder rows: the notes whose *name* matched, and the
+   folders whose name or path did, above the lines that matched
+   (src/rightSidebar.ts). One header, then rows in the shape of every other
+   result — name, shortened folder, and for a folder the folder glyph. */
+.search-result-group-title {
+  padding: 8px 12px 2px;
+  color: var(--text-faint);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.search-result-group .tree-item-icon {
+  display: flex;
+  align-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+.search-result-group .tree-item-icon svg {
+  width: 16px;
+  height: 16px;
+}
 .search-result-file-path {
   overflow: hidden;
   text-overflow: ellipsis;

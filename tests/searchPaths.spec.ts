@@ -133,3 +133,75 @@ test('the file panel filter shortens the path it shows under a hit', async ({ pa
   });
   expect(paths.sort()).toEqual(['Uni/Sc/Physics', 'Uni/Se/Accounting']);
 });
+
+// The search is a finder as well as a grep: notes whose *name* matches, and
+// the folders whose name or path does, come first — "one search act as both
+// grep and find". Both are read from the note list the search already has, and
+// a folder is only offered while it holds notes (that is all a search over
+// notes can know).
+test('a search matches names and folders above the lines', async ({ page }) => {
+  await boot(page, FILES, 'Notes/Physics/lecture 1.md');
+  await searchAll(page, 'solo');
+  const group = page.locator('#right-panel .search-result-group');
+  await expect(group).toHaveCount(1);
+  await expect(group.locator('.search-result-group-title')).toHaveText('Files and folders');
+  const rows = await group.locator('.search-result-file-title').evaluateAll((els) => els.map((el) => ({
+    name: el.querySelector('.tree-item-inner')?.textContent ?? '',
+    folder: el.querySelector('.search-result-file-path')?.textContent ?? '',
+    note: el.getAttribute('data-note') ?? '',
+    folderAttr: el.getAttribute('data-folder') ?? '',
+  })));
+  expect(rows).toEqual([{ name: 'solo', folder: 'Physics', note: 'Notes/Physics/solo.md', folderAttr: '' }]);
+  // The name match is marked, so it is clear why the row is there.
+  await expect(group.locator('.search-result-file-matched-text')).toHaveText('solo');
+  // And the summary counts it as a name match.
+  await expect(page.locator('#right-panel .search-summary')).toContainText('1 by name');
+  // The lines that matched are still there, *below* the name group — the group
+  // is added in front of them, never instead of them.
+  const order = await page.evaluate(() => {
+    const list = document.querySelector('#right-panel .search-results')!;
+    const first = list.querySelector('.search-result-group');
+    const rows = [...list.children];
+    const groupIndex = rows.indexOf(first as Element);
+    const contentAt = rows.findIndex((el) => !el.classList.contains('search-result-group') && el.querySelector('.search-result-file-match'));
+    return { groupIndex, contentAt, matches: list.querySelectorAll('.search-result-file-match').length };
+  });
+  expect(order.matches).toBeGreaterThan(0);
+  expect(order.groupIndex).toBeLessThan(order.contentAt);
+});
+
+test('a folder matches by its own name and by the path above it', async ({ page }) => {
+  await boot(page, FILES, 'Notes/Physics/lecture 1.md');
+  // By the folder's own name.
+  await searchAll(page, 'Accounting');
+  const byName = await page.locator('#right-panel [data-folder]').evaluateAll((els) => els.map((el) => el.getAttribute('data-folder')));
+  expect(byName).toEqual(['Notes/Uni/Semester 3/Accounting']);
+  // By the path the note lives under: the folder and everything below it
+  // match "Uni/Semester 3" (the search settles asynchronously, so the summary
+  // is what says the new query has landed).
+  await page.locator('#right-panel .vault-search').fill('Semester 3');
+  await expect(page.locator('#right-panel .search-summary')).toContainText('2 by name');
+  const byPath = await page.locator('#right-panel [data-folder]').evaluateAll((els) => els.map((el) => el.getAttribute('data-folder')));
+  expect(byPath).toEqual(['Notes/Uni/Semester 3', 'Notes/Uni/Semester 3/Accounting']);
+});
+
+test('a folder row opens the file panel at that folder', async ({ page }) => {
+  await boot(page, FILES, 'Notes/Physics/lecture 1.md');
+  await searchAll(page, 'Accounting');
+  await page.locator('#right-panel [data-folder]').first().click();
+  await expect(page.locator('body')).toHaveClass(/files-open/);
+  await expect(page.locator('#file-panel .tree-item-self[data-path="Notes/Uni/Semester 3/Accounting"]')).toBeVisible();
+});
+
+test('a name row opens the note, and the note scope stays content-only', async ({ page }) => {
+  await boot(page, FILES, 'Notes/Physics/lecture 1.md');
+  await searchAll(page, 'solo');
+  await page.locator('#right-panel [data-note="Notes/Physics/solo.md"]').first().click();
+  await expect(page.locator('#app .cm-file-name')).toHaveText('solo');
+  // This note's own scope has no notes to find by name: it is the outline.
+  await page.keyboard.press('Control+Shift+f');
+  const panel = page.locator('#right-panel');
+  await panel.locator('[data-scope="note"]').click();
+  await panel.locator('.vault-search').fill('solo');
+  await expect(panel.locator('.search-result-group')).toHaveCount(0);
+});

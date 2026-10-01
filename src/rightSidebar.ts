@@ -18,7 +18,7 @@
 // Queries are regular expressions, ignoring case (src/searchRegex.ts).
 import { headingsOfText, type Heading } from './outline';
 import { isInvalidSearch, searchRegExp } from './searchRegex';
-import { dirname, stem } from './vault';
+import { basename, dirname, stem } from './vault';
 import { shortenPath } from './pathShort';
 
 export interface SidebarDeps {
@@ -39,6 +39,9 @@ export interface SidebarDeps {
    *  the app cannot list it. */
   folderNames(dir: string): Promise<readonly string[] | null>;
   onResult(path: string, from: number, to: number): void;
+  /** A folder a result named: open it in the file panel (the drawer's tree),
+   *  the way a note result opens a note. */
+  onFolder(path: string): void;
   /** The current note's majority direction; the whole tree flips for it. */
   noteDir(): 'ltr' | 'rtl';
 }
@@ -50,13 +53,27 @@ const ICONS = {
   search: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
   chevron: icon('<path d="m6 9 6 6 6-6"/>'),
   collapseAll: icon('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
+  folder: icon('<path d="M3.5 7.5a2 2 0 0 1 2-2h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
   expandAll: icon('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'),
 };
 const SCOPE_KEY = 'satr:search-scope';
 const MAX_PER_NOTE = 100;
+/** How many name matches, and how many folder matches, one search shows. */
+const MAX_NAMES = 12;
+const MAX_FOLDERS = 8;
 const MAX_TOTAL = 1000;
 
 interface Hit { from: number; to: number }
+
+/** A name or path with its matches marked, escaped first so a folder called
+ *  `a<b` prints as itself: the search's own highlight markup, without the
+ *  find bar's line rendering. */
+function markText(text: string, re: RegExp): string {
+  const wrapped = text.replace(new RegExp(re.source, 'giu'), (m) => `\u0000${m}\u0001`);
+  return escapeHtml(wrapped)
+    .replace(/\u0000/g, '<span class="search-result-file-matched-text">')
+    .replace(/\u0001/g, '</span>');
+}
 
 export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   root.innerHTML = `
@@ -237,18 +254,49 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       listed += 1;
       siblings.set(dir, await deps.folderNames(dir).catch(() => null));
     };
+    // The same query is also a finder: a note's *name* or the *path* above it
+    // can be what the reader is after, and matching those costs nothing — the
+    // note list is already here, and the folders come from the notes'
+    // themselves ("one search act as both grep and find"). Folder rows are
+    // derived from the notes' own ancestors: nothing extra is read, and a
+    // folder with no notes in it is not something a search over notes is
+    // looking for.
+    const nameRe = re ? new RegExp(re.source, 'iu') : null;
+    const fileMatches: string[] = [];
+    const folderMatches: string[] = [];
+    if (nameRe) {
+      for (const note of notes) {
+        if (fileMatches.length >= MAX_NAMES) break;
+        if (nameRe.test(stem(note.path))) fileMatches.push(note.path);
+      }
+      const seenFolders = new Set<string>();
+      for (const note of notes) {
+        for (let dir = dirname(note.path); dir; dir = dirname(dir)) {
+          if (dir === root || seenFolders.has(dir)) continue;
+          seenFolders.add(dir);
+        }
+      }
+      for (const dir of seenFolders) {
+        if (folderMatches.length >= MAX_FOLDERS) break;
+        if (nameRe.test(basename(dir)) || nameRe.test(dir)) folderMatches.push(dir);
+      }
+      fileMatches.sort((a, b) => a.localeCompare(b));
+      folderMatches.sort((a, b) => a.localeCompare(b));
+    }
+
     const shortened = new Map<string, string>();
-    for (const note of notes) {
-      const dir = dirname(note.path);
-      const relative = folderOf(note.path);
-      if (!relative || shortened.has(relative)) continue;
+    const shortenDir = async (dir: string): Promise<void> => {
+      const relative = dir && root && dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : dir;
+      if (!relative || shortened.has(relative)) return;
       const base = root && dir.startsWith(`${root}/`) ? root : '';
       const parts = relative.split('/');
       for (let i = 0; i < parts.length; i += 1) {
         await namesIn([base, ...parts.slice(0, i)].filter(Boolean).join('/'));
       }
       shortened.set(relative, shortenPath(relative, (at) => siblings.get(at) ?? null, { base, anchor: true }));
-    }
+    };
+    for (const note of notes) await shortenDir(dirname(note.path));
+    for (const dir of folderMatches) await shortenDir(dir);
     const noteRow = (path: string, flair: string, children: string): string => {
       const key = `n:${path}`;
       const folder = shortened.get(folderOf(path)) ?? folderOf(path);
@@ -290,7 +338,43 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       total += hits.length;
       html += noteRow(note.path, `<span class="tree-item-flair">${hits.length}${hits.length >= MAX_PER_NOTE ? '+' : ''}</span>`, headingTree(note.path, note.text, headingsOf(note), re, hits, `${note.path}|`));
     }
-    summary.textContent = total ? `${total}${capped ? '+' : ''} result${total === 1 ? '' : 's'} in ${files} note${files === 1 ? '' : 's'}` : '';
+    // Matching names and folders, above the lines that matched: a row is one
+    // tap away from the note by its name, or from the folder in the file
+    // panel. (A folder row opens the tree at that folder — nothing else in
+    // the app can put a folder in front of the reader.)
+    const named = fileMatches.length + folderMatches.length;
+    if (named) {
+      const folderOfDir = (dir: string): string => {
+        const parent = dirname(dir);
+        const relative = parent && root && parent.startsWith(`${root}/`) ? parent.slice(root.length + 1) : '';
+        return shortened.get(relative) ?? relative;
+      };
+      // In front of the lines that matched, never instead of them: `html`
+      // already holds the content rows by now.
+      html = `<div class="search-result-group" data-key="g:names">`
+        + `<div class="search-result-group-title">Files and folders</div>`
+        + fileMatches.map((path) => {
+          const dir = dirname(path);
+          const relative = folderOf(path);
+          return `<div class="tree-item search-result" data-key="f:${escapeHtml(path)}">`
+            + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(path)}">`
+            + `<span class="tree-item-inner" dir="auto">${markText(stem(path), nameRe!)}</span>`
+            + (relative ? `<span class="search-result-file-path" dir="auto">${escapeHtml(shortened.get(relative) ?? relative)}</span>` : '')
+            + `</div></div>`;
+        }).join('')
+        + folderMatches.map((dir) => {
+          const parent = folderOfDir(dir);
+          return `<div class="tree-item search-result" data-key="d:${escapeHtml(dir)}">`
+            + `<div class="search-result-file-title tree-item-self is-clickable" data-folder="${escapeHtml(dir)}">`
+            + `<span class="tree-item-icon">${ICONS.folder}</span>`
+            + `<span class="tree-item-inner" dir="auto">${markText(basename(dir), nameRe!)}</span>`
+            + (parent ? `<span class="search-result-file-path" dir="auto">${escapeHtml(parent)}</span>` : '')
+            + `</div></div>`;
+        }).join('')
+        + `</div>` + html;
+    }
+    const counted = named ? ` \u00b7 ${named} by name` : '';
+    summary.textContent = total ? `${total}${capped ? '+' : ''} result${total === 1 ? '' : 's'} in ${files} note${files === 1 ? '' : 's'}${counted}` : (named ? `${named} by name` : '');
     list.innerHTML = html || '<div class="pane-empty">No results</div>';
     renderChrome();
     markCurrent();
@@ -341,6 +425,8 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const target = event.target as HTMLElement;
     const match = target.closest<HTMLElement>('.search-result-file-match');
     if (match) { deps.onResult(match.dataset.path!, Number(match.dataset.from), Number(match.dataset.to)); return; }
+    const folder = target.closest<HTMLElement>('[data-folder]');
+    if (folder) { deps.onFolder(folder.dataset.folder!); return; }
     // The chevron's tap area is wider than the 16px icon: the whole row
     // height and 14px either side of it, which covers the row's indent.
     let toggle = target.closest<HTMLElement>('[data-toggle]');
