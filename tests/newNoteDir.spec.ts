@@ -22,9 +22,11 @@ async function boot(page: Page, files: Record<string, string>, active: string) {
   }));
 }
 
-/** Tap the app's own New note button and let it land. */
+/** The app's own way to a new note: the tab bar's + opens the new tab (it
+ *  makes a tab, not a note — see newTab.spec.ts), and Create new note is on it. */
 async function newNote(page: Page): Promise<void> {
   await page.locator('#nav-new').click();
+  await page.locator('#empty-tab [data-act="new"]').click();
   await expect(page.locator('#app .cm-file-name')).toHaveText(/^Untitled/);
 }
 
@@ -59,6 +61,15 @@ test('a note at the very top of the storage is not a folder to write into', asyn
   await newNote(page);
   expect(await exists(page, 'Notes/Untitled.md')).toBe(true);
   expect(await exists(page, 'Untitled.md')).toBe(false);
+});
+
+test('a note made on the new tab still lands where the reader was', async ({ page }) => {
+  // The tab bar's + is the way to a new tab, and the new tab is where a note
+  // can be made: stepping through it must not lose the folder of the note the
+  // reader came from.
+  await boot(page, { 'Notes/Physics/lecture.md': '# Lecture\n' }, 'Notes/Physics/lecture.md');
+  await newNote(page);
+  expect(await exists(page, 'Notes/Physics/Untitled.md')).toBe(true);
 });
 
 test('a name already taken in that folder steps aside', async ({ page }) => {

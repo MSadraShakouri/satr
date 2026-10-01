@@ -142,6 +142,19 @@ export function insertMath(view: EditorView): boolean {
   return insertDelimiter(view, '$');
 }
 
+/** Markor's "expand selection of cursor to whole line", as one action: every
+ *  line the selection (or the caret) touches becomes selected whole, so a line
+ *  can be copied, cut or replaced without dragging handles to its ends. It
+ *  lives in the keyboard toolbar — the floating selection bar has the same
+ *  action as its "Line", and Markor's own bar is where the idea comes from. */
+export function selectWholeLines(view: EditorView): boolean {
+  const lines = touchedLines(view);
+  if (!lines.length) return false;
+  const ranges = lines.map((line) => EditorSelection.range(line.from, line.to));
+  view.dispatch({ selection: EditorSelection.create(ranges, 0), userEvent: 'select.pointer', scrollIntoView: false });
+  return true;
+}
+
 export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
   undo, redo,
   heading: cycleHeading,
@@ -150,6 +163,7 @@ export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
   task: cycleTask,
   footnote: insertFootnote,
   deleteLine,
+  line: selectWholeLines,
   math: insertMath,
   lineUp: moveLineUp,
   lineDown: moveLineDown,

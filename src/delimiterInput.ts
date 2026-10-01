@@ -1,6 +1,25 @@
 // Markdown delimiters share one policy for typing and the math toolbar.
 // Remember pairs per editor, not in a timer/global: only an empty pair we
 // actually inserted may be deleted together. Existing $$ delimiters are text.
+//
+// One delimiter is its own case: a single `=` is a setext underline, a table
+// rule, an arithmetic sign — far more often than the start of a
+// `==highlight==`. Pairing `=` on the first press made every one of those
+// impossible (and put the caret between two `=` the writer never typed), so
+// `=` types one `=`; the *second* `=`, with the first still the last thing
+// written, is what opens the pair, in the form the editor has always produced
+// for two presses: `==|==`, whose closing two are the inserted ones and go
+// away on a space, like every other empty pair's closing half.
+//
+// `~` follows the same rule for the same reason: a lone `~` is a range
+// ("10~20") or a subscript in some flavours, and `~~strikethrough~~` costs no
+// more than two presses. Backticks are the other way round — one backtick is
+// almost always the start of `code` — so the first press opens the pair and
+// each press inside it grows the run, up to three (`` ``` ``); Enter inside an
+// empty run of three opens a fenced block, exactly as Enter inside `$$|$$`
+// opens a display-math block. A `"` is a quotation mark, not a markdown
+// delimiter, and pairs only where a pair means something: inside a bracket,
+// where the writer is quoting something into it — `(""`.
 import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, StateEffect, StateField, type EditorState, type SelectionRange } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -15,10 +34,35 @@ const pairs = StateField.define<Pair[]>({
       .filter((p) => p.to - p.from >= p.mark.length * 2
         && tr.newDoc.sliceString(p.from, p.from + p.mark.length) === p.mark
         && tr.newDoc.sliceString(p.to - p.mark.length, p.to) === p.mark);
-    for (const effect of tr.effects) if (effect.is(addPair)) mapped.push(effect.value);
+    for (const effect of tr.effects) if (effect.is(addPair)) {
+      // The pair that was there is what grew into this one (`` `|` `` into
+      // `` ``|`` ``): only the longest run is a pair to skip over later.
+      for (let i = mapped.length - 1; i >= 0; i -= 1) {
+        if (mapped[i].from === effect.value.from && mapped[i].to === effect.value.to) mapped.splice(i, 1);
+      }
+      mapped.push(effect.value);
+    }
     return mapped;
   },
 });
+
+// The one `=` (or `~`) of the pair rule above: the mark the writer last typed
+// on its own, and where it ended. Anything else the writer does ends the
+// chance to pair — the field only survives transactions that change no
+// document (a caret move can't turn a typed `=` into the start of a highlight
+// on its own).
+const setLoneMark = StateEffect.define<{ mark: string; at: number } | null>();
+const loneMark = StateField.define<{ mark: string; at: number } | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(setLoneMark)) return effect.value;
+    return tr.docChanged ? null : value;
+  },
+});
+/** The marks that type one first, and pair on the second press. */
+const ONE_THEN_PAIR = new Set(['=', '~']);
+/** How long a run of one mark may grow (the inside of an empty pair). */
+const runCap = (mark: string): number => (mark === '*' || mark === '_' || mark === '`' ? 3 : 2);
 
 function escaped(state: EditorState, pos: number): boolean {
   let n = 0;
@@ -54,7 +98,11 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
   const { from, to } = range;
   const literal = () => ({ changes: { from, to, insert: text }, range: EditorSelection.cursor(from + text.length) });
   const mark = text[0];
-  if (inCode(state, from) || escaped(state, from) || (mark !== '$' && inMath(state, from))) return literal();
+  if (escaped(state, from) || (mark !== '$' && inMath(state, from))) return literal();
+  const pair = state.field(pairs, false)?.find((p) => p.mark[0] === mark && from === p.from + p.mark.length && from === p.to - p.mark.length);
+  // Code is out of bounds for delimiters — except our own empty pair, which is
+  // where the run grows (`` `|` ``, `` ``|`` ``, ``` ```|``` ```).
+  if (!pair && inCode(state, from)) return literal();
 
   if (!range.empty) {
     // Keep the selection and its direction, allowing * then * to make bold.
@@ -65,9 +113,16 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
     };
   }
 
-  const pair = state.field(pairs, false)?.find((p) => p.mark[0] === mark && from === p.from + p.mark.length && from === p.to - p.mark.length);
-  if (pair && pair.mark.length < (mark === '*' || mark === '_' ? 3 : 2)) {
-    const next = mark.repeat(Math.min(mark === '*' || mark === '_' ? 3 : 2, pair.mark.length + text.length));
+  if (pair && pair.mark.length < runCap(mark)) {
+    const next = mark.repeat(Math.min(runCap(mark), pair.mark.length + text.length));
+    // The third backtick is a fence, not a longer span: the run ends there and
+    // the closing half goes away — the writer is opening a block, and Enter
+    // after it opens the writing line (enterCodeFence). (Left in, ` ``` ` +
+    // Enter used to leave six backticks that the markdown parser then quietly
+    // cut back to a three-backtick fence.)
+    if (mark === '`' && next === '```') {
+      return { changes: { from: pair.from, to: pair.to, insert: '```' }, range: EditorSelection.cursor(pair.from + 3) };
+    }
     if (mark === '$') {
       const block = displayBlock(state, pair.from, pair.to);
       if (block) return block;
@@ -79,6 +134,13 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
     };
   }
 
+  // A mark past the run's cap grows the run rather than skipping the closing
+  // half: `==|==` and another `=` is `===|==`, which is what a setext
+  // underline is made of (and a space still takes the closing two away).
+  if (pair && pair.mark === mark.repeat(runCap(mark))) {
+    return { changes: { from, to: from, insert: mark }, range: EditorSelection.cursor(from + 1) };
+  }
+
   const closing = closingAt(state, from, mark);
   if (closing >= 0) return { range: EditorSelection.cursor(Math.min(closing, from + text.length)) };
   if (inMath(state, from)) return literal();
@@ -87,11 +149,52 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
   const after = state.sliceDoc(to, to + 1);
   // No accidental formatting in snake_case, prices, escapes, or mid-word.
   if (/[\p{L}\p{N}_]/u.test(before) || (after && !/[\s)\]}.,;:!?،؛»]/.test(after))) return literal();
+  // The second `=` (or `~`): the writer has just typed one, so this one opens
+  // the pair — `==|==`, `~~|~~` — and the pair is tracked like any other.
+  const lone = state.field(loneMark, false);
+  if (lone && ONE_THEN_PAIR.has(mark) && lone.mark === mark && lone.at === from) {
+    return {
+      changes: { from, to: from, insert: mark.repeat(3) },
+      range: EditorSelection.cursor(from + 1),
+      effects: addPair.of({ from: from - 1, to: from + 3, mark: mark.repeat(2) }),
+    };
+  }
   // A neighbouring opening delimiter isn't a closing one to skip over.
   if (before === mark || after === mark) return literal();
   if (text === '$$') {
     const block = displayBlock(state, from, to);
     if (block) return block;
+  }
+  // A run that arrives in one input event (a fast keyboard, a swiped word):
+  // the same result as a press at a time — `==|==`, `~~|~~`, `` ``|`` ``.
+  if (mark !== '$' && text.length > 1 && text === mark.repeat(text.length) && text.length <= runCap(mark)) {
+    return {
+      changes: { from, to: from, insert: text + text },
+      range: EditorSelection.cursor(from + text.length),
+      effects: addPair.of({ from, to: from + text.length * 2, mark: text }),
+    };
+  }
+  // A `"` pairs where a pair means something: inside a bracket the writer is
+  // quoting something into it — `(""` with the caret between the quotes.
+  // Anywhere else it is one quotation mark, exactly as typed.
+  if (mark === '"') {
+    if (!/[([{<«‘“]$/.test(state.sliceDoc(Math.max(0, from - 1), from))) return literal();
+    return {
+      changes: { from, to, insert: '""' },
+      range: EditorSelection.cursor(from + 1),
+      effects: addPair.of({ from, to: from + 2, mark: '"' }),
+    };
+  }
+  // One `=` (or `~`) is one mark, and it is remembered as the possible start of
+  // a pair (see the second mark above): setext underlines, tables, arithmetic
+  // and ranges get theirs, and a `==highlight==`/`~~strike~~` still costs no
+  // more than two presses.
+  if (ONE_THEN_PAIR.has(mark)) {
+    return {
+      changes: { from, to, insert: mark },
+      range: EditorSelection.cursor(from + 1),
+      effects: setLoneMark.of({ mark, at: from + 1 }),
+    };
   }
   return {
     changes: { from, to, insert: text + text },
@@ -125,6 +228,39 @@ export function enterDisplayMath(view: EditorView): boolean {
   return true;
 }
 
+/** Enter in a lone ``` line (or inside an empty ```|``` run) opens a fenced
+ *  block, the way enterDisplayMath opens a display-math one. */
+export function enterCodeFence(view: EditorView): boolean {
+  const { state } = view;
+  const range = state.selection.main;
+  if (state.readOnly || !range.empty || state.selection.ranges.length !== 1) return false;
+  const line = state.doc.lineAt(range.head);
+  const match = /^([ \t]*)(`{3,})([^\n`]*?)[ \t]*((?:`{3,})[ \t]*)?$/.exec(line.text);
+  if (!match) return false;
+  const indent = match[1];
+  const fence = match[2];
+  const info = match[3];
+  const start = line.from + indent.length;
+  const closing = match[4];
+  const end = closing ? line.from + line.text.lastIndexOf(closing) : line.to;
+  if (range.head < start + fence.length + info.length || range.head > end) return false;
+  // A fence line that is already inside a block closes it: Enter there is an
+  // ordinary newline after it, never a new block. (The opening line of a
+  // block, and a lone fence, are *not* inside one.)
+  if (inCode(state, line.from)) return false;
+  // The closing fence repeats the opening line, language and all — what the
+  // markdown keymap's own fence continuation does.
+  const open = `${indent}${fence}${info}`;
+  const close = `${indent}${fence}${info}`;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: `${open}\n${indent}\n${close}` },
+    selection: EditorSelection.cursor(line.from + open.length + 1 + indent.length),
+    effects: addPair.of({ from: line.from, to: line.from + open.length + 1 + indent.length + close.length, mark: fence }),
+    userEvent: 'input.enter', scrollIntoView: true,
+  });
+  return true;
+}
+
 export function deleteDelimiterPair(view: EditorView): boolean {
   const { state } = view;
   if (state.readOnly || state.selection.ranges.some((r) => !r.empty)) return false;
@@ -144,15 +280,18 @@ export function deleteDelimiterPair(view: EditorView): boolean {
 // worth — a space before `)` is usually wanted, and never surprising.)
 const input = EditorView.inputHandler.of((view, from, to, text) => {
   if (view.composing || view.state.readOnly || from !== view.state.selection.main.from || to !== view.state.selection.main.to) return false;
-  if (/^(\${1,2}|\*{1,3}|_{1,3}|~{1,2}|={1,2}|%{1,2})$/.test(text)) return insertDelimiter(view, text);
+  if (/^(\${1,2}|\*{1,3}|_{1,3}|~{1,2}|={1,2}|%{1,2}|`{1,3}|")$/.test(text)) return insertDelimiter(view, text);
   if (text === ' ' && from === to) {
-    const pair = view.state.field(pairs).find((p) => p.mark.length === 1 && p.mark !== '$' && p.from + 1 === from && p.to - 1 === to);
+    // An empty pair's closing half goes away, whatever its length: `= ` out of
+    // `==|==` (the pair the second `=` opened) as much as `* ` out of `*|*`.
+    const pair = view.state.field(pairs).find((p) => p.mark.length <= 2 && p.mark !== '$$'
+      && p.from + p.mark.length === from && p.to - p.mark.length === to);
     if (pair) {
-      view.dispatch({ changes: { from, to: from + 1, insert: ' ' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });
+      view.dispatch({ changes: { from, to: from + pair.mark.length, insert: ' ' }, selection: { anchor: from + 1 }, userEvent: 'input.type' });
       return true;
     }
   }
   return false;
 });
 
-export const delimiterInput = [pairs, input];
+export const delimiterInput = [pairs, loneMark, input];

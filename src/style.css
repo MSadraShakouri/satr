@@ -1020,34 +1020,23 @@ body {
   cursor: pointer;
   position: relative;
 }
-/* The tappable leading area of a task's line — a box on the *line*, where the
-   geometry is the line's own: the full height of the line, from its start side
-   through the checkbox. A finger that lands anywhere in it ticks the box, and
-   the task's text keeps its own taps, so editing a task is still a caret on
-   its words.
+/* A task's line is marked .cm-lp-task-line for the tap handler, which reads
+   the tap from where the finger is rather than from the element it hit (the
+   line is what a touch reports for the text and for the marker alike): on the
+   marker — the 17px box plus the 7px of margin it carries on the line's side —
+   the tap ticks the box, and on the words it is a caret.
 
-   The marker keeps its own 17px box, and it had a pseudo-element of its own
-   before this — an absolutely positioned area on a *zero-height* inline (the
-   marker's text is at font-size: 0), whose real geometry was not what its
-   insets said. Measured, its wide part sat above the square, and its lower
-   half — exactly where a finger aiming at the square lands — was 14px wide.
-   A tap there belongs to the line, which places a caret: "the hit box is
-   small" and the caret coming back, again, were the same thing. A line's own
-   box has nothing to interpret. */
-.cm-line.cm-lp-task-line {
-  position: relative;
-}
-.cm-line.cm-lp-task-line::after {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  /* The marker's own room plus the box, and a little past it: the task's text
-     starts after this. In the line's own em, so it grows with the note, and
-     never taller than its own line, so the task above or below is never
-     taken. */
-  width: calc(2.4em + 17px);
-}
+   The area needs no pseudo-element. It had one, twice: first on the marker
+   itself, where an absolutely positioned box on a *zero-height* inline (the
+   marker's text is at font-size: 0) put its wide part above the square and
+   only 14px of it where a finger aiming at the square lands — "the hit box is
+   small", and the caret coming back, were that. Then on the line, where it
+   worked but reached a fixed width past the marker into the text: the marker
+   is drawn from the line's start, so any width guess either misses the box or
+   eats the first characters of the task ("the hit box got too big and I can no
+   longer select the first few chars of a checklist item"). The marker's own
+   rect is the one measurement that is always right, and it is the one the
+   handler uses. */
 .cm-lp-task::before {
   /* Obsidian mobile checkbox: 17px, 4px radius, 1px faint border */
   content: "";
@@ -1911,7 +1900,10 @@ input.mod-no-match {
 .document-search-container input {
   display: block;
   width: 100%;
-  min-height: 40px;
+  /* 36px, not 40: with `height: auto` a 40px field is a tall bar for one
+     line of text on a phone. A minimum still, so a larger system font scale
+     grows it with the text. */
+  min-height: 36px;
   height: auto;
   padding: 8px 16px;
   border: 1px solid var(--background-modifier-border);
@@ -2707,7 +2699,13 @@ textarea,
   display: none;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Centred by the container's own auto margins, not by `justify-content:
+     center`: with a list of recent notes the content is taller than a phone's
+     screen, and a centred column in a scroll container loses its top — the
+     first actions ended up pinned to the top of the screen with no way to
+     scroll to what was above them. Auto margins centre it when it fits and
+     leave it scrollable from the first line when it doesn't. */
+  justify-content: flex-start;
   overflow-y: auto;
   padding: 60px 0 100px;
   background: var(--background-primary);
@@ -2724,7 +2722,7 @@ textarea,
 }
 .empty-state-container {
   width: min(480px, calc(100% - 40px));
-  margin: 20px;
+  margin: auto 20px;
   text-align: center;
 }
 .empty-state-title {
@@ -2782,10 +2780,116 @@ textarea,
   font-size: 1rem;
   unicode-bidi: plaintext;
 }
+/* The new tab's own search (src/main.ts): one wide field with the search icon
+   at its start, over the whole current scope — the sidebar's search, laid out
+   in the page instead of in a drawer that covers it. */
+.empty-state-search {
+  position: relative;
+  width: min(480px, calc(100% - 8px));
+  margin: 4px auto 0;
+}
+.empty-state-search-icon {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  transform: translateY(-50%);
+  -webkit-tap-highlight-color: transparent;
+}
+.empty-state-search-icon:active {
+  background: var(--background-modifier-hover);
+}
+.empty-state-search-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.empty-state-search-field {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  padding: 8px 16px;
+  padding-inline-start: 48px;
+  border: 0;
+  border-radius: var(--input-radius);
+  outline: none;
+  background: var(--interactive-normal);
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 1rem; /* no zoom-on-focus on phones */
+  unicode-bidi: plaintext;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.empty-state-search-field:focus {
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35);
+}
+.empty-state-search-field::-webkit-search-cancel-button {
+  display: none;
+}
+/* While a query is up, the new tab is a search: the actions and the recent
+   notes make way for the results. */
+.empty-state-container.has-query .empty-state-action-list,
+.empty-state-container.has-query .empty-state-recent {
+  display: none;
+}
+.empty-state-results {
+  margin-top: 24px;
+  text-align: start;
+}
+.empty-state-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: transparent;
+  text-align: start;
+  -webkit-tap-highlight-color: transparent;
+}
+.empty-state-hit:active {
+  background: var(--background-modifier-hover);
+}
+.empty-state-hit-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.empty-state-hit-line {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
 .empty-state-recent-dir {
   color: var(--text-faint);
   font-size: 0.75rem;
   unicode-bidi: plaintext;
+  /* The folder is shortened (src/pathShort.ts), and clipped if it still does
+     not fit: a wrapped path under the note's name reads as a second line of
+     it, which is what this line is not. */
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .empty-state-recent-dir:empty {
   display: none;
@@ -3220,6 +3324,105 @@ textarea,
   font-family: var(--font-monospace);
   font-size: 0.75rem;
 }
+/* The phone's own selection bar (src/selectionBar.ts): a raised pill over the
+   finger's selection with the actions Android's own bar would carry, plus
+   Markor's Line. Placed by the module (translate3d), so nothing here positions
+   it. */
+.selection-bar {
+  position: fixed;
+  z-index: 45;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 6px;
+  border-radius: 44px;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
+  transform: translate3d(0, 0, 0);
+  transition: opacity 0.12s ease-out;
+}
+.selection-bar[hidden] {
+  display: none;
+}
+.selection-bar button {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 34px;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.selection-bar button:active {
+  background: var(--background-modifier-hover);
+}
+/* The selection's two handles, under its two ends. The platform draws its own
+   only for a selection it made from a gesture of its own; these are the same
+   two grips for the selections the app made (a double tap's word, a drag, a
+   line), so a selection can be adjusted instead of started over. They hang
+   below the line so a thumb does not cover what it is adjusting, and each one
+   swallows the finger's own scrolling — the drag is the handle's, not the
+   note's. */
+.selection-handles {
+  position: fixed;
+  z-index: 46;
+  inset: 0;
+  pointer-events: none;
+}
+.selection-handles[hidden] {
+  display: none;
+}
+.selection-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transform: translate3d(0, 0, 0);
+}
+.selection-handle span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-accent, var(--interactive-accent));
+  box-shadow: 0 0 0 2px var(--background-primary), var(--shadow-xs);
+}
+.selection-handle span::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  width: 2px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--text-accent, var(--interactive-accent));
+}
+.selection-handle[data-edge="start"] span::after {
+  inset-inline-end: 3px;
+}
+.selection-handle[data-edge="end"] span::after {
+  inset-inline-start: 3px;
+}
+.selection-handle.is-dragging span {
+  box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 6px var(--background-modifier-hover);
+}
+
 /* The ≡ button with a quick action: the action's icon and a small
    chevrons-up-down flair (hold for the menu), as Obsidian's. */
 #nav-menu {

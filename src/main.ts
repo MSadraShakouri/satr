@@ -17,6 +17,8 @@ import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { showNotice, type NoticeHandle } from './notice';
+import { shortenPathIn } from './pathShort';
+import { createSelectionBar, type SelectionBar, type SelectionAction } from './selectionBar';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
@@ -63,6 +65,7 @@ app.innerHTML = `
         <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg></button>
         <button tabindex="-1" data-command="math" aria-label="Math"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></button>
         <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
+        <button tabindex="-1" data-command="line" aria-label="Select whole line"><svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 18h16"/><path d="M4 12h16"/></svg></button>
         <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M10 11v6M14 11v6M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         <button tabindex="-1" data-command="lineBelow" aria-label="New line below"><svg viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/></svg></button>
         <button tabindex="-1" data-command="lineUp" aria-label="Move line up"><svg viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></button>
@@ -76,7 +79,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Previous tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
@@ -462,6 +465,7 @@ function update(): void {
   saveTimer = window.setTimeout(saveNow, 700);
 }
 splitView.addEventListener('change', () => { if (splitView.matches && previewDirty) renderPreview(); });
+let selectionBar: SelectionBar | null = null;
 function setMode(next: Mode, restoredLine?: number): void {
   if (restoredLine === undefined) releaseHold();
   const generation = viewGeneration;
@@ -470,6 +474,7 @@ function setMode(next: Mode, restoredLine?: number): void {
   const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view));
   mode = next;
   document.body.dataset.mode = mode;
+  selectionBar?.hide(); // the bar belongs to the editing view
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
   previewButton.innerHTML = mode === 'edit' ? bookIcon : penIcon;
   previewButton.setAttribute('aria-label', mode === 'edit' ? 'Open preview' : 'Return to editor');
@@ -492,7 +497,8 @@ function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
 
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
-  onSelection: () => rememberViewSoon(),
+  autoSpace: loadSettings().spaceAfterPunctuation,
+  onSelection: () => { rememberViewSoon(); syncSelectionBar(); },
   onFold: () => { applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
   linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
   openLink: (target, heading) => openLink(target, heading),
@@ -744,6 +750,7 @@ async function leaveCurrent(): Promise<boolean> {
   return saved;
 }
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
   ++viewGeneration;
   window.clearTimeout(viewTimer);
   window.clearTimeout(renderTimer);
@@ -926,8 +933,16 @@ async function openFallback(): Promise<void> {
 // notes have never gone), when there is no note open at all, or when the file
 // was opened from another app — a folder that is none of Satr's business. All
 // of those get the space's own home, as before.
+// The note the reader was last *in*. An empty tab is not a place to write from,
+// so a note made on the new tab belongs to the folder of the note they came
+// from — the tab-bar + is the way to that screen, and the folder should not be
+// lost by stepping through it. Nothing ever opened this session still means the
+// space's own home, and a file shared in from another app is not a folder of
+// the reader's to write into (both as before).
+let lastNotePath = '';
 function focusedNoteDir(): string {
-  const dir = filePath && externalFileScreen.hidden ? dirname(filePath) : '';
+  const path = filePath && externalFileScreen.hidden ? filePath : lastNotePath;
+  const dir = path && !isExternalPath(path) ? dirname(path) : '';
   return dir || notesHome();
 }
 async function newFile(dir = focusedNoteDir()): Promise<void> {
@@ -1221,27 +1236,105 @@ async function renderEmptyTab(): Promise<void> {
     if (recent.length >= 8) break;
     if (await backend.stat(path)) recent.push(path);
   }
+  // The folder under each recent note's name, shortened the way the drawers'
+  // own paths are (src/pathShort.ts): the folder the note lives in keeps its
+  // name, the ones above it are cut to the shortest prefix their siblings
+  // leave free — "accounting" survives where "documents" can be cut.
+  const dirs = await folderLabels(recent);
   emptyTab.innerHTML = `
-    <div class="empty-state-container">
+    <div class="empty-state-container${emptyQuery ? ' has-query' : ''}">
       <div class="empty-state-title">No file is open</div>
+      <div class="empty-state-search">
+        <button type="button" class="empty-state-search-icon" data-act="search" aria-label="Search notes">${SEARCH_ICON}</button>
+        <input type="search" class="empty-state-search-field" dir="auto" placeholder="Search notes" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${escapeText(emptyQuery)}">
+      </div>
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
         <button type="button" class="empty-state-action" data-act="files">Go to file</button>
         ${tabs.length > 1 ? '<button type="button" class="empty-state-action" data-act="close">Close</button>' : ''}
       </div>
+      <div class="empty-state-results"${emptyQuery ? '' : ' hidden'}></div>
       ${recent.length ? `<div class="empty-state-recent"><div class="empty-state-recent-title">Recent notes</div>${recent.map((p) =>
-        `<button type="button" class="empty-state-recent-item" data-path="${escapeText(p)}"><span class="empty-state-recent-name" dir="auto">${escapeText(stem(p))}</span><span class="empty-state-recent-dir" dir="auto">${escapeText(dirname(p))}</span></button>`).join('')}</div>` : ''}
+        `<button type="button" class="empty-state-recent-item" data-path="${escapeText(p)}"><span class="empty-state-recent-name" dir="auto">${escapeText(stem(p))}</span><span class="empty-state-recent-dir" dir="auto">${escapeText(dirs.get(p) ?? dirname(p))}</span></button>`).join('')}</div>` : ''}
     </div>`;
+  const field = emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field')!;
+  field.addEventListener('input', () => { emptyQuery = field.value; void runEmptySearch(); });
+  field.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && field.value) { event.preventDefault(); field.value = ''; emptyQuery = ''; void runEmptySearch(); }
+  });
+  if (emptyQuery) void runEmptySearch();
 }
 emptyTab.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  const hit = target.closest<HTMLElement>('[data-hit-note]');
+  if (hit) {
+    openEmptyHit(hit.dataset.hitNote!, Number(hit.dataset.hitFrom ?? 0), Number(hit.dataset.hitTo ?? 0));
+    return;
+  }
   const recent = target.closest<HTMLElement>('[data-path]');
   if (recent) { void openFile(recent.dataset.path!); return; }
   const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (act === 'new') void newFile();
   else if (act === 'files') toggleFiles(true);
+  else if (act === 'search') emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field')?.focus();
   else if (act === 'close') closeTab(activeTab);
 });
+
+// The new tab's own search: a big field over the whole current scope (the
+// space, or the folder All files is browsing), the way the sidebar's search
+// works but laid out in the page — the reader asked for a search in the new
+// tab itself, not a drawer that covers it. Results are note + folder + the
+// matching line; opening one goes to the line with the find bar's own ring on
+// it, exactly as a sidebar result does.
+let emptyQuery = '';
+let emptySearchRun = 0;
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"/><circle cx="11" cy="11" r="8"/></svg>';
+const EMPTY_HITS_MAX = 60;
+async function runEmptySearch(): Promise<void> {
+  const mine = ++emptySearchRun;
+  const results = emptyTab.querySelector<HTMLElement>('.empty-state-results')!;
+  const container = emptyTab.querySelector<HTMLElement>('.empty-state-container')!;
+  const query = emptyQuery.trim();
+  container.classList.toggle('has-query', Boolean(query));
+  if (!query) { results.hidden = true; results.innerHTML = ''; return; }
+  results.hidden = false;
+  const needle = query.toLocaleLowerCase();
+  const hits: { path: string; from: number; to: number; text: string; folder: string }[] = [];
+  const notes = await allNotes();
+  if (mine !== emptySearchRun) return;
+  const folders = await folderLabels(notes.map((note) => note.path));
+  if (mine !== emptySearchRun) return;
+  for (const note of notes) {
+    if (hits.length >= EMPTY_HITS_MAX) break;
+    let from = 0;
+    for (const line of note.text.split('\n')) {
+      const at = line.toLocaleLowerCase().indexOf(needle);
+      if (at >= 0) {
+        hits.push({ path: note.path, from: from + at, to: from + at + query.length, text: line, folder: folders.get(note.path) ?? '' });
+        if (hits.length >= EMPTY_HITS_MAX) break;
+      }
+      from += line.length + 1;
+    }
+  }
+  const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  results.innerHTML = hits.length
+    ? hits.map((hit) => `<button type="button" class="empty-state-hit" data-hit-note="${escapeText(hit.path)}" data-hit-from="${hit.from}" data-hit-to="${hit.to}">`
+      + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${escapeText(stem(hit.path))}</span>`
+      + (hit.folder ? `<span class="search-result-file-path" dir="auto">${escapeText(hit.folder)}</span>` : '')
+      + `</span><span class="empty-state-hit-line" dir="auto">${escapeText(hit.text.trimStart()).replace(pattern, (m) => `<span class="search-result-file-matched-text">${escapeText(m)}</span>`)}</span></button>`).join('')
+    : '<div class="pane-empty">No results</div>';
+}
+
+/** Open a new-tab search hit: the note, at the hit, the way a sidebar result
+ *  does — the caret after it and the ring on it for a few seconds. */
+function openEmptyHit(path: string, from: number, to: number): void {
+  void openFile(path, () => {
+    if (mode !== 'edit') setMode('edit');
+    ownScroll(400);
+    releaseHold();
+    editor.flashRange(from, to);
+  });
+}
 
 function showTabs(): void {
   void (async () => {
@@ -1377,7 +1470,10 @@ function renderNavButtons(): void {
 }
 navBack.addEventListener('click', () => void stepTab(-1));
 navForward.addEventListener('click', () => void stepTab(1));
-document.querySelector('#nav-new')!.addEventListener('click', () => void newFile());
+// The + opens a tab, not a note. A note is one tap away from the tab it opens
+// (Create new note), and the same screen is where Search and Go to file live —
+// which is what a + on a phone means everywhere else.
+document.querySelector('#nav-new')!.addEventListener('click', () => newTab());
 // The bar never takes focus from the note (no keyboard flicker).
 document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
 renderNavButtons();
@@ -1388,21 +1484,181 @@ function find(replace = false): void {
 }
 document.querySelector('#nav-find')!.addEventListener('click', () => find(false));
 
+// Android's own selection bar can ask for the same thing ours does: a "Line"
+// item is appended to the WebView's selection menu in Java
+// (android/…/SatrWebView.java), the way Markor's whole-line selection is a
+// menu item there, and this is the page's half of it. The selection it makes
+// is the platform's, not the app's, so the app's own bar stays out of the way
+// and Android's menu remains the one on screen.
+declare global { interface Window { satrSelectionAction?: (action: string) => void } }
+window.satrSelectionAction = (action: string): void => {
+  if (action !== 'line') return;
+  if (mode !== 'edit') setMode('edit');
+  editor.expandToLines(false);
+  syncSelectionBar();
+};
+
+// ---- The phone's own selection bar (src/selectionBar.ts) ----
+// Android's selection bar appears for a selection the platform made itself.
+// Satr's double tap finds the word on its own (src/touchSelection.ts), and a
+// WebView will not show its bar for a selection it did not make, so the app
+// brings the same actions — and Markor's "Line" — in its own bar, over the
+// finger's selection. Touch devices only: on the desktop the keyboard and the
+// mouse already have every one of these.
+const touchDevice = (): boolean => navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+function syncSelectionBar(): void {
+  if (!selectionBar) return;
+  const [anchor, head] = editor.getSelection();
+  const from = Math.min(anchor, head);
+  const to = Math.max(anchor, head);
+  if (!touchDevice() || mode !== 'edit' || to <= from) { selectionBar.hide(); return; }
+  // One menu at a time, and the platform's comes first. The platform draws
+  // its bar and its handles for a selection *it* made from a gesture it
+  // recognised — a long press in the app, a double click or a drag of its own
+  // on the site — and beside those ours was two pop-ups at once ("site-native
+  // and Android pop-up showing at the same time"). Ours is for the selections
+  // the platform did not make, which are exactly the app's own: the word a
+  // double tap found, the range a drag extended, Line, Select all.
+  if (!editor.selectionFromApp) { selectionBar.hide(); return; }
+  // The Line step survives its own syncs and dies with any other selection.
+  if (lineSteps && !((from === lineSteps.after[0] && to === lineSteps.after[1])
+    || (from === lineSteps.before[0] && to === lineSteps.before[1]))) lineSteps = null;
+  selectionBar.show(from, to);
+}
+async function copySelectionText(text: string): Promise<void> {
+  try { await navigator.clipboard.writeText(text); } catch { document.execCommand('copy'); }
+}
+async function pasteIntoNote(): Promise<void> {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) editor.insertText(text);
+  } catch {
+    showNotice('Clipboard access was refused — long-press the note to paste', 4000);
+  }
+}
+// Line is a step, not a destination: a second press gives the finger's own
+// selection back (Markor's ☰ is likewise how you get the whole line, and the
+// way back matters as much as the way in). The pair is dropped the moment the
+// selection is anything but one of the two.
+let lineSteps: { before: [number, number]; after: [number, number] } | null = null;
+
+selectionBar = createSelectionBar({
+  anchor: (from, to) => {
+    const head = editor.view.coordsAtPos(from, 1);
+    if (!head) return null;
+    const tail = editor.view.coordsAtPos(to, -1) ?? head;
+    return {
+      top: Math.min(head.top, tail.top),
+      bottom: Math.max(head.bottom, tail.bottom),
+      left: Math.min(head.left, tail.left),
+      right: Math.max(head.right, tail.right),
+    };
+  },
+  point: (pos, side) => {
+    const rect = editor.view.coordsAtPos(pos, side);
+    return rect ? { x: side > 0 ? rect.left : rect.right, y: rect.bottom } : null;
+  },
+  handle: (edge, x, y) => {
+    const pos = editor.view.posAtCoords({ x, y }, false);
+    if (pos === null) return;
+    const [anchor, head] = editor.getSelection();
+    const from = Math.min(anchor, head);
+    const to = Math.max(anchor, head);
+    // An end may not cross the other: a handle dragged past its opposite end
+    // would make the selection vanish under the finger, and there is nowhere
+    // for a finger to go that means "the other way round".
+    if (edge === 'start') editor.setSelection(Math.min(pos, to), to, false);
+    else editor.setSelection(from, Math.max(pos, from), false);
+    syncSelectionBar();
+  },
+  run: (action: SelectionAction) => {
+    if (action === 'line') {
+      const [anchor, head] = editor.getSelection();
+      const from = Math.min(anchor, head);
+      const to = Math.max(anchor, head);
+      const step = lineSteps;
+      if (step && step.after[0] === from && step.after[1] === to) {
+        editor.setSelection(step.before[0], step.before[1]);
+        lineSteps = null;
+      } else {
+        editor.expandToLines();
+        const [a2, h2] = editor.getSelection();
+        const after: [number, number] = [Math.min(a2, h2), Math.max(a2, h2)];
+        // A press that changed nothing (the selection was whole lines to
+        // begin with) is not a step to come back from.
+        lineSteps = after[0] === from && after[1] === to ? null : { before: [from, to], after };
+      }
+      syncSelectionBar();
+      return;
+    }
+    if (action === 'all') { editor.selectAll(); syncSelectionBar(); return; }
+    if (action === 'paste') { void pasteIntoNote(); return; }
+    const text = window.getSelection()?.toString() ?? '';
+    if (!text) return;
+    void copySelectionText(text);
+    if (action === 'cut') { editor.insertText(''); selectionBar?.hide(); }
+  },
+});
+// The bar follows the note (a scroll moves the selection under it) and gets
+// out of the way when the reader leaves the note for the chrome.
+editor.view.scrollDOM.addEventListener('scroll', () => {
+  if (!selectionBar?.visible) return;
+  const [anchor, head] = editor.getSelection();
+  selectionBar.reposition(Math.min(anchor, head), Math.max(anchor, head));
+}, { passive: true });
+// A tap on the bar is never a tap on the note. On the phone the editable
+// keeps its focus while the reader is editing, and a tap that reaches it — or
+// a WebView that re-focuses it for its own reasons — brings the keyboard back
+// up behind the menu: "pressing the hamburger sometimes triggers the keyboard".
+// The bar lets the note's focus go instead. Blur only, never focus: the caret,
+// the selection and the scroll all stay where the writer left them, and every
+// button here (find, new tab, tabs, menu) brings its own focus if it needs one.
+const navbar = document.querySelector<HTMLElement>('#navbar')!;
+navbar.addEventListener('pointerdown', (event) => {
+  selectionBar?.hide();
+  // A finger, and only a finger: a mouse keeps the note focused, because on a
+  // desktop the focus is what the writer is typing into and the keyboard that
+  // this protects against does not exist there.
+  if (event.pointerType === 'touch') editor.blur();
+});
+// The keyboard's own toolbar and the tab strip are the same kind of chrome.
+document.querySelector<HTMLElement>('.mobile-tabbar')?.addEventListener('pointerdown', () => selectionBar?.hide());
+
 // ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
 const rightPanel = document.querySelector<HTMLElement>('#right-panel')!;
 const noteTopSpacing = (): number => parseFloat(getComputedStyle(editor.view.contentDOM).paddingTop) || 60;
 /** Notes to search: every note in the space (in All files, under the folder
- *  being browsed); the open one with its live text. */
+ *  being browsed), and the open one's live text when a note is open. */
 async function allNotes(): Promise<{ path: string; text: string }[]> {
   const scope = currentScope();
   const root = scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
-  const notes = [{ path: filePath, text: editor.getValue() }];
+  const notes: { path: string; text: string }[] = [];
+  if (filePath) notes.push({ path: filePath, text: editor.getValue() });
   for (const path of await walkNotes(root)) {
     if (path === filePath) continue;
     const text = await backend.read(path);
     if (text !== null) notes.push({ path, text });
   }
   return notes;
+}
+
+/** What each note's folder is called in a list: the path shortened the way
+ *  the drawers' own paths are (src/pathShort.ts), each folder read once. */
+async function folderLabels(paths: readonly string[]): Promise<Map<string, string>> {
+  const names = new Map<string, readonly string[] | null>();
+  const nameLookup = async (dir: string): Promise<readonly string[] | null> => {
+    if (!names.has(dir)) {
+      try { names.set(dir, (await backend.list(dir)).map((entry) => entry.name)); } catch { names.set(dir, null); }
+    }
+    return names.get(dir)!;
+  };
+  const out = new Map<string, string>();
+  for (const path of paths) {
+    const dir = dirname(path);
+    if (out.has(dir)) continue;
+    out.set(dir, dir ? await shortenPathIn(dir, nameLookup, { anchor: false }) : '');
+  }
+  return new Map(paths.map((path) => [path, out.get(dirname(path)) ?? dirname(path)]));
 }
 function sidebarGoToLine(line: number): void {
   ownScroll(400);
@@ -1444,13 +1700,21 @@ const sidebar = createRightSidebar(rightPanel, {
     const scope = currentScope();
     return scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
   },
+  // Names a folder holds, for shortening the paths the rows show
+  // (src/pathShort.ts). Null where the app cannot list the folder.
+  folderNames: async (dir) => {
+    try { return (await backend.list(dir)).map((entry) => entry.name); } catch { return null; }
+  },
   onResult: (path, from, to) => {
     toggleOutline(false);
     void openFile(path, () => {
       if (mode !== 'edit') setMode('edit');
       ownScroll(400);
       releaseHold(); // a jump the reader asked for
-      editor.revealRange(from, to);
+      // Shown, not selected: the caret lands after the hit and the hit wears a
+      // ring (editor.flashRange) — a selection here raised the phone's
+      // selection bar over the very line the reader had asked to look at.
+      editor.flashRange(from, to);
     });
   },
 });
@@ -1500,6 +1764,7 @@ function applySettings(settings: Settings): void {
   root.setProperty('--note-font-size', `${settings.fontSize / 16}rem`);
   root.setProperty('--note-line-height', String(settings.lineHeight));
   editor.setLineNumbers(settings.lineNumbers);
+  editor.setAutoSpace(settings.spaceAfterPunctuation);
   document.body.classList.toggle('no-line-numbers', !settings.lineNumbers);
   editor.remeasure();
   setHighlightAll(settings.highlightAll);
@@ -1824,6 +2089,7 @@ const drawers = initDrawers({
   backdrop: document.querySelector<HTMLElement>('#backdrop')!,
   classes: { left: 'files-open', right: 'outline-open' },
   onOpening: (side) => {
+    selectionBar?.hide();
     closePopover();
     restoreNavigation();
     (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down

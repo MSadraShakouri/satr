@@ -19,6 +19,7 @@
 import { headingsOfText, type Heading } from './outline';
 import { isInvalidSearch, searchRegExp } from './searchRegex';
 import { dirname, stem } from './vault';
+import { shortenPath } from './pathShort';
 
 export interface SidebarDeps {
   headings(): Heading[];
@@ -34,6 +35,9 @@ export interface SidebarDeps {
   scopeName(): string;
   /** The folder the note list was taken from (the space, or the browsed one). */
   rootPath(): string;
+  /** The names a folder holds (for shortening the paths shown), or null where
+   *  the app cannot list it. */
+  folderNames(dir: string): Promise<readonly string[] | null>;
   onResult(path: string, from: number, to: number): void;
   /** The current note's majority direction; the whole tree flips for it. */
   noteDir(): 'ltr' | 'rtl';
@@ -218,9 +222,36 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       if (!dir || dir === root) return '';
       return root && dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : dir;
     };
+    // p10k-style shortening of what a row says (src/pathShort.ts): the
+    // ancestors cut to their shortest unique prefix, the folder the note
+    // lives in in full — "the low-level ones keep their names". Siblings come
+    // from each folder's own listing, asked for once.
+    const siblings = new Map<string, readonly string[] | null>();
+    let listed = 0;
+    const namesIn = async (dir: string): Promise<void> => {
+      if (siblings.has(dir)) return;
+      // A search over a big vault is not a reason to walk it a second time:
+      // past a few dozen folders the paths are shown whole, which is what
+      // they were before any of this.
+      if (listed >= 60) { siblings.set(dir, null); return; }
+      listed += 1;
+      siblings.set(dir, await deps.folderNames(dir).catch(() => null));
+    };
+    const shortened = new Map<string, string>();
+    for (const note of notes) {
+      const dir = dirname(note.path);
+      const relative = folderOf(note.path);
+      if (!relative || shortened.has(relative)) continue;
+      const base = root && dir.startsWith(`${root}/`) ? root : '';
+      const parts = relative.split('/');
+      for (let i = 0; i < parts.length; i += 1) {
+        await namesIn([base, ...parts.slice(0, i)].filter(Boolean).join('/'));
+      }
+      shortened.set(relative, shortenPath(relative, (at) => siblings.get(at) ?? null, { base, anchor: true }));
+    }
     const noteRow = (path: string, flair: string, children: string): string => {
       const key = `n:${path}`;
-      const folder = folderOf(path);
+      const folder = shortened.get(folderOf(path)) ?? folderOf(path);
       return `<div class="tree-item search-result${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
         + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(path)}">`
         + (children ? `<span class="tree-item-icon collapse-icon" data-toggle="${escapeHtml(key)}">${ICONS.chevron}</span>` : '')

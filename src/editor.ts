@@ -11,12 +11,13 @@ import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
+import { autoSpace } from './autoSpace';
 import { Highlight, highlightTag } from './highlightSyntax';
 import { inCode, inMath, mathSource } from './mathSource';
-import { deleteDelimiterPair, delimiterInput, enterDisplayMath } from './delimiterInput';
+import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
 import { TapTracker, wordRangeAt, type Range } from './touchSelection';
-import { beginSelectionDrag, endSelectionDrag, isCaretRevealSuppressed } from './touchState';
+import { beginSelectionDrag, endSelectionDrag, isCaretRevealSuppressed, pinScrollStill, unpinScrollStill } from './touchState';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
@@ -387,7 +388,7 @@ function continueOnEnter(view: EditorView): boolean {
 // toolbar's "new line below" runs exactly this at the line's end, so the
 // button and the key can never drift apart.
 function enterAtCaret(view: EditorView): boolean {
-  return enterDisplayMath(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+  return enterDisplayMath(view) || enterCodeFence(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
 /** The toolbar's "new line below": Enter at the end of the line. The caret
@@ -662,6 +663,27 @@ const pairs = EditorState.languageData.of((state, pos) => [{
   },
 }]);
 
+// A search hit the reader just landed on: shown with the ring the find bar puts
+// on its match, not selected (see flashRange). It goes away on its own, or as
+// soon as the reader does something that means they have moved on — a
+// keystroke, a tap, a selection.
+const searchFlash = StateEffect.define<{ from: number; to: number } | null>();
+const searchFlashMark = Decoration.mark({ class: 'obsidian-search-match-highlight cm-search-flash' });
+const searchFlashField = StateField.define<{ from: number; to: number } | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(searchFlash)) return effect.value;
+    if (!value) return null;
+    if (tr.docChanged) return null;
+    if (tr.selection && (tr.isUserEvent('input') || tr.isUserEvent('select'))) return null;
+    return { from: tr.changes.mapPos(value.from), to: tr.changes.mapPos(value.to, -1) };
+  },
+});
+const searchFlashDecorations = EditorView.decorations.compute([searchFlashField], (state) => {
+  const flash = state.field(searchFlashField);
+  return flash && flash.to > flash.from ? Decoration.set([searchFlashMark.range(flash.from, flash.to)]) : Decoration.none;
+});
+
 // A finger is on the note text (see scrollMargins and revealCaret below).
 let touching = false;
 
@@ -670,19 +692,24 @@ const readOnlySlot = new Compartment();
 // New tabs start clean; living tabs reattach their complete EditorState.
 // Histories never cross files and are never serialized to disk.
 const historySlot = new Compartment();
+const autoSpaceSlot = new Compartment();
 
 export class SatrEditor {
   readonly view: EditorView;
   private isReadOnly = false;
+  /** The space after a sign, as the settings have it (src/autoSpace.ts). */
+  private autoSpaceOn = false;
   constructor(parent: HTMLElement, onChange: () => void, options?: {
     title?: string;
     onRename?: (base: string) => string | null;
     checkName?: (base: string) => string | null;
-    onSelection?: (position: number) => void;
+    onSelection?: (position: number, from: number, to: number) => void;
     /** Height in px hidden at the bottom of the viewport (e.g. the keyboard toolbar). */
     obscuredBottom?: () => number;
     /** A heading was folded or unfolded. */
     onFold?: () => void;
+    /** Space after a sign, from the settings (src/autoSpace.ts). */
+    autoSpace?: boolean;
     /** Wiki links: note names for the [[ popup, and opening a link. */
     linkNames?: () => string[];
     openLink?: (target: string, heading: string) => void;
@@ -690,10 +717,11 @@ export class SatrEditor {
     if (options?.linkNames) wikiRuntime.names = options.linkNames;
     if (options?.openLink) wikiRuntime.open = options.openLink;
     initialTitle = options?.title ?? 'untitled';
+    this.autoSpaceOn = options?.autoSpace ?? false;
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -711,6 +739,7 @@ export class SatrEditor {
       ])),
       titleField,
       rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      searchFlashField, searchFlashDecorations,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
       // typing and running commands. Not while a finger is on the text:
@@ -734,6 +763,7 @@ export class SatrEditor {
         { key: 'Mod-/', run: toggleComment },
         { key: 'Mod-a', run: (target) => { target.dispatch({ selection: { anchor: 0, head: target.state.doc.length } }); return true; } },
         { key: 'Enter', run: enterDisplayMath },
+        { key: 'Enter', run: enterCodeFence },
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
         { key: 'Tab', run: indentMore, shift: outdentLess },
@@ -745,7 +775,18 @@ export class SatrEditor {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
         if (update.selectionSet) {
           selectionMoved = true;
-          options?.onSelection?.(update.state.selection.main.head);
+          // Whose selection this is. The app's own paths (a double tap's word,
+          // a drag that extends it, Line, Select all) announce themselves just
+          // before they dispatch; anything else — the platform's own double
+          // tap, a long press, a mouse drag — is the reader's or the engine's,
+          // and on the site the engine brings its own menu for those. The
+          // selection bar uses this to avoid standing next to the platform's
+          // own (src/main.ts).
+          const main = update.state.selection.main;
+          this.selectionFromApp = this.appSelection !== null
+            && this.appSelection.anchor === main.anchor && this.appSelection.head === main.head;
+          this.appSelection = this.selectionFromApp ? this.appSelection : null;
+          options?.onSelection?.(update.state.selection.main.head, update.state.selection.main.from, update.state.selection.main.to);
         }
         // A line made with Enter puts the caret on the line below the one on
         // screen; bring it in, exactly as typing a character does.
@@ -796,6 +837,9 @@ export class SatrEditor {
     let touchSelection: [number, number] = [0, 0];
     let touchMoved = false;
     let touchStartY = 0;
+    // The note's own position when a finger went down: a gesture that moved
+    // the note must never move it again (see the reveal at the end of it).
+    let touchScrollTop = 0;
     // Double tap selects the word under the finger, and a drag after it (the
     // finger never lifted) selects more. The WebView does both itself when the
     // caret lives in the DOM selection, so this only fills the gap for the
@@ -817,6 +861,7 @@ export class SatrEditor {
       return pos === null ? null : wordRangeAt(this.view.state.doc.toString(), pos);
     };
     const selectRange = (from: number, to: number): void => {
+      this.markAppSelection(from, to);
       this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
     };
     // The browser's own word selection can land a frame or two after the lift,
@@ -835,6 +880,7 @@ export class SatrEditor {
       touchMoved = false;
       const touch = event.touches[0];
       touchStartY = touch?.clientY ?? 0;
+      touchScrollTop = this.view.scrollDOM.scrollTop;
       const { anchor, head } = this.view.state.selection.main;
       touchSelection = [anchor, head];
       // A widget (the file name, a list bullet, a link) has no word of the
@@ -881,19 +927,34 @@ export class SatrEditor {
       if (!dragWord || !touch) return;
       const dx = touch.clientX - dragWord.x;
       const dy = touch.clientY - dragWord.y;
+      // The decision can be revisited, and only in one direction: a drag that
+      // starts sideways is an extend, but if the finger then travels up or
+      // down — which is what a reader who wants to scroll does, a moment after
+      // a double tap — it becomes a scroll, and the platform takes the gesture
+      // back. Deciding once meant a single sideways sample at the start could
+      // make the note unscrollable for the rest of the drag: "double tap
+      // select can't scroll".
       if (dragWord.mode === 'undecided') {
         if (Math.abs(dx) > 10 && Math.abs(dx) >= Math.abs(dy)) dragWord.mode = 'extend';
         else if (Math.abs(dy) > 10) dragWord.mode = 'scroll';
+      } else if (dragWord.mode === 'extend') {
+        if (Math.abs(dy) > 24 && Math.abs(dy) >= Math.abs(dx) + 8) dragWord.mode = 'scroll';
       }
       if (dragWord.mode === 'scroll') {
+        unpinScrollStill();
         endSelectionDrag(); // the note may scroll: the drawer keeps its distance
+        window.clearTimeout(revealTimer); // a scroll cancels a reveal that was queued
         return;
       }
       if (dragWord.mode !== 'extend') return;
       beginSelectionDrag();
-      // The finger is extending the selection: the page must not scroll under
-      // it as well.
-      event.preventDefault();
+      // The finger is extending the selection: the note must not move under it
+      // — but nothing is prevented, because a prevented touch is a touch the
+      // platform has given up on, and a scroll that was never started cannot
+      // be resumed. The scroller is pinned instead (touchState.pinScrollStill):
+      // the browser pans, the pin puts the note back, and if this drag turns
+      // vertical the pin is dropped and that same pan carries on.
+      pinScrollStill(this.view.scrollDOM);
       const to = wordAt(touch.clientX, touch.clientY);
       if (!to) return;
       selectRange(Math.min(dragWord.word.from, to.from), Math.max(dragWord.word.to, to.to));
@@ -902,6 +963,7 @@ export class SatrEditor {
       window.clearTimeout(touchTimer);
       const word = dragWord?.mode === 'scroll' ? null : dragWord; // a scroll is not a word selection
       dragWord = null;
+      unpinScrollStill(); // the drag is over, whatever it was
       endSelectionDrag(); // the finger is up: the drawer may act again
       // A gesture that moved was not a tap, whatever it did to the selection.
       if (touchMoved) taps.cancel();
@@ -911,13 +973,19 @@ export class SatrEditor {
         touching = false;
         const { anchor, head } = this.view.state.selection.main;
         const selectionChanged = anchor !== touchSelection[0] || head !== touchSelection[1];
-        // A scroll gesture leaves the caret alone; a tap or a handle drag
-        // that moved the selection gets it revealed.
-        if (selectionChanged && (!touchMoved || anchor !== head)) revealSoon(0);
+        // A gesture that scrolled the note never moves it again. The selection
+        // it made is the double tap's word, so a reveal here — 350ms after the
+        // finger is up, when the reader is already somewhere else — used to
+        // glide the note back to the selected word: "double tap scroll is very
+        // unreliable". Measured on the scroller, not guessed: if the note is
+        // not where the gesture found it, the reader has taken it somewhere and
+        // it stays there.
+        const scrolled = this.view.scrollDOM.scrollTop !== touchScrollTop;
+        if (selectionChanged && !scrolled && (!touchMoved || anchor !== head)) revealSoon(0);
       }, 350);
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
-    this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; endSelectionDrag(); release(); }, { passive: true });
+    this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; unpinScrollStill(); endSelectionDrag(); release(); }, { passive: true });
 
     // "Select all" from Android's own selection bar is the one command that
     // rides on the DOM selection instead of the keyboard: it dispatches no
@@ -1100,6 +1168,13 @@ export class SatrEditor {
     });
   }
   getValue(): string { return this.view.state.doc.toString(); }
+  /** Where the current selection came from (see the update listener). */
+  selectionFromApp = false;
+  private appSelection: { anchor: number; head: number } | null = null;
+  /** Say that the selection about to be dispatched is the app's own. */
+  private markAppSelection(anchor: number, head: number): void {
+    this.appSelection = { anchor, head };
+  }
   setTitle(base: string): void { this.view.dispatch({ effects: setTitleEffect.of(base) }); }
   setReadOnly(on: boolean): void {
     if (on) this.closeFind();
@@ -1118,6 +1193,7 @@ export class SatrEditor {
   /** Select the whole note, giving the editor the focus so copy works too. */
   selectAll(): void {
     this.view.focus();
+    this.markAppSelection(0, this.view.state.doc.length);
     this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
     this.markCaretSettled?.(); // the whole note is selected: nothing to bring into view
   }
@@ -1129,6 +1205,14 @@ export class SatrEditor {
     selection?.selectAllChildren(el);
   }
   /** Settings: line numbers on or off. */
+  /** The space after a sign (src/autoSpace.ts), on or off as the settings say.
+   *  The rule reads the field each time, so reconfiguring is a no-op change of
+   *  the value alone. */
+  setAutoSpace(on: boolean): void {
+    if (on === this.autoSpaceOn) return;
+    this.autoSpaceOn = on;
+    this.view.dispatch({ effects: autoSpaceSlot.reconfigure(autoSpace(() => this.autoSpaceOn)) });
+  }
   setLineNumbers(on: boolean): void {
     this.view.dispatch({ effects: lineNumberSlot.reconfigure(on ? lineNumbers({ formatNumber: (n) => String(n) }) : []) });
   }
@@ -1147,15 +1231,51 @@ export class SatrEditor {
     this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: value }, annotations: isolateHistory.of('full') });
   }
   focus(): void { this.view.focus(); }
+  /** Let the note go. The bar's own taps must not leave the WebView with an
+   *  editable still focused: Android re-opens the keyboard for the editable
+   *  that still has it when a button in the page is tapped ("the bottom
+   *  hamburger sometimes triggers the keyboard"). The note itself is
+   *  untouched — same document, same selection, same scroll. */
+  blur(): void { if (this.view.hasFocus) this.view.contentDOM.blur(); }
   /** Caret / selection as [anchor, head], for remembering between sessions. */
   getSelection(): [number, number] {
     const { anchor, head } = this.view.state.selection.main;
     return [anchor, head];
   }
+  /** Grow the selection to the whole line or lines it touches (Markor's
+   *  "expand selection of cursor to whole line", and what the phone's
+   *  selection bar's Line button asks for). An empty selection grows to the
+   *  line the caret is on. */
+  /** Grow the selection to the whole line or lines it touches. `own` says
+   *  whether this selection is the app's (its own bar and handles follow it) —
+   *  Android's own bar asks for the line too and keeps its own selection, in
+   *  which case the app must not also put a bar on screen. */
+  expandToLines(own = true): void {
+    const { doc, selection } = this.view.state;
+    const main = selection.main;
+    const from = doc.lineAt(main.from).from;
+    const to = doc.lineAt(main.to).to;
+    if (from === main.from && to === main.to) return;
+    if (own) this.markAppSelection(from, to);
+    this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
+  }
+  /** Replace the selection (or insert at the caret) — paste, and the cut that
+   *  follows the copy. One transaction, so undo takes it back in one step. */
+  insertText(text: string): void {
+    if (this.isReadOnly) return;
+    this.view.dispatch(this.view.state.replaceSelection(text), { userEvent: 'input.paste' });
+  }
   /** Put the caret back without focusing (no keyboard) and without scrolling. */
-  setSelection(anchor: number, head = anchor): void {
+  /** Put the caret (or a selection) somewhere. `keepStill` is for a finger
+   *  that is already moving the selection itself — a handle being dragged
+   *  (src/selectionBar.ts): the note must not scroll along with it. */
+  setSelection(anchor: number, head = anchor, keepStill = false): void {
     const max = this.view.state.doc.length;
-    this.view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } });
+    this.markAppSelection(Math.min(anchor, max), Math.min(head, max));
+    this.view.dispatch({
+      selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) },
+      scrollIntoView: keepStill ? false : undefined,
+    });
     this.markCaretSettled?.(); // placed without scrolling, on purpose
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
@@ -1176,14 +1296,28 @@ export class SatrEditor {
     this.unfoldAround(pos);
     this.view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: topOffset }) });
   }
-  /** Select a range and centre it (search results); no focus, so no keyboard. */
-  revealRange(from: number, to: number): void {
+  /** Land on a range without selecting it — a search result. The caret goes
+   *  *after* the hit: a selection is what raises the phone's selection bar and
+   *  puts handles over the line, and the reader tapped a result to see where
+   *  the word is, not to have it half-selected. The ring (the find bar's own
+   *  match highlight) says where the hit is, for a few seconds or until the
+   *  reader types, taps or selects anything. No focus, so no keyboard. */
+  flashRange(from: number, to: number, ms = 4000): void {
     const max = this.view.state.doc.length;
-    from = Math.min(from, max); to = Math.min(to, max);
+    from = Math.max(0, Math.min(from, max));
+    to = Math.max(from, Math.min(to, max));
     this.unfoldAround(from);
-    this.view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) });
+    this.view.dispatch({
+      selection: EditorSelection.cursor(to),
+      effects: [searchFlash.of({ from, to }), EditorView.scrollIntoView(from, { y: 'center' })],
+    });
     this.markCaretSettled?.(); // centred on purpose
+    window.clearTimeout(this.flashTimer);
+    this.flashTimer = window.setTimeout(() => {
+      if (this.view.state.field(searchFlashField, false)) this.view.dispatch({ effects: searchFlash.of(null) });
+    }, ms);
   }
+  private flashTimer: number | undefined;
   /** Fold / unfold the heading on this 0-based line. */
   toggleFold(line: number): boolean { return toggleHeadingFold(this.view, line); }
   foldAll(): void { foldAllHeadings(this.view); }

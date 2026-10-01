@@ -67,10 +67,23 @@ test('backspace deletes only tracked empty pairs, never half an existing delimit
     await page.keyboard.press('Backspace');
     expect(await contents(page)).toBe(after);
   }
-  for (const char of ['$', '*', '_', '~', '=', '%']) {
+  for (const char of ['$', '*', '_', '%']) {
     await draft(page, '|');
     await page.keyboard.insertText(char);
     expect(await contents(page)).toBe(`${char}|${char}`);
+    await page.keyboard.press('Backspace');
+    expect(await contents(page)).toBe('|');
+  }
+  // `=` and `~` are one sign on the first press — a setext underline and a
+  // lone tilde both need it — and the pair opens on the second, which is where
+  // the tracked pair (and so the Backspace) comes from. Backspace inside the
+  // pair still takes both signs at once (the tracker, not the text, decides).
+  for (const char of ['=', '~']) {
+    await draft(page, '|');
+    await page.keyboard.insertText(char);
+    expect(await contents(page)).toBe(`${char}|`);
+    await page.keyboard.insertText(char);
+    expect(await contents(page)).toBe(`${char}${char}|${char}${char}`);
     await page.keyboard.press('Backspace');
     expect(await contents(page)).toBe('|');
   }
@@ -227,9 +240,16 @@ test('ordinary brackets, apostrophes and code-fence pairing still work', async (
   await draft(page, "don|t");
   await page.keyboard.insertText("'");
   expect(await contents(page)).toBe("don'|t");
+  // Backticks: a pair that grows, until the third press turns the run into a
+  // bare fence — the line a block is written on, with nothing after it to
+  // swallow (see delimiterEquals.spec.ts).
   await draft(page, '|');
-  for (let i = 0; i < 3; i++) await page.keyboard.insertText('`');
-  expect(await contents(page)).toBe('```|```');
+  await page.keyboard.insertText('`');
+  expect(await contents(page)).toBe('`|`');
+  await page.keyboard.insertText('`');
+  expect(await contents(page)).toBe('``|``');
+  await page.keyboard.insertText('`');
+  expect(await contents(page)).toBe('```|');
 });
 
 test('spacing defaults migrate without resetting other chosen values', async ({ page }) => {

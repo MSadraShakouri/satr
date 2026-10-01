@@ -14,6 +14,8 @@ export interface Settings {
   hiddenTools: string[];
   /** The ≡ button's quick action: a tap runs it, a long press opens the menu. '' = none. */
   quickAction: QuickAction;
+  /** A space after a sign, when the next word starts (src/autoSpace.ts). */
+  spaceAfterPunctuation: boolean;
   /** Digits shown inside formulas (preview + PDF only; the note keeps what was typed). */
   mathDigits: 'auto' | 'english' | 'persian';
   /** PDF page numbers, bottom centre. */
@@ -34,7 +36,7 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
 };
 const KEY = 'satr:settings';
 const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', pdfPageNumbers: 'persian', pdfCss: '' };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true };
 
 export function loadSettings(): Settings {
   try {
@@ -129,6 +131,10 @@ export function openSettings(deps: SettingsDeps): void {
         <div class="setting-item">
           <div class="setting-item-info"><div class="setting-item-name">Highlight every match</div><div class="setting-item-description">In find, not only the current one</div></div>
           ${toggle('highlightAll', settings.highlightAll)}
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Space after a sign</div><div class="setting-item-description">Typing , . ! ? : ; or ، ؟ ؛ and then the next word puts one space in between — what Android's keyboards call auto-space. The space never lands in a number (3.14), a web address (example.com, https://…) or code.</div></div>
+          ${toggle('spaceAfterPunctuation', settings.spaceAfterPunctuation)}
         </div>
         <div class="setting-item">
           <div class="setting-item-info"><div class="setting-item-name">Math digits</div><div class="setting-item-description">Every digit in a formula, in the preview and the PDF. The note keeps the digits you typed.</div></div>
@@ -268,6 +274,7 @@ export function openSettings(deps: SettingsDeps): void {
     const name = sw.dataset.toggle!;
     if (name === 'lineNumbers') settings.lineNumbers = on;
     else if (name === 'highlightAll') settings.highlightAll = on;
+    else if (name === 'spaceAfterPunctuation') settings.spaceAfterPunctuation = on;
     else if (name.startsWith('tool:')) {
       const command = name.slice(5);
       settings.hiddenTools = on ? settings.hiddenTools.filter((c) => c !== command) : [...settings.hiddenTools, command];

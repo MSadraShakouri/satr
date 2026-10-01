@@ -318,8 +318,10 @@ test('a double tap followed by a scroll scrolls: the page is not held for the se
 
 test('a double tap followed by a sideways drag still takes the selection with it', async ({ page }) => {
   // The other half of the same decision: a mostly sideways move after the tap
-  // is a drag, the page must stay put for it, and the selection follows the
-  // finger from the word the tap found.
+  // is a drag, the selection follows the finger from the word the tap found,
+  // and the note stays put under it — held by the pin rather than by refusing
+  // the touch, so the platform's own pan is still there if the drag turns
+  // vertical (tests/touchDrag.spec.ts).
   const report = await page.evaluate(async () => {
     const view = window.testEditor.view;
     const from = view.coordsAtPos(6)!;
@@ -341,9 +343,11 @@ test('a double tap followed by a sideways drag still takes the selection with it
     const { anchor, head } = view.state.selection.main;
     return { kept, text: window.testEditor.getValue().slice(anchor, head), anchor };
   });
-  // The page was held for the drag (each move prevented), and the selection
-  // runs from the tapped word to the word under the finger.
-  expect(report.kept).toEqual([false, false, false]);
+  // Nothing was refused — the touch is still the platform's, so a drag that
+  // turns vertical can still become a scroll (the note is held still by the
+  // pin instead: tests/touchDrag.spec.ts) — and the selection runs from the
+  // tapped word to the word under the finger.
+  expect(report.kept).toEqual([true, true, true]);
   expect(report.text.startsWith('quick')).toBe(true);
   expect(report.text).toContain('jumps');
 });
@@ -368,4 +372,43 @@ test('the note does not let the engine’s own double tap zoom it', async ({ pag
     return getComputedStyle(editor.view.contentDOM).touchAction;
   });
   expect(action).toBe('manipulation');
+});
+
+test('a double tap that scrolled the note leaves it where the reader put it', async ({ page }) => {
+  // What a double-tap-then-scroll *is* on a phone: the WebView's own double tap
+  // selects a word, the finger travels, and the note scrolls under it. 350ms
+  // after the lift the editor revealed that selection — and glided the note
+  // back to the word the reader had just scrolled away from, which is what
+  // "double tap scroll is very unreliable" was. A gesture that moved the note
+  // never moves it again; the note is compared with where the gesture found it,
+  // and a synthetic touch cannot scroll, so the test moves the note the way the
+  // browser does.
+  const report = await page.evaluate(async () => {
+    const { EditorSelection } = await import('/node_modules/@codemirror/state/dist/index.js');
+    const view = window.testEditor.view;
+    window.testEditor.setValue(Array.from({ length: 80 }, (_, i) => `line ${i + 1} of prose`).join('\n'));
+    await new Promise((r) => requestAnimationFrame(r));
+    const rect = view.coordsAtPos(6)!;
+    const x = rect.left + 1;
+    const y = (rect.top + rect.bottom) / 2;
+    const fire = (type: string, clientY = y): boolean => {
+      const touch = new Touch({ identifier: 1, target: view.contentDOM, clientX: x, clientY });
+      const live = type !== 'touchend';
+      return view.contentDOM.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live ? [touch] : [], targetTouches: live ? [touch] : [], changedTouches: [touch],
+      }));
+    };
+    const scroller = view.scrollDOM;
+    scroller.scrollTop = 0;
+    fire('touchstart'); fire('touchend');
+    fire('touchstart');
+    view.dispatch({ selection: EditorSelection.range(6, 11) }); // the browser's own word selection
+    fire('touchmove', y + 40);
+    scroller.scrollTop = 240; // the browser's own scroll, under the finger
+    fire('touchend', y + 40);
+    await new Promise((r) => window.setTimeout(r, 700)); // well past the reveal's delay
+    return { top: scroller.scrollTop };
+  });
+  expect(report.top).toBe(240);
 });

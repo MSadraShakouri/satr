@@ -13,7 +13,7 @@ import { spansHold } from './mathScan';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNodeRef } from '@lezer/common';
 import { editFootnote, findDefinition } from './footnoteDialog';
-import { suppressCaretReveal } from './touchState';
+import { holdScrollStill, suppressCaretReveal } from './touchState';
 
 // Bullets and checkboxes are MARKS over the real "-" / "[ ]" text (drawn
 // with CSS), not replacing widgets — the same trick as Obsidian's
@@ -74,9 +74,9 @@ function quoteLine(indent: number): Decoration {
 // start under the text, not under the bullet.
 const listLines = new Map<string, Decoration>();
 /** A list line's own decoration — and, when it is a task, the tappable leading
- *  area with it (see .cm-lp-task-line in style.css): the checkbox's own box is
- *  17px, and the line is where a finger-sized target has geometry it can
- *  trust. */
+ *  a marker the tap handler knows by (see .cm-lp-task-line in style.css): the
+ *  drawn box is 17px, and the box's own rect is what the handler measures the
+ *  tap against. */
 function listLine(indent: number, task = false): Decoration {
   const px = Math.round(indent * 10) / 10;
   const key = `${px}${task ? ':task' : ''}`;
@@ -368,18 +368,24 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
 // is scrolling, not tapping: the claim is dropped at once and the scroll
 // happens as if the checkbox were any other text.
 /** Where the tap is, not merely what it hit. The line is the element a touch
- *  reports for the text and for its tappable area alike (the area is the
- *  line's own pseudo-element), so a tap's meaning has to be read from where
- *  the finger is: inside the leading area — the line's start side through the
- *  marker, and a little past it — it is the checkbox's; past that it belongs
- *  to the words, which is a caret. */
+ *  reports for the text and for the marker alike, so a tap's meaning has to be
+ *  read from where the finger is: on the marker — the drawn box and the 7px of
+ *  margin it carries on the line's side — it is the checkbox's; on the words it
+ *  is a caret, which is what editing them needs.
+ *
+ *  The marker's own rect is the box plus that leading margin, and the task's
+ *  text starts at its trailing edge (the box's 0.25em of margin is the last of
+ *  it). So the area is generous where there is nothing to take — the whole
+ *  line's height, and the empty room on the line's leading side — and stops at
+ *  the marker: a version of this that reached 8px past it swallowed the first
+ *  character or two of every task ("the hit box got too big and I can no
+ *  longer select the first few chars of a checklist item"). */
 function inTaskLeadingArea(line: HTMLElement, marker: HTMLElement, clientX: number): boolean {
   const lineBox = line.getBoundingClientRect();
   const markerBox = marker.getBoundingClientRect();
-  const slack = 8;
   return getComputedStyle(line).direction === 'rtl'
-    ? clientX >= markerBox.left - slack && clientX <= lineBox.right + 2
-    : clientX <= markerBox.right + slack && clientX >= lineBox.left - 2;
+    ? clientX >= markerBox.left + 1 && clientX <= lineBox.right + 2
+    : clientX <= markerBox.right - 1 && clientX >= lineBox.left - 2;
 }
 
 let pendingTaskTap: { target: HTMLElement; x: number; y: number } | null = null;
@@ -421,8 +427,11 @@ const toggleTask = EditorView.domEventHandlers({
     toggleTaskAt(view, pending.target);
     // The WebView's own reaction to the tap — focusing the editable region,
     // and its caret — can arrive after the finger is up; the quiet window
-    // starts again here so the reveal cannot slip in behind it.
+    // starts again here so the reveal cannot slip in behind it. And the note
+    // itself is held still for a moment, for the part of that reaction that is
+    // a scroll and not a reveal (touchState.holdScrollStill).
     suppressCaretReveal();
+    holdScrollStill(view.scrollDOM);
     return true;
   },
   click(event, view) {
@@ -465,6 +474,8 @@ function toggleTaskAt(view: EditorView, target: HTMLElement): void {
   if (!match) return;
   const at = pos + match.index + 1;
   view.dispatch({ changes: { from: at, to: at + 1, insert: match[1] === ' ' ? 'x' : ' ' }, userEvent: 'input.toggle-task' });
+  // The marker's own span: the only place the WebView's focus-caret lands.
+  holdTaskCaret(view, pos + match.index, at + 1);
 }
 
 let lastTapHead = -1; // caret before the tap, to tell a first tap from a second
@@ -480,4 +491,47 @@ const livePreviewPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-export const livePreview = [livePreviewPlugin, toggleTask];
+// A tick must not move the caret either — the same complaint as the scroll,
+// and the same cause. `event.preventDefault()` on the tap stops the WebView
+// from placing a caret of its own, but a WebView that focuses the editable
+// anyway puts its caret where the finger was (on the marker, several
+// characters back from where the writer was writing) and that arrives a
+// moment after the finger is up, as a selection-only change. For the same few
+// hundred milliseconds the scroll is held, the caret is held too: a selection
+// change nobody made is put back. The writer's own next touch, key or wheel
+// ends the hold, and so does any text change — the hold must never fight
+// someone who is actually writing.
+let heldCaret: { view: EditorView; until: number; anchor: number; head: number; markerFrom: number; markerTo: number } | null = null;
+
+function holdTaskCaret(view: EditorView, markerFrom: number, markerTo: number, ms = 900): void {
+  const main = view.state.selection.main;
+  heldCaret = { view, until: performance.now() + ms, anchor: main.anchor, head: main.head, markerFrom, markerTo };
+}
+
+const caretHold = EditorView.updateListener.of((update) => {
+  if (!heldCaret || update.view !== heldCaret.view || !update.selectionSet) return;
+  const held = heldCaret;
+  if (performance.now() > held.until || update.docChanged) { heldCaret = null; return; }
+  const main = update.state.selection.main;
+  if (main.anchor === held.anchor && main.head === held.head) return;
+  // Only the one change that is nobody's but the WebView's: a caret that
+  // landed on the marker the finger tapped. Everything else — the writer
+  // moving the caret, selecting text, typing, another tab's state being
+  // installed — is left exactly as it is: this hold exists to undo a side
+  // effect of the tap, never to argue with the reader.
+  const onMarker = (pos: number): boolean => pos >= held.markerFrom - 1 && pos <= held.markerTo + 1;
+  if (!onMarker(main.head) || !onMarker(main.anchor)) return;
+  window.requestAnimationFrame(() => {
+    if (heldCaret !== held) return;
+    update.view.dispatch({ selection: { anchor: held.anchor, head: held.head }, scrollIntoView: false });
+  });
+});
+
+// The reader taking over ends the caret hold, exactly as it ends the scroll
+// hold (touchState.releaseScrollHold). The tap that ticks the box is a
+// touchstart *before* the hold is set, so it never cancels its own.
+for (const type of ['touchstart', 'pointerdown', 'wheel', 'keydown'] as const) {
+  window.addEventListener(type, () => { heldCaret = null; }, { capture: true, passive: true });
+}
+
+export const livePreview = [livePreviewPlugin, toggleTask, caretHold];

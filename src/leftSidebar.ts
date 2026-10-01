@@ -15,6 +15,7 @@ import {
   addSpace, currentScope, loadSpaces, moveSpaces, removeSpace, scopeName, scopeRoot, setScope, setWalkDir, walkDir, type Scope,
 } from './spaces';
 import { backend, basename, dirname, extension, freeName, isNote, joinPath, within, type Entry } from './vault';
+import { shortenPath, siblingList } from './pathShort';
 
 export interface LeftSidebarDeps {
   currentPath(): string;
@@ -213,9 +214,15 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const words = filterQuery().split(/\s+/).filter(Boolean);
     const found: Entry[] = [];
     const queue = [dir];
+    // What each folder the walk passes through holds: a row's path is
+    // shortened against its own siblings, and the walk has already listed
+    // them (src/pathShort.ts).
+    const siblings = siblingList();
     while (queue.length && found.length < 300) {
-      const entries = await list$(queue.shift()!);
+      const current = queue.shift()!;
+      const entries = await list$(current);
       if (token !== renderToken) return '';
+      siblings.record(current, entries.map((entry) => entry.name));
       for (const entry of entries) {
         if (entry.kind === 'folder') queue.push(entry.path);
         const name = entry.name.toLocaleLowerCase();
@@ -226,7 +233,10 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const pattern = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
     return found.map((entry) => {
       const parent = dirname(entry.path);
-      const shownParent = parent === dir ? '' : (dir ? parent.slice(dir.length + 1) : parent);
+      const relative = parent === dir ? '' : (dir ? parent.slice(dir.length + 1) : parent);
+      // p10k-style: the ancestors cut to their shortest unique prefix, the
+      // folder the hit lives in in full.
+      const shownParent = relative ? shortenPath(relative, siblings.of, { base: dir, anchor: true }) : '';
       const row = rowHtml(entry, { walker: true }).replace(/(<div class="tree-item-inner[^>]*>)([^<]*)(<\/div>)/, (_, open: string, text: string, close: string) =>
         `${open}<span class="nav-filter-name">${text.replace(pattern, (m) => `<span class="search-result-file-matched-text">${m}</span>`)}</span>${shownParent ? `<span class="nav-filter-path">${escapeHtml(shownParent)}</span>` : ''}${close}`);
       return `<div class="tree-item ${entry.kind === 'folder' ? 'nav-folder' : 'nav-file'} mod-found">${row}</div>`;
