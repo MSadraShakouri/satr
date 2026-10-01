@@ -18,7 +18,7 @@
 // Queries are regular expressions, ignoring case (src/searchRegex.ts).
 import { headingsOfText, type Heading } from './outline';
 import { isInvalidSearch, searchRegExp } from './searchRegex';
-import { stem } from './vault';
+import { dirname, stem } from './vault';
 
 export interface SidebarDeps {
   headings(): Heading[];
@@ -32,6 +32,8 @@ export interface SidebarDeps {
   currentText(): string;
   /** Name of the space (or "All files"), for the header. */
   scopeName(): string;
+  /** The folder the note list was taken from (the space, or the browsed one). */
+  rootPath(): string;
   onResult(path: string, from: number, to: number): void;
   /** The current note's majority direction; the whole tree flips for it. */
   noteDir(): 'ltr' | 'rtl';
@@ -206,12 +208,25 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     if (mine !== run) return; // a newer search started meanwhile
     notes.sort((a, b) => (a.path === current ? -1 : b.path === current ? 1 : stem(a.path).localeCompare(stem(b.path))));
     const headingsOf = (note: { path: string; text: string }): Heading[] => (note.path === current ? deps.headings() : headingsOfText(note.text));
+    // Names are reused across folders, so a result says which folder it is in:
+    // the path relative to the root being searched, in small faint text after
+    // the name (a note directly in that root says nothing — there is nothing to
+    // tell it apart from).
+    const root = deps.rootPath();
+    const folderOf = (path: string): string => {
+      const dir = dirname(path);
+      if (!dir || dir === root) return '';
+      return root && dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : dir;
+    };
     const noteRow = (path: string, flair: string, children: string): string => {
       const key = `n:${path}`;
+      const folder = folderOf(path);
       return `<div class="tree-item search-result${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
         + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(path)}">`
         + (children ? `<span class="tree-item-icon collapse-icon" data-toggle="${escapeHtml(key)}">${ICONS.chevron}</span>` : '')
-        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(path))}</span>${flair}</div>`
+        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(path))}</span>`
+        + (folder ? `<span class="search-result-file-path" dir="auto">${escapeHtml(folder)}</span>` : '')
+        + `${flair}</div>`
         + (children ? `<div class="tree-item-children">${children}</div>` : '') + '</div>';
     };
     if (!re) {

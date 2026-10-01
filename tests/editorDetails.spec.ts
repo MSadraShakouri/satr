@@ -370,3 +370,63 @@ test('a Persian phrase in a formula keeps its word order, right to left', async 
   // own words as break points (two atoms, in reading order).
   expect(report.latin.firstLeft).toBeLessThan(report.latin.secondLeft!);
 });
+
+// What brings the caret into view, and what must not. A focus arriving on its
+// own is not a reason for the note to move: the WebView re-focuses the
+// editable region by itself (a checkbox tapped further down the note, a link,
+// the keyboard restarting), and the focus handler used to glide the view back
+// to the caret each time — measured at up to 1688px of jump for a tap the
+// writer never meant as a caret placement. A caret that actually moved still
+// comes into view.
+test('a focus on its own does not drag the note back to the caret', async ({ page }) => {
+  await page.evaluate(() => {
+    const outer = window.testEditor.view.dom.parentElement as HTMLElement;
+    outer.style.height = '420px';
+  });
+  await setText(page, Array.from({ length: 120 }, (_, i) => `line ${i}`).join('\n'), 0);
+  const away = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    view.scrollDOM.scrollTop = 1600;
+    view.contentDOM.blur();
+    await new Promise((r) => requestAnimationFrame(r));
+    view.contentDOM.focus(); // the WebView's own re-focus: nothing changed
+    await new Promise((r) => setTimeout(r, 400));
+    return view.scrollDOM.scrollTop;
+  });
+  expect(away, `the view moved to ${away}`).toBeGreaterThan(1500);
+
+  // And the same focus, after the caret really moved, does bring it in.
+  const afterMove = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    view.contentDOM.blur();
+    view.dispatch({ selection: { anchor: 0 } });
+    view.contentDOM.focus();
+    await new Promise((r) => setTimeout(r, 1500)); // a glide, not a jump
+    const caret = view.coordsAtPos(0)!;
+    const box = view.scrollDOM.getBoundingClientRect();
+    return { top: view.scrollDOM.scrollTop, visible: caret.top >= box.top - 1 && caret.top < box.bottom };
+  });
+  expect(afterMove.visible, `caret at ${afterMove.top}px`).toBe(true);
+});
+
+// A command that selects the whole note is not a reason to glide either: the
+// selection's head sits at the note's end, so a reveal would take the writer
+// to the bottom of a note they had not moved in.
+test('Select all leaves the view where the writer was', async ({ page }) => {
+  await page.evaluate(() => {
+    const outer = window.testEditor.view.dom.parentElement as HTMLElement;
+    outer.style.height = '420px';
+  });
+  await setText(page, Array.from({ length: 120 }, (_, i) => `line ${i}`).join('\n'), 0);
+  const out = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    view.scrollDOM.scrollTop = 900;
+    await new Promise((r) => requestAnimationFrame(r));
+    const before = view.scrollDOM.scrollTop;
+    window.testEditor.selectAll();
+    await new Promise((r) => setTimeout(r, 600));
+    return { before, after: view.scrollDOM.scrollTop, selected: view.state.selection.main.to, length: view.state.doc.length };
+  });
+  expect(out.selected).toBe(out.length); // the whole note, in fact
+  expect(Math.abs(out.after - out.before), `moved to ${out.after} from ${out.before}`).toBeLessThan(40);
+});

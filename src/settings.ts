@@ -204,8 +204,9 @@ export function openSettings(deps: SettingsDeps): void {
     el.querySelector('[data-value="fontSize"]')!.textContent = `${settings.fontSize}px`;
     el.querySelector('[data-value="lineHeight"]')!.textContent = settings.lineHeight.toFixed(2);
     const preview = el.querySelector<HTMLElement>('.setting-item-preview')!;
-    // Honest: the note's size is the Settings base times the phone's scale.
-    preview.style.fontSize = `calc(${settings.fontSize}px * var(--system-font-scale))`;
+    // Honest: the note's size in the sheet's own unit, so the phone's font
+    // scale (and the browser's default size) is in this sample too.
+    preview.style.fontSize = `${settings.fontSize / 16}rem`;
     preview.style.lineHeight = String(settings.lineHeight);
   };
   const commit = (): void => { save(settings); deps.apply(settings); renderValues(); };

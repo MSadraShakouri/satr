@@ -16,7 +16,7 @@ import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
 import { TapTracker, wordRangeAt, type Range } from './touchSelection';
-import { beginSelectionDrag, endSelectionDrag } from './touchState';
+import { beginSelectionDrag, endSelectionDrag, isCaretRevealSuppressed } from './touchState';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
@@ -743,7 +743,10 @@ export class SatrEditor {
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChange(); // the text is read lazily (getValue)
-        if (update.selectionSet) options?.onSelection?.(update.state.selection.main.head);
+        if (update.selectionSet) {
+          selectionMoved = true;
+          options?.onSelection?.(update.state.selection.main.head);
+        }
         // A line made with Enter puts the caret on the line below the one on
         // screen; bring it in, exactly as typing a character does.
         if (update.transactions.some((tr) => tr.isUserEvent('input.enter'))) revealSoon(0);
@@ -755,8 +758,18 @@ export class SatrEditor {
     // caret into the part of the screen the keyboard and toolbar leave
     // visible — a short smooth scroll, only if it is actually hidden, and
     // only once the keyboard has finished resizing the page.
+    // Whether the caret has been somewhere new since the last time the view
+    // brought it into sight. A focus is not a reason to move on its own: the
+    // WebView re-focuses the editable region by itself — a checkbox tap, a
+    // link, a keyboard restart — and gliding back to a caret the writer had
+    // scrolled away from (measured: up to 1688px) is the opposite of what they
+    // asked for. The paths that mean it — a tap, Enter, the keyboard opening —
+    // each move the selection or say so explicitly.
+    let selectionMoved = true;
     const revealCaret = (): void => {
       if (!this.view.hasFocus || touching) return;
+      if (isCaretRevealSuppressed()) return; // a widget tap just happened: nothing moves
+      selectionMoved = false; // this pass is the reveal for wherever the caret is now
       const coords = this.view.coordsAtPos(this.view.state.selection.main.head);
       if (!coords) return;
       const box = this.view.scrollDOM.getBoundingClientRect();
@@ -777,7 +790,8 @@ export class SatrEditor {
     // viewport resize, pulled the view back to the caret each time you tried
     // to scroll away from it; Chrome's address bar resizes the viewport as
     // you scroll.)
-    this.view.contentDOM.addEventListener('focus', () => revealSoon(160));
+    this.view.contentDOM.addEventListener('focus', () => { if (selectionMoved) revealSoon(160); });
+    this.markCaretSettled = () => { selectionMoved = false; };
     let touchTimer: number | undefined;
     let touchSelection: [number, number] = [0, 0];
     let touchMoved = false;
@@ -790,7 +804,14 @@ export class SatrEditor {
     // browser selected itself always wins. The word itself is chosen by
     // src/touchSelection.ts, the same rule a phone keyboard uses.
     const taps = new TapTracker();
-    let dragWord: { word: Range; anchor: number; head: number } | null = null;
+    // What the finger is doing after a double tap, decided by the first
+    // movement it makes: 'undecided' (the finger has not moved far enough to
+    // say), 'extend' (a drag, the selection follows it) or 'scroll' (a scroll,
+    // the page follows it and the selection stays where it is). Deciding here
+    // is what lets a double tap be followed by a scroll: the note used to
+    // preventDefault every move once the tap had found a word, so the page
+    // could not be scrolled at all until the finger was lifted.
+    let dragWord: { word: Range; anchor: number; head: number; x: number; y: number; mode: 'undecided' | 'extend' | 'scroll' } | null = null;
     const wordAt = (x: number, y: number): Range | null => {
       const pos = this.view.posAtCoords({ x, y });
       return pos === null ? null : wordRangeAt(this.view.state.doc.toString(), pos);
@@ -821,7 +842,7 @@ export class SatrEditor {
       const onWidget = (event.target as HTMLElement | null)?.closest('.cm-widget, .cm-file-title, .cm-gutters, .cm-tooltip');
       const count = onWidget || !touch ? taps.cancel() : taps.start(event.timeStamp, touch.clientX, touchStartY, event.touches.length);
       const word = count >= 2 ? wordAt(touch!.clientX, touchStartY) : null;
-      dragWord = word ? { word, anchor, head } : null;
+      dragWord = word ? { word, anchor, head, x: touch!.clientX, y: touchStartY, mode: 'undecided' } : null;
       if (dragWord) beginSelectionDrag();
     }, { passive: true });
     // A tap below the last line means "the end of the note", not the nearest
@@ -850,9 +871,25 @@ export class SatrEditor {
         touchMoved = true;
         taps.cancel(); // a scroll is not a tap
       }
-      // Dragging after a double tap takes the selection with the finger, from
-      // the word the tap found to the word under the finger now.
+      // A finger that moved after a double tap is either extending the
+      // selection or scrolling the note — and the two must not fight. The
+      // first movement decides: mostly sideways is a drag (the selection
+      // follows the finger, the page stays still); mostly up or down is a
+      // scroll (the page follows the finger, the selection stays put, and
+      // nothing is prevented). Until then nothing is prevented either, so a
+      // scroll never loses its first few pixels to the tap.
       if (!dragWord || !touch) return;
+      const dx = touch.clientX - dragWord.x;
+      const dy = touch.clientY - dragWord.y;
+      if (dragWord.mode === 'undecided') {
+        if (Math.abs(dx) > 10 && Math.abs(dx) >= Math.abs(dy)) dragWord.mode = 'extend';
+        else if (Math.abs(dy) > 10) dragWord.mode = 'scroll';
+      }
+      if (dragWord.mode === 'scroll') {
+        endSelectionDrag(); // the note may scroll: the drawer keeps its distance
+        return;
+      }
+      if (dragWord.mode !== 'extend') return;
       beginSelectionDrag();
       // The finger is extending the selection: the page must not scroll under
       // it as well.
@@ -863,7 +900,7 @@ export class SatrEditor {
     }, { passive: false });
     const release = (): void => {
       window.clearTimeout(touchTimer);
-      const word = dragWord;
+      const word = dragWord?.mode === 'scroll' ? null : dragWord; // a scroll is not a word selection
       dragWord = null;
       endSelectionDrag(); // the finger is up: the drawer may act again
       // A gesture that moved was not a tap, whatever it did to the selection.
@@ -881,6 +918,177 @@ export class SatrEditor {
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
     this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; endSelectionDrag(); release(); }, { passive: true });
+
+    // "Select all" from Android's own selection bar is the one command that
+    // rides on the DOM selection instead of the keyboard: it dispatches no
+    // keydown (so no keymap sees it) and the WebView sets that selection
+    // before, after or without telling the editable region it happened.
+    // Whether the editor ended up with the whole note was a race between that
+    // and CodeMirror's own reading of the DOM selection — the intermittent
+    // "Select all". Three ways in, so that whatever the platform does, the
+    // editor's own selection is the one that ends up standing.
+    //
+    //  1. `selectstart`. Blink's own SelectAll — the selection bar's command,
+    //     a key binding, a WebView's `selectAll()` — announces itself by
+    //     dispatching a cancelable `selectstart` on the *editable root*,
+    //     before it touches the selection. A tap, a drag or a keyboard
+    //     extension, when they dispatch one at all, aim it at the node under
+    //     the finger or the caret instead, so the root itself is the signature
+    //     of the command and of nothing else. This is the one signal that
+    //     arrives *before* the platform has a chance to turn "the whole
+    //     editable element" into a caret at its end — which is exactly what it
+    //     does, and exactly why this worked only sometimes. A finger or a key
+    //     that was busy in the editor a breath ago is exempt, so a selection
+    //     made by hand is never taken for a command.
+    //  2. The input event Chrome fires for it (`inputType: 'selectAll'`), when
+    //     it fires one at all: taken over and answered from the state.
+    //  3. `selectionchange`, for the WebView that only moves the DOM
+    //     selection: a selection that covers the whole editable region *is*
+    //     the whole note, so the editor adopts it. The content region must be
+    //     on screen and either hold the selection's own anchor or have the
+    //     focus, so a selection somewhere else on the page (the reading view,
+    //     a drawer) is never mistaken for this one.
+    //
+    // The last two listen on `window` in the capture phase, and that is the
+    // point: CodeMirror listens on the document, so capture runs first, while
+    // the platform's selection is still the platform's to read.
+    const wholeNote = (): { anchor: number; head: number } => ({ anchor: 0, head: this.view.state.doc.length });
+    const selectWholeNote = (): void => {
+      const main = this.view.state.selection.main;
+      if (main.from === 0 && main.to === this.view.state.doc.length) return;
+      this.view.dispatch({ selection: wholeNote(), userEvent: 'select.pointer' });
+      // Nothing to bring into view: the whole note is selected. (The head is
+      // at the note's end, so a reveal here would glide the reader to the
+      // bottom, of all places, after a command that did not move them at all.)
+      selectionMoved = false;
+    };
+    // Where fingers and keys were last busy. A touch selection belongs to the
+    // finger that made it, a keyboard extension to the key that made it; a
+    // Select all command belongs to neither, and that is how the two are told
+    // apart. A finger that never lifted (its stream was cut off) stops
+    // counting after a second and a half.
+    let alive = true;
+    let lastFingerDown = 0;
+    let lastFingerUp = 0;
+    let lastKeyDown = 0;
+    const fingerBusy = (): boolean =>
+      (lastFingerDown > lastFingerUp && Date.now() - lastFingerDown < 1500)
+      || Date.now() - lastFingerUp < 120;
+    const noteFingerDown = (): void => { lastFingerDown = Date.now(); };
+    const noteFingerUp = (): void => { lastFingerUp = Date.now(); };
+    const noteKeyDown = (): void => { lastKeyDown = Date.now(); };
+    const selectAllCommand = (event: Event): void => {
+      if (event.target !== this.view.contentDOM) return;
+      if (fingerBusy() || Date.now() - lastKeyDown < 120) return;
+      if (!this.view.contentDOM.getClientRects().length) return; // the editor is not the visible pane
+      // Answered here rather than witnessed afterwards: Blink skips its own
+      // selection step for a canceled selectstart, so the editor's whole-note
+      // selection is the only one that ever lands, and it lands in the same
+      // task as the command.
+      event.preventDefault();
+      this.view.focus();
+      selectWholeNote();
+      // And if an embedder goes ahead anyway, the editor still has the last
+      // word — one frame later, after the platform has had its say.
+      requestAnimationFrame(() => { if (alive) selectWholeNote(); });
+    };
+    const selectAllInput = (event: Event): void => {
+      if ((event as InputEvent).inputType !== 'selectAll') return;
+      event.preventDefault();
+      this.view.focus();
+      this.view.dispatch({ selection: wholeNote(), userEvent: 'select.pointer' });
+    };
+    // The third shape of the same command: a WebView (or an Android build)
+    // that answers "Select all" for the *page* when the note itself is not what
+    // it thinks is focused — Blink's own case, where the selection resolves
+    // against `body`. The note is on screen anyway, so the whole page meaning
+    // the whole note is exactly what the writer asked for. A field's own
+    // select-all is anchored in the field, never at the body, and a selection
+    // made in the reading view belongs to a pane the editor is not showing.
+    const adoptWholePageSelection = (): boolean => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+      const content = this.view.contentDOM;
+      if (!content.getClientRects().length) return false; // the editor is not the visible pane
+      const range = selection.getRangeAt(0);
+      const document_ = document.documentElement;
+      if (range.startContainer !== document_.parentNode && range.startContainer !== document_ && range.startContainer !== document.body) return false;
+      if (range.endContainer !== document_.parentNode && range.endContainer !== document_ && range.endContainer !== document.body) return false;
+      return true;
+    };
+    const adoptWholeDocumentSelection = (): void => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+      const content = this.view.contentDOM;
+      if (!content.getClientRects().length) return; // the editor is not the visible pane
+      if (adoptWholePageSelection()) {
+        // The page selection means the note: make it one, text-anchored, so
+        // the editor reads back the selection the writer can see.
+        const lines = content.querySelectorAll('.cm-line');
+        const first = lines[0]?.firstChild;
+        const lastLine = lines[lines.length - 1];
+        const last = lastLine?.lastChild;
+        if (first?.nodeType === Node.TEXT_NODE && last?.nodeType === Node.TEXT_NODE) {
+          const restored = document.createRange();
+          restored.setStart(first, 0);
+          restored.setEnd(last, last.textContent?.length ?? 0);
+          const dom = window.getSelection()!;
+          dom.removeAllRanges();
+          dom.addRange(restored);
+        }
+        this.view.focus();
+        selectWholeNote();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const whole = document.createRange();
+      whole.selectNodeContents(content);
+      if (range.compareBoundaryPoints(Range.START_TO_START, whole) > 0
+        || range.compareBoundaryPoints(Range.END_TO_END, whole) < 0) return;
+      const anchor = selection.anchorNode;
+      if (!(anchor && content.contains(anchor)) && !this.view.hasFocus) return;
+      // Anchor the platform's range on the note's own text — the first line's
+      // first character to the last line's last — so the selection the editor
+      // saves is the one CodeMirror can read back, whatever it does with the
+      // element-level range the platform left behind.
+      const lines = content.querySelectorAll('.cm-line');
+      const first = lines[0]?.firstChild;
+      const lastLine = lines[lines.length - 1];
+      const last = lastLine?.lastChild;
+      if (first?.nodeType === Node.TEXT_NODE && last?.nodeType === Node.TEXT_NODE) {
+        const restored = document.createRange();
+        restored.setStart(first, 0);
+        restored.setEnd(last, last.textContent?.length ?? 0);
+        selection.removeAllRanges();
+        selection.addRange(restored);
+      }
+      selectWholeNote();
+    };
+    this.view.contentDOM.addEventListener('beforeinput', selectAllInput);
+    for (const type of ['pointerdown', 'touchstart'] as const) {
+      this.view.contentDOM.addEventListener(type, noteFingerDown, { capture: true, passive: true });
+    }
+    for (const type of ['pointerup', 'pointercancel', 'touchend', 'touchcancel'] as const) {
+      this.view.contentDOM.addEventListener(type, noteFingerUp, { capture: true, passive: true });
+    }
+    // Capture, on the window: before the document's own listeners (CodeMirror's
+    // included), while the platform's selection is still the platform's.
+    window.addEventListener('selectstart', selectAllCommand, true);
+    window.addEventListener('selectionchange', adoptWholeDocumentSelection, true);
+    window.addEventListener('keydown', noteKeyDown, true);
+    this.cleanupSelectionAdoption = () => {
+      alive = false;
+      this.view.contentDOM.removeEventListener('beforeinput', selectAllInput);
+      for (const type of ['pointerdown', 'touchstart'] as const) {
+        this.view.contentDOM.removeEventListener(type, noteFingerDown, true);
+      }
+      for (const type of ['pointerup', 'pointercancel', 'touchend', 'touchcancel'] as const) {
+        this.view.contentDOM.removeEventListener(type, noteFingerUp, true);
+      }
+      window.removeEventListener('selectstart', selectAllCommand, true);
+      window.removeEventListener('selectionchange', adoptWholeDocumentSelection, true);
+      window.removeEventListener('keydown', noteKeyDown, true);
+    };
     // The keyboard opening shrinks the viewport by far more than an address
     // bar does; only that counts.
     let viewportHeight = window.visualViewport?.height ?? window.innerHeight;
@@ -911,6 +1119,7 @@ export class SatrEditor {
   selectAll(): void {
     this.view.focus();
     this.view.dispatch({ selection: { anchor: 0, head: this.view.state.doc.length } });
+    this.markCaretSettled?.(); // the whole note is selected: nothing to bring into view
   }
   focusTitle(): void {
     const el = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
@@ -947,6 +1156,7 @@ export class SatrEditor {
   setSelection(anchor: number, head = anchor): void {
     const max = this.view.state.doc.length;
     this.view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } });
+    this.markCaretSettled?.(); // placed without scrolling, on purpose
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
   openFind(replace = false): void { openFind(this.view, replace && !this.isReadOnly); }
@@ -972,6 +1182,7 @@ export class SatrEditor {
     from = Math.min(from, max); to = Math.min(to, max);
     this.unfoldAround(from);
     this.view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) });
+    this.markCaretSettled?.(); // centred on purpose
   }
   /** Fold / unfold the heading on this 0-based line. */
   toggleFold(line: number): boolean { return toggleHeadingFold(this.view, line); }
@@ -990,5 +1201,13 @@ export class SatrEditor {
   findPrevious(): void { findPrevious(this.view); }
   undo(): void { if (!this.isReadOnly) undo(this.view); }
   redo(): void { if (!this.isReadOnly) redo(this.view); }
-  destroy(): void { this.view.destroy(); }
+  destroy(): void {
+    this.cleanupSelectionAdoption?.();
+    this.view.destroy();
+  }
+  private cleanupSelectionAdoption?: () => void;
+  /** Set by the constructor: says the caret needs no bringing into view, so a
+   *  focus that follows (a select-all's own) is not a reason to glide —
+   *  see the focus reveal above. */
+  private markCaretSettled?: () => void;
 }

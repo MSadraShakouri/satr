@@ -88,8 +88,11 @@ async function pageGeometry(page: Page) {
       bodyWidth: Math.round(document.body.getBoundingClientRect().width),
       pageHeights: pages.map((p) => Math.round(p.getBoundingClientRect().height)),
       sheetHeights: sheets.map((s) => Math.round(s.getBoundingClientRect().height)),
-      // The native hand-off leaves 32px below paginated text, so a tiny
-      // WebView font-metric difference cannot clip the last line on a sheet.
+      // No reserve below paginated text, in the app any more than in the
+      // browser: the page content fills the area it was measured in (the
+      // app-only 32px reserve used to shorten every page, which is what made
+      // the phone break a page earlier than the web — tests/printParity.spec.ts
+      // holds the two paths to the same pages).
       contentBottomGaps: pages.map((p) => {
         const content = p.querySelector<HTMLElement>('.pagedjs_page_content');
         const area = content?.parentElement;
@@ -143,10 +146,18 @@ for (const columns of [1, 2] as const) {
     for (const height of [...geometry.pageHeights, ...geometry.sheetHeights]) {
       expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
     }
-    expect(geometry.overflowing).toEqual([]);
+    // The print WebView is a second layout engine instance, so a page can come
+    // out a hair taller than the frame that measured it. Nothing about that
+    // may clip a line: the surplus runs down into the page's own 1in bottom
+    // margin — which is where the app-only 32px reserve used to sit, and why
+    // it could go: it was never free (it is 24pt less room on every page for
+    // the measuring frame too, so the phone broke a page earlier than the
+    // browser; tests/printParity.spec.ts holds the two paths to the same
+    // pages). Bounded here, so a runaway layout still fails.
+    expect(geometry.overflowing.every(({ over }) => over <= 32), JSON.stringify(geometry.overflowing)).toBe(true);
     expect(geometry.columnLeaks).toEqual([]);
     expect(geometry.offSheetText).toEqual([]);
-    expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);
+    expect(geometry.contentBottomGaps.every((gap) => gap <= 1)).toBe(true);
     // The laid-out pages still hold the whole note.
     const content = page.locator('.pagedjs_page_content');
     await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
@@ -205,6 +216,13 @@ test('app: the document handed over is static and asks for the paper’s width',
   // scale: the app's own sheet carries the scale (--system-font-scale), and
   // none of it is in the print CSS.
   expect(html).toMatch(/html\s*\{[^}]*font-size:\s*15px/);
+  // And no measurement reaches the paper. The math's sizes are KaTeX's own em
+  // attributes, which resolve in the frame that prints them; a length a frame
+  // *measured* (px), frozen into the document, is the one thing that could
+  // arrive already wrong — it was measured against another engine's em.
+  const frozenPx = html.match(/<svg[^>]*style="[^"]*\b(?:width|height):\s*[\d.]+px/gi) ?? [];
+  expect(frozenPx).toEqual([]);
+  expect(html).toMatch(/<svg[^>]*style="[^"]*width:\s*[\d.]+em/);
 });
 
 test('app: a phone font scale changes neither the pages nor the output', async ({ page }) => {
@@ -228,10 +246,10 @@ test('app: a phone font scale changes neither the pages nor the output', async (
   for (const height of [...geometry.pageHeights, ...geometry.sheetHeights]) {
     expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
   }
-  expect(geometry.overflowing).toEqual([]);
+  expect(geometry.overflowing.every(({ over }) => over <= 32), JSON.stringify(geometry.overflowing)).toBe(true);
   expect(geometry.columnLeaks).toEqual([]);
   expect(geometry.offSheetText).toEqual([]);
-  expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);
+  expect(geometry.contentBottomGaps.every((gap) => gap <= 1)).toBe(true);
   const content = page.locator('.pagedjs_page_content');
   await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
   await expect(content.locator('.math-display')).toHaveCount(64);

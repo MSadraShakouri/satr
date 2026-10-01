@@ -27,7 +27,7 @@ import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots } from './snapshot';
-import { ensureFileAccess, setupSystemBars, systemBars } from './native';
+import { ensureFileAccess, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot } from './spaces';
 import { backend, DEFAULT_FOLDER, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
@@ -918,7 +918,19 @@ async function openFallback(): Promise<void> {
   filePath = '';
   showFile(path, text);
 }
-async function newFile(dir = notesHome()): Promise<void> {
+// Where a new note goes when nobody said where: the folder the writer is
+// already working in — the folder of the note in front of them. Notes are kept
+// in folders by subject, so a note written while reading "Physics/lecture 2"
+// belongs beside it, not at the top of the vault. There is no folder to follow
+// when the note itself sits at the very top of the storage (the one place new
+// notes have never gone), when there is no note open at all, or when the file
+// was opened from another app — a folder that is none of Satr's business. All
+// of those get the space's own home, as before.
+function focusedNoteDir(): string {
+  const dir = filePath && externalFileScreen.hidden ? dirname(filePath) : '';
+  return dir || notesHome();
+}
+async function newFile(dir = focusedNoteDir()): Promise<void> {
   if (!await leaveCurrent()) return;
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
@@ -1426,6 +1438,12 @@ const sidebar = createRightSidebar(rightPanel, {
   currentText: () => editor.getValue(),
   noteDir: () => majorityDirection(editor.getValue()),
   scopeName: () => scopeName(currentScope()),
+  // The folder the note list was taken from, so a result can say where it
+  // sits relative to what is being searched (src/rightSidebar.ts).
+  rootPath: () => {
+    const scope = currentScope();
+    return scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
+  },
   onResult: (path, from, to) => {
     toggleOutline(false);
     void openFile(path, () => {
@@ -1474,9 +1492,12 @@ editor.view.dom.addEventListener('input', refreshOutlineSoon);
 // drawer, as Obsidian's. The theme is chosen there.
 function applySettings(settings: Settings): void {
   const root = document.documentElement.style;
-  // The Settings size is a base: the phone's font scale (--system-font-scale,
-  // src/native.ts) applies on top, as it does to the rest of the sheet.
-  root.setProperty('--note-font-size', `calc(${settings.fontSize}px * var(--system-font-scale))`);
+  // The Settings size is a base in the sheet's own unit: 16px is 1rem, and
+  // the root carries the scale (the phone's font size as --system-font-scale,
+  // the browser's own default on the web), so the note grows with everything
+  // else — and the em a KaTeX sign is laid out in is always the em of the
+  // letter beside it (src/style.css, src/mathLayout.ts).
+  root.setProperty('--note-font-size', `${settings.fontSize / 16}rem`);
   root.setProperty('--note-line-height', String(settings.lineHeight));
   editor.setLineNumbers(settings.lineNumbers);
   document.body.classList.toggle('no-line-numbers', !settings.lineNumbers);
@@ -1811,5 +1832,6 @@ const drawers = initDrawers({
   },
 });
 applySettings(loadSettings());
+setupFontScalePreview(); // the web's own `?fontscale=`, before the bars report the phone's
 setupSystemBars();
 void boot();

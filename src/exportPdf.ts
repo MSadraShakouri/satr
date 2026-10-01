@@ -70,14 +70,18 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
       `.math-display, .math-display .katex-display > .katex { text-align: ${mathAlign}; }
        .math-display .katex-display > .katex { white-space: normal; }`,
       options.columns === 2 ? columnPageCss : '',
-      // Android's print WebView can lay a line slightly taller than the
-      // measuring WebView. Keep a one-line reserve at the foot of every
-      // paginated column so its fixed-height page box cannot clip that line
-      // when Android writes the PDF. The browser path prints the measuring
-      // layout itself and does not need this safety space.
-      Capacitor.isNativePlatform()
-        ? `.pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content { height: calc(100% - var(--pagedjs-footnotes-height, 0px) - 32px) !important; }`
-        : '',
+      // The app used to shorten every page here — a one-line reserve at the
+      // foot of each paginated column, in the app only, from when the print
+      // WebView still received a fixed-height multi-column page content that
+      // could clip a line it laid out a hair taller. That box is gone (see
+      // printDocumentHtml: plain flow, nothing clipped), and the reserve was
+      // never free: it is 24pt less room on every page for the measuring
+      // frame too, so a section that still fitted at the foot of a page in
+      // the browser was pushed to the next page in the app. The same note,
+      // exported on the phone and in the site, came out with different page
+      // breaks — and the phone, the one with less room, was the sparser of
+      // the two. Both paths now paginate the identical layout: same pages,
+      // same breaks, same output.
     ].map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n');
 
     // Hidden but laid out (display: none would stop both layout and print).

@@ -294,3 +294,167 @@ test('a programmatic whole-document selection survives two frames', async ({ pag
   expect(out.to).toBe(out.length);
   expect(out.rows).toBe(out.lines);
 });
+
+// The same "Select all", from the other side: the platform's own command.
+// Blink's SelectAll — the selection bar's item, a key binding, a WebView's
+// selectAll() — runs *before* the selection moves, and it says so: it
+// dispatches a cancelable selectstart on the editable root. That is the whole
+// fix for "Select all works sometimes". Left alone, the platform turns "the
+// whole editable element" into a caret at the note's end and CodeMirror
+// faithfully copies that down, so the note looked deselected; whether the
+// command had worked came down to which of the two won the race.
+test('the platform\u2019s own Select all ends up as the whole note, every time', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Heading one\n\nA paragraph of text here\n\nSecond paragraph\n\nLast line');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+  });
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
+  await page.locator('#app .cm-content').click({ position: { x: 20, y: 60 } });
+
+  const read = () => page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    const main = view.state.selection.main;
+    return { from: main.from, to: main.to, length: view.state.doc.length };
+  });
+  const setSelection = (anchor: number, head = anchor) => page.evaluate(async ({ anchor, head }) => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    view.dispatch({ selection: { anchor, head } });
+  }, { anchor, head });
+  // What the platform does to announce it: cancelable selectstart, root as target.
+  const platformSelectAll = () => page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>('#app .cm-content')!;
+    return content.dispatchEvent(new Event('selectstart', { bubbles: true, cancelable: true }));
+  });
+
+  // 1. From a word selection, and then again from a bare caret: the platform's
+  //    command is not a coin toss about where the caret happened to be.
+  await page.waitForTimeout(200); // the tap above used a finger; a command is not one
+  await setSelection(9, 22);
+  const announcedWithSelection = await platformSelectAll();
+  expect(await read()).toEqual({ from: 0, to: (await read()).length, length: (await read()).length });
+  // It was answered, not merely witnessed: Blink skips its own selection step
+  // when the event is canceled.
+  expect(announcedWithSelection).toBe(false);
+
+  await setSelection(4);
+  await platformSelectAll();
+  const second = await read();
+  expect(second).toEqual({ from: 0, to: second.length, length: second.length });
+
+  // 2. A finger that came down in the editor is not a command: the platform's
+  //    own touch selection keeps that selectstart, and the caret stays put.
+  //    The command's own re-assert lands one frame after it, so let that frame
+  //    pass first: what is being tested here is the finger, not the frame.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await setSelection(0, 11);
+  await page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>('#app .cm-content')!;
+    content.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'touch' }));
+    content.dispatchEvent(new Event('selectstart', { bubbles: true, cancelable: true }));
+  });
+  expect(await read()).toEqual({ from: 0, to: 11, length: (await read()).length });
+
+  // 3. And the WebView that only moves the DOM selection — collapsed, but
+  //    covering the whole region from the note's first character to its last.
+  const viaDomSelection = await page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    view.dispatch({ selection: { anchor: 2, head: 8 } });
+    const content = view.contentDOM;
+    const lines = content.querySelectorAll('.cm-line');
+    const range = document.createRange();
+    range.setStart(lines[0].firstChild!, 0);
+    range.setEnd(lines[lines.length - 1].lastChild!, lines[lines.length - 1].lastChild!.textContent!.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const main = view.state.selection.main;
+    return { from: main.from, to: main.to, length: view.state.doc.length };
+  });
+  expect(viaDomSelection).toEqual({ from: 0, to: viaDomSelection.length, length: viaDomSelection.length });
+
+  // 4. A selection that is *not* the whole region is never taken for the note:
+  //    it stays the small selection it is — here, the two characters the
+  //    platform marked — and is not widened to the whole note. (That the
+  //    editor then reads that selection back as its own is CodeMirror doing
+  //    its job, and is what the native drag handles rely on.)
+  const untouched = await page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    view.dispatch({ selection: { anchor: 2, head: 8 } });
+    const line = view.contentDOM.querySelector('.cm-line')!;
+    // A line's first child may be a preview wrapper, not the text itself.
+    const textOf = (node: Node): Node => (node.nodeType === Node.TEXT_NODE || !node.firstChild ? node : textOf(node.firstChild));
+    const text = textOf(line);
+    const range = document.createRange();
+    const textLength = text.textContent?.length ?? 0;
+    range.setStart(text, 0);
+    range.setEnd(text, Math.min(2, textLength));
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const main = view.state.selection.main;
+    return { from: main.from, to: main.to, length: view.state.doc.length };
+  });
+  expect(untouched.to - untouched.from).toBeLessThan(10);
+  expect(untouched.to).toBeGreaterThan(0);
+});
+
+// The platform's *other* shape of "Select all", which is the one the report
+// describes: a WebView whose command resolves against the page instead of the
+// note (Blink's own hidden-selection case), so the selection it leaves is
+// rooted at `body`. Both mean the same thing to a writer, so both end as the
+// note — and neither a field's own selection nor the reading view's is
+// mistaken for it.
+test('a Select all that lands on the page, not on the note, still means the note', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Heading one\n\nA paragraph of text here\n\nSecond paragraph\n\nLast line');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+  });
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
+
+  const state = () => page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    const main = view.state.selection.main;
+    return { from: main.from, to: main.to, length: view.state.doc.length };
+  });
+
+  // The note is on screen but the caret is not in it (the writer has tapped the
+  // title): this is exactly when the platform's command resolves to the page.
+  await page.locator('#app .cm-file-name').click();
+  await page.evaluate(() => {
+    const range = document.createRange();
+    range.selectNodeContents(document.body);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.waitForTimeout(60);
+  const after = await state();
+  expect(after).toEqual({ from: 0, to: after.length, length: after.length });
+
+  // A field's own selection is anchored in the field, and is left alone.
+  await page.evaluate(async () => {
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    view.dispatch({ selection: { anchor: 3, head: 9 } });
+    const input = document.createElement('input');
+    input.value = 'find bar text';
+    document.body.appendChild(input);
+    input.focus();
+    input.select();
+  });
+  await page.waitForTimeout(60);
+  expect(await state()).toEqual({ from: 3, to: 9, length: (await state()).length });
+});

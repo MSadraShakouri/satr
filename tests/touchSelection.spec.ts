@@ -279,3 +279,71 @@ test('the editor asks the browser for its contenteditable input, not EditContext
   expect(report.autocorrect).toBe('on');
   expect(report.spellcheck).toBe('false');
 });
+
+test('a double tap followed by a scroll scrolls: the page is not held for the selection', async ({ page }) => {
+  // Tapping twice on a word and then dragging the finger down the page is a
+  // scroll — the gesture a reader makes all the time. Once the tap had found a
+  // word, every move of the finger was preventDefault-ed and the selection
+  // stretched under it, so the note could not be scrolled at all until the
+  // finger was lifted, and the drag left a selection smeared over the text it
+  // passed. The first movement decides now: mostly down is a scroll, nothing is
+  // prevented, and the selection is left exactly as the tap found it.
+  const report = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    const rect = view.coordsAtPos(6)!;
+    const x = rect.left + 1;
+    const y = (rect.top + rect.bottom) / 2;
+    const fire = (type: string, clientY = y): boolean => {
+      const touch = new Touch({ identifier: 1, target: view.contentDOM, clientX: x, clientY });
+      const live = type !== 'touchend';
+      return view.contentDOM.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live ? [touch] : [], targetTouches: live ? [touch] : [], changedTouches: [touch],
+      }));
+    };
+    fire('touchstart'); fire('touchend');
+    fire('touchstart');
+    // 40px down the page, in steps, as a scroll arrives.
+    const kept = [fire('touchmove', y + 12), fire('touchmove', y + 26), fire('touchmove', y + 40)];
+    fire('touchend', y + 40);
+    await new Promise((r) => window.setTimeout(r, 200));
+    const { anchor, head } = view.state.selection.main;
+    return { kept, text: window.testEditor.getValue().slice(anchor, head), anchor, head };
+  });
+  // Nothing was prevented: the browser is free to scroll the note.
+  expect(report.kept).toEqual([true, true, true]);
+  // And no selection was dragged out of the gesture either.
+  expect(report.text).not.toContain('quick');
+});
+
+test('a double tap followed by a sideways drag still takes the selection with it', async ({ page }) => {
+  // The other half of the same decision: a mostly sideways move after the tap
+  // is a drag, the page must stay put for it, and the selection follows the
+  // finger from the word the tap found.
+  const report = await page.evaluate(async () => {
+    const view = window.testEditor.view;
+    const from = view.coordsAtPos(6)!;
+    const to = view.coordsAtPos(20)!;
+    const y = (from.top + from.bottom) / 2;
+    const fire = (type: string, clientX: number): boolean => {
+      const touch = new Touch({ identifier: 1, target: view.contentDOM, clientX, clientY: y });
+      const live = type !== 'touchend';
+      return view.contentDOM.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live ? [touch] : [], targetTouches: live ? [touch] : [], changedTouches: [touch],
+      }));
+    };
+    fire('touchstart', from.left + 1); fire('touchend', from.left + 1);
+    fire('touchstart', from.left + 1);
+    const kept = [fire('touchmove', from.left + 14), fire('touchmove', to.left), fire('touchmove', to.left + 4)];
+    fire('touchend', to.left + 4);
+    await new Promise((r) => window.setTimeout(r, 250));
+    const { anchor, head } = view.state.selection.main;
+    return { kept, text: window.testEditor.getValue().slice(anchor, head), anchor };
+  });
+  // The page was held for the drag (each move prevented), and the selection
+  // runs from the tapped word to the word under the finger.
+  expect(report.kept).toEqual([false, false, false]);
+  expect(report.text.startsWith('quick')).toBe(true);
+  expect(report.text).toContain('jumps');
+});

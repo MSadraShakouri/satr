@@ -13,6 +13,7 @@ import { spansHold } from './mathScan';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNodeRef } from '@lezer/common';
 import { editFootnote, findDefinition } from './footnoteDialog';
+import { suppressCaretReveal } from './touchState';
 
 // Bullets and checkboxes are MARKS over the real "-" / "[ ]" text (drawn
 // with CSS), not replacing widgets — the same trick as Obsidian's
@@ -352,9 +353,44 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
   }
 }
 
-// Tapping a rendered checkbox toggles it without moving the caret or
-// opening the keyboard.
+// Tapping a rendered checkbox toggles it without moving the caret, opening
+// the keyboard or moving the page.
+//
+// A tap on a widget is claimed from its very first touch event, so the
+// WebView never places a caret on the marker — and never drags the view back
+// to that caret a moment later, which is why tapping a checkbox used to jump
+// the note away from the line the writer was looking at. A finger that moves
+// is scrolling, not tapping: the claim is dropped at once and the scroll
+// happens as if the checkbox were any other text.
+let pendingTaskTap: { box: HTMLElement; x: number; y: number } | null = null;
+
 const toggleTask = EditorView.domEventHandlers({
+  touchstart(event) {
+    const box = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('.cm-lp-task');
+    if (!box) return false;
+    const touch = event.touches[0];
+    pendingTaskTap = { box, x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
+    suppressCaretReveal();
+    event.preventDefault(); // no caret, no handles, no synthetic click
+    return true;
+  },
+  touchmove(event) {
+    if (!pendingTaskTap) return false;
+    const touch = event.touches[0];
+    // The tap area is roomier than the box (style.css): the slop is what tells
+    // a tap on it from a scroll that started on it.
+    if (touch && Math.hypot(touch.clientX - pendingTaskTap.x, touch.clientY - pendingTaskTap.y) > 12) pendingTaskTap = null;
+    return false;
+  },
+  touchend(event, view) {
+    const pending = pendingTaskTap;
+    pendingTaskTap = null;
+    if (!pending) return false;
+    event.preventDefault();
+    suppressCaretReveal();
+    toggleTaskAt(view, pending.box);
+    return true;
+  },
   click(event, view) {
     // Tapping a footnote reference opens its note in a popover at the
     // reference (Obsidian's footnote popover). A second tap, with the caret already in the
@@ -371,18 +407,24 @@ const toggleTask = EditorView.domEventHandlers({
   },
   mousedown(event, view) {
     lastTapHead = view.hasFocus ? view.state.selection.main.head : -1;
-    const box = (event.target as HTMLElement | null)?.closest?.('.cm-lp-task');
+    const box = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('.cm-lp-task');
     if (!box) return false;
     event.preventDefault();
-    const pos = view.posAtDOM(box);
-    const line = view.state.doc.lineAt(pos);
-    const match = /\[([ xX])\]/.exec(view.state.sliceDoc(pos, line.to));
-    if (!match) return true;
-    const at = pos + match.index + 1;
-    view.dispatch({ changes: { from: at, to: at + 1, insert: match[1] === ' ' ? 'x' : ' ' }, userEvent: 'input.toggle-task' });
+    suppressCaretReveal();
+    toggleTaskAt(view, box);
     return true;
   },
 });
+
+/** Flip the box's `[ ]` / `[x]` in the note, wherever the caret is. */
+function toggleTaskAt(view: EditorView, box: HTMLElement): void {
+  const pos = view.posAtDOM(box);
+  const line = view.state.doc.lineAt(pos);
+  const match = /\[([ xX])\]/.exec(view.state.sliceDoc(pos, line.to));
+  if (!match) return;
+  const at = pos + match.index + 1;
+  view.dispatch({ changes: { from: at, to: at + 1, insert: match[1] === ' ' ? 'x' : ' ' }, userEvent: 'input.toggle-task' });
+}
 
 let lastTapHead = -1; // caret before the tap, to tell a first tap from a second
 

@@ -111,10 +111,18 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
       ]);
     }
   });
-  // Swipe a card sideways to close it: it follows the finger and fades; past
-  // a third of its width (or a quick flick) it flies off and the tab closes.
+  // Swipe a card sideways to close it: it follows the finger and fades; past a
+  // quarter of its width (or a flick — the direction the finger was already
+  // going at, a moment further) it flies off and the tab closes. The gesture is
+  // read before it is claimed: a drag that starts a little downward, or whose
+  // first millimetres are not perfectly horizontal, used to be thrown away
+  // outright — which is what made closing a tab feel like it needed the whole
+  // card's width, twice, at the right angle.
   let swiped = false;
-  let drag: { card: HTMLElement; x: number; y: number; t: number; dx: number; on: boolean } | null = null;
+  let drag: { card: HTMLElement; x: number; y: number; t: number; dx: number; on: boolean; decided: boolean } | null = null;
+  /** The flick that counts: how far this drag would still travel at the speed
+   *  it is going, over the moment after the lift. */
+  const projected = (dx: number, dt: number): number => dx + (dx / Math.max(1, dt)) * 100;
   // Press and hold (350ms, finger still) picks a card up to reorder.
   let holdTimer: number | undefined;
   let lift: { card: HTMLElement; wrapper: HTMLElement; from: number; x: number; y: number; left: number; top: number } | null = null;
@@ -167,7 +175,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     cancelHold();
     if (deps.tabs().length > 1) holdTimer = window.setTimeout(() => startLift(card, t.clientX, t.clientY), 350);
     if (deps.tabs().length < 2) return;
-    drag = { card, x: t.clientX, y: t.clientY, t: event.timeStamp, dx: 0, on: false };
+    drag = { card, x: t.clientX, y: t.clientY, t: event.timeStamp, dx: 0, on: false, decided: false };
   }, { passive: true });
   el.addEventListener('touchmove', (event) => {
     const t = event.touches[0];
@@ -177,15 +185,23 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     const dy = t.clientY - drag.y;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) cancelHold();
     if (!drag.on) {
-      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; } // scrolling
-      if (Math.abs(dx) < 10) return;
+      // The scroll container keeps a mostly vertical gesture (the switcher
+      // scrolls); a mostly horizontal one is this drag, whenever it arrives —
+      // the first movement only has to settle which of the two it is.
+      if (!drag.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        drag.decided = true;
+        if (Math.abs(dy) > Math.abs(dx)) { drag = null; return; } // scrolling, for good
+      }
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy)) return;
       drag.on = true;
     }
     event.preventDefault();
     drag.dx = dx;
     drag.card.style.transition = 'none';
     drag.card.style.transform = `translateX(${dx}px)`;
-    drag.card.style.opacity = String(Math.max(0.2, 1 - Math.abs(dx) / drag.card.offsetWidth));
+    // Fading as the card travels, so the quarter of the way it takes to close
+    // is visible while the finger is still down.
+    drag.card.style.opacity = String(Math.max(0.25, 1 - Math.abs(dx) / (drag.card.offsetWidth / 2)));
   }, { passive: false });
   const endDrag = (event: TouchEvent): void => {
     cancelHold();
@@ -196,9 +212,10 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     if (!on) return;
     swiped = true;
     window.setTimeout(() => { swiped = false; }, 400);
-    const fast = Math.abs(dx) / Math.max(1, event.timeStamp - t) > 0.6;
+    const width = card.offsetWidth;
+    const reach = Math.abs(dx) > width / 4 || Math.abs(projected(dx, event.timeStamp - t)) > width / 2;
     card.style.transition = 'transform 180ms ease-out, opacity 180ms ease-out';
-    if (Math.abs(dx) > card.offsetWidth / 3 || (fast && Math.abs(dx) > 30)) {
+    if (reach) {
       card.style.transform = `translateX(${Math.sign(dx) * window.innerWidth}px)`;
       card.style.opacity = '0';
       window.setTimeout(() => { deps.close(Number(card.dataset.index)); render(); }, 180);

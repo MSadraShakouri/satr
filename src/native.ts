@@ -45,14 +45,32 @@ function applyInsets(insets: Insets): void {
   // is pinned to 100% text zoom (SystemBarsPlugin.java): Android's textZoom
   // scales the glyphs but not the CSS em context, which every KaTeX sign and
   // offset is laid out in.
-  if (typeof insets.fontScale === 'number' && Number.isFinite(insets.fontScale) && insets.fontScale > 0) {
-    root.setProperty('--system-font-scale', String(insets.fontScale));
-    if (Math.abs(insets.fontScale - lastSystemFontScale) > 0.001) {
-      const previous = lastSystemFontScale;
-      lastSystemFontScale = insets.fontScale;
-      window.dispatchEvent(new CustomEvent('satr:font-scale-change', { detail: { scale: insets.fontScale, previous } }));
-    }
+  setFontScale(insets.fontScale);
+}
+
+/** The phone's font scale (Android's font size setting) as --system-font-scale,
+ *  the one number src/style.css derives the whole sheet from. */
+function setFontScale(fontScale: unknown): void {
+  if (typeof fontScale !== 'number' || !Number.isFinite(fontScale) || fontScale <= 0) return;
+  const root = document.documentElement.style;
+  root.setProperty('--system-font-scale', String(fontScale));
+  if (Math.abs(fontScale - lastSystemFontScale) > 0.001) {
+    const previous = lastSystemFontScale;
+    lastSystemFontScale = fontScale;
+    window.dispatchEvent(new CustomEvent('satr:font-scale-change', { detail: { scale: fontScale, previous } }));
   }
+}
+
+/**
+ * The same scale, on the web, from the address: `?fontscale=1.15` sizes the
+ * whole app — chrome and note alike — as the phone does at that system font
+ * size, so the site and the APK can be held side by side. The browser's own
+ * default font size is the web's font scale (see src/style.css), and this only
+ * ever narrows the difference; nothing in the app reads it but CSS.
+ */
+export function setupFontScalePreview(): void {
+  const asked = Number(new URLSearchParams(window.location.search).get('fontscale'));
+  if (Number.isFinite(asked) && asked > 0) setFontScale(Math.min(3, Math.max(0.5, asked)));
 }
 
 /**
