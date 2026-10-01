@@ -88,11 +88,12 @@ async function pageGeometry(page: Page) {
       bodyWidth: Math.round(document.body.getBoundingClientRect().width),
       pageHeights: pages.map((p) => Math.round(p.getBoundingClientRect().height)),
       sheetHeights: sheets.map((s) => Math.round(s.getBoundingClientRect().height)),
-      // No reserve below paginated text, in the app any more than in the
-      // browser: the page content fills the area it was measured in (the
-      // app-only 32px reserve used to shorten every page, which is what made
-      // the phone break a page earlier than the web — tests/printParity.spec.ts
-      // holds the two paths to the same pages).
+      // The foot reserve, in every path: the page content is one line shorter
+      // than the area it was measured in, so a page has somewhere to put a
+      // line that comes out a hair taller in the print WebView. It is shared
+      // with the browser path on purpose — the reserve belongs to the page,
+      // not to the engine printing it — and tests/printParity.spec.ts holds
+      // the two paths to the same pages.
       contentBottomGaps: pages.map((p) => {
         const content = p.querySelector<HTMLElement>('.pagedjs_page_content');
         const area = content?.parentElement;
@@ -147,17 +148,21 @@ for (const columns of [1, 2] as const) {
       expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
     }
     // The print WebView is a second layout engine instance, so a page can come
-    // out a hair taller than the frame that measured it. Nothing about that
-    // may clip a line: the surplus runs down into the page's own 1in bottom
-    // margin — which is where the app-only 32px reserve used to sit, and why
-    // it could go: it was never free (it is 24pt less room on every page for
-    // the measuring frame too, so the phone broke a page earlier than the
-    // browser; tests/printParity.spec.ts holds the two paths to the same
-    // pages). Bounded here, so a runaway layout still fails.
-    expect(geometry.overflowing.every(({ over }) => over <= 32), JSON.stringify(geometry.overflowing)).toBe(true);
+    // out a hair taller than the frame that measured it. The reserve is what
+    // a page has to absorb that: its content stops a line short of the area it
+    // was measured in, so nothing is overfull and the taller line has room
+    // inside the page. (Measured without it: the content box ran over by up to
+    // 28px and text came within 1px of the margin line on three of eight
+    // pages — a page with nowhere left to put that line, which is the v0.4.1
+    // overflow come back.) Both bounds are pinned, so a runaway layout fails
+    // here and a missing reserve fails here too.
+    expect(geometry.overflowing, JSON.stringify(geometry.overflowing)).toEqual([]);
     expect(geometry.columnLeaks).toEqual([]);
     expect(geometry.offSheetText).toEqual([]);
-    expect(geometry.contentBottomGaps.every((gap) => gap <= 1)).toBe(true);
+    expect(
+      geometry.contentBottomGaps.every((gap) => gap >= 31 && gap <= 32),
+      JSON.stringify(geometry.contentBottomGaps),
+    ).toBe(true);
     // The laid-out pages still hold the whole note.
     const content = page.locator('.pagedjs_page_content');
     await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
@@ -201,6 +206,12 @@ test('app: the document handed over is static and asks for the paper’s width',
   // The pages are A4: view the document at the paper's width, so nothing is
   // scaled to fit it (PrintPlugin.java sets useWideViewPort).
   expect(html).toMatch(/<meta name="viewport" content="width=794, initial-scale=1">/i);
+  // The foot reserve, once, and for every path: it belongs to the page rather
+  // than to the platform printing it, so the app and the browser hand Paged.js
+  // the same geometry (the alternative — the app alone, or neither — is what
+  // put the phone's last line within 1px of the margin, and made the same note
+  // paginate two ways).
+  expect(html.match(/height:\s*calc\(100% - var\(--pagedjs-footnotes-height, 0px\) - 32px\)/g)?.length).toBe(1);
   // A4 with no margins, as the last word in the cascade: the pages carry
   // their own 1in ones, and Paged.js's letter-sized @page must not shrink
   // the paper under them.
@@ -246,10 +257,10 @@ test('app: a phone font scale changes neither the pages nor the output', async (
   for (const height of [...geometry.pageHeights, ...geometry.sheetHeights]) {
     expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
   }
-  expect(geometry.overflowing.every(({ over }) => over <= 32), JSON.stringify(geometry.overflowing)).toBe(true);
+  expect(geometry.overflowing, JSON.stringify(geometry.overflowing)).toEqual([]);
   expect(geometry.columnLeaks).toEqual([]);
   expect(geometry.offSheetText).toEqual([]);
-  expect(geometry.contentBottomGaps.every((gap) => gap <= 1)).toBe(true);
+  expect(geometry.contentBottomGaps.every((gap) => gap >= 31 && gap <= 32)).toBe(true);
   const content = page.locator('.pagedjs_page_content');
   await expect(content.locator('h3')).toHaveText(Array.from({ length: 40 }, (_, i) => `${i + 1}.`));
   await expect(content.locator('.math-display')).toHaveCount(64);

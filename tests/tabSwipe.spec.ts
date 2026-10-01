@@ -123,6 +123,27 @@ test('a drag that starts a little crooked still closes: the first real movement 
   await expect(page.locator('.mobile-tab')).toHaveCount(2);
 });
 
+test('a swipe that starts downward still closes once it travels sideways', async ({ page }) => {
+  // The first real movement used to decide for good, and a sample that leaned
+  // vertical threw the gesture away: 4 across and 14 down, then a clean
+  // sideways pull, was read as a scroll and the card never moved at all —
+  // which is what made closing a card feel like it took the card's whole
+  // width, twice, at the right angle. What the gesture is, is what it
+  // becomes, so the vertical start claims nothing and the sideways travel
+  // closes.
+  const result = await swipe(page, 1, [
+    { action: 'down' },
+    { action: 'move', dx: 4, dy: 14 }, // leans vertical: not this drag's yet
+    { action: 'move', dx: 96, dy: 16 }, // sideways: the swipe takes it
+    { action: 'wait', wait: 200 },
+    { action: 'up' },
+  ]);
+  expect(result.seen[1].prevented).toBe(false); // the scroll kept its first pixels
+  expect(result.seen[2].prevented).toBe(true);
+  expect(lastOf(result.seen)).toMatch(flewOff);
+  await expect(page.locator('.mobile-tab')).toHaveCount(2);
+});
+
 // The card is a picture of the note, so it shows it at the note's own text
 // size — not merely at whatever the app's chrome happens to use. A writer who
 // sets 20px notes sees 20px notes in the switch, halved by the card.

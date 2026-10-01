@@ -119,7 +119,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
   // outright — which is what made closing a tab feel like it needed the whole
   // card's width, twice, at the right angle.
   let swiped = false;
-  let drag: { card: HTMLElement; x: number; y: number; t: number; dx: number; on: boolean; decided: boolean } | null = null;
+  let drag: { card: HTMLElement; x: number; y: number; t: number; dx: number; on: boolean } | null = null;
   /** The flick that counts: how far this drag would still travel at the speed
    *  it is going, over the moment after the lift. */
   const projected = (dx: number, dt: number): number => dx + (dx / Math.max(1, dt)) * 100;
@@ -173,9 +173,11 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     if (!card || (event.target as HTMLElement).closest('.close-button')) return;
     const t = event.touches[0];
     cancelHold();
-    if (deps.tabs().length > 1) holdTimer = window.setTimeout(() => startLift(card, t.clientX, t.clientY), 350);
+    // Press and hold picks a card up; the hold is long enough that a swipe
+    // that starts a moment slow is still a swipe.
+    if (deps.tabs().length > 1) holdTimer = window.setTimeout(() => startLift(card, t.clientX, t.clientY), 450);
     if (deps.tabs().length < 2) return;
-    drag = { card, x: t.clientX, y: t.clientY, t: event.timeStamp, dx: 0, on: false, decided: false };
+    drag = { card, x: t.clientX, y: t.clientY, t: event.timeStamp, dx: 0, on: false };
   }, { passive: true });
   el.addEventListener('touchmove', (event) => {
     const t = event.touches[0];
@@ -185,14 +187,15 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     const dy = t.clientY - drag.y;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) cancelHold();
     if (!drag.on) {
-      // The scroll container keeps a mostly vertical gesture (the switcher
-      // scrolls); a mostly horizontal one is this drag, whenever it arrives —
-      // the first movement only has to settle which of the two it is.
-      if (!drag.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-        drag.decided = true;
-        if (Math.abs(dy) > Math.abs(dx)) { drag = null; return; } // scrolling, for good
-      }
-      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy)) return;
+      // The switcher's own scroll keeps a gesture that is mostly up and down;
+      // this drag takes one that is clearly sideways, whenever it becomes
+      // that. A finger that starts a little downward and then travels
+      // sideways is a swipe — it used to be thrown away by the first sample
+      // that leaned vertical, which is why closing a card felt like it took
+      // the card's whole width, twice, at the right angle. Nothing is
+      // claimed until the movement is sideways, so a scroll never loses its
+      // first pixels to this.
+      if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) + 8) return;
       drag.on = true;
     }
     event.preventDefault();

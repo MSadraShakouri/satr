@@ -876,6 +876,17 @@ body {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
+/* The note hands a gesture it is not using back to the page — a double tap's
+   drag, when the finger goes up or down, is a scroll. What claimed it instead
+   was the engine's own double tap: Chrome and the Android WebView both keep
+   double-tap-to-zoom (and double-tap *drag* zoom) on unless the page says
+   otherwise, and that gesture is exactly this one — a tap, then a drag. The
+   page looked like it could not be scrolled after a double tap at all, or
+   scrolled and zoomed at once. `manipulation` is the page saying otherwise:
+   panning and pinch zoom stay, the double tap stops being a zoom. */
+.cm-content {
+  touch-action: manipulation;
+}
 /* Line numbers, after Obsidian mobile: faint, 0.8em tabular digits, no
    active-line highlight. Their line boxes use unitless multipliers, so they
    follow the note's text: the glyphs grow with the system font scale (a px
@@ -1009,20 +1020,33 @@ body {
   cursor: pointer;
   position: relative;
 }
-/* The tap area, sized for a finger: the drawn box is 17px, the target about
-   45 by 21 — and it reaches towards the line's start side, where the marker's
-   own space is, so the whole "- [ ]" is tappable rather than the square alone.
-   A pseudo-element takes no room, so the line never moves. The em is the
-   note's own (this element inherits font-size: 0 from the marker): the area
-   grows with the text, and stays inside the line's height, so it can never
-   cover the checkbox of the line above or below — at the default 1.85 line
-   spacing there are 12px to spare between one line's area and the next. */
-.cm-lp-task::after {
+/* The tappable leading area of a task's line — a box on the *line*, where the
+   geometry is the line's own: the full height of the line, from its start side
+   through the checkbox. A finger that lands anywhere in it ticks the box, and
+   the task's text keeps its own taps, so editing a task is still a caret on
+   its words.
+
+   The marker keeps its own 17px box, and it had a pseudo-element of its own
+   before this — an absolutely positioned area on a *zero-height* inline (the
+   marker's text is at font-size: 0), whose real geometry was not what its
+   insets said. Measured, its wide part sat above the square, and its lower
+   half — exactly where a finger aiming at the square lands — was 14px wide.
+   A tap there belongs to the line, which places a caret: "the hit box is
+   small" and the caret coming back, again, were the same thing. A line's own
+   box has nothing to interpret. */
+.cm-line.cm-lp-task-line {
+  position: relative;
+}
+.cm-line.cm-lp-task-line::after {
   content: "";
   position: absolute;
-  font-size: var(--note-font-size);
-  inset-block: -1.2em 0.1em;
-  inset-inline: -1em -0.75em;
+  inset-block: 0;
+  inset-inline-start: 0;
+  /* The marker's own room plus the box, and a little past it: the task's text
+     starts after this. In the line's own em, so it grows with the note, and
+     never taller than its own line, so the task above or below is never
+     taken. */
+  width: calc(2.4em + 17px);
 }
 .cm-lp-task::before {
   /* Obsidian mobile checkbox: 17px, 4px radius, 1px faint border */

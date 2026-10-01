@@ -31,7 +31,12 @@ for (const kind of ['paragraph', 'list', 'quote'] as const) {
       const counts = pages.map((text) => text.match(/Row \d/g)?.length ?? 0);
       expect(counts.reduce((a, b) => a + b)).toBe(7);
       expect(counts.filter(Boolean).every((n) => n >= 3)).toBe(true);
-      expect(counts).toEqual(height === 210 ? [4, 3] : [0, 7]);
+      // The split is measured against the room a page has, and every page now
+      // keeps a line of slack at its foot for the print WebView (see the
+      // reserve in src/exportPdf.ts): the same fixture with the same rule sits
+      // one line differently from here than it would with none. What must not
+      // change is the rule itself — three lines on either side, and no widows.
+      expect(counts).toEqual(height === 210 ? [3, 4] : [0, 7]);
     });
   }
 }

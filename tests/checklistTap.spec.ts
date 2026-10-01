@@ -86,17 +86,39 @@ test('a tap on a checkbox ticks it, and the caret does not move', async ({ page 
   expect(report.scrolled).toBe(false);
 });
 
-test('the box is bigger than it looks: the tap area reaches past the 17px square', async ({ page }) => {
+const reset = (page: Page) => page.evaluate((text) => {
+  window.testEditor.setValue(text);
+  window.testEditor.setSelection(0);
+}, NOTE);
+
+test('the tappable area is the line’s leading side, the box included', async ({ page }) => {
   await mount(page);
-  // The drawn box is 17px; the marker's own space before it and the leading
-  // around it are tappable too — a finger is not a mouse. (The area is drawn
-  // by a pseudo-element, so a hit test is what can see it.)
-  expect((await touchAt(page, -12, -12)).taskLine).toBe('- [x] a task to tick');
-  // Roomier, but not greedy: the previous list item's line above is not this
-  // marker's to take. (It was ticked by the line before this one, so what is
-  // read here is that nothing ticked it *back*.)
-  expect((await touchAt(page, -12, -24)).taskLine).toBe('- [x] a task to tick');
-  expect((await touchAt(page, -12, -34)).taskLine).toBe('- [x] a task to tick');
+  // The drawn box is 17px, and the marker's own pseudo-element only ever
+  // covered its upper-left half: a finger aiming at the square landed on the
+  // line and placed a caret — "the hit box is small", and the caret coming
+  // back, were the same thing. The area is the line's own leading side now:
+  // the line's full height, from its start edge through the marker and a
+  // little past it. A tap anywhere in it, at any height in the line, ticks
+  // the box.
+  for (const dy of [-16, -8, 0, 4]) {
+    await reset(page);
+    expect((await touchAt(page, -12, dy)).taskLine, `left of the box at ${dy}`).toBe('- [x] a task to tick');
+    await reset(page);
+    expect((await touchAt(page, 6, dy)).taskLine, `over the box at ${dy}`).toBe('- [x] a task to tick');
+  }
+  // The words are not the marker's: a tap on the task's own text is a caret,
+  // which is what editing it needs.
+  await reset(page);
+  const onText = await touchAt(page, 46, -8);
+  expect(onText.taskLine).toBe('- [ ] a task to tick'); // not the marker's tap
+  expect(onText.caretMoved).toBe(false); // and nothing of ours touched the caret
+  // (a real tap there is the browser's own caret placement — a synthetic touch
+  // has no browser behind it to place one, which is why this pins the claim,
+  // not the caret)
+  // And the line above is not this marker's to take.
+  await reset(page);
+  const above = await touchAt(page, -12, -24);
+  expect(above.taskLine).toBe('- [ ] a task to tick');
 });
 
 test('a finger that moves is scrolling, not ticking', async ({ page }) => {

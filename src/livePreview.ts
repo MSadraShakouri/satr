@@ -72,16 +72,21 @@ function quoteLine(indent: number): Decoration {
 // List lines, as Obsidian's .HyperMD-list-line: a hair of space above and
 // below, and a hanging indent the width of the drawn marker so wrapped lines
 // start under the text, not under the bullet.
-const listLines = new Map<number, Decoration>();
-function listLine(indent: number): Decoration {
+const listLines = new Map<string, Decoration>();
+/** A list line's own decoration — and, when it is a task, the tappable leading
+ *  area with it (see .cm-lp-task-line in style.css): the checkbox's own box is
+ *  17px, and the line is where a finger-sized target has geometry it can
+ *  trust. */
+function listLine(indent: number, task = false): Decoration {
   const px = Math.round(indent * 10) / 10;
-  let deco = listLines.get(px);
+  const key = `${px}${task ? ':task' : ''}`;
+  let deco = listLines.get(key);
   if (!deco) {
     deco = Decoration.line({
-      class: 'cm-lp-list-line',
+      class: task ? 'cm-lp-list-line cm-lp-task-line' : 'cm-lp-list-line',
       attributes: px > 0 ? { style: `padding-inline-start:${px}px;text-indent:-${px}px` } : {},
     });
-    listLines.set(px, deco);
+    listLines.set(key, deco);
   }
   return deco;
 }
@@ -258,7 +263,7 @@ function build(view: EditorView): DecorationSet {
                   px += textWidth(view, state.sliceDoc(node.from, markEnd) + ' ');
                   if (list?.name === 'BulletList' && spaced(node.to) && !inside(node.from, node.to)) px += BULLET_PAD_EM * em;
                 }
-                out.push(listLine(px).range(line.from));
+                out.push(listLine(px, drawnTask).range(line.from));
               }
             }
             if (task && task.name === 'TaskMarker') {
@@ -362,24 +367,49 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
 // the note away from the line the writer was looking at. A finger that moves
 // is scrolling, not tapping: the claim is dropped at once and the scroll
 // happens as if the checkbox were any other text.
-let pendingTaskTap: { box: HTMLElement; x: number; y: number } | null = null;
+/** Where the tap is, not merely what it hit. The line is the element a touch
+ *  reports for the text and for its tappable area alike (the area is the
+ *  line's own pseudo-element), so a tap's meaning has to be read from where
+ *  the finger is: inside the leading area — the line's start side through the
+ *  marker, and a little past it — it is the checkbox's; past that it belongs
+ *  to the words, which is a caret. */
+function inTaskLeadingArea(line: HTMLElement, marker: HTMLElement, clientX: number): boolean {
+  const lineBox = line.getBoundingClientRect();
+  const markerBox = marker.getBoundingClientRect();
+  const slack = 8;
+  return getComputedStyle(line).direction === 'rtl'
+    ? clientX >= markerBox.left - slack && clientX <= lineBox.right + 2
+    : clientX <= markerBox.right + slack && clientX >= lineBox.left - 2;
+}
+
+let pendingTaskTap: { target: HTMLElement; x: number; y: number } | null = null;
 
 const toggleTask = EditorView.domEventHandlers({
   touchstart(event) {
-    const box = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('.cm-lp-task');
-    if (!box) return false;
+    const target = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('.cm-lp-task, .cm-lp-task-line');
+    if (!target) return false;
     const touch = event.touches[0];
-    pendingTaskTap = { box, x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
+    if (!target.classList.contains('cm-lp-task')) {
+      const marker = target.querySelector<HTMLElement>('.cm-lp-task');
+      if (!marker || !inTaskLeadingArea(target, marker, touch?.clientX ?? 0)) return false;
+    }
+    pendingTaskTap = { target, x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
     suppressCaretReveal();
     event.preventDefault(); // no caret, no handles, no synthetic click
     return true;
+  },
+  touchcancel() {
+    // The WebView cancels the touch on its own account (a scroll it decided
+    // was happening, the system's gesture): a cancelled tap is not a tap.
+    pendingTaskTap = null;
+    return false;
   },
   touchmove(event) {
     if (!pendingTaskTap) return false;
     const touch = event.touches[0];
     // The tap area is roomier than the box (style.css): the slop is what tells
     // a tap on it from a scroll that started on it.
-    if (touch && Math.hypot(touch.clientX - pendingTaskTap.x, touch.clientY - pendingTaskTap.y) > 12) pendingTaskTap = null;
+    if (touch && Math.hypot(touch.clientX - pendingTaskTap.x, touch.clientY - pendingTaskTap.y) > 16) pendingTaskTap = null;
     return false;
   },
   touchend(event, view) {
@@ -388,7 +418,11 @@ const toggleTask = EditorView.domEventHandlers({
     if (!pending) return false;
     event.preventDefault();
     suppressCaretReveal();
-    toggleTaskAt(view, pending.box);
+    toggleTaskAt(view, pending.target);
+    // The WebView's own reaction to the tap — focusing the editable region,
+    // and its caret — can arrive after the finger is up; the quiet window
+    // starts again here so the reveal cannot slip in behind it.
+    suppressCaretReveal();
     return true;
   },
   click(event, view) {
@@ -407,18 +441,25 @@ const toggleTask = EditorView.domEventHandlers({
   },
   mousedown(event, view) {
     lastTapHead = view.hasFocus ? view.state.selection.main.head : -1;
-    const box = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('.cm-lp-task');
-    if (!box) return false;
+    const target = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('.cm-lp-task, .cm-lp-task-line');
+    if (!target) return false;
+    if (!target.classList.contains('cm-lp-task')) {
+      const marker = target.querySelector<HTMLElement>('.cm-lp-task');
+      if (!marker || !inTaskLeadingArea(target, marker, event.clientX)) return false;
+    }
     event.preventDefault();
     suppressCaretReveal();
-    toggleTaskAt(view, box);
+    toggleTaskAt(view, target);
+    suppressCaretReveal();
     return true;
   },
 });
 
-/** Flip the box's `[ ]` / `[x]` in the note, wherever the caret is. */
-function toggleTaskAt(view: EditorView, box: HTMLElement): void {
-  const pos = view.posAtDOM(box);
+/** Flip the box's `[ ]` / `[x]` in the note, wherever the caret is. `target`
+ *  is the marker itself or the line that carries the tappable area; both point
+ *  at the same line, and the marker on it is what is looked for. */
+function toggleTaskAt(view: EditorView, target: HTMLElement): void {
+  const pos = view.posAtDOM(target);
   const line = view.state.doc.lineAt(pos);
   const match = /\[([ xX])\]/.exec(view.state.sliceDoc(pos, line.to));
   if (!match) return;

@@ -347,3 +347,25 @@ test('a double tap followed by a sideways drag still takes the selection with it
   expect(report.text.startsWith('quick')).toBe(true);
   expect(report.text).toContain('jumps');
 });
+
+// The note hands a gesture it is not using back to the page: after a double
+// tap, a drag that goes up or down is a scroll. Chrome and the Android WebView
+// both keep double-tap-to-zoom — and double-tap *drag* zoom — on unless the
+// page says otherwise, and that is the same gesture: a tap, then a drag. The
+// page could not be scrolled after a double tap at all, or it scrolled and
+// zoomed at once ("double tap scroll is very unreliable"). This is the page
+// saying otherwise; panning and pinch zoom are untouched.
+test('the note does not let the engine’s own double tap zoom it', async ({ page }) => {
+  await page.goto('/');
+  const action = await page.evaluate(async () => {
+    const { SatrEditor } = await import('/src/editor.ts');
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0';
+    document.body.appendChild(host);
+    const editor = new SatrEditor(host, () => {});
+    editor.setValue('a line of text to double tap on');
+    await new Promise((r) => requestAnimationFrame(r));
+    return getComputedStyle(editor.view.contentDOM).touchAction;
+  });
+  expect(action).toBe('manipulation');
+});

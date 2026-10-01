@@ -4,14 +4,16 @@
 // (window.print() versus a native plugin and a second WebView), and that is
 // exactly why nothing about the *pages* may depend on which one is in use.
 //
-// It used to: the app shortened every paginated page by 32px, a one-line
-// reserve added when the print WebView still received a fixed-height
-// multi-column page content that could clip a line. That box is gone (see
-// printDocumentHtml), and the reserve was never free — 24pt less room on every
-// page for the measuring frame too, so a section that still fitted at the foot
-// of a page in the browser was pushed to the next page in the app. The same
-// note exported on the phone and in the site came out with different breaks,
-// and the phone — the one with less room — was the sparser of the two.
+// One thing about the pages is deliberately not the printer's business: the
+// foot reserve, a line of slack at the bottom of every paginated column. It is
+// not a pagination change — measured on the formula-heavy fixture, the same
+// note pages the same with and without it — it is the room a page needs to
+// survive the print WebView laying text a hair taller than the frame that
+// measured it. The app used to carry it alone, so the same note came out of
+// two geometries; then, briefly, neither path carried it, and every page ran
+// its last line to within 1px of the margin with the content box overfull by
+// up to 28px — the v0.4.1 overflow, back on the phone. Now both paths hand
+// Paged.js the identical document, reserve included.
 //
 // These tests export one note through both paths and compare the pages
 // themselves, then a note built to sit exactly on a page boundary, which is
@@ -106,8 +108,9 @@ for (const options of [
     const app = await pageText(page, await printApp(page, homework, options));
     expect(app.length).toBe(web.length);
     // Page by page: the same text, in the same place. A difference in room on
-    // any page (a reserve, a font-scale correction, a stray margin) moves a
-    // section across a break and fails here.
+    // any page (a reserve applied to one path only, a font-scale correction, a
+    // stray margin) moves a section across a break and fails here. The reserve
+    // is in both paths, so it moves nothing.
     for (const [index, text] of web.entries()) {
       expect(app[index], `page ${index + 1}`).toBe(text);
     }
@@ -119,10 +122,16 @@ test('print: a section at the foot of a page breaks the same way in the app as i
   const web = await pageText(page, await printWeb(page, BOUNDARY_NOTE, options));
   const app = await pageText(page, await printApp(page, BOUNDARY_NOTE, options));
   expect(app).toEqual(web);
-  // The note is long enough to reach the boundary: the heading and its prose
-  // sit on the first page, and the formula plus the last line follow.
+  // The note is long enough to reach the boundary: the filler fills the first
+  // page and the heading — which keeps its prose and the formula with it —
+  // opens the second. The reserve is part of both paths, so it moves nothing
+  // between them, which is what this test is about; where it falls is the
+  // page's own business, and it falls a line earlier than it would with no
+  // reserve at all (that line is the room a page keeps for the print WebView).
   expect(web.length).toBe(2);
-  expect(web[0]).toContain('A heading near the foot');
+  expect(web[0]).toContain('Line 29 of filler prose');
+  expect(web[0]).not.toContain('A heading near the foot');
+  expect(web[1]).toContain('A heading near the foot');
   expect(web[1]).toContain('Final line.');
 });
 

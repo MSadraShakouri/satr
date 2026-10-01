@@ -70,18 +70,35 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
       `.math-display, .math-display .katex-display > .katex { text-align: ${mathAlign}; }
        .math-display .katex-display > .katex { white-space: normal; }`,
       options.columns === 2 ? columnPageCss : '',
-      // The app used to shorten every page here — a one-line reserve at the
-      // foot of each paginated column, in the app only, from when the print
-      // WebView still received a fixed-height multi-column page content that
-      // could clip a line it laid out a hair taller. That box is gone (see
-      // printDocumentHtml: plain flow, nothing clipped), and the reserve was
-      // never free: it is 24pt less room on every page for the measuring
-      // frame too, so a section that still fitted at the foot of a page in
-      // the browser was pushed to the next page in the app. The same note,
-      // exported on the phone and in the site, came out with different page
-      // breaks — and the phone, the one with less room, was the sparser of
-      // the two. Both paths now paginate the identical layout: same pages,
-      // same breaks, same output.
+      // A one-line reserve at the foot of every paginated column, for both
+      // paths.
+      //
+      // It is back because the old overflow came back with it gone: v0.7.3
+      // dropped it on the strength of a measurement that said it only made the
+      // app's pages sparser — but that measurement applied the rule to a
+      // document Paged.js had already paginated, where it can no longer change
+      // where a break falls. Measured properly, with the rule in the document
+      // Paged.js reads, the same note pages the same either way; what the rule
+      // really does is leave the last line of room free. Without it every page
+      // is filled to the last pixel — text within 1px of the margin line, the
+      // content box overfull by up to 28px — and the print WebView, a second
+      // layout engine instance that lays text a hair taller than the frame
+      // which measured it (Android's A4 is never Paged.js's to the last
+      // fraction of a pixel), then has nowhere to put the first line that
+      // comes out taller: it spills past the page's own foot, which is exactly
+      // the pre-v0.4.1 overflow. That is the slack bought here. (v0.4.2's flow
+      // layout, in printDocumentHtml, is what keeps such a line on the paper
+      // instead of losing it sideways; this is what keeps a page from needing
+      // that help.)
+      //
+      // Shared with the browser path on purpose. The app carried it alone
+      // once, so the same note exported on the phone and in the site came out
+      // of two different geometries — and dropping it from the app alone was
+      // the same mistake from the other side. The reserve belongs to the page,
+      // not to the engine printing it: both paths hand Paged.js the same
+      // document and get the same pages (tests/printParity.spec.ts holds them
+      // to it).
+      `.pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content { height: calc(100% - var(--pagedjs-footnotes-height, 0px) - 32px) !important; }`,
     ].map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n');
 
     // Hidden but laid out (display: none would stop both layout and print).
