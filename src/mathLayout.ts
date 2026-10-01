@@ -135,12 +135,15 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
 
 // KaTeX's drawn signs — the \vec arrow, stretchy brackets, roots, \overline —
 // are SVG, and KaTeX gives each one a size in em as a presentation
-// *attribute* (width="0.471em"). Android's WebView scales text (its text zoom
-// follows Configuration.fontScale, like Obsidian's), and a length that lives
-// only in an SVG presentation attribute did not always follow it there: the
-// letters grew, the signs stayed put, and \vec{u} ended up with its arrow
-// touching the letter. The same page is fine on the web and in print, and so
-// is the PDF, which the app hands to a print WebView pinned at setTextZoom(100).
+// *attribute* (width="0.471em"). A length that lives only in an SVG
+// presentation attribute did not always follow the text on Android: with the
+// WebView's own text zoom (it follows Configuration.fontScale) the letters
+// grew, the signs stayed put, and \vec{u} ended up with its arrow touching the
+// letter. Both WebViews are now pinned at 100% text zoom and the phone's scale
+// is applied in CSS instead (src/style.css, --system-font-scale), so the em
+// above resolves to the size of the letter beside it — but the web, the print
+// WebView and any browser that still mis-resolves the attribute are why the
+// checks below stay.
 //
 // The sign is therefore sized in three steps, and only the last two are here
 // at all on a browser where the first one already works:
@@ -148,8 +151,8 @@ function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
 //  1. Carry the same numbers into CSS, in em — the units are kept, so a sign
 //     always grows with the text it belongs to, whatever scales it (system
 //     font scale, 200% zoom, print at a fixed size). Nothing is frozen in px:
-//     a value computed at one font size goes stale the moment the text zoom
-//     changes, which is what made the app worse.
+//     a value computed at one font size goes stale the moment the text around
+//     it changes size, which is what made the app worse.
 //
 //  2. *Check* it, against the formula's own text. KaTeX's strut is an
 //     inline-block whose height KaTeX wrote in em and the engine draws with

@@ -22,8 +22,11 @@ const A4_HEIGHT = 297 / 25.4 * 96;
 
 /** Exports the note the way the Android app does: the platform reports as
  *  native, SatrPrint is the native plugin and keeps the document the app
- *  hands to the print WebView instead of printing it. */
-async function printNative(page: Page, markdown: string, options: PrintOptions, fontScale = 1): Promise<string> {
+ *  hands to the print WebView instead of printing it. `scale` is the phone's
+ *  font scale: the app WebView is pinned at 100% text zoom, so the scale
+ *  reaches the page the way the plugin reports it — as --system-font-scale
+ *  for the app's own CSS (src/native.ts) — and never as a WebView zoom. */
+async function printNative(page: Page, markdown: string, options: PrintOptions, scale = 1): Promise<string> {
   await page.addInitScript(() => {
     window.__printHtml = undefined;
     window.__fontScale = 1;
@@ -47,14 +50,15 @@ async function printNative(page: Page, markdown: string, options: PrintOptions, 
     };
   });
   await page.goto('/');
-  const html = await page.evaluate(async ({ markdown, options, fontScale }) => {
-    window.__fontScale = fontScale;
+  const html = await page.evaluate(async ({ markdown, options, scale }) => {
+    window.__fontScale = scale;
+    document.documentElement.style.setProperty('--system-font-scale', String(scale));
     window.Capacitor.isNativePlatform = () => true;
     const path = '/src/exportPdf.ts';
     const { exportPdf } = await import(path);
     await exportPdf('Print hand-off regression', markdown, '', options);
     return window.__printHtml;
-  }, { markdown, options, fontScale });
+  }, { markdown, options, scale });
   expect(html, 'the app must hand a document to the print WebView').toBeTruthy();
   return html!;
 }
@@ -197,28 +201,34 @@ test('app: the document handed over is static and asks for the paper’s width',
   expect(html).toMatch(/display:\s*flow-root\s*!important/);
   expect(html).toMatch(/column-width:\s*auto\s*!important/);
   expect(html).toMatch(/column-count:\s*auto\s*!important/);
-  // The temporary font-scale override must never reach the print WebView.
-  expect(html).not.toContain('--satr-font-scale-correction');
+  // The pages are measured and printed at 100%, whatever the phone's font
+  // scale: the app's own sheet carries the scale (--system-font-scale), and
+  // none of it is in the print CSS.
+  expect(html).toMatch(/html\s*\{[^}]*font-size:\s*15px/);
 });
 
 test('app: a phone font scale changes neither the pages nor the output', async ({ page }) => {
-  // The measuring WebView follows the phone's font size, so the export
-  // divides every font size by it while Paged.js measures and then hands the
-  // print WebView the unscaled CSS at 100%. Neither half may leak into the
-  // other: the override once made the PDF tiny.
+  // The app WebView no longer follows Android's text zoom: both WebViews are
+  // pinned at 100% (SystemBarsPlugin.java, PrintPlugin.java) and the phone's
+  // font scale is applied in the app's own CSS — --system-font-scale, which
+  // src/style.css derives the note's text from. The export measures in a
+  // frame of its own, which that scale cannot reach, so the pages are the
+  // same ones at any phone font size, and the print WebView receives them
+  // untouched.
+  const plain = await printNative(page, homework, { columns: 1, direction: 'ltr', mathAlign: 'center' }, 1);
   const scaled = await printNative(page, homework, { columns: 1, direction: 'ltr', mathAlign: 'center' }, 1.3);
-  expect(scaled).not.toContain('--satr-font-scale-correction');
-  expect(scaled).toMatch(/html\{[^}]*font-size:15px/);
+  // Paged.js writes a fresh data-ref onto every element it lays out, so the
+  // two hand-overs are compared without those: everything else — the order of
+  // the pages, every measured box and style — must be identical.
+  const withoutRefs = (html: string): string => html.replace(/ ?data-ref="[^"]*"/g, '');
+  expect(withoutRefs(scaled)).toBe(withoutRefs(plain));
   await openPrintDocument(page, scaled);
   const geometry = await pageGeometry(page);
+  expect(geometry.pages).toBe(8);
   for (const height of [...geometry.pageHeights, ...geometry.sheetHeights]) {
     expect(Math.abs(height - A4_HEIGHT), `page of ${height}px on A4`).toBeLessThanOrEqual(1);
   }
-  // The pages hold more text than this emulated WebView renders: Android's
-  // text zoom would enlarge the measured layout by the same 1.3, but here
-  // nothing does, so the hand-over is genuinely taller than its boxes. It is
-  // exactly the situation the fix has to survive — the surplus must run down
-  // the page, never sideways off the sheet.
+  expect(geometry.overflowing).toEqual([]);
   expect(geometry.columnLeaks).toEqual([]);
   expect(geometry.offSheetText).toEqual([]);
   expect(geometry.contentBottomGaps.every((gap) => gap >= 31)).toBe(true);

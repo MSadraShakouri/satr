@@ -35,10 +35,14 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * instead, and the bottom inset is 0 while it's up (the keyboard covers the
  * navigation bar).
  *
- * Leave the app WebView's text zoom at its Android default. Like Obsidian,
- * Satr lets Android apply the system font scale to the app's text. The scale
- * is also reported to the PDF exporter so its temporary Paged.js layout can
- * cancel it before the separate, fixed-scale print WebView receives the pages.
+ * The app WebView is pinned to 100% text zoom, the same as PrintPlugin's.
+ * Android's textZoom (which follows Configuration.fontScale) scales the
+ * painted glyphs but not the CSS em context, and KaTeX lays out every sign,
+ * accent offset and fraction shift in em — so at any scale but 100% the sign
+ * beside a letter is not the size of the letter. The scale is instead
+ * published as --system-font-scale (src/native.ts) and src/style.css derives
+ * the whole sheet from it, which keeps em resolving to the size of the letter
+ * beside it. Obsidian's mobile app scales its text the same way.
  */
 @CapacitorPlugin(name = "SatrSystemBars")
 public class SystemBarsPlugin extends Plugin {
@@ -66,8 +70,13 @@ public class SystemBarsPlugin extends Plugin {
             controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
 
             WebView webView = getBridge().getWebView();
-            // Do not call setTextZoom(100) here: Android's default WebView
-            // zoom follows Configuration.fontScale, as Obsidian does.
+            // Android's textZoom (which follows Configuration.fontScale) scales
+            // the painted glyphs but not the CSS em context, and KaTeX lays out
+            // every sign, accent offset and fraction shift in em. Pin the WebView
+            // to 100% and let src/style.css apply the system scale, so em resolves
+            // to the size of the letter beside it — the same reason PrintPlugin
+            // already pins 100.
+            webView.getSettings().setTextZoom(100);
             // KaTeX builds a fraction's height with a 1px font. The WebView's
             // default 8px minimum inflates that, so the strut is the wrong
             // height and a large display formula is cramped or clipped.

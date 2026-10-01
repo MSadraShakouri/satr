@@ -247,3 +247,50 @@ test('select-all works while the note itself is not focused, and never steals a 
   expect(kept.active).toBe('INPUT');
   expect(kept.inputValue).toBe('Heading');
 });
+
+// Task 4: the native Android selection bar's "Select all" does not dispatch a
+// keydown at all — it manipulates the DOM selection directly. Since the editor
+// opted out of EditContext, the caret lives in that selection, so whatever the
+// bar leaves there is the note's selection; nothing may quietly reset it on
+// the next frame. (The device half of this — the bar itself — is manual, and
+// is recorded in ROADMAP.md.)
+test('a programmatic whole-document selection survives two frames', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Heading one\n\nA paragraph of text here\n\nSecond paragraph\n\nLast line');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+  });
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
+  await page.locator('#app .cm-content').click({ position: { x: 20, y: 60 } });
+  const out = await page.evaluate(async () => {
+    // The contenteditable the bar acts on: the whole DOM contents, as the
+    // platform's own select-all would take them.
+    const content = document.querySelector<HTMLElement>('#app .cm-content')!;
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
+    const main = view.state.selection.main;
+    return {
+      native: window.getSelection()?.toString().length ?? 0,
+      from: main.from,
+      to: main.to,
+      length: view.state.doc.length,
+      rows: document.querySelectorAll('#app .cm-satr-selection').length,
+      lines: view.state.doc.lines,
+    };
+  });
+  // The selection is still there, whole, two frames later: the DOM's copy and
+  // the editor's agree, and every line is painted.
+  expect(out.native).toBeGreaterThan(50);
+  expect(out.from).toBe(0);
+  expect(out.to).toBe(out.length);
+  expect(out.rows).toBe(out.lines);
+});

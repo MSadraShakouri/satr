@@ -128,7 +128,7 @@ function markers(view: EditorView): RectangleMarker[] {
     }
   }
   // Font ascent/descent rectangles can exceed the CSS line pitch (especially
-  // Vazirmatn, headings and Android text zoom). Padding those independently
+  // Vazirmatn, headings and the phone's font scale). Padding those independently
   // painted neighbouring rows would overlap them. Clamp each box at the
   // midpoint between row centres, so neighbouring rows share that edge
   // exactly: no gap between them, and no overlap either.

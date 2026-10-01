@@ -16,6 +16,7 @@ import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
 import { TapTracker, wordRangeAt, type Range } from './touchSelection';
+import { beginSelectionDrag, endSelectionDrag } from './touchState';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
@@ -821,6 +822,7 @@ export class SatrEditor {
       const count = onWidget || !touch ? taps.cancel() : taps.start(event.timeStamp, touch.clientX, touchStartY, event.touches.length);
       const word = count >= 2 ? wordAt(touch!.clientX, touchStartY) : null;
       dragWord = word ? { word, anchor, head } : null;
+      if (dragWord) beginSelectionDrag();
     }, { passive: true });
     // A tap below the last line means "the end of the note", not the nearest
     // character under the finger: the empty room under the text is where the
@@ -840,20 +842,32 @@ export class SatrEditor {
       this.view.dispatch({ selection: { anchor: this.view.state.doc.length }, scrollIntoView: false });
       this.view.focus();
     }, true);
+    // Not passive, so a drag that extends a selection can keep the page still
+    // (below); everything that is not such a drag passes through untouched.
     this.view.contentDOM.addEventListener('touchmove', (event) => {
       const touch = event.touches[0];
-      if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) touchMoved = true;
+      if (Math.abs((touch?.clientY ?? touchStartY) - touchStartY) > 10) {
+        touchMoved = true;
+        taps.cancel(); // a scroll is not a tap
+      }
       // Dragging after a double tap takes the selection with the finger, from
       // the word the tap found to the word under the finger now.
       if (!dragWord || !touch) return;
+      beginSelectionDrag();
+      // The finger is extending the selection: the page must not scroll under
+      // it as well.
+      event.preventDefault();
       const to = wordAt(touch.clientX, touch.clientY);
       if (!to) return;
       selectRange(Math.min(dragWord.word.from, to.from), Math.max(dragWord.word.to, to.to));
-    }, { passive: true });
+    }, { passive: false });
     const release = (): void => {
       window.clearTimeout(touchTimer);
       const word = dragWord;
       dragWord = null;
+      endSelectionDrag(); // the finger is up: the drawer may act again
+      // A gesture that moved was not a tap, whatever it did to the selection.
+      if (touchMoved) taps.cancel();
       if (word) selectWordIfUntouched(word);
       // Native selection handles keep adjusting for a moment after the lift.
       touchTimer = window.setTimeout(() => {
@@ -866,7 +880,7 @@ export class SatrEditor {
       }, 350);
     };
     this.view.contentDOM.addEventListener('touchend', release, { passive: true });
-    this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; release(); }, { passive: true });
+    this.view.contentDOM.addEventListener('touchcancel', () => { taps.cancel(); dragWord = null; endSelectionDrag(); release(); }, { passive: true });
     // The keyboard opening shrinks the viewport by far more than an address
     // bar does; only that counts.
     let viewportHeight = window.visualViewport?.height ?? window.innerHeight;
