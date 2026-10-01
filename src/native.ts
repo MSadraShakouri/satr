@@ -23,6 +23,7 @@ interface SystemBarsPlugin {
   setStyle(options: { dark: boolean }): Promise<void>;
   hide(): Promise<void>;
   show(): Promise<void>;
+  hideKeyboard(): Promise<void>;
   addListener(event: 'insets', listener: (insets: Insets) => void): Promise<{ remove(): Promise<void> }>;
 }
 const SystemBars = registerPlugin<SystemBarsPlugin>('SatrSystemBars');
@@ -32,6 +33,20 @@ export const isNative = (): boolean => Capacitor.isNativePlatform();
 /** The system bars, in the app only (the status bar hides on scroll). */
 export function systemBars(): Pick<SystemBarsPlugin, 'hide' | 'show'> | undefined {
   return isNative() ? SystemBars : undefined;
+}
+
+/**
+ * The soft keyboard, down, with the caret kept: the bottom bar's down chevron.
+ * Blurring the editable would put the keyboard away too, but it would drop the
+ * caret the writer was at — while the platform's own InputMethodManager
+ * (SystemBarsPlugin.java) puts the keyboard away and leaves the focus, and so
+ * the caret, alone. False in a browser: there is no on-screen keyboard for the
+ * page to put away.
+ */
+export function hideKeyboard(): boolean {
+  if (!isNative()) return false;
+  void SystemBars.hideKeyboard().catch(() => undefined);
+  return true;
 }
 
 let lastSystemFontScale = 1;

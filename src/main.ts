@@ -24,13 +24,14 @@ import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
+import { createFolderExport } from './folderExport';
 import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots } from './snapshot';
-import { ensureFileAccess, setupFontScalePreview, setupSystemBars, systemBars } from './native';
+import { ensureFileAccess, hideKeyboard, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
-import { currentScope, scopeName, scopeRoot } from './spaces';
+import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
 
 type Mode = 'edit' | 'preview';
@@ -84,6 +85,7 @@ app.innerHTML = `
         </div>
       </nav>
     </div>
+    <section class="folder-export-screen" id="folder-export-screen" hidden></section>
     <section class="external-file-screen" id="external-file-screen" hidden></section>
   </div>`;
 
@@ -757,6 +759,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // never saved back over the original.
   const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
   externalFileScreen.hidden = true;
+  folderExport.close();
   document.body.classList.remove('external-file-active', 'is-empty-tab');
   renderMenuButton();
   // Another note never opens the keyboard or shows the caret: it comes back
@@ -1748,7 +1751,42 @@ settingsButton.className = 'clickable-icon workspace-drawer-header-icon mod-rais
 settingsButton.id = 'settings-button';
 settingsButton.setAttribute('aria-label', 'Settings');
 settingsButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>'; // lucide settings
-settingsButton.addEventListener('click', () => showSettings());
+// The same gear, held: the folder's export page (src/folderExport.ts). A tap
+// still opens Settings; the hold opens the page for the folder the drawer is
+// showing — the space's folder, or the walker's — because exporting a folder
+// is a decision about the folder, not about the note that happens to be open.
+const folderExportScreen = document.querySelector<HTMLElement>('#folder-export-screen')!;
+const folderExport = createFolderExport(folderExportScreen, {
+  currentFolder: () => (currentScope().kind === 'all' ? walkDir() : scopeRoot(currentScope())),
+  noteOptions: (path) => loadPrintOptions(path),
+  notice: (message: string, ms?: number) => showNotice(message, ms),
+});
+function openFolderExport(): void {
+  toggleFiles(false);
+  folderExport.open();
+}
+let settingsHoldFired = false;
+let settingsHoldTimer = 0;
+let settingsHoldAt = { x: 0, y: 0 };
+const cancelSettingsHold = (): void => { window.clearTimeout(settingsHoldTimer); settingsHoldTimer = 0; };
+settingsButton.addEventListener('pointerdown', (event) => {
+  settingsHoldFired = false;
+  settingsHoldAt = { x: event.clientX, y: event.clientY };
+  cancelSettingsHold();
+  settingsHoldTimer = window.setTimeout(() => { settingsHoldFired = true; openFolderExport(); }, 500);
+});
+settingsButton.addEventListener('pointermove', (event) => {
+  if (!settingsHoldTimer) return;
+  if (Math.hypot(event.clientX - settingsHoldAt.x, event.clientY - settingsHoldAt.y) > 10) cancelSettingsHold();
+});
+settingsButton.addEventListener('pointerup', cancelSettingsHold);
+settingsButton.addEventListener('pointercancel', cancelSettingsHold);
+// A mouse's long press: the context menu, as the file rows have.
+settingsButton.addEventListener('contextmenu', (event) => { event.preventDefault(); openFolderExport(); });
+settingsButton.addEventListener('click', (event) => {
+  if (settingsHoldFired) { settingsHoldFired = false; event.preventDefault(); return; }
+  showSettings();
+});
 function showSettings(): void {
   toggleFiles(false);
   openSettings({
@@ -1789,6 +1827,7 @@ function handleBack(): boolean {
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
   else if (isSettingsOpen()) closeSettings();
+  else if (folderExport.isOpen()) folderExport.close();
   else if (document.querySelector('#save-conflict-dialog')) closeSaveConflict();
   else if (document.body.classList.contains('external-file-active')) returnFromIncomingFile();
   else if (editor.findOpen) editor.closeFind();
@@ -1988,7 +2027,16 @@ document.addEventListener('focusout', () => window.setTimeout(layoutToolbar, 50)
 toolbar.addEventListener('pointerdown', (event) => event.preventDefault());
 toolbar.addEventListener('mousedown', (event) => event.preventDefault());
 toolbar.addEventListener('click', (event) => {
-  if ((event.target as HTMLElement).closest('[data-act="hide-keyboard"]')) { editor.view.contentDOM.blur(); return; }
+  if ((event.target as HTMLElement).closest('[data-act="hide-keyboard"]')) {
+    // The keyboard, and only the keyboard. The app hides it through the
+    // platform (SystemBarsPlugin.java, the InputMethodManager), so the note
+    // keeps the focus and the caret the writer left; blurring the editable
+    // would put the keyboard away too, but it would drop the caret with it.
+    // A browser has no keyboard for the page to put away, so there the
+    // button still lets the editor go.
+    if (!hideKeyboard()) editor.view.contentDOM.blur();
+    return;
+  }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-command]');
   if (!button) return;
   editor.run(button.dataset.command!);

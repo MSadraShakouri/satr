@@ -43,33 +43,89 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({
 
 let busy = false;
 
+/** One file of a folder export — or the single note of Export to PDF. */
+export interface ExportDocument {
+  name: string;
+  markdown: string;
+  /** The note's path, so its relative images can be found. */
+  path: string;
+  options: PrintOptions;
+}
+
+/** What the folder's own page decides for the collection as a whole. Each
+ *  file keeps its own print options — direction, equation alignment, custom
+ *  CSS — and these are the parts that belong to the paper, not to a file. */
+export interface CollectionOptions {
+  /** One page shape for the whole document: a note's own column setting
+   *  cannot apply to a collection. */
+  columns?: 1 | 2;
+  pageNumbers?: 'persian' | 'latin' | 'none';
+  /** The file's name as the heading of its first page. */
+  heading?: boolean;
+}
+
+/** Export one note to PDF (≡ menu → Export to PDF). */
 export async function exportPdf(name: string, markdown: string, notePath = '', options: PrintOptions = loadPrintOptions(notePath)): Promise<void> {
-  if (busy) return;
+  await exportDocuments([{ name, markdown, path: notePath, options }], name, {});
+}
+
+/** Export a folder as one PDF, each file starting on a fresh page. */
+export async function exportFolder(name: string, documents: ExportDocument[], collection: CollectionOptions = {}): Promise<void> {
+  await exportDocuments(documents, name, collection);
+}
+
+/** Every file's direction, as the document's: what the footnote rule and the
+ *  columns are pinned to. */
+function documentDirection(bodies: HTMLElement[]): 'ltr' | 'rtl' {
+  const all = document.createElement('div');
+  for (const body of bodies) all.appendChild(body.cloneNode(true));
+  return printDirection(all, 'auto');
+}
+
+async function exportDocuments(documents: ExportDocument[], name: string, collection: CollectionOptions): Promise<void> {
+  if (busy || !documents.length) return;
   busy = true;
   const frame = document.createElement('iframe');
   try {
     const settings = loadSettings();
-    options = validPrintOptions(options);
-    const hasMath = /\$/.test(markdown);
+    const columns = collection.columns ?? validPrintOptions(documents[0].options).columns;
+    const numbering = collection.pageNumbers ?? settings.pdfPageNumbers;
+    const hasMath = documents.some((document) => /\$/.test(document.markdown));
     const [fonts, pagedJs] = await Promise.all([
       embeddedFonts(hasMath),
       import('../node_modules/pagedjs/dist/paged.polyfill.min.js?raw').then((m) => m.default),
     ]);
-    const body = printableBody(renderMarkdown(markdown));
-    await loadImages(body, notePath); // embedded as data: URLs before paging
-    const dir = printDirection(body, options.direction);
-    const mathAlign = options.mathAlign === 'center' ? 'center' : dir === 'rtl' ? 'right' : 'left';
-    const pageNumber = settings.pdfPageNumbers === 'none' ? ''
-      : `@page { @bottom-center { content: counter(page${settings.pdfPageNumbers === 'persian' ? ', persian' : ''}); font-family: Vazirmatn, sans-serif; font-size: 12pt; color: #222; vertical-align: middle; } }`;
+    const files = await Promise.all(documents.map(async (document) => {
+      const body = printableBody(renderMarkdown(document.markdown));
+      await loadImages(body, document.path); // embedded as data: URLs before paging
+      const direction = printDirection(body, document.options.direction);
+      const align = document.options.mathAlign === 'center' ? 'center' : direction === 'rtl' ? 'right' : 'left';
+      return { body, direction, align, name: document.name };
+    }));
+    // One file keeps its own direction; a collection is pinned to the
+    // majority's, which is what the footnote rule and the columns follow.
+    const dir = files.length === 1 ? files[0].direction : documentDirection(files.map((file) => file.body));
+    const pageNumber = numbering === 'none' ? ''
+      : `@page { @bottom-center { content: counter(page${numbering === 'persian' ? ', persian' : ''}); font-family: Vazirmatn, sans-serif; font-size: 12pt; color: #222; vertical-align: middle; } }`;
+    // One file is exported exactly as it always was — the note's own body,
+    // unwrapped, so nothing about a single note's pages moves. A collection
+    // wraps every file in a section instead: the file's direction and its
+    // equation edge are read from the wrapper, because in a folder export the
+    // files can disagree, and the wrapper is what the page break is set on.
+    const collectionExport = files.length > 1;
     const styles = [
       fonts,
       hasMath ? katexCss.replace(/@font-face\{[^}]*\}/g, '') : '',
       printCss,
       pageNumber,
       settings.pdfCss,
-      `.math-display, .math-display .katex-display > .katex { text-align: ${mathAlign}; }
-       .math-display .katex-display > .katex { white-space: normal; }`,
-      options.columns === 2 ? columnPageCss : '',
+      `.math-display .katex-display > .katex { white-space: normal; }`,
+      collectionExport
+        ? `.export-file[data-align="center"] .math-display, .export-file[data-align="center"] .math-display .katex-display > .katex { text-align: center; }
+       .export-file[data-align="left"] .math-display, .export-file[data-align="left"] .math-display .katex-display > .katex { text-align: left; }
+       .export-file[data-align="right"] .math-display, .export-file[data-align="right"] .math-display .katex-display > .katex { text-align: right; }`
+        : `.math-display, .math-display .katex-display > .katex { text-align: ${files[0].align}; }`,
+      columns === 2 ? columnPageCss : '',
       // A one-line reserve at the foot of every paginated column, for both
       // paths.
       //
@@ -99,6 +155,15 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
       // document and get the same pages (tests/printParity.spec.ts holds them
       // to it).
       `.pagedjs_pagebox > .pagedjs_area > .pagedjs_page_content { height: calc(100% - var(--pagedjs-footnotes-height, 0px) - 32px) !important; }`,
+      // A collection: every file after the first begins on a fresh page, and
+      // nothing of one file runs into the next. (Paged.js takes
+      // break-before: page as a forced break.) The margin reset is the
+      // sheet's own body > :first-child rule, for the top of each new page.
+      collectionExport ? `.export-file + .export-file { break-before: page; }
+       .export-file + .export-file > :first-child { margin-top: 0; }` : '',
+      // The file's name as its first page's heading: a landmark to find a
+      // file by in a document of forty.
+      collection.heading && collectionExport ? `.export-file-title { margin: 0 0 0.9em; font-size: 1.3em; }` : '',
     ].map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n');
 
     // Hidden but laid out (display: none would stop both layout and print).
@@ -110,7 +175,12 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
     // looking to the right, and in an RTL page its columns grow to the left,
     // so text past the end of a page would silently vanish. The class only
     // puts the footnote rule on the right.
-    frame.srcdoc = `<!doctype html><html lang="${dir === 'rtl' ? 'fa' : 'en'}" dir="ltr" class="doc-${dir}"><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>${styles}</head><body>${body.innerHTML}</body></html>`;
+    const content = collectionExport
+      ? files.map((file) => `<section class="export-file doc-${file.direction}" data-align="${file.align}">`
+        + (collection.heading ? `<h1 class="export-file-title" dir="auto">${escapeHtml(file.name)}</h1>` : '')
+        + `${file.body.innerHTML}</section>`).join('\n')
+      : files[0].body.innerHTML;
+    frame.srcdoc = `<!doctype html><html lang="${dir === 'rtl' ? 'fa' : 'en'}" dir="ltr" class="doc-${dir}"><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>${styles}</head><body>${content}</body></html>`;
     const loaded = new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
     document.body.appendChild(frame);
     await loaded;
@@ -127,7 +197,7 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
 
     // Wrap long formulas at the page's width, as on screen.
     if (hasMath) {
-      doc.body.style.width = `${options.columns === 2 ? COLUMN_WIDTH_PX : CONTENT_WIDTH}px`;
+      doc.body.style.width = `${columns === 2 ? COLUMN_WIDTH_PX : CONTENT_WIDTH}px`;
       layoutMath(doc.body);
       doc.body.style.width = '';
     }
@@ -140,7 +210,7 @@ export async function exportPdf(name: string, markdown: string, notePath = '', o
     if (!win.PagedPolyfill) throw new Error('Paged.js did not load');
     win.PagedPolyfill.chunker.hooks.onOverflow.register(keepHeadingWithContent);
     await win.PagedPolyfill.preview();
-    if (options.columns === 2) assembleColumns(doc, dir, settings.pdfPageNumbers);
+    if (columns === 2) assembleColumns(doc, dir, numbering);
     numberFootnotes(doc);
     script.remove();
 

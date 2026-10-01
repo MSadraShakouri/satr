@@ -59,6 +59,11 @@ const loneMark = StateField.define<{ mark: string; at: number } | null>({
     return tr.docChanged ? null : value;
   },
 });
+/** A word right after the caret (or a closing quote): a quotation mark typed
+ *  there is closing something, not opening it. A *bracket* after the caret is
+ *  not that — `(` leaves its own `)` there, and a quote between the two is
+ *  exactly the opening the pair is for. */
+const WORD_AFTER = /[\p{L}\p{N}"”]/u;
 /** The marks that type one first, and pair on the second press. */
 const ONE_THEN_PAIR = new Set(['=', '~']);
 /** How long a run of one mark may grow (the inside of an empty pair). */
@@ -185,11 +190,26 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
       effects: addPair.of({ from, to: from + text.length * 2, mark: text }),
     };
   }
-  // A `"` pairs where a pair means something: inside a bracket the writer is
-  // quoting something into it — `(""` with the caret between the quotes.
-  // Anywhere else it is one quotation mark, exactly as typed.
+  // A `"` gets the same treatment as every other delimiter: a pair where it
+  // *opens* something, one character where it closes it.
+  //
+  //   * It opens after nothing, after a space, and after an opening mark
+  //     (`(`, `[`, `{`, `<`, `«`, a dash, a quote) — the places a quotation
+  //     starts. (It used to pair only when it sat *directly* after a bracket,
+  //     so `( "` — one space into the parenthesis — came out as a single
+  //     quote: "The () " inserts one, but I asked for normal treatment".)
+  //   * It is one character after a word: there the writer is closing the
+  //     quotation they opened, or writing a unit (“20”, a prime, an inch mark).
+  //   * And it is one character when a word follows it at once: the closing
+  //     quote of selected text, or a quotation typed backwards over a word.
+  //
+  // The pair is tracked like every other one, so the closing `"` is skipped
+  // over rather than typed twice (the `closingAt` step above) and a space
+  // inside the empty pair takes it away.
   if (mark === '"') {
-    if (!/[([{<«‘“]$/.test(state.sliceDoc(Math.max(0, from - 1), from))) return literal();
+    const prev = state.sliceDoc(Math.max(0, from - 1), from);
+    const opens = prev === '' || /[\s([{<«—–\-'‘“]$/.test(prev);
+    if (!opens || WORD_AFTER.test(state.sliceDoc(from, from + 1))) return literal();
     return {
       changes: { from, to, insert: '""' },
       range: EditorSelection.cursor(from + 1),

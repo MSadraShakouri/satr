@@ -1,0 +1,285 @@
+/* Folder export: the settings page's clothes, so the two cannot drift.
+   The header is .settings-header (44px round raised buttons, a centred
+   title), the body is a .settings-scroll of .setting-group cards (30px
+   corners, 20px inside, inset dividers), the toggles are the app's own
+   .checkbox-container pills and the dropdowns its .dropdown. */
+.folder-export-screen[hidden] { display: none; }
+.folder-export-screen:not([hidden]) {
+  position: fixed;
+  /* The settings page's own tier (40), so the app's bottom-sheet menu (41)
+     and its notices (60) stay above this page, and the drawers below it. */
+  z-index: 40;
+  inset: 0;
+  display: flex;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+.folder-export-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+}
+
+/* --- header: the settings header, with the path under the title --- */
+.folder-export-header {
+  grid-template-rows: 44px auto;
+  height: auto;
+  padding-bottom: 4px;
+}
+.folder-export-heading {
+  grid-column: 2;
+  min-width: 0;
+}
+.folder-export-title {
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-export-path {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-export-close svg { width: 24px; height: 24px; }
+
+/* --- the body: the settings scroll --- */
+.folder-export-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px 8px;
+}
+
+/* Pills, as the app's floating controls: the toolbar's rounded raised look. */
+.folder-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 4px;
+}
+.folder-export-pill {
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 36px;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  box-shadow: var(--shadow-xs), var(--raised-edge);
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.folder-export-pill:active { background: var(--background-modifier-hover); }
+.folder-export-pill:disabled { opacity: 0.45; }
+
+.folder-export-group-title {
+  margin: 20px 0 12px;
+  padding: 0 16px;
+}
+
+/* --- one card of files (the .setting-group look) --- */
+.folder-export-list {
+  overflow: hidden;
+  padding: 20px;
+  border-radius: 30px;
+  background: var(--background-primary);
+}
+.theme-dark .folder-export-list { background: var(--background-primary-alt, #1e1e1e); }
+.folder-export-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.folder-export-list > .folder-export-row:first-child { padding-top: 0; border-top: 0; }
+.folder-export-list > .folder-export-row:last-child { padding-bottom: 0; }
+.folder-export-row.is-excluded .folder-export-text,
+.folder-export-row.is-excluded .folder-export-check { opacity: 0.45; }
+/* The row being carried: raised off the card, above the rows it passes. */
+.folder-export-row.is-dragging {
+  position: relative;
+  z-index: 1;
+  border-radius: 14px;
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+
+/* The grip (“=”): on the left of the row, 44px of finger. */
+.folder-export-handle {
+  display: grid;
+  flex: 0 0 32px;
+  place-items: center;
+  align-self: stretch;
+  min-height: 44px;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.folder-export-handle svg,
+.folder-export-menu svg,
+.folder-export-pick-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.folder-export-handle:active { color: var(--text-normal); cursor: grabbing; }
+
+.folder-export-check {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border: 1px solid var(--checkbox-border-color);
+  border-radius: 50%; /* a round tick, not a box: the export's own check */
+  accent-color: var(--interactive-accent);
+}
+.folder-export-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.folder-export-name {
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-export-sub {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row's submenu (“…on the right”): a round icon button, as the header's. */
+.folder-export-menu {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: var(--text-muted);
+}
+.folder-export-menu:active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.folder-export-menu[aria-expanded="true"] { color: var(--text-normal); }
+[dir="rtl"] .folder-export-menu svg { transform: scaleX(-1); }
+
+/* --- the picker, in the same card --- */
+.folder-export-pick-icon {
+  display: grid;
+  flex: 0 0 32px;
+  place-items: center;
+  align-self: stretch;
+  min-height: 44px;
+  color: var(--text-muted);
+}
+/* The picker's tick, in the same round shape as the list's checks. */
+.folder-export-row.is-choose .folder-export-pick-icon {
+  color: var(--text-on-accent);
+}
+.folder-export-row.is-choose .folder-export-pick-icon svg {
+  box-sizing: content-box;
+  width: 14px;
+  height: 14px;
+  padding: 4px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  stroke-width: 2.6;
+}
+.folder-export-row.is-choose .folder-export-name { font-weight: 600; }
+.folder-export-row.is-pick:active { background: var(--background-modifier-hover); }
+
+/* --- options: the settings rows, the app's toggles and dropdowns --- */
+.folder-export-options {
+  overflow: visible;
+  padding: 20px;
+  border-radius: 30px;
+  background: var(--background-primary);
+}
+.theme-dark .folder-export-options { background: var(--background-primary-alt, #1e1e1e); }
+.folder-export-options .setting-item { padding: 14px 0; }
+.folder-export-options .setting-item:first-child { padding-top: 0; border-top: 0; }
+.folder-export-options .setting-item:last-child { padding-bottom: 0; }
+/* A row with a dropdown stacks it under its text, as the settings page. */
+.folder-export-options .setting-item:has(> .dropdown) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+.folder-export-options .dropdown {
+  width: 100%;
+  height: 44px;
+  padding: 0 32px 0 16px;
+  border: 0;
+  border-radius: 44px;
+  background: var(--background-secondary) no-repeat right 14px center / 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+[dir="rtl"] .folder-export-options .dropdown { background-position: left 14px center; }
+
+/* --- the foot --- */
+.folder-export-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 16px max(12px, var(--safe-bottom));
+}
+.folder-export-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-export-go {
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 44px;
+  background: var(--interactive-accent);
+  box-shadow: var(--shadow-xs);
+  color: var(--text-on-accent);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.folder-export-go:active { filter: brightness(0.94); }
+.folder-export-go:disabled { opacity: 0.45; }

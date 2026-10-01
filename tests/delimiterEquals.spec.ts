@@ -137,18 +137,53 @@ test('a fence that is being closed is not re-opened by Enter', async ({ page }) 
   expect((await state(page)).text).toBe('```\ntext\n\n```');
 });
 
-// A `"` is a quotation mark, not a markdown delimiter: it pairs only inside a
-// bracket, where the writer is quoting something into it.
-test('a quote inside a bracket makes a pair, and anywhere else is one quote', async ({ page }) => {
+// A `"` gets the same treatment as every other delimiter: a pair where it
+// opens a quotation, one character where it closes one.
+test('a quote opens a pair where a quotation starts, and is one character where it ends', async ({ page }) => {
+  // Opening: after nothing, after a space, and after an opening mark. (It used
+  // to pair only *directly* after a bracket, so `( "` gave one quote:
+  // "The () \" inserts one, but I asked for normal treatment".)
   await mount(page);
-  await page.keyboard.type('("');
-  expect(await state(page)).toEqual({ text: '("")', anchor: 2, head: 2 });
-  await mount(page);
-  await page.keyboard.type('he said "');
-  expect(await state(page)).toEqual({ text: 'he said "', anchor: 9, head: 9 });
-  // A second quote is just a second quote, as typed.
   await page.keyboard.type('"');
-  expect(await state(page)).toEqual({ text: 'he said ""', anchor: 10, head: 10 });
+  expect(await state(page)).toEqual({ text: '""', anchor: 1, head: 1 });
+
+  await mount(page);
+  await page.keyboard.type('(');
+  await page.keyboard.type('"');
+  expect(await state(page)).toEqual({ text: '("")', anchor: 2, head: 2 });
+
+  await mount(page);
+  await page.keyboard.type('( ');
+  await page.keyboard.type('"');
+  expect(await state(page)).toEqual({ text: '( "")', anchor: 3, head: 3 });
+
+  await mount(page);
+  await page.keyboard.type('he said ');
+  await page.keyboard.type('"');
+  expect(await state(page)).toEqual({ text: 'he said ""', anchor: 9, head: 9 });
+
+  // Closing: after a word, and before one.
+  await mount(page);
+  await page.keyboard.type('20');
+  await page.keyboard.type('"');
+  expect(await state(page)).toEqual({ text: '20"', anchor: 3, head: 3 });
+
+  await mount(page);
+  await page.keyboard.type('x ');
+  await page.evaluate(() => {
+    // A word after the caret: the quote typed there is closing it.
+    const view = window.testEditor.view;
+    view.dispatch({ changes: { from: 2, insert: 'word' }, selection: { anchor: 2 } });
+  });
+  await page.keyboard.type('"');
+  expect(await state(page)).toEqual({ text: 'x "word', anchor: 3, head: 3 });
+
+  // And the pair is tracked: the second quote skips over the closing one
+  // rather than typing a third.
+  await mount(page);
+  await page.keyboard.type('"quoted');
+  await page.keyboard.type('"');
+  expect(await state(page)).toEqual({ text: '"quoted"', anchor: 8, head: 8 });
 });
 
 // Three backticks delivered in one input event — a fast typist, a swipe, an IME

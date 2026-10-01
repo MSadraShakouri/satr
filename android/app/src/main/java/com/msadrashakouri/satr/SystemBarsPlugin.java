@@ -1,10 +1,12 @@
 package com.msadrashakouri.satr;
 
+import android.content.Context;
 import android.graphics.Color;
 import android.os.Build;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebView;
 
 import androidx.core.graphics.Insets;
@@ -118,6 +120,23 @@ public class SystemBarsPlugin extends Plugin {
         if (last == null) last = new JSObject();
         last.put("fontScale", getActivity().getResources().getConfiguration().fontScale);
         call.resolve(last);
+    }
+
+    /**
+     * The keyboard down, the caret kept. This is the bottom bar's down
+     * chevron: the page's own "hide keyboard" button. Blurring the editable
+     * would put the keyboard away too, but it would also drop the caret the
+     * writer was at; the InputMethodManager hides the keyboard and leaves the
+     * focused view — and its caret — exactly where they were.
+     */
+    @PluginMethod
+    public void hideKeyboard(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            WebView webView = getBridge().getWebView();
+            InputMethodManager manager = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (manager != null) manager.hideSoftInputFromWindow(webView.getWindowToken(), 0);
+            call.resolve();
+        });
     }
 
     /** Bar icons for the theme: dark = light icons on the dark page. */
