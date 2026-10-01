@@ -1,8 +1,10 @@
 // Folder export: one page for a folder, one PDF out of it.
 //
-// Reached by pressing and holding the settings gear at the foot of the left
-// drawer (the same long-press in a browser, and the context menu), because
-// that is where a folder-wide decision belongs: it is not a note's business.
+// Reached from the file tree's own long-press menu: holding a folder row and
+// choosing “Export folder as PDF…” (the same menu on a right-click), because
+// that is where a folder-wide decision belongs — a note's own menu exports
+// the note. The settings-gear hold it used to be is gone; the gear opens
+// Settings.
 //
 // The page is built in the app's own clothes: the settings page's header
 // (44px round raised buttons, a centred title), its 30px cards on the
@@ -41,7 +43,7 @@ export interface FolderExportState {
 }
 
 export const defaultFolderExport: FolderExportState = {
-  order: [], excluded: [], includeSubfolders: true, heading: true, columns: 1, pageNumbers: 'inherit',
+  order: [], excluded: [], includeSubfolders: false, heading: false, columns: 1, pageNumbers: 'inherit',
 };
 
 export const folderExportKey = (folder: string): string => `satr:folderExport:${folder}`;
@@ -53,8 +55,8 @@ export function validFolderExport(value: Partial<FolderExportState> | null): Fol
   return {
     order: list(value?.order),
     excluded: list(value?.excluded),
-    includeSubfolders: value?.includeSubfolders !== false,
-    heading: value?.heading !== false,
+    includeSubfolders: value?.includeSubfolders === true,
+    heading: value?.heading === true,
     columns: value?.columns === 2 ? 2 : 1,
     pageNumbers,
   };
@@ -103,7 +105,7 @@ export function moveNote(notes: string[], path: string, where: 'top' | 'bottom')
 const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 const stroke = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 const ICONS = {
-  handle: stroke('<path d="M4 8h16M4 12h16M4 16h16"/>'), // lucide menu, the grip the writer calls “=”
+  handle: stroke('<path d="M4 8h16M4 12h16M4 16h16"/>'), // lucide menu: the order grip
   submenu: stroke('<path d="m9 18 6-6-6-6"/>'), // lucide chevron-right: this row has a submenu
   back: stroke('<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>'),
   up: stroke('<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>'), // lucide arrow-up
@@ -115,8 +117,6 @@ const ICONS = {
 } as const;
 
 export interface FolderExportDeps {
-  /** The folder the page opens on: the drawer's folder, or the space's. */
-  currentFolder(): string;
   /** The note's own print options (direction, equations, custom CSS). */
   noteOptions(path: string): PrintOptions;
   /** Short messages, as elsewhere in the app. */
@@ -126,7 +126,8 @@ export interface FolderExportDeps {
 }
 
 export interface FolderExportPage {
-  open(): void;
+  /** Open the page for a folder — the row whose menu asked for it. */
+  open(folder: string): void;
   close(): void;
   isOpen(): boolean;
 }
@@ -153,7 +154,6 @@ export function createFolderExport(root: HTMLElement, deps: FolderExportDeps): F
         <div class="folder-export-actions">
           <button type="button" class="folder-export-pill" data-act="all">Select all</button>
           <button type="button" class="folder-export-pill" data-act="none">Deselect all</button>
-          <button type="button" class="folder-export-pill" data-act="sort">Sort A–Z</button>
         </div>
         <div class="setting-group-title folder-export-group-title">Files</div>
         <div class="setting-group folder-export-list" role="list"></div>
@@ -221,7 +221,7 @@ export function createFolderExport(root: HTMLElement, deps: FolderExportDeps): F
         ? `${included.length} of ${notes.length} file${notes.length === 1 ? '' : 's'}`
         : 'No notes in this folder';
     exportButton.disabled = !included.length || picking;
-    buttons('button[data-act="all"],button[data-act="none"],button[data-act="sort"]').forEach((button) => { button.disabled = !notes.length || picking; });
+    buttons('button[data-act="all"],button[data-act="none"]').forEach((button) => { button.disabled = !notes.length || picking; });
   }
 
   function rowHtml(path: string): string {
@@ -431,12 +431,6 @@ export function createFolderExport(root: HTMLElement, deps: FolderExportDeps): F
         renderList();
         updateSummary();
         break;
-      case 'sort':
-        notes = [...notes].sort((a, b) => basename(a).localeCompare(basename(b), undefined, { numeric: true, sensitivity: 'base' }));
-        persistOrder();
-        renderList();
-        updateSummary();
-        break;
     }
   });
 
@@ -505,8 +499,8 @@ export function createFolderExport(root: HTMLElement, deps: FolderExportDeps): F
   }
 
   return {
-    open(): void {
-      folder = deps.currentFolder();
+    open(startFolder: string): void {
+      folder = startFolder;
       state = loadFolderExport(folder);
       root.hidden = false;
       document.body.classList.add('folder-export-active');

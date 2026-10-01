@@ -274,7 +274,7 @@ test('tab number uses the alignment from before 77171fe', async ({ page }) => {
   await expect(count).toHaveCSS('transform', 'none');
 });
 
-test('Markor keyboard: autocorrect and suggestions on, no spell check', async ({ page }) => {
+test('Markor keyboard: the strip and auto-correct on, the underline gone', async ({ page }) => {
   const attributes = await page.evaluate(() => {
     const el = window.testEditor.view.contentDOM;
     return {
@@ -285,15 +285,17 @@ test('Markor keyboard: autocorrect and suggestions on, no spell check', async ({
       writingsuggestions: el.getAttribute('writingsuggestions'),
     };
   });
-  // Obsidian's own values, read from its 1.13.8 bundle — the reference the
-  // phone is compared against: spellcheck on (its setting's default),
-  // autocorrect on, autocapitalize on. The IME is the thing that acts on
-  // them, and the IME is where the suggestion strip, auto-correct and the
-  // phantom space live.
+  // autocorrect and autocapitalize are Obsidian's own values (its 1.13.8
+  // bundle): the IME reads them for the suggestion strip and auto-correct,
+  // and the IME is where the strip, auto-correct and the phantom space live.
+  // spell checking is off — no squiggly underline under a word, ever — and
+  // writing suggestions with it, which is the other attribute that can
+  // underline. Neither has anything to do with the strip.
   expect(attributes).toMatchObject({
-    spellcheck: 'true',
+    spellcheck: 'false',
     autocorrect: 'on',
     autocapitalize: 'on',
+    writingsuggestions: 'false',
   });
 });
 

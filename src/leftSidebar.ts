@@ -19,6 +19,10 @@ import { shortenPath, siblingList } from './pathShort';
 
 export interface LeftSidebarDeps {
   currentPath(): string;
+  /** Open the folder export page for a folder (a folder row's menu). */
+  exportFolder(folder: string): void;
+  /** Export one text file as a single-note PDF (a file row's menu). */
+  exportNote(path: string): void;
   /** Open a note (the sidebar closes the drawer itself). */
   open(path: string): void;
   /** Open a note in a new tab. */
@@ -62,6 +66,9 @@ const ICONS = {
   newTab: icon('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/>'),
   x: icon('<path d="M18 6 6 18M6 6l12 12"/>'),
   search: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
+  // The same file-down glyph the ≡ menu uses for Export to PDF: the two
+  // exports are one thing with two entrances.
+  exportPdf: icon('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>'),
 };
 
 export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
@@ -370,6 +377,14 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       { title: 'Move to…', icon: ICONS.move, action: () => { void moveTo(path, isFolder); } },
     );
     if (isFolder) entries.push('separator', { title: 'Use as a space', icon: ICONS.vault, action: () => switchTo({ kind: 'space', space: addSpace(path) }) });
+    // Export, on its own line like Delete: a folder exports as one PDF of its
+    // notes, a text file as a PDF of itself. Only text files can: the
+    // single-file path renders markdown, and a picture or a .json is not that.
+    if (isFolder) {
+      entries.push('separator', { title: 'Export folder as PDF…', icon: ICONS.exportPdf, action: () => deps.exportFolder(path) });
+    } else if (isNote(path.split('/').pop() ?? '')) {
+      entries.push('separator', { title: 'Export file as PDF…', icon: ICONS.exportPdf, action: () => deps.exportNote(path) });
+    }
     entries.push('separator', { title: 'Delete', icon: ICONS.trash, warning: true, action: () => remove(path, isFolder) });
     const row = rowOf(path);
     row?.classList.add('has-active-menu');

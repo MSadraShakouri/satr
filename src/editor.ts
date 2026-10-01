@@ -611,25 +611,20 @@ const titleField = StateField.define({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-// The keyboard's own attributes, taken from Obsidian's editor — the page
-// whose keyboard behaviour the phone is compared against. Its CM6 view sets
-// exactly these on the content element (read out of the 1.13.8 bundle):
-//
-//   contentAttributes.of({ spellcheck: String(getConfig("spellcheck")),
-//                          autocorrect: "on", autocapitalize: "on",
-//                          contenteditable: "true" })
-//
-// `spellcheck` is Obsidian's own setting and is **on by default**; Chromium
-// turns the suggestion strip off for autocomplete="off"
-// (TYPE_TEXT_FLAG_NO_SUGGESTIONS) and drops auto-correct for
-// autocorrect="off", so both stay on here too. These attributes are what the
-// IME reads to decide whether it is looking at prose — and the IME is where
-// the suggestion strip, auto-correct, the weak space and the phantom space
-// live, none of which the page can see or imitate (see
-// /home/user/phantom-space-research.md). Matching the reference exactly is
-// therefore the whole trick; there is nothing app-side to "implement".
+// The keyboard's own attributes. Obsidian's editor sets
+// `spellcheck: String(getConfig("spellcheck"))` — its own setting, on by
+// default — with autocorrect and autocapitalize on; Satr keeps the two that
+// the IME reads for its suggestion strip and auto-correct, and drops the one
+// that paints: **no spell checking, so no squiggly underline under a word,
+// ever** (asked for directly). `writingsuggestions` is off for the same
+// reason: Chromium's newer writing-suggestions layer is the other thing that
+// can underline, and neither it nor the spell checker is what makes the
+// suggestion strip work — that follows autocorrect / autocapitalize, which
+// stay on. The IME is where the strip, auto-correct and the weak space live,
+// none of which the page can see or imitate (see
+// /home/user/phantom-space-research.md).
 const keyboardAttributes = EditorView.contentAttributes.of({
-  spellcheck: 'true', autocorrect: 'on', autocapitalize: 'on',
+  spellcheck: 'false', autocorrect: 'on', autocapitalize: 'on', writingsuggestions: 'false',
 });
 
 // How the keyboard talks to the editor.

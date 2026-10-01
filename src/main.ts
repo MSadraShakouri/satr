@@ -1465,6 +1465,27 @@ async function exportCurrentPdf(): Promise<void> {
     notice.hide();
   }
 }
+/** A file row's "Export file as PDF…": the file as it is on disk — it is not
+ *  the open tab, necessarily — with its own saved print options, exactly as
+ *  the ≡ menu exports the open note. No tab opens; nothing on screen changes
+ *  but the notice. */
+async function exportFilePdf(path: string): Promise<void> {
+  const markdown = await backend.read(path);
+  if (markdown === null) {
+    showNotice(`“${fileName(path)}” could not be read.`, 5000);
+    return;
+  }
+  const name = displayNameForPath(path) || 'Note';
+  const options = loadPrintOptions(path);
+  const notice = showNotice('Preparing the PDF…', 60000);
+  try {
+    await exportPdf(name, markdown, path, options);
+  } catch (error) {
+    showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
+  } finally {
+    notice.hide();
+  }
+}
 function showNoteMenu(): void {
   const item = (key: Exclude<QuickAction, ''>): MenuEntry => {
     const a = noteAction(key);
@@ -1751,42 +1772,15 @@ settingsButton.className = 'clickable-icon workspace-drawer-header-icon mod-rais
 settingsButton.id = 'settings-button';
 settingsButton.setAttribute('aria-label', 'Settings');
 settingsButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>'; // lucide settings
-// The same gear, held: the folder's export page (src/folderExport.ts). A tap
-// still opens Settings; the hold opens the page for the folder the drawer is
-// showing — the space's folder, or the walker's — because exporting a folder
-// is a decision about the folder, not about the note that happens to be open.
+// The folder export's page (src/folderExport.ts). Its entrances are the file
+// tree's own long-press menus: a folder row exports the folder, a text file
+// row exports that file (src/leftSidebar.ts).
 const folderExportScreen = document.querySelector<HTMLElement>('#folder-export-screen')!;
 const folderExport = createFolderExport(folderExportScreen, {
-  currentFolder: () => (currentScope().kind === 'all' ? walkDir() : scopeRoot(currentScope())),
   noteOptions: (path) => loadPrintOptions(path),
   notice: (message: string, ms?: number) => showNotice(message, ms),
 });
-function openFolderExport(): void {
-  toggleFiles(false);
-  folderExport.open();
-}
-let settingsHoldFired = false;
-let settingsHoldTimer = 0;
-let settingsHoldAt = { x: 0, y: 0 };
-const cancelSettingsHold = (): void => { window.clearTimeout(settingsHoldTimer); settingsHoldTimer = 0; };
-settingsButton.addEventListener('pointerdown', (event) => {
-  settingsHoldFired = false;
-  settingsHoldAt = { x: event.clientX, y: event.clientY };
-  cancelSettingsHold();
-  settingsHoldTimer = window.setTimeout(() => { settingsHoldFired = true; openFolderExport(); }, 500);
-});
-settingsButton.addEventListener('pointermove', (event) => {
-  if (!settingsHoldTimer) return;
-  if (Math.hypot(event.clientX - settingsHoldAt.x, event.clientY - settingsHoldAt.y) > 10) cancelSettingsHold();
-});
-settingsButton.addEventListener('pointerup', cancelSettingsHold);
-settingsButton.addEventListener('pointercancel', cancelSettingsHold);
-// A mouse's long press: the context menu, as the file rows have.
-settingsButton.addEventListener('contextmenu', (event) => { event.preventDefault(); openFolderExport(); });
-settingsButton.addEventListener('click', (event) => {
-  if (settingsHoldFired) { settingsHoldFired = false; event.preventDefault(); return; }
-  showSettings();
-});
+settingsButton.addEventListener('click', () => showSettings());
 function showSettings(): void {
   toggleFiles(false);
   openSettings({
@@ -1800,6 +1794,8 @@ function showSettings(): void {
 // Left sidebar: spaces and the file explorer (src/leftSidebar.ts).
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
   currentPath: () => filePath,
+  exportFolder: (folder) => { toggleFiles(false); folderExport.open(folder); },
+  exportNote: (path) => { void exportFilePdf(path); },
   open: (path) => { toggleFiles(false); void openFile(path); },
   createNote: (dir) => void newFile(dir),
   renamed: pathMoved,
