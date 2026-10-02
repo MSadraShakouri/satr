@@ -14,9 +14,6 @@ on:
   push:
     tags:
       - 'v*'
-    # TEMPORARY: verify the CharacterCodingException fix on this branch; reverted before merge.
-    branches:
-      - 'arena/01a0eb11-satr'
   workflow_dispatch:
 
 permissions:
