@@ -6,6 +6,8 @@ import { EditorSelection, type ChangeSpec, type Line } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { insertDelimiter } from './delimiterInput';
 import { editFootnote } from './footnoteDialog';
+import { findLatexMath } from './mathNormalize';
+import { showNotice } from './notice';
 
 const PERSIAN_TEXT = /[\u0600-\u06FF]/;
 const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
@@ -142,6 +144,37 @@ export function insertMath(view: EditorView): boolean {
   return insertDelimiter(view, '$');
 }
 
+/** Rewrite the LaTeX-style delimiters a pasted formula arrives with — `\(x\)`
+ *  and `\[…\]` — into the dollars Satr speaks, so the reading view, the PDF and
+ *  print all render them without a second dialect (src/mathNormalize.ts).
+ *
+ *  With text selected it normalizes that text, otherwise the whole note, and
+ *  says which in the notice. The rewrite is one transaction, so it is one undo:
+ *  the reader can always put a note back exactly as it was pasted. Unpaired
+ *  delimiters are left alone, which also makes a second run a no-op. */
+/** The rewrite itself, and the number of pairs it made — the pill says what it
+ *  did, so it needs to know rather than guess. */
+export function normalizeMathIn(view: EditorView): number {
+  const { state } = view;
+  const selection = state.selection.main;
+  const scoped = !selection.empty;
+  const rewrites = findLatexMath(state.doc.toString(), scoped ? selection.from : 0, scoped ? selection.to : state.doc.length);
+  if (!rewrites.length) {
+    showNotice(scoped ? 'No \\( \\) or \\[ \\] math in the selection.' : 'No \\( \\) or \\[ \\] math in this note.', 2500);
+    return 0;
+  }
+  const set = state.changes(rewrites.map((rewrite) => ({ from: rewrite.from, to: rewrite.to, insert: rewrite.insert })));
+  view.dispatch({ changes: set, selection: state.selection.map(set), userEvent: 'input.math', scrollIntoView: false });
+  const count = `${rewrites.length} formula${rewrites.length === 1 ? '' : 's'}`;
+  showNotice(`Normalized ${count}${scoped ? ' in the selection' : ''}.`, 2500);
+  return rewrites.length;
+}
+
+export function normalizeMath(view: EditorView): boolean {
+  normalizeMathIn(view);
+  return true;
+}
+
 /** Markor's "expand selection of cursor to whole line", as one action: every
  *  line the selection (or the caret) touches becomes selected whole, so a line
  *  can be copied, cut or replaced without dragging handles to its ends. It
@@ -166,6 +199,7 @@ export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
   deleteLine,
   line: selectWholeLines,
   math: insertMath,
+  normalizeMath,
   lineUp: moveLineUp,
   lineDown: moveLineDown,
 };

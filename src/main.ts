@@ -16,7 +16,9 @@ import { setMathDigits } from './math';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
+import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
+import { normalizeMathIn } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -56,6 +58,8 @@ app.innerHTML = `
       <section class="preview-pane" id="preview-pane" aria-label="Preview"><article id="preview"></article></section>
     </main>
     <div class="edit-toolbar" id="edit-toolbar" role="toolbar" aria-label="Formatting" data-ignore-swipe>
+      <button type="button" class="pill-gray" data-math-warning hidden></button>
+      <div class="edit-toolbar-row">
       <div class="edit-toolbar-list-container"><div class="edit-toolbar-list" id="edit-toolbar-list">
         <button tabindex="-1" data-command="undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
         <button tabindex="-1" data-command="redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
@@ -72,9 +76,12 @@ app.innerHTML = `
         <button tabindex="-1" data-command="lineDown" aria-label="Move line down"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
       </div></div>
       <div class="edit-toolbar-floating"><button tabindex="-1" data-act="hide-keyboard" aria-label="Hide keyboard"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></div>
+      </div>
     </div>
     <div class="navbar-wrap" id="navbar-wrap">
       <nav class="mobile-navbar" id="navbar" aria-label="Navigation" data-ignore-swipe>
+        <button type="button" class="pill-gray" data-math-warning hidden></button>
+        <div class="pill-white">
         <div class="mobile-navbar-actions">
           <div class="mobile-navbar-action"><button type="button" id="nav-back" aria-label="Previous tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
@@ -83,6 +90,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
+        </div>
       </nav>
     </div>
     <section class="folder-export-screen" id="folder-export-screen" hidden></section>
@@ -90,6 +98,8 @@ app.innerHTML = `
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
+const mathWarnings = [...document.querySelectorAll<HTMLElement>('[data-math-warning]')];
+const editorPane = document.querySelector<HTMLElement>('#editor-pane')!;
 const externalFileScreen = document.querySelector<HTMLElement>('#external-file-screen')!;
 const EXTERNAL_PATH_PREFIX = 'satr-open://';
 const externalFilesByPath = new Map<string, IncomingOpenFile>();
@@ -462,10 +472,135 @@ function update(): void {
   previewDirty = true;
   window.clearTimeout(renderTimer);
   if (previewVisible()) renderTimer = window.setTimeout(renderPreview, 250);
+  updateMathWarning();
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveNow, 700);
 }
-splitView.addEventListener('change', () => { if (splitView.matches && previewDirty) renderPreview(); });
+
+// A note that arrived with `\(…\)` or `\[…\]` shows its formulas as the plain
+// text they are, in the editor and the reading view alike, and the reader has
+// no other way of knowing that is what happened. So the bar under the note says
+// so — and it says it by growing.
+//
+// The gray is a part of the pill that unfolds upward out of it, the way a drawer
+// opens. The white part is not touched: same 52px, same buttons, same place on
+// the screen, before and after. Nothing is added to the top of the page and no
+// line of the note's own is taken; the only thing that moves is the bar the
+// warning lives in.
+//
+// Both bars carry it — the navbar while reading, the keyboard toolbar while
+// typing — so whichever is on screen is the one that says it, and a tap means
+// the same thing in both. It cannot be dismissed: a note that needs converting
+// says so until it has been converted.
+let mathWarningCount = 0;
+let mathConfirmTimer: number | undefined;
+
+/** Unfolds upward from the pill the gray sits on: height alone, no movement, so
+ *  the white part below it never shifts by a pixel. */
+const pillAnimation = new WeakMap<HTMLElement, Animation>();
+function growFromPill(el: HTMLElement, open: boolean): void {
+  // A fold still in flight must not hide what came after it: the editor's own
+  // change starts a fold the moment the note converts, and the receipt is shown
+  // over the top of it. One animation at a time, or the stale one wins.
+  pillAnimation.get(el)?.cancel();
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The keyboard toolbar's gray sits inside a strip that is display:none
+  // whenever the keyboard is down, so there is nothing to unfold and nothing to
+  // measure: it is simply there the moment the strip is.
+  if (!el.offsetParent && !el.offsetHeight) {
+    el.hidden = !open;
+    return;
+  }
+  if (open) {
+    el.hidden = false;
+    if (still) return;
+    el.style.height = '0px';
+    el.style.overflow = 'hidden';
+    const height = el.scrollHeight;
+    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: 280, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' });
+    pillAnimation.set(el, unfold);
+    unfold.onfinish = (): void => {
+      if (pillAnimation.get(el) !== unfold) return; // superseded
+      pillAnimation.delete(el);
+      el.style.height = ''; el.style.overflow = ''; layoutToolbar();
+    };
+    return;
+  }
+  if (still) { el.hidden = true; return; }
+  el.style.overflow = 'hidden';
+  const height = el.scrollHeight;
+  // The way down is unhurried and even: the slide curve used everywhere else is
+  // front-loaded, which reads as a snatch rather than a settle.
+  // The gray is anchored to the bottom of the pill, so as it collapses its top
+  // edge travels down — straight through the text, which used to ride down
+  // behind the pill and vanish. The text is gone before the box starts moving,
+  // and the box then closes on nothing.
+  const fold = el.animate([
+    { height: `${height}px`, opacity: 1 },
+    { height: `${height}px`, opacity: 0, offset: 0.5 },
+    { height: '0px', opacity: 0 },
+  ], { duration: 420, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' });
+  pillAnimation.set(el, fold);
+  fold.onfinish = (): void => {
+    if (pillAnimation.get(el) !== fold) return; // superseded
+    pillAnimation.delete(el);
+    el.hidden = true; el.style.height = ''; el.style.overflow = ''; layoutToolbar();
+  };
+}
+
+/** Stops whatever the pill was doing and leaves it standing, for when the text
+ *  under it changes: the receipt arrives while a fold from the note's own edit
+ *  is still in flight, and that fold's end would hide it a second later. */
+function holdPill(el: HTMLElement): void {
+  pillAnimation.get(el)?.cancel();
+  pillAnimation.delete(el);
+  el.style.height = '';
+  el.style.overflow = '';
+  el.hidden = false;
+}
+
+function updateMathWarning(): void {
+  // A receipt on screen outranks anything the note's text says: the editor
+  // changes as the formulas convert, and that is not a reason to take the
+  // "2 formulas converted" away from the reader before they have read it.
+  if (mathConfirmTimer) return;
+  const count = hasNote() && !picture.url ? findLatexMath(editor.getValue()).length : 0;
+  if (count === mathWarningCount) return;
+  mathWarningCount = count;
+  const offer = count > 0
+    ? `${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span>`
+    : '';
+  for (const warning of mathWarnings) {
+    if (offer) warning.innerHTML = offer;
+    warning.classList.remove('is-done');
+    warning.parentElement?.classList.toggle('has-math-warning', offer !== '');
+    growFromPill(warning, offer !== '');
+  }
+}
+/** The bar is the receipt too: it says what it did, then folds away. No banner
+ *  — the thing that did the work is still on screen, and a second message
+ *  saying the same thing is noise. */
+function confirmMathWarning(converted: number): void {
+  const said = `${converted} formula${converted === 1 ? '' : 's'} converted`;
+  for (const warning of mathWarnings) {
+    holdPill(warning);
+    warning.innerHTML = `${MENU_ICONS.normalize}<span dir="auto">${said}</span>`;
+    warning.classList.add('is-done');
+    warning.parentElement?.classList.add('has-math-warning');
+  }
+  // -1 so the timer below always recomputes: the receipt is showing, and the
+  // count it replaced is no longer what the bar should be saying.
+  mathWarningCount = -1;
+  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2000);
+}
+function runNormalize(): void {
+  if (mode !== 'edit') setMode('edit');
+  const converted = normalizeMathIn(editor.view);
+  if (converted > 0) confirmMathWarning(converted);
+  else updateMathWarning();
+}
+for (const warning of mathWarnings) warning.addEventListener('click', runNormalize);
+
 function setMode(next: Mode, restoredLine?: number): void {
   if (restoredLine === undefined) releaseHold();
   const generation = viewGeneration;
@@ -811,6 +946,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   }
   editor.setTitle(fileBase);
   editor.setTitleEditable(canRenameInline(path));
+  updateMathWarning();
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
@@ -1427,6 +1563,7 @@ const MENU_ICONS = {
   rename: svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'), // pencil
   trash: svg('<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   settings: svg('<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>'),
+  normalize: svg('<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>'), // arrows-left-right
 };
 const FLAIR = '<span class="mobile-navbar-action-flair"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';
 
@@ -1492,7 +1629,21 @@ function showNoteMenu(): void {
     const externalRestriction = isExternalPath(filePath) && (key === 'rename' || key === 'delete');
     return { title: a.title, icon: a.icon, warning: a.warning, disabled: (a.needsNote && !hasNote()) || externalRestriction, action: a.run };
   };
-  openMenu([item('fold'), item('view'), 'separator', item('pdf'), 'separator', item('rename'), item('delete'), 'separator', item('settings')]);
+  openMenu([item('fold'), item('view'), 'separator', normalizeItem(), item('pdf'), 'separator', item('rename'), item('delete'), 'separator', item('settings')]);
+}
+/** The normalizer is not a quick action: it is one thing, done to one note, and
+ *  it rewrites the note's text — so it lives in the ≡ sheet beside the other
+ *  things a note needs rather than in the toolbar or the quick-action list. It
+ *  is disabled on a note that has nothing to convert, so the item never leads
+ *  to a dead tap. */
+function normalizeItem(): MenuEntry {
+  const latex = hasNote() && findLatexMath(editor.getValue()).length > 0;
+  return {
+    title: 'Normalize math',
+    icon: MENU_ICONS.normalize,
+    disabled: !latex,
+    action: () => { if (mode !== 'edit') setMode('edit'); editor.run('normalizeMath'); },
+  };
 }
 function renderMenuButton(): void {
   const quick = loadSettings().quickAction;
@@ -2011,6 +2162,12 @@ function layoutToolbar(): void {
   // pill sits 8px above the keyboard. Anchoring to the bottom instead put it
   // ~30px too high in Chrome, where position:fixed; bottom:0 is measured
   // against a box taller than what is visible above the keyboard.
+  // The gray unfolds upward out of the strip, so the strip is measured from the
+  // bottom of the visible area and lifted by however much the gray has grown:
+  // the gray takes the space above the buttons, and the buttons stay on the line
+  // they have always been on. Down by the same amount would move them twice.
+  // The warning is out of the flow — it is tucked up behind the pill — so the
+  // strip sits exactly where it always did, however tall the warning grows.
   const top = (viewport?.offsetTop ?? 0) + height - TOOLBAR_STRIP;
   toolbar.style.transform = `translate3d(0, ${Math.round(top)}px, 0)`;
 }
