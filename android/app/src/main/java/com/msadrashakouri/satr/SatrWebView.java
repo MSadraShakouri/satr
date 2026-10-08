@@ -1,10 +1,12 @@
 package com.msadrashakouri.satr;
 
+import android.graphics.Rect;
 import android.view.ActionMode;
 import android.util.AttributeSet;
 import android.content.Context;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
 
 import com.getcapacitor.CapacitorWebView;
 
@@ -27,6 +29,15 @@ import com.getcapacitor.CapacitorWebView;
  * as they were — {@link #onCreateActionMode} builds the menu first through the
  * original callback and the item is appended to it.
  *
+ * The wrapper is a {@link ActionMode.Callback2}, and that is not a detail: the
+ * platform places the floating bar by asking the callback where the selected
+ * text is ({@code onGetContentRect}). The plain {@code Callback} interface has
+ * no such method, so wrapping Chromium's {@code Callback2} in a plain
+ * {@code Callback} silently threw the selection's rectangle away and the bar
+ * fell back to the whole view — the top of the page. Implementing
+ * {@code Callback2} and passing the rectangle through puts the bar back over
+ * the words it belongs to.
+ *
  * That bar, with that one item in it, is the only selection menu the app has:
  * the selection itself is the WebView's (Obsidian's is the same — its editor
  * ships no touch handling of its own, and its Android build registers no
@@ -42,17 +53,25 @@ public class SatrWebView extends CapacitorWebView {
         super(context, attrs);
     }
 
+    /** The platform's one-argument start goes through the two-argument one, so
+     *  the wrapper is made here, once — a callback already wrapped is left
+     *  alone rather than wrapped a second time (which would add the item
+     *  twice). */
+    private ActionMode.Callback wrapped(ActionMode.Callback callback) {
+        return callback instanceof SatrActionMode ? callback : new SatrActionMode(callback);
+    }
+
     @Override
     public ActionMode startActionMode(ActionMode.Callback callback) {
-        return super.startActionMode(new SatrActionMode(callback));
+        return super.startActionMode(wrapped(callback));
     }
 
     @Override
     public ActionMode startActionMode(ActionMode.Callback callback, int type) {
-        return super.startActionMode(new SatrActionMode(callback), type);
+        return super.startActionMode(wrapped(callback), type);
     }
 
-    private final class SatrActionMode implements ActionMode.Callback {
+    private final class SatrActionMode extends ActionMode.Callback2 {
         private final ActionMode.Callback inner;
 
         SatrActionMode(ActionMode.Callback inner) {
@@ -68,6 +87,21 @@ public class SatrWebView extends CapacitorWebView {
                 item.setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM | MenuItem.SHOW_AS_ACTION_WITH_TEXT);
             }
             return created;
+        }
+
+        /**
+         * Where the floating bar goes. Chromium hands over its own rectangle —
+         * the bounds of the selected text — and that is the one to keep; a
+         * callback that is not a {@code Callback2} has no way to give it, and
+         * the bar ends up over the top of the page instead of over the words.
+         */
+        @Override
+        public void onGetContentRect(ActionMode mode, View view, Rect outRect) {
+            if (inner instanceof ActionMode.Callback2) {
+                ((ActionMode.Callback2) inner).onGetContentRect(mode, view, outRect);
+            } else {
+                super.onGetContentRect(mode, view, outRect);
+            }
         }
 
         @Override

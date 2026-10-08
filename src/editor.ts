@@ -485,9 +485,40 @@ function flattenTitleDom(el: HTMLElement): void {
   }
 }
 
+/** The live title element's own state, kept with the element: a title change
+ *  CodeMirror brings to the same widget updates the element it already has
+ *  (TitleWidget.updateDOM), and the closures below read and write this. */
+interface TitleFieldState {
+  original: string;
+  field: HTMLElement;
+  setError(message: string | null): void;
+  refresh(value: string): void;
+}
+const titleFields = new WeakMap<HTMLElement, TitleFieldState>();
+
+// The title is a widget, and it keeps its element. A title change — the rename
+// a ✓ commits, a file switch — used to build a new element and drop the old
+// one; on the phone, a focused element leaving the document is what closes the
+// keyboard, so the ✓ closed it and the focus that followed could only bring it
+// back (the writer saw exactly that blink, and asked why it closes at all).
+// CodeMirror redraws a widget whose `eq` says it changed — unless `updateDOM`
+// takes the element it is given and brings it up to date, which this one does:
+// the field keeps the same node for the whole note, focus and all.
 class TitleWidget extends WidgetType {
   constructor(readonly value: string) {
     super();
+  }
+
+  eq(other: TitleWidget): boolean {
+    return other.value === this.value;
+  }
+
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    const state = titleFields.get(dom);
+    if (!state) return false; // not ours to update: let CodeMirror build one
+    state.refresh(this.value);
+    view.requestMeasure();
+    return true;
   }
 
   toDOM(view: EditorView) {
@@ -507,6 +538,18 @@ class TitleWidget extends WidgetType {
     errorEl.className = 'cm-file-name-error';
     wrap.append(el, errorEl);
     let original = this.value;
+    const state: TitleFieldState = {
+      original,
+      field: el,
+      setError: (message) => showError(message),
+      refresh: (value) => {
+        original = value;
+        state.original = value;
+        if (el.textContent !== value) el.textContent = value;
+        showError(null);
+      },
+    };
+    titleFields.set(wrap, state);
     const titleText = (): string => (el.textContent ?? '').replace(/\s+/g, ' ').trim();
     const showError = (message: string | null): void => {
       if (errorEl.textContent === (message ?? '')) return;
@@ -590,10 +633,6 @@ class TitleWidget extends WidgetType {
       showError(null);
     });
     return wrap;
-  }
-
-  eq(other: TitleWidget) {
-    return other.value === this.value;
   }
 
   ignoreEvent() {

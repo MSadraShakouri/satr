@@ -31,3 +31,29 @@ test('Enter in the title hands the focus to the note, and nothing closes', async
   // Nothing was closed: the note is still the one open.
   await expect(title).toHaveText('A');
 });
+
+test('the ✓ on a new file renames it and keeps the title\'s own element', async ({ page }) => {
+  await boot(page);
+  // A new note, the app's own way: the tab bar's + and then Create new note.
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab [data-act="new"]').click();
+  const title = page.locator('#app .cm-file-name');
+  await expect(title).toHaveText(/^Untitled/);
+  // The element the finger is in, marked: a rename must not replace it —
+  // an element leaving the document is what drops the phone's keyboard.
+  await title.evaluate((el) => { el.dataset.probe = 'kept'; });
+  await title.evaluate((el) => { el.focus(); window.getSelection()?.selectAllChildren(el); });
+  await page.keyboard.type('MyNote');
+  await page.keyboard.press('Enter');
+  // The rename landed...
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('satr:tabs')))
+    .toContain('Notes/MyNote.md');
+  await expect(title).toHaveText('MyNote');
+  // ...the note has the caret (the keyboard stays, not closes and reopens)...
+  await expect.poll(() => page.evaluate(async () => {
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
+    return EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!.hasFocus;
+  })).toBe(true);
+  // ...and the title element is the same node it was.
+  expect(await title.evaluate((el) => el.dataset.probe ?? 'REPLACED')).toBe('kept');
+});
