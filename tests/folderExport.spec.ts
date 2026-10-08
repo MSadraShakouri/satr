@@ -103,6 +103,8 @@ test('the folder row’s own menu carries the export, on its own line', async ({
     '---',
     'Use as a space',
     '---',
+    'Open all notes in tabs | Replace tabs with this folder',
+    '---',
     'Export folder as PDF…',
     '---',
     'Delete',
