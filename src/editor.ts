@@ -532,12 +532,7 @@ class TitleWidget extends WidgetType {
     };
     // The title's ✓ (Enter) hands the caret to the note in the same key event,
     // without blurring the title, so the keyboard stays up.
-    // A new file has an empty body, so the caret would land on the title's own
-    // line: give the body a first, empty line and put the caret on it.
-    const intoNote = (): void => {
-      if (view.state.doc.length === 0) view.dispatch({ changes: { from: 0, insert: '\n' }, selection: { anchor: 1 } });
-      view.focus();
-    };
+    const intoNote = (): void => { view.focus(); };
     el.addEventListener('focus', () => { original = titleText() || original; showError(null); });
     el.addEventListener('input', () => {
       flattenTitleDom(el);

@@ -31,17 +31,3 @@ test('Enter in the title hands the focus to the note, and nothing closes', async
   // Nothing was closed: the note is still the one open.
   await expect(title).toHaveText('A');
 });
-
-test('Enter in the title of a new (empty) file gives the body a new empty line, with the caret on it', async ({ page }) => {
-  await boot(page, '');
-  const title = page.locator('#app .cm-file-name');
-  await title.click();
-  await page.keyboard.press('End');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => page.evaluate(async () => {
-    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
-    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
-    return { doc: view.state.doc.toString(), head: view.state.selection.main.head, focus: view.hasFocus };
-  })).toEqual({ doc: '\n', head: 1, focus: true });
-  await expect(title).not.toBeFocused();
-});
