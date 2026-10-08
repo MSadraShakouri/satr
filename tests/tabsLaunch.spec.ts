@@ -38,7 +38,7 @@ test('On launch: an empty tab is added after the last tabs, and it is the one sh
 });
 
 test('after being away past the chosen time, the app comes back with a new empty tab', async ({ page }) => {
-  await boot(page, { launchTabs: 'empty', newTabAfterMinutes: 5 }, Date.now() - 6 * 60_000);
+  await boot(page, { launchTabs: 'away', newTabAfterMinutes: 5 }, Date.now() - 6 * 60_000);
   await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
   expect(await tabCount(page)).toBe(3);
   // One absence gives one new tab: the mark is gone.
@@ -46,12 +46,12 @@ test('after being away past the chosen time, the app comes back with a new empty
 });
 
 test('a shorter absence than the chosen time opens nothing new', async ({ page }) => {
-  await boot(page, { newTabAfterMinutes: 5 }, Date.now() - 60_000);
+  await boot(page, { launchTabs: 'away', newTabAfterMinutes: 5 }, Date.now() - 60_000);
   await expect(page.locator('#app .cm-file-name')).toHaveText('B');
   expect(await tabCount(page)).toBe(2);
 });
 
-test('Never (the default) opens nothing new however long the absence', async ({ page }) => {
+test('Restore (the default) opens nothing new however long the absence', async ({ page }) => {
   await boot(page, {}, Date.now() - 10 * 24 * 60 * 60_000);
   await expect(page.locator('#app .cm-file-name')).toHaveText('B');
   expect(await tabCount(page)).toBe(2);
@@ -61,7 +61,7 @@ test('coming back to the visible app after being away adds the empty tab too', a
   await boot(page, { newTabAfterMinutes: 15 });
   await expect(page.locator('#app .cm-file-name')).toHaveText('B');
   // The away time belongs to the empty-tab launch, so that is the choice in force.
-  await page.evaluate(() => localStorage.setItem('satr:settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('satr:settings')!), launchTabs: 'empty' })));
+  await page.evaluate(() => localStorage.setItem('satr:settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('satr:settings')!), launchTabs: 'away' })));
   // Away: the app goes to the background (the same event the app listens for).
   await page.evaluate((key) => {
     localStorage.setItem(key, String(Date.now() - 20 * 60_000));
@@ -78,10 +78,10 @@ test('the Tabs settings save their choices', async ({ page }) => {
     openSettings({ apply: () => {}, tools: () => [] });
   });
   await expect(page.locator('.settings-screen')).toBeVisible();
-  await page.locator('[data-select="launchTabs"]').selectOption('empty');
+  await page.locator('[data-select="launchTabs"]').selectOption('away');
   await page.locator('[data-select="newTabAfterMinutes"]').selectOption('30');
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('satr:settings')!));
-  expect(saved.launchTabs).toBe('empty');
+  expect(saved.launchTabs).toBe('away');
   expect(saved.newTabAfterMinutes).toBe(30);
 });
 
@@ -97,6 +97,12 @@ test('Restore last tabs: a long absence or a refresh adds no tab, and the away t
   });
   await expect(page.locator('.settings-screen')).toBeVisible();
   await expect(page.locator('[data-away-row]')).toBeHidden();
-  await page.locator('[data-select="launchTabs"]').selectOption('empty');
+  await page.locator('[data-select="launchTabs"]').selectOption('away');
   await expect(page.locator('[data-away-row]')).toBeVisible();
+});
+
+test('Always open a new empty tab: every launch adds one, whatever the time setting', async ({ page }) => {
+  await boot(page, { launchTabs: 'empty', newTabAfterMinutes: 1440 }, Date.now() - 1000);
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(3);
 });

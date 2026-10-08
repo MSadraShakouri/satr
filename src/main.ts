@@ -2133,7 +2133,7 @@ function takeAwayTab(): boolean {
   // Only the empty-tab launch has an away time: a refresh or a return with
   // "Restore last tabs" brings the tabs back, with no new tab.
   const settings = loadSettings();
-  if (settings.launchTabs !== 'empty') return false;
+  if (settings.launchTabs !== 'away') return false;
   const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
 }
@@ -2141,8 +2141,8 @@ async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   // A new empty tab at launch: the setting asks for one, or the app was away
   // long enough. The tabs from last time stay where they were.
-  const launchEmpty = loadSettings().launchTabs === 'empty';
-  if (takeAwayTab() || launchEmpty) {
+  const launchTabs = loadSettings().launchTabs;
+  if (launchTabs === 'empty' || takeAwayTab()) {
     const empty = tabs.findIndex((t) => !t.path);
     if (empty >= 0) activeTab = empty;
     else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
