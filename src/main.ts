@@ -1197,11 +1197,20 @@ async function handleIncomingId(id: string): Promise<void> {
     closeMenu();
     closeTabSwitcher();
     closeSettings();
-    const path = externalPath(file.id, file.name);
+    // The same source again (shared, or opened from the file manager, while its
+    // tab is still open) is that tab, not a second one. The source identity is
+    // `viewId`; the temporary id changes every time, so the tab keeps its path
+    // and takes the newest id to read from.
+    const sameSource = file.viewId
+      ? [...externalFilesByPath].find(([p, f]) => f.viewId === file.viewId && tabs.some((tab) => tab.path === p))
+      : undefined;
+    const path = sameSource ? sameSource[0] : externalPath(file.id, file.name);
     externalFilesByPath.set(path, file);
     const existingTab = tabs.findIndex((tab) => tab.path === path);
     if (existingTab >= 0) {
       await switchTab(existingTab);
+      // Already showing it: read the newest copy the app was just handed.
+      if (curTab().path === path) await openIncomingPath(path);
     } else {
       if (!await leaveCurrent()) return;
       if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
