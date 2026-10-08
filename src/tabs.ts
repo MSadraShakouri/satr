@@ -9,17 +9,19 @@
 // hold a card to pick it up and drag it to a new place.
 import { openMenu } from './menu';
 
-export interface TabCard { title: string; active: boolean }
+export interface TabCard { title: string; active: boolean; empty: boolean }
 export interface TabSwitcherDeps {
   tabs(): TabCard[];
   /** Rendered HTML of the start of a tab's note. */
   preview(index: number): Promise<string>;
   select(index: number): void;
-  close(index: number): void;
+  /** Resolves once the tab is gone (or the close was refused). */
+  close(index: number): Promise<void>;
   newTab(): void;
   canReopen(): boolean;
   reopen(): void;
   closeOthers(): void;
+  closeAll(): Promise<void>;
   /** Reorder: the tab at `from` goes to `to`. */
   move(from: number, to: number): void;
 }
@@ -69,7 +71,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
       <div class="mobile-tab-wrapper">
         <div class="mobile-tab${tab.active ? ' is-active' : ''}" data-index="${i}">
           <div class="mobile-tab-preview">
-            ${tabs.length > 1 ? `<div class="close-button" data-close="${i}" role="button" aria-label="Close tab">${ICONS.x}</div>` : ''}
+            ${tabs.length > 1 || !tabs[0].empty ? `<div class="close-button" data-close="${i}" role="button" aria-label="Close tab">${ICONS.x}</div>` : ''}
             <div class="mobile-tab-preview-embed"><div class="mobile-tab-preview-page markdown-preview-view"></div></div>
             <div class="mobile-tab-preview-empty">${ICONS.file}</div>
           </div>
@@ -90,8 +92,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     const target = event.target as HTMLElement;
     const close = target.closest<HTMLElement>('[data-close]');
     if (close) {
-      deps.close(Number(close.dataset.close));
-      render();
+      void deps.close(Number(close.dataset.close)).then(render);
       return;
     }
     const card = target.closest<HTMLElement>('.mobile-tab');
@@ -108,6 +109,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
         { title: 'Reopen closed tab', icon: ICONS.undo, disabled: !deps.canReopen(), action: () => { closeTabSwitcher(); deps.reopen(); } },
         'separator',
         { title: 'Close other tabs', icon: ICONS.archiveX, warning: true, disabled: n < 2, action: () => { deps.closeOthers(); render(); } },
+        { title: 'Close all tabs', icon: ICONS.archiveX, warning: true, disabled: deps.tabs().every((t) => t.empty), action: () => { void deps.closeAll().then(render); } },
       ]);
     }
   });
@@ -176,7 +178,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     // Press and hold picks a card up; the hold is long enough that a swipe
     // that starts a moment slow is still a swipe.
     if (deps.tabs().length > 1) holdTimer = window.setTimeout(() => startLift(card, t.clientX, t.clientY), 450);
-    if (deps.tabs().length < 2) return;
+    if (deps.tabs().length < 2 && deps.tabs()[0].empty) return; // nothing to close
     drag = { card, x: t.clientX, y: t.clientY, t: event.timeStamp, dx: 0, on: false };
   }, { passive: true });
   el.addEventListener('touchmove', (event) => {
@@ -221,7 +223,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     if (reach) {
       card.style.transform = `translateX(${Math.sign(dx) * window.innerWidth}px)`;
       card.style.opacity = '0';
-      window.setTimeout(() => { deps.close(Number(card.dataset.index)); render(); }, 180);
+      window.setTimeout(() => { void deps.close(Number(card.dataset.index)).then(render); }, 180);
     } else {
       card.style.transform = '';
       card.style.opacity = '';

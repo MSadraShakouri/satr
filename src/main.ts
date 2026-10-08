@@ -1251,8 +1251,22 @@ function newTab(): void {
     showEmptyTab();
   })();
 }
-function closeTab(index: number): void {
-  if (tabs.length < 2 || !tabs[index]) return;
+/** Close a tab. Closing the last one leaves the default tab (the empty
+ *  "No file is open" page) in its place. Resolves once the close is done,
+ *  so the switcher can redraw from the new list. */
+async function closeTab(index: number): Promise<void> {
+  if (!tabs[index]) return;
+  if (tabs.length < 2) {
+    // The last tab: it becomes the empty tab, and the note it had can come back.
+    if (!tabs[index].path) return; // already the default tab
+    if (!await leaveCurrent()) return;
+    closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift();
+    tabs[0] = { path: '' };
+    activeTab = 0;
+    showEmptyTab();
+    renderNavButtons();
+    return;
+  }
   if (index !== activeTab) {
     if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
@@ -1260,13 +1274,22 @@ function closeTab(index: number): void {
     renderNavButtons();
     return;
   }
-  void (async () => {
-    if (!await leaveCurrent()) return;
-    if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
-    tabs.splice(index, 1);
-    activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
-    await openTab(curTab());
-  })();
+  if (!await leaveCurrent()) return;
+  if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
+  tabs.splice(index, 1);
+  activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
+  await openTab(curTab());
+}
+
+/** Close every tab but leave the default (empty) tab; the closed notes can
+ *  be reopened one by one. */
+async function closeAllTabs(): Promise<void> {
+  if (!await leaveCurrent()) return;
+  for (const tab of tabs) if (tab.path) { closedTabs.push({ path: tab.path }); if (closedTabs.length > 20) closedTabs.shift(); }
+  tabs = [{ path: '' }];
+  activeTab = 0;
+  showEmptyTab();
+  renderNavButtons();
 }
 function reopenClosedTab(): void {
   // A file opened from another app can't come back on its own: its permission
@@ -1523,7 +1546,7 @@ function showTabs(): void {
   void (async () => {
     if (!await leaveCurrent()) return;
     openTabSwitcher({
-      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab })),
+      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path })),
       preview: async (i) => {
         const path = tabs[i].path;
         if (!path) return '';
@@ -1540,6 +1563,7 @@ function showTabs(): void {
       canReopen: () => closedTabs.length > 0,
       reopen: reopenClosedTab,
       closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+      closeAll: closeAllTabs,
       move: moveTab,
     });
   })();
