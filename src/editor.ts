@@ -530,6 +530,9 @@ class TitleWidget extends WidgetType {
       view.dispatch({ selection: { anchor: 0 } });
       window.requestAnimationFrame(() => view.focus());
     };
+    // The title's ✓ (Enter) hands the caret to the note in the same key event,
+    // without blurring the title, so the keyboard stays up.
+    const intoNote = (): void => { view.focus(); };
     el.addEventListener('focus', () => { original = titleText() || original; showError(null); });
     el.addEventListener('input', () => {
       flattenTitleDom(el);
@@ -563,7 +566,9 @@ class TitleWidget extends WidgetType {
       } else if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
         event.stopPropagation();
-        if (commit()) enterNote();
+        // Commit, then go to the note's first line. The caret moves straight
+        // there, without blurring the title, so the keyboard stays up.
+        if (commit()) intoNote();
       } else if (event.key === 'ArrowDown') {
         // Leaving through the bottom edge of the title hands the caret to the note.
         const selection = window.getSelection();
