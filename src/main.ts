@@ -971,7 +971,20 @@ function showFile(path: string, content: string, after?: () => void, options?: {
 async function openFile(path: string, after?: () => void): Promise<void> {
   if (path === filePath) { after?.(); return; }
   const existing = tabs.findIndex((t) => t.path === path);
-  if (existing >= 0) { await switchTab(existing, after); return; }
+  if (existing >= 0) {
+    // Picked from an empty tab: that tab gives way to the one already open,
+    // so no empty tab is left behind.
+    if (!curTab().path && existing !== activeTab) {
+      const gone = activeTab;
+      if (!await leaveCurrent()) return;
+      tabs.splice(gone, 1);
+      activeTab = existing > gone ? existing - 1 : existing;
+      await openTab(curTab(), after);
+      return;
+    }
+    await switchTab(existing, after);
+    return;
+  }
   const opened = await backend.readText(path);
   if (opened.status !== 'text') {
     leftSidebar.hint(opened.status === 'too-large'
