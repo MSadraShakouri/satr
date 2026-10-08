@@ -532,7 +532,13 @@ class TitleWidget extends WidgetType {
     };
     // The title's ✓ (Enter) hands the caret to the note in the same key event,
     // without blurring the title, so the keyboard stays up.
-    const intoNote = (): void => { view.focus(); };
+    // An empty body (a new file) has no line for the caret to land on. Focus
+    // now, and once more after the keypress: the phone's Enter action can drop
+    // the focus that was just moved, and the keyboard goes with it.
+    const intoNote = (): void => {
+      view.focus();
+      if (view.state.doc.length === 0) window.setTimeout(() => { if (!view.hasFocus) view.focus(); }, 60);
+    };
     el.addEventListener('focus', () => { original = titleText() || original; showError(null); });
     el.addEventListener('input', () => {
       flattenTitleDom(el);
