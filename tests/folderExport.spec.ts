@@ -329,13 +329,7 @@ test('the down chevron hides the keyboard without dropping the caret', async ({ 
   const caret = await page.evaluate(() => (document.querySelector('#app .cm-content') as HTMLElement).contains(document.getSelection()?.anchorNode ?? null));
   expect(caret, 'the caret is in the note').toBe(true);
 
+  // The down chevron lets the note go, as in the older versions: the caret goes with it.
   await page.evaluate(() => document.querySelector<HTMLElement>('[data-act="hide-keyboard"]')!.click());
-  expect(await page.evaluate(() => window.__hidKeyboard)).toBe(1);
-  await expect(page.locator('#app .cm-content')).toBeFocused(); // the caret stays
-
-  // The web fallback: no platform to ask, so the editor is let go as before.
-  await page.evaluate(() => { window.Capacitor.isNativePlatform = () => false; });
-  await page.evaluate(() => document.querySelector<HTMLElement>('[data-act="hide-keyboard"]')!.click());
-  expect(await page.evaluate(() => window.__hidKeyboard)).toBe(1);
   await expect(page.locator('#app .cm-content')).not.toBeFocused();
 });

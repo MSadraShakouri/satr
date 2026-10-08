@@ -2280,13 +2280,9 @@ toolbar.addEventListener('pointerdown', (event) => event.preventDefault());
 toolbar.addEventListener('mousedown', (event) => event.preventDefault());
 toolbar.addEventListener('click', (event) => {
   if ((event.target as HTMLElement).closest('[data-act="hide-keyboard"]')) {
-    // The keyboard, and only the keyboard. The app hides it through the
-    // platform (SystemBarsPlugin.java, the InputMethodManager), so the note
-    // keeps the focus and the caret the writer left; blurring the editable
-    // would put the keyboard away too, but it would drop the caret with it.
-    // A browser has no keyboard for the page to put away, so there the
-    // button still lets the editor go.
-    if (!hideKeyboard()) editor.view.contentDOM.blur();
+    // The down chevron lets the note go: blurring the editable hides the
+    // keyboard and the caret with it (the behaviour the writer asked to keep).
+    editor.view.contentDOM.blur();
     return;
   }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-command]');
