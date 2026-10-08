@@ -74,7 +74,12 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   // caret up or down instead of stepping along the row.
   let here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5 && Math.abs(s.top - current.top) <= 4);
   if (here < 0) here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
-  const target = here < 0 ? null : stops[here + step];
+  // A stop on the caret's own position is no step at all (a soft-wrap break
+  // has two slots for one position): skip past those, so a press always moves
+  // the caret to a different place or is left to the platform.
+  let next = here + step;
+  while (here >= 0 && stops[next] && stops[next].pos === sel.head) next += step;
+  const target = here < 0 ? null : stops[next];
   if (!target) return false;
   // Plain motion is a cursor at the stop, on the stop's side — the side is
   // what paints the caret where the step visually landed. The range has to
