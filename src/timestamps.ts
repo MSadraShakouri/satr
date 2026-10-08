@@ -64,7 +64,8 @@ export function refreshTimestamps(root: ParentNode = document): void {
   });
 }
 
-/** Keeps the relative ones current: once every 30 seconds while the app is shown. */
+/** Keeps the relative ones current: once a second while the app is shown, so a
+ *  "in 45 seconds" counts down. Only the relative ones are touched. */
 export function keepTimestampsCurrent(): void {
-  window.setInterval(() => { if (!document.hidden) refreshTimestamps(); }, 30_000);
+  window.setInterval(() => { if (!document.hidden) refreshTimestamps(); }, 1_000);
 }

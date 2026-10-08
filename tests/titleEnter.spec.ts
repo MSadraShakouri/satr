@@ -3,15 +3,15 @@ import { expect, test, type Page } from '@playwright/test';
 // The title's ✓ (Enter): commit the name and go to the note's first line,
 // with the editor focused in the same key event (so the keyboard stays up).
 
-async function boot(page: Page) {
+async function boot(page: Page, body = 'first line\n\nsecond line\n') {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => {
+  await page.addInitScript((body) => {
     if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
-    localStorage.setItem('satr:fs:file:Notes/A.md', 'first line\n\nsecond line\n');
+    localStorage.setItem('satr:fs:file:Notes/A.md', body);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
     localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
-  });
+  }, body);
   await page.goto('/');
   await expect(page.locator('#app .cm-file-name')).toHaveText('A');
 }
@@ -30,4 +30,18 @@ test('Enter in the title hands the focus to the note, and nothing closes', async
   await expect(title).not.toBeFocused();
   // Nothing was closed: the note is still the one open.
   await expect(title).toHaveText('A');
+});
+
+test('Enter in the title of a new (empty) file gives the body a new empty line, with the caret on it', async ({ page }) => {
+  await boot(page, '');
+  const title = page.locator('#app .cm-file-name');
+  await title.click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(async () => {
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
+    return { doc: view.state.doc.toString(), head: view.state.selection.main.head, focus: view.hasFocus };
+  })).toEqual({ doc: '\n', head: 1, focus: true });
+  await expect(title).not.toBeFocused();
 });

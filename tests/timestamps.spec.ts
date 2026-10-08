@@ -76,3 +76,21 @@ test('in the editor the time shows, and the code comes back when the cursor is o
   await expect(page.locator('#app .cm-lp-timestamp')).toHaveCount(1);
   await expect(page.locator('#app .cm-content')).toContainText('<t:1700000000:F>');
 });
+
+test('a relative timestamp counts down while it is on screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    const soon = Math.floor(Date.now() / 1000) + 45;
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', `Soon: <t:${soon}:R>\n`);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+  });
+  await page.goto('/');
+  const widget = page.locator('#app .cm-lp-timestamp');
+  await expect(widget).toHaveText(/^in (4[0-5]) seconds$/);
+  const first = await widget.textContent();
+  // A tick later the number has moved on (it is not frozen at load time).
+  await expect.poll(() => widget.textContent(), { timeout: 5000 }).not.toBe(first);
+});
