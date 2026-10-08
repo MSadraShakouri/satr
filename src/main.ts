@@ -23,6 +23,7 @@ import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
+import { keepTimestampsCurrent } from './timestamps';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
@@ -2095,6 +2096,7 @@ if (Capacitor.isNativePlatform()) {
 }
 document.addEventListener('satr:back', () => { handleBack(); });
 
+keepTimestampsCurrent(); // the relative timestamps ("in 3 hours") in the note and the reading view
 let bootReady = false;
 let queuedIncomingId = '';
 async function boot(): Promise<void> {
