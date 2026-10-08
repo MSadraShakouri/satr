@@ -66,7 +66,7 @@ test('the source and the preview keep the same place, math and tables and all', 
       const before = scroller.scrollTop;
       const pane = document.querySelector<HTMLElement>('#preview-pane')!;
       const preview = document.querySelector<HTMLElement>('#preview')!;
-      const { previewScroll } = await import('/src/scrollSync.ts');
+      const { previewScroll } = await window.__satr.load('/src/scrollSync.ts');
       toggle(); // to the preview
       await wait(600); // the mapping's own settle passes (120ms, 350ms, fonts)
       const previewLine = previewScroll(pane, preview);
@@ -100,7 +100,7 @@ test('a formula settled late does not move the place the reader is at', async ({
     const scroller = document.querySelector<HTMLElement>('#editor .cm-scroller')!;
     const pane = document.querySelector<HTMLElement>('#preview-pane')!;
     const preview = document.querySelector<HTMLElement>('#preview')!;
-    const { previewScroll, applyPreviewScroll } = await import('/src/scrollSync.ts');
+    const { previewScroll, applyPreviewScroll } = await window.__satr.load('/src/scrollSync.ts');
     const wait = (ms: number): Promise<void> => new Promise((r) => window.setTimeout(r, ms));
     scroller.scrollTop = 1600;
     await wait(150);

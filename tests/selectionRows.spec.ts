@@ -6,7 +6,7 @@ declare global { interface Window { testEditor: SatrEditor } }
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     // Tight spacing, where the rows' font boxes exceed the line pitch and
@@ -71,7 +71,7 @@ test('the empty end of a selected line still meets its neighbours', async ({ pag
 
 test('select-all covers every text line and never paints the file title', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);
@@ -96,7 +96,7 @@ test('select-all covers every text line and never paints the file title', async 
 
 test('a widget at a selection endpoint is skipped, not painted', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);
@@ -129,7 +129,7 @@ test('a widget at a selection endpoint is skipped, not painted', async ({ page }
 
 test('rows fall back to the caret geometry when text runs cannot be measured', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);
@@ -169,7 +169,7 @@ test('select-all in the app selects every line and the native selection follows'
   await page.keyboard.press('Control+a');
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const out = await page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     const main = view.state.selection.main;
     return {
@@ -208,7 +208,7 @@ test('select-all works while the note itself is not focused, and never steals a 
   // A tap on the chrome (the file title, the top bar) takes the focus away.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   const focused = await page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     return EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!.hasFocus;
   });
   expect(focused).toBe(false);
@@ -216,7 +216,7 @@ test('select-all works while the note itself is not focused, and never steals a 
   await page.keyboard.press('Control+a');
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const out = await page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     const main = view.state.selection.main;
     return {
@@ -275,7 +275,7 @@ test('a programmatic whole-document selection survives two frames', async ({ pag
     selection.addRange(range);
     document.dispatchEvent(new Event('selectionchange'));
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     const main = view.state.selection.main;
     return {
@@ -315,13 +315,13 @@ test('the platform\u2019s own Select all ends up as the whole note, every time',
   await page.locator('#app .cm-content').click({ position: { x: 20, y: 60 } });
 
   const read = () => page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     const main = view.state.selection.main;
     return { from: main.from, to: main.to, length: view.state.doc.length };
   });
   const setSelection = (anchor: number, head = anchor) => page.evaluate(async ({ anchor, head }) => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     view.dispatch({ selection: { anchor, head } });
   }, { anchor, head });
@@ -362,7 +362,7 @@ test('the platform\u2019s own Select all ends up as the whole note, every time',
   // 3. And the WebView that only moves the DOM selection — collapsed, but
   //    covering the whole region from the note's first character to its last.
   const viaDomSelection = await page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     view.dispatch({ selection: { anchor: 2, head: 8 } });
     const content = view.contentDOM;
@@ -385,7 +385,7 @@ test('the platform\u2019s own Select all ends up as the whole note, every time',
   //    editor then reads that selection back as its own is CodeMirror doing
   //    its job, and is what the native drag handles rely on.)
   const untouched = await page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     view.dispatch({ selection: { anchor: 2, head: 8 } });
     const line = view.contentDOM.querySelector('.cm-line')!;
@@ -424,7 +424,7 @@ test('a Select all that lands on the page, not on the note, still means the note
   await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
 
   const state = () => page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     const main = view.state.selection.main;
     return { from: main.from, to: main.to, length: view.state.doc.length };
@@ -446,7 +446,7 @@ test('a Select all that lands on the page, not on the note, still means the note
 
   // A field's own selection is anchored in the field, and is left alone.
   await page.evaluate(async () => {
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     view.dispatch({ selection: { anchor: 3, head: 9 } });
     const input = document.createElement('input');

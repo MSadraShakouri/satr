@@ -55,7 +55,7 @@ async function printNative(page: Page, markdown: string, options: PrintOptions, 
     document.documentElement.style.setProperty('--system-font-scale', String(scale));
     window.Capacitor.isNativePlatform = () => true;
     const path = '/src/exportPdf.ts';
-    const { exportPdf } = await import(path);
+    const { exportPdf } = await window.__satr.load(path);
     await exportPdf('Print hand-off regression', markdown, '', options);
     return window.__printHtml;
   }, { markdown, options, scale });

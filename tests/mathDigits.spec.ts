@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
 
 test('math digits can be forced to one set across the whole formula', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { renderMath, setMathDigits } = await import('/src/math.ts');
+    const { renderMath, setMathDigits } = await window.__satr.load('/src/math.ts');
     const tex = 'x = 12 \\text{ سال 3 } \\tag{7}';
     setMathDigits('auto');
     const auto = renderMath(tex, true);
@@ -35,7 +35,7 @@ test('math digits can be forced to one set across the whole formula', async ({ p
 
 test('inline math follows the digits setting too', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { renderMath, setMathDigits } = await import('/src/math.ts');
+    const { renderMath, setMathDigits } = await window.__satr.load('/src/math.ts');
     setMathDigits('persian');
     const html = renderMath('a_1 + b_2', false);
     setMathDigits('auto');

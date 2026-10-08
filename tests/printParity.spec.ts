@@ -37,7 +37,7 @@ async function printWeb(page: Page, markdown: string, options: PrintOptions): Pr
   await page.goto('/');
   const html = await page.evaluate(async ({ markdown, options }) => {
     localStorage.setItem('satr:settings', JSON.stringify({ version: 3, pdfPageNumbers: 'latin', pdfCss: '' }));
-    const { exportPdf } = await import('/src/exportPdf.ts');
+    const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
     await exportPdf('Print parity', markdown, '', options);
     return window.__printedHtml;
   }, { markdown, options });
@@ -69,7 +69,7 @@ async function printApp(page: Page, markdown: string, options: PrintOptions, sca
     window.__fontScale = scale;
     document.documentElement.style.setProperty('--system-font-scale', String(scale));
     window.Capacitor.isNativePlatform = () => true;
-    const { exportPdf } = await import('/src/exportPdf.ts');
+    const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
     await exportPdf('Print parity', markdown, '', options);
     return window.__printHtml;
   }, { markdown, options, scale });

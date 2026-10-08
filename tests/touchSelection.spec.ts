@@ -24,7 +24,7 @@ type Step = { action: 'down' | 'up' | 'move'; at: number; wait?: number; on?: st
 async function mount(page: Page, text = NOTE): Promise<void> {
   await page.goto('/');
   await page.evaluate(async (text) => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);

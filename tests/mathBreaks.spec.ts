@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => {
 
 test('word spaces inside text commands are break points', async ({ page }) => {
   const result = await page.evaluate(async (lines) => {
-    const { renderMath } = await import('/src/math.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
     const inspect = (tex: string) => {
       const html = renderMath(tex, true);
       const texes = [...html.matchAll(/<annotation encoding="application\/x-tex">([\s\S]*?)<\/annotation>/g)].map((m) => m[1]);
@@ -78,8 +78,8 @@ test('word spaces inside text commands are break points', async ({ page }) => {
 
 test('a phone-width theorem wraps between words and does not overflow', async ({ page }) => {
   const report = await page.evaluate(async (lines) => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('article');
     host.id = 'math-break-host';
     host.style.cssText = 'width: 240px; position: fixed; inset: 0 auto auto 0; background: white; z-index: 5; font-size: 18px;';
@@ -130,7 +130,7 @@ test('a phone-width theorem wraps between words and does not overflow', async ({
 
 test('the theorem note keeps each display line and wraps the sentences', async ({ page }) => {
   const html = await page.evaluate(async (markdown) => {
-    const { renderMarkdown } = await import('/src/markdown.ts');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
     return renderMarkdown(markdown);
   }, THEOREM);
   expect(html).toContain('dir="ltr"');
@@ -142,7 +142,7 @@ test('the theorem note keeps each display line and wraps the sentences', async (
 
 test('break points carry their preference: line ends, then commas, then relations, then spaces', async ({ page }) => {
   const result = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
     const breaks = (tex: string) => [...renderMath(tex, true).matchAll(/<span class="math-unit"(?: data-first)?(?: data-break="(\d)")?/g)]
       .map((m) => m[1] ?? 'first');
     return {
@@ -161,8 +161,8 @@ test('break points carry their preference: line ends, then commas, then relation
 
 test('a source line end wins over an equal sign when both can break', async ({ page }) => {
   const starts = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('article');
     host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;';
     host.innerHTML = renderMath('aaa = bbb\ncc', true);
@@ -182,8 +182,8 @@ test('a source line end wins over an equal sign when both can break', async ({ p
 
 test('a comma wins over an equal sign when both can break', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('article');
     host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;';
     host.innerHTML = renderMath('aaa = bbb, ccc', true);
@@ -210,8 +210,8 @@ test('a comma wins over an equal sign when both can break', async ({ page }) => 
 test('an overwide group breaks at its own punctuation, never at an arbitrary atom', async ({ page }) => {
   const tex = String.raw`g(\alpha, \beta, \gamma, \delta, \epsilon, \zeta, \eta, \theta, \iota, \kappa) = \lambda, \mu, \nu, \xi, o, \pi, \rho, \sigma`;
   const report = await page.evaluate(async (tex) => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const read = (width: number) => {
       const host = document.createElement('article');
       host.style.cssText = `position:fixed;inset:0 auto auto 0;width:${width}px;background:white;font-size:18px;`;

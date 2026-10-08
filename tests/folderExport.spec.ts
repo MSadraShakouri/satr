@@ -254,7 +254,7 @@ test('folder export: every file begins on a page of its own', async ({ page }) =
   });
   await page.goto('/');
   const html = await page.evaluate(async (homework) => {
-    const { exportFolder } = await import('/src/exportPdf.ts');
+    const { exportFolder } = await window.__satr.load('/src/exportPdf.ts');
     const options = { columns: 1, direction: 'ltr', mathAlign: 'center' } as const;
     // Real notes: several paragraphs each, as a note is written.
     const long = `${homework}\n\n${homework}`;

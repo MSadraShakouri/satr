@@ -12,7 +12,7 @@ async function print(page: Page, markdown: string, options: PrintOptions, pdfCss
   const result = await page.evaluate(async ({ markdown, options, pdfCss }) => {
     localStorage.setItem('satr:settings', JSON.stringify({ version: 3, pdfPageNumbers: 'latin', pdfCss }));
     const path = '/src/exportPdf.ts';
-    const { exportPdf } = await import(path);
+    const { exportPdf } = await window.__satr.load(path);
     await exportPdf('Print layout regression', markdown, '', options);
     return window.__printedHtml;
   }, { markdown, options, pdfCss });

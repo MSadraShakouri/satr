@@ -26,12 +26,12 @@ for (const fontSize of [15, 12, 20]) {
         pdfCss: fontSize === 15 ? '' : `html { font-size: ${fontSize}px; }`,
       }));
       const rendererPath = '/src/markdown.ts';
-      const { renderMarkdown } = await import(rendererPath);
+      const { renderMarkdown } = await window.__satr.load(rendererPath);
       const source = new DOMParser().parseFromString(renderMarkdown(markdown), 'text/html');
       source.querySelectorAll('.math-cont').forEach((el) => el.remove());
       const sourceFormulas = [...source.querySelectorAll('annotation')].map((el) => el.textContent);
       const exporterPath = '/src/exportPdf.ts';
-      const { exportPdf } = await import(exporterPath);
+      const { exportPdf } = await window.__satr.load(exporterPath);
       await exportPdf('Homework 12.2', markdown);
       return { html: window.__printedHtml, sourceFormulas };
     }, { markdown: homework, fontSize });

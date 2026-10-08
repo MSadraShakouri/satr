@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
 
 test('the note majority decides, math and code do not vote', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { majorityDirection } = await import('/src/direction.ts');
+    const { majorityDirection } = await window.__satr.load('/src/direction.ts');
     return {
       persian: majorityDirection('این یک متن فارسی است\n\nو سطری دیگر'),
       english: majorityDirection('This note is English\n\nWith another line'),
@@ -24,7 +24,7 @@ test('the note majority decides, math and code do not vote', async ({ page }) =>
 
 test('the outline tree flips with the note while rows keep their own direction', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { createRightSidebar } = await import('/src/rightSidebar.ts');
+    const { createRightSidebar } = await window.__satr.load('/src/rightSidebar.ts');
     const host = document.createElement('div');
     document.body.appendChild(host);
     let dir: 'ltr' | 'rtl' = 'rtl';

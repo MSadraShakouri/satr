@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 async function open(page: Page, notePath?: string) {
   await page.evaluate(async (notePath) => {
     const path = '/src/settings.ts';
-    const { openSettings } = await import(path);
+    const { openSettings } = await window.__satr.load(path);
     openSettings({ notePath, apply: () => {}, tools: () => [] });
   }, notePath);
   await expect(page.locator('.settings-screen')).toBeVisible();
@@ -82,8 +82,8 @@ test('auto direction counts prose, ignoring math, code and an English title', as
   const directions = await page.evaluate(async () => {
     const optionsPath = '/src/printOptions.ts';
     const rendererPath = '/src/markdown.ts';
-    const { printDirection } = await import(optionsPath);
-    const { renderMarkdown } = await import(rendererPath);
+    const { printDirection } = await window.__satr.load(optionsPath);
+    const { renderMarkdown } = await window.__satr.load(rendererPath);
     const body = document.createElement('div');
     body.innerHTML = renderMarkdown('# Homework\n\nاین یک متن فارسی برای آزمایش ترتیب ستون‌ها است.\n\n$$' + 'x+y+'.repeat(100) + 'z$$\n\n```\n' + 'English code '.repeat(100) + '\n```');
     const auto = printDirection(body, 'auto');
@@ -101,7 +101,7 @@ test('corrupt or obsolete per-file settings fall back safely', async ({ page }) 
   await page.goto('/');
   const options = await page.evaluate(async () => {
     const path = '/src/printOptions.ts';
-    const { loadPrintOptions } = await import(path);
+    const { loadPrintOptions } = await window.__satr.load(path);
     localStorage.setItem('satr:pdf:bad.md', '{broken');
     localStorage.setItem('satr:pdf:old.md', JSON.stringify({ columns: 4, direction: 'bad', mathAlign: 'bad' }));
     return [loadPrintOptions('bad.md'), loadPrintOptions('old.md')];

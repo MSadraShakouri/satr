@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
     const path = '/src/editor.ts';
-    const { SatrEditor } = await import(path);
+    const { SatrEditor } = await window.__satr.load(path);
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);
@@ -157,7 +157,7 @@ test('selection rows do not overlap at normal or deliberately tight spacing', as
 test('lone and empty same-line dollars are text; a block being written is a display line', async ({ page }) => {
   const report = await page.evaluate(async () => {
     const path = '/src/markdown.ts';
-    const { renderMarkdown } = await import(path);
+    const { renderMarkdown } = await window.__satr.load(path);
     const host = document.createElement('article');
     const displays = (text: string) => {
       host.innerHTML = renderMarkdown(text);
@@ -255,7 +255,7 @@ test('ordinary brackets, apostrophes and code-fence pairing still work', async (
 test('spacing defaults migrate without resetting other chosen values', async ({ page }) => {
   const settings = await page.evaluate(async () => {
     const path = '/src/settings.ts';
-    const { loadSettings } = await import(path);
+    const { loadSettings } = await window.__satr.load(path);
     return [undefined, { version: 2, lineHeight: 1.5 }, { version: 2, lineHeight: 2.1 }, { version: 3, lineHeight: 1.5 }].map((value) => {
       if (value) localStorage.setItem('satr:settings', JSON.stringify(value));
       else localStorage.removeItem('satr:settings');

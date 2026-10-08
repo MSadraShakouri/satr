@@ -29,7 +29,7 @@ const NOTE = [
 async function mount(page: Page, lines = 1) {
   await page.goto('/');
   await page.evaluate(async ({ text, lines }) => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000;overflow:auto';
     document.body.appendChild(host);

@@ -14,8 +14,8 @@ test.beforeEach(async ({ page }) => {
 
 test('a display formula grows to its content instead of the strut height', async ({ page }) => {
   const report = await page.evaluate(async ({ tall, split }) => {
-    const { renderMath } = await import('/src/math.ts');
-    const { fitDisplayMath, layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { fitDisplayMath, layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('div');
     host.style.cssText = 'width: 420px; position: fixed; left: 0; top: 0; font-size: 16px; background: white;';
     host.innerHTML = renderMath(tall, true) + renderMath(split, true) + renderMath('a = b', true);
@@ -65,8 +65,8 @@ test('a display formula grows to its content instead of the strut height', async
 
 test('KaTeX SVG signs carry their em sizes in CSS so they scale with the text', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('div');
     host.style.cssText = 'width: 380px; position: fixed; left: 0; top: 0; background: white;';
     host.innerHTML = renderMath('\\vec{u} + \\sqrt{2} + \\left(\\frac{a}{b}\\right)', true);

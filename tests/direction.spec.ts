@@ -25,8 +25,8 @@ test('shared contextual policy: source lines and rendered blocks', async ({ page
   await page.goto('/');
   const results = await page.evaluate(async (cases) => {
     const directionPath = '/src/direction.ts', markdownPath = '/src/markdown.ts';
-    const { sourceDirections } = await import(directionPath);
-    const { renderMarkdown } = await import(markdownPath);
+    const { sourceDirections } = await window.__satr.load(directionPath);
+    const { renderMarkdown } = await window.__satr.load(markdownPath);
     return cases.map(({ text }) => {
       const lines = text.split('\n');
       const index = lines.findIndex((line) => /123|۱۲۳/.test(line));
@@ -48,7 +48,7 @@ test('full-document inference ignores metadata and fenced headings; a lone $$ is
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const path = '/src/direction.ts';
-    const { sourceDirections, strongDirection } = await import(path);
+    const { sourceDirections, strongDirection } = await window.__satr.load(path);
     return {
       numbers: ['123', '۱۲۳', '١٢٣', '...'].map(strongDirection),
       prefix: sourceDirections('---\ntitle: English\n---\n123\n\nفارسی')[3],
@@ -72,7 +72,7 @@ test('editor updates context beyond its viewport and keeps math LTR', async ({ p
   await page.goto('/');
   await page.evaluate(async () => {
     const path = '/src/editor.ts';
-    const { SatrEditor } = await import(path);
+    const { SatrEditor } = await window.__satr.load(path);
     const host = document.createElement('div');
     host.id = 'direction-editor'; host.style.cssText = 'position:fixed;inset:0;z-index:1000;background:white';
     document.body.append(host);
@@ -89,7 +89,7 @@ test('editor updates context beyond its viewport and keeps math LTR', async ({ p
   await page.evaluate(async () => {
     const e = window.testEditor;
     e.setValue('فارسی\n' + '\n'.repeat(350) + '123\nEnglish');
-    const path = '/src/scrollSync.ts'; const { applyEditorScroll } = await import(path);
+    const path = '/src/scrollSync.ts'; const { applyEditorScroll } = await window.__satr.load(path);
     applyEditorScroll(e.view, 348);
   });
   await expect(line).toHaveAttribute('dir', 'rtl');
@@ -99,7 +99,7 @@ test('print retains inferred dates, list items and footnotes without changing ma
   await page.addInitScript(() => { window.print = () => { window.parent.__printedHtml = document.documentElement.outerHTML; }; });
   await page.goto('/');
   const html = await page.evaluate(async () => {
-    const path = '/src/exportPdf.ts'; const { exportPdf } = await import(path);
+    const path = '/src/exportPdf.ts'; const { exportPdf } = await window.__satr.load(path);
     await exportPdf('Directions', '# English title\n\nفارسی[^date]\n\n$$x+y=z$$\n\n2026/09/28\n\n- ۱۲۳\n\nEnglish\n\n# فارسی\n\nادامه\n\n[^date]: ۱۴۰۵/۰۷/۰۶', '', { columns: 1, direction: 'ltr', mathAlign: 'center' });
     return window.__printedHtml;
   });

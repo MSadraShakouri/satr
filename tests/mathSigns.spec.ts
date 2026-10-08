@@ -29,8 +29,8 @@ const BASE = 20;
 async function measure(page: Page, fontSize: number, options: { frozen?: boolean; layout?: boolean } = {}) {
   const { frozen = false, layout = true } = options;
   return page.evaluate(async ({ tex, fontSize, frozen, layout, base }) => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const render = (size: number) => {
       const probe = document.createElement('div');
       probe.style.cssText = `position: absolute; visibility: hidden; left: 0; top: 0; font-size: ${size}px;`;
@@ -161,7 +161,7 @@ test('the arrow keeps its size relative to its letter at any text size', async (
 
 test('the correction is only made for a sign that is really the wrong size', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { emSize, signSizeCorrection } = await import('/src/mathLayout.ts');
+    const { emSize, signSizeCorrection } = await window.__satr.load('/src/mathLayout.ts');
     return {
       em: [emSize('0.471em'), emSize('400em'), emSize(' 1.08em '), emSize('50%'), emSize('1.08px'), emSize(null), emSize('')],
       right: signSizeCorrection(11.4, 11.4),

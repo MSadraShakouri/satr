@@ -8,3 +8,6 @@ playwright-report/
 *.keystore
 *.b64
 *.p12
+
+# The production build the tests run against (tests/vite.test.config.ts)
+test-dist/

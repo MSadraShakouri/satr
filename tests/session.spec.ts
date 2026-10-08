@@ -21,7 +21,7 @@ async function attach(page: Page) {
   await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
   await page.evaluate(async () => {
     const path = '/node_modules/@codemirror/view/dist/index.js';
-    const { EditorView } = await import(path);
+    const { EditorView } = await window.__satr.load(path);
     window.appView = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
     await document.fonts.ready;
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -63,7 +63,7 @@ async function reopen(page: Page) {
 }
 async function position(page: Page) {
   return page.evaluate(async () => {
-    const path = '/src/scrollSync.ts'; const { editorScroll, previewScroll } = await import(path);
+    const path = '/src/scrollSync.ts'; const { editorScroll, previewScroll } = await window.__satr.load(path);
     return document.body.dataset.mode === 'preview'
       ? previewScroll(document.querySelector('.preview-pane')!, document.querySelector('#preview')!)
       : editorScroll(window.appView);
@@ -71,7 +71,7 @@ async function position(page: Page) {
 }
 async function scrollTo(page: Page, line: number) {
   await page.evaluate(async (line) => {
-    const path = '/src/scrollSync.ts'; const { applyEditorScroll, applyPreviewScroll } = await import(path);
+    const path = '/src/scrollSync.ts'; const { applyEditorScroll, applyPreviewScroll } = await window.__satr.load(path);
     const pane = document.body.dataset.mode === 'preview' ? document.querySelector<HTMLElement>('.preview-pane')! : window.appView.scrollDOM;
     pane.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); // genuine reader intent releases the restore hold
     if (document.body.dataset.mode === 'preview') applyPreviewScroll(pane, document.querySelector('#preview')!, line);
@@ -170,7 +170,7 @@ test('URI bookmarks use source identity, not grant ids or duplicate file names',
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const path = '/src/viewMemory.ts';
-    const { writeViewMemory, readViewMemory, viewMemoryKey } = await import(path);
+    const { writeViewMemory, readViewMemory, viewMemoryKey } = await window.__satr.load(path);
     const first = { path: 'satr-open://first-grant/Note.md', sourceId: 'stable-source-one' };
     const reopened = { path: 'satr-open://new-grant/Note.md', sourceId: 'stable-source-one' };
     const other = { path: 'satr-open://other-grant/Note.md', sourceId: 'stable-source-two' };
@@ -196,7 +196,7 @@ test('URI bookmarks use source identity, not grant ids or duplicate file names',
   expect(result.invalid.cursor).toBeUndefined();
   await page.reload();
   expect(await page.evaluate(async () => {
-    const path = '/src/viewMemory.ts'; const { readViewMemory } = await import(path);
+    const path = '/src/viewMemory.ts'; const { readViewMemory } = await window.__satr.load(path);
     return readViewMemory({ path: 'satr-open://third-grant/Note.md', sourceId: 'stable-source-one' })?.line;
   })).toBe(88.75);
 });
@@ -207,7 +207,7 @@ test('external reloads preserve earlier undo, but closing an inactive tab discar
   await append(page, '-local');
   await switchTo(page, 'B');
   await page.evaluate(async () => {
-    const path = '/src/vault.ts'; const { backend } = await import(path);
+    const path = '/src/vault.ts'; const { backend } = await window.__satr.load(path);
     await backend.write('Notes/A.md', 'Alpha-external');
   });
   await switchTo(page, 'A');

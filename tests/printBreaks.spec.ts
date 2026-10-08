@@ -20,7 +20,7 @@ for (const kind of ['paragraph', 'list', 'quote'] as const) {
           p, li { font-size: 15px; line-height: 20px; margin: 0; }
         ` }));
         const path = '/src/exportPdf.ts';
-        const { exportPdf } = await import(path);
+        const { exportPdf } = await window.__satr.load(path);
         await exportPdf('Page-break regression', markdown);
         return window.__printedHtml;
       }, { markdown: `# Filler\n\n${content}`, height });
