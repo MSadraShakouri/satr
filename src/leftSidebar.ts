@@ -21,6 +21,8 @@ export interface LeftSidebarDeps {
   currentPath(): string;
   /** Open the folder export page for a folder (a folder row's menu). */
   exportFolder(folder: string): void;
+  /** Open all of a folder's notes as tabs, in order; `replace` closes the other tabs first. */
+  openFolderTabs(folder: string, replace: boolean): void;
   /** Export one text file as a single-note PDF (a file row's menu). */
   exportNote(path: string): void;
   /** Open a note (the sidebar closes the drawer itself). */
@@ -377,6 +379,9 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       { title: 'Move to…', icon: ICONS.move, action: () => { void moveTo(path, isFolder); } },
     );
     if (isFolder) entries.push('separator', { title: 'Use as a space', icon: ICONS.vault, action: () => switchTo({ kind: 'space', space: addSpace(path) }) });
+    // Every note of a folder as tabs, in alphabetical order. \"Replace\" also
+    // closes the tabs that are open now (they can be reopened).
+    if (isFolder) entries.push('separator', { title: 'Open all notes in tabs', icon: ICONS.newNote, action: () => deps.openFolderTabs(path, false) }, { title: 'Replace tabs with this folder', icon: ICONS.newNote, warning: true, action: () => deps.openFolderTabs(path, true) });
     // Export, on its own line like Delete: a folder exports as one PDF of its
     // notes, a text file as a PDF of itself. Only text files can: the
     // single-file path renders markdown, and a picture or a .json is not that.

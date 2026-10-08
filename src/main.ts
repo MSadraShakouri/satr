@@ -1290,6 +1290,43 @@ async function closeTab(index: number): Promise<void> {
   await openTab(curTab());
 }
 
+/** The folder's own notes (not its subfolders), in alphabetical order. */
+async function folderNotes(folder: string): Promise<string[]> {
+  const entries = await backend.list(folder).catch(() => []);
+  return entries
+    .filter((e) => e.kind === 'file' && isNote(e.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((e) => e.path);
+}
+
+/** Open every note of a folder, in alphabetical order, as one block of tabs
+ *  placed after the current tab. A note already open moves into the block (its
+ *  own tab and view are kept). With `replace`, every other tab is closed
+ *  first (they can be reopened). */
+async function openFolderTabs(folder: string, replace: boolean): Promise<void> {
+  const paths = await folderNotes(folder);
+  if (!paths.length) { showNotice('This folder has no notes.', 3000); return; }
+  if (!await leaveCurrent()) return;
+  const block = paths.map((path) => tabs.find((t) => t.path === path) ?? { path });
+  const inBlock = new Set(paths);
+  if (replace) {
+    for (const tab of tabs) if (!inBlock.has(tab.path) && tab.path) { closedTabs.push({ path: tab.path }); if (closedTabs.length > 20) closedTabs.shift(); }
+    tabs = block;
+    activeTab = 0;
+  } else {
+    // Keep every tab that isn't part of the block, in order, and put the block
+    // in after the current tab. An empty current tab is replaced by the block.
+    const current = curTab();
+    const keepCurrent = Boolean(current.path) && !inBlock.has(current.path);
+    const before = [...tabs.slice(0, activeTab).filter((t) => !inBlock.has(t.path)), ...(keepCurrent ? [current] : [])];
+    const after = tabs.slice(activeTab + 1).filter((t) => !inBlock.has(t.path));
+    tabs = [...before, ...block, ...after];
+    activeTab = tabs.indexOf(block[0]);
+  }
+  await openTab(curTab());
+  renderNavButtons();
+}
+
 /** Close every tab but leave the default (empty) tab; the closed notes can
  *  be reopened one by one. */
 async function closeAllTabs(): Promise<void> {
@@ -1979,6 +2016,7 @@ function showSettings(): void {
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
   currentPath: () => filePath,
   exportFolder: (folder) => { toggleFiles(false); folderExport.open(folder); },
+  openFolderTabs: (folder, replace) => { toggleFiles(false); void openFolderTabs(folder, replace); },
   exportNote: (path) => { void exportFilePdf(path); },
   open: (path) => { toggleFiles(false); void openFile(path); },
   createNote: (dir) => void newFile(dir),
