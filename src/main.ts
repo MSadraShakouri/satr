@@ -1810,19 +1810,6 @@ function find(replace = false): void {
   editor.openFind(replace);
 }
 
-// Android's own selection bar can ask for the same one action the toolbar has:
-// a "Line" item is appended to the WebView's selection menu in Java
-// (android/…/SatrWebView.java), the way Markor's whole-line selection is a
-// menu item there, and this is the page's half of it. The selection it makes
-// is the platform's, and the platform's own bar is the only menu over it —
-// the app has none of its own any more (see the note over the touch block in
-// src/editor.ts).
-declare global { interface Window { satrSelectionAction?: (action: string) => void } }
-window.satrSelectionAction = (action: string): void => {
-  if (action !== 'line') return;
-  if (mode !== 'edit') setMode('edit');
-  editor.expandToLines();
-};
 
 // A press on the bottom bar is never a press on the note. On the phone the
 // editable keeps its focus while the reader is editing, and a tap that reaches

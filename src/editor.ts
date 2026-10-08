@@ -1172,17 +1172,6 @@ export class SatrEditor {
     const { anchor, head } = this.view.state.selection.main;
     return [anchor, head];
   }
-  /** Grow the selection to the whole line or lines it touches — Markor's
-   *  whole-line action, on the toolbar and behind the "Line" item Android's own
-   *  selection bar gets (android/…/SatrWebView.java). */
-  expandToLines(): void {
-    const { doc, selection } = this.view.state;
-    const main = selection.main;
-    const from = doc.lineAt(main.from).from;
-    const to = doc.lineAt(main.to).to;
-    if (from === main.from && to === main.to) return;
-    this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
-  }
   /** Replace the selection (or insert at the caret) — paste, and the cut that
    *  follows the copy. One transaction, so undo takes it back in one step. */
   insertText(text: string): void {
