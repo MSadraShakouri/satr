@@ -38,7 +38,7 @@ test('On launch: an empty tab is added after the last tabs, and it is the one sh
 });
 
 test('after being away past the chosen time, the app comes back with a new empty tab', async ({ page }) => {
-  await boot(page, { newTabAfterMinutes: 5 }, Date.now() - 6 * 60_000);
+  await boot(page, { launchTabs: 'empty', newTabAfterMinutes: 5 }, Date.now() - 6 * 60_000);
   await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
   expect(await tabCount(page)).toBe(3);
   // One absence gives one new tab: the mark is gone.
@@ -60,6 +60,8 @@ test('Never (the default) opens nothing new however long the absence', async ({ 
 test('coming back to the visible app after being away adds the empty tab too', async ({ page }) => {
   await boot(page, { newTabAfterMinutes: 15 });
   await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  // The away time belongs to the empty-tab launch, so that is the choice in force.
+  await page.evaluate(() => localStorage.setItem('satr:settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('satr:settings')!), launchTabs: 'empty' })));
   // Away: the app goes to the background (the same event the app listens for).
   await page.evaluate((key) => {
     localStorage.setItem(key, String(Date.now() - 20 * 60_000));
@@ -81,4 +83,20 @@ test('the Tabs settings save their choices', async ({ page }) => {
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('satr:settings')!));
   expect(saved.launchTabs).toBe('empty');
   expect(saved.newTabAfterMinutes).toBe(30);
+});
+
+test('Restore last tabs: a long absence or a refresh adds no tab, and the away time is not shown', async ({ page }) => {
+  await boot(page, { launchTabs: 'last', newTabAfterMinutes: 5 }, Date.now() - 6 * 60_000);
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  expect(await tabCount(page)).toBe(2);
+  await expect(page.locator('body')).not.toHaveClass(/is-empty-tab/);
+  expect(await page.evaluate((key) => localStorage.getItem(key), AWAY_KEY)).toBeNull();
+  await page.evaluate(async () => {
+    const { openSettings } = await window.__satr.load('/src/settings.ts');
+    openSettings({ apply: () => {}, tools: () => [] });
+  });
+  await expect(page.locator('.settings-screen')).toBeVisible();
+  await expect(page.locator('[data-away-row]')).toBeHidden();
+  await page.locator('[data-select="launchTabs"]').selectOption('empty');
+  await expect(page.locator('[data-away-row]')).toBeVisible();
 });

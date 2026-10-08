@@ -172,7 +172,7 @@ export function openSettings(deps: SettingsDeps): void {
             <option value="empty"${settings.launchTabs === 'empty' ? ' selected' : ''}>Open an empty tab</option>
           </select>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" data-away-row>
           <div class="setting-item-info"><div class="setting-item-name">New tab after being away</div><div class="setting-item-description">When Satr comes back after this long away, it opens a new empty tab.</div></div>
           <select class="dropdown" data-select="newTabAfterMinutes">
             ${NEW_TAB_AFTER_CHOICES.map(([m, label]) => `<option value="${m}"${settings.newTabAfterMinutes === m ? ' selected' : ''}>${label}</option>`).join('')}
@@ -231,6 +231,9 @@ export function openSettings(deps: SettingsDeps): void {
     </div>`;
 
   const renderValues = (): void => {
+    // The away time only means something when the app opens an empty tab; with
+    // "Restore last tabs" it is not shown at all.
+    el.querySelector<HTMLElement>('[data-away-row]')!.style.display = settings.launchTabs === 'empty' ? '' : 'none';
     el.querySelector('[data-value="fontSize"]')!.textContent = `${settings.fontSize}px`;
     el.querySelector('[data-value="lineHeight"]')!.textContent = settings.lineHeight.toFixed(2);
     const preview = el.querySelector<HTMLElement>('.setting-item-preview')!;

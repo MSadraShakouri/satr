@@ -2130,7 +2130,11 @@ function markAway(): void { localStorage.setItem(AWAY_KEY, String(Date.now())); 
 function takeAwayTab(): boolean {
   const since = Number(localStorage.getItem(AWAY_KEY));
   localStorage.removeItem(AWAY_KEY);
-  const minutes = loadSettings().newTabAfterMinutes;
+  // Only the empty-tab launch has an away time: a refresh or a return with
+  // "Restore last tabs" brings the tabs back, with no new tab.
+  const settings = loadSettings();
+  if (settings.launchTabs !== 'empty') return false;
+  const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
 }
 async function openFirstNote(): Promise<void> {
