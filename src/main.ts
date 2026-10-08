@@ -822,8 +822,11 @@ const flush = (): void => {
 };
 window.addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flush();
-  else if (document.visibilityState === 'visible') void refreshOnResume();
+  if (document.visibilityState === 'hidden') { flush(); markAway(); }
+  else if (document.visibilityState === 'visible') {
+    if (takeAwayTab()) newTab();
+    void refreshOnResume();
+  }
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
@@ -2117,8 +2120,31 @@ async function boot(): Promise<void> {
     dropSnapshot(); // the real note is on screen: lift the start-up copy
   }
 }
+/** When Satr went to the background (kept, so a launch after a kill counts too). */
+const AWAY_KEY = 'satr:awayAt';
+function markAway(): void { localStorage.setItem(AWAY_KEY, String(Date.now())); }
+/** Whether a new empty tab is due: the app was away for the \"New tab after being
+ *  away\" time. Clears the mark, so one absence gives one new tab. */
+function takeAwayTab(): boolean {
+  const since = Number(localStorage.getItem(AWAY_KEY));
+  localStorage.removeItem(AWAY_KEY);
+  const minutes = loadSettings().newTabAfterMinutes;
+  return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
+}
 async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
+  // A new empty tab at launch: the setting asks for one, or the app was away
+  // long enough. The tabs from last time stay where they were.
+  const launchEmpty = loadSettings().launchTabs === 'empty';
+  if (takeAwayTab() || launchEmpty) {
+    const empty = tabs.findIndex((t) => !t.path);
+    if (empty >= 0) activeTab = empty;
+    else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
+    showEmptyTab();
+    renderNavButtons();
+    void leftSidebar.refresh();
+    return;
+  }
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
   let text = path ? await backend.read(path) : null;
