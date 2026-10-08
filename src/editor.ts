@@ -485,9 +485,40 @@ function flattenTitleDom(el: HTMLElement): void {
   }
 }
 
+/** The live title element's own state, kept with the element: a title change
+ *  CodeMirror brings to the same widget updates the element it already has
+ *  (TitleWidget.updateDOM), and the closures below read and write this. */
+interface TitleFieldState {
+  original: string;
+  field: HTMLElement;
+  setError(message: string | null): void;
+  refresh(value: string): void;
+}
+const titleFields = new WeakMap<HTMLElement, TitleFieldState>();
+
+// The title is a widget, and it keeps its element. A title change — the rename
+// a ✓ commits, a file switch — used to build a new element and drop the old
+// one; on the phone, a focused element leaving the document is what closes the
+// keyboard, so the ✓ closed it and the focus that followed could only bring it
+// back (the writer saw exactly that blink, and asked why it closes at all).
+// CodeMirror redraws a widget whose `eq` says it changed — unless `updateDOM`
+// takes the element it is given and brings it up to date, which this one does:
+// the field keeps the same node for the whole note, focus and all.
 class TitleWidget extends WidgetType {
   constructor(readonly value: string) {
     super();
+  }
+
+  eq(other: TitleWidget): boolean {
+    return other.value === this.value;
+  }
+
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    const state = titleFields.get(dom);
+    if (!state) return false; // not ours to update: let CodeMirror build one
+    state.refresh(this.value);
+    view.requestMeasure();
+    return true;
   }
 
   toDOM(view: EditorView) {
@@ -507,6 +538,18 @@ class TitleWidget extends WidgetType {
     errorEl.className = 'cm-file-name-error';
     wrap.append(el, errorEl);
     let original = this.value;
+    const state: TitleFieldState = {
+      original,
+      field: el,
+      setError: (message) => showError(message),
+      refresh: (value) => {
+        original = value;
+        state.original = value;
+        if (el.textContent !== value) el.textContent = value;
+        showError(null);
+      },
+    };
+    titleFields.set(wrap, state);
     const titleText = (): string => (el.textContent ?? '').replace(/\s+/g, ' ').trim();
     const showError = (message: string | null): void => {
       if (errorEl.textContent === (message ?? '')) return;
@@ -529,6 +572,15 @@ class TitleWidget extends WidgetType {
       el.blur();
       view.dispatch({ selection: { anchor: 0 } });
       window.requestAnimationFrame(() => view.focus());
+    };
+    // The title's ✓ (Enter) hands the caret to the note in the same key event,
+    // without blurring the title, so the keyboard stays up.
+    // An empty body (a new file) has no line for the caret to land on. Focus
+    // now, and once more after the keypress: the phone's Enter action can drop
+    // the focus that was just moved, and the keyboard goes with it.
+    const intoNote = (): void => {
+      view.focus();
+      if (view.state.doc.length === 0) window.setTimeout(() => { if (!view.hasFocus) view.focus(); }, 60);
     };
     el.addEventListener('focus', () => { original = titleText() || original; showError(null); });
     el.addEventListener('input', () => {
@@ -563,7 +615,9 @@ class TitleWidget extends WidgetType {
       } else if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
         event.stopPropagation();
-        if (commit()) enterNote();
+        // Commit, then go to the note's first line. The caret moves straight
+        // there, without blurring the title, so the keyboard stays up.
+        if (commit()) intoNote();
       } else if (event.key === 'ArrowDown') {
         // Leaving through the bottom edge of the title hands the caret to the note.
         const selection = window.getSelection();
@@ -579,10 +633,6 @@ class TitleWidget extends WidgetType {
       showError(null);
     });
     return wrap;
-  }
-
-  eq(other: TitleWidget) {
-    return other.value === this.value;
   }
 
   ignoreEvent() {
@@ -1121,17 +1171,6 @@ export class SatrEditor {
   getSelection(): [number, number] {
     const { anchor, head } = this.view.state.selection.main;
     return [anchor, head];
-  }
-  /** Grow the selection to the whole line or lines it touches — Markor's
-   *  whole-line action, on the toolbar and behind the "Line" item Android's own
-   *  selection bar gets (android/…/SatrWebView.java). */
-  expandToLines(): void {
-    const { doc, selection } = this.view.state;
-    const main = selection.main;
-    const from = doc.lineAt(main.from).from;
-    const to = doc.lineAt(main.to).to;
-    if (from === main.from && to === main.to) return;
-    this.view.dispatch({ selection: EditorSelection.range(from, to), userEvent: 'select.pointer', scrollIntoView: false });
   }
   /** Replace the selection (or insert at the caret) — paste, and the cut that
    *  follows the copy. One transaction, so undo takes it back in one step. */

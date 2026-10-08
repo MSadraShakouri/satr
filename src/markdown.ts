@@ -3,6 +3,7 @@ import { applyReadingDirections } from './direction';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { renderMath } from './math';
+import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamps';
 import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
 
@@ -173,6 +174,25 @@ marked.use({
     },
     renderer(token) {
       return `<mark>${this.parser.parseInline((token as unknown as { tokens: Token[] }).tokens)}</mark>`;
+    },
+  }],
+});
+
+// <t:UNIX> and <t:UNIX:F>: Discord-style timestamps (src/timestamps.ts). An
+// extension, so a code span or a formula that holds one stays as written.
+marked.use({
+  extensions: [{
+    name: 'discordTimestamp',
+    level: 'inline',
+    start: (src: string) => { const at = src.indexOf('<t:'); return at < 0 ? undefined : at; },
+    tokenizer(src: string) {
+      const match = TIMESTAMP_START.exec(src);
+      if (!match) return undefined;
+      return { type: 'discordTimestamp', raw: match[0], seconds: Number(match[1]), format: (match[2] ?? 'f') as TimestampFormat };
+    },
+    renderer(token) {
+      const { seconds, format } = token as unknown as { seconds: number; format: TimestampFormat };
+      return timestampTag(seconds, format);
     },
   }],
 });

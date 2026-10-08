@@ -11,7 +11,8 @@ import type { Range } from '@codemirror/state';
 import { inMath, mathSpans, overlapsMath } from './mathSource';
 import { spansHold } from './mathScan';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import type { SyntaxNodeRef } from '@lezer/common';
+import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common';
+import { formatTimestamp, fullTimestamp, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { editFootnote, findDefinition } from './footnoteDialog';
 
 // Bullets and checkboxes are MARKS over the real "-" / "[ ]" text (drawn
@@ -36,6 +37,22 @@ class FenceWidget extends WidgetType {
     el.className = 'cm-lp-fence';
     // A zero-width space keeps the line its normal height when it has no label.
     el.textContent = this.label || '\u200b';
+    return el;
+  }
+}
+
+// <t:UNIX:F>: the time it names, in place of the code (src/timestamps.ts). The
+// relative ones keep themselves current (refreshTimestamps).
+class TimestampWidget extends WidgetType {
+  constructor(readonly seconds: number, readonly format: TimestampFormat) { super(); }
+  eq(other: TimestampWidget): boolean { return other.seconds === this.seconds && other.format === this.format; }
+  toDOM(): HTMLElement {
+    const el = document.createElement('time');
+    el.className = 'discord-timestamp cm-lp-timestamp';
+    el.dataset.ts = String(this.seconds);
+    el.dataset.format = this.format;
+    el.title = fullTimestamp(this.seconds);
+    el.textContent = formatTimestamp(this.seconds, this.format);
     return el;
   }
 }
@@ -320,6 +337,24 @@ function build(view: EditorView): DecorationSet {
         }
       },
     });
+  }
+  // Timestamps: the time they name, unless the cursor is on the code. A
+  // formula or a code span holding one is never a timestamp.
+  const inCode = (pos: number): boolean => {
+    for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
+      if (/Code/.test(node.name)) return true;
+    }
+    return false;
+  };
+  for (const { from, to } of view.visibleRanges) {
+    for (const match of state.sliceDoc(from, to).matchAll(/<t:-?\d{1,15}(?::[tTdDfFR])?>/g)) {
+      const at = from + (match.index ?? 0);
+      const end = at + match[0].length;
+      if (insideMath(at, end) || inCode(at) || touches(at, end)) continue;
+      const parsed = TIMESTAMP_START.exec(match[0]);
+      if (!parsed) continue;
+      out.push(Decoration.replace({ widget: new TimestampWidget(Number(parsed[1]), (parsed[2] ?? 'f') as TimestampFormat) }).range(at, end));
+    }
   }
   addFootnotes(view, out);
   return Decoration.set(out, true);

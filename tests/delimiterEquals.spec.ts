@@ -13,7 +13,7 @@ declare global { interface Window { testEditor: SatrEditor } }
 async function mount(page: Page) {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);

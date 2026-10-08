@@ -3606,3 +3606,13 @@ textarea,
 .pill-gray.is-done {
   color: var(--text-normal);
 }
+
+/* Discord-style timestamps (src/timestamps.ts): <t:UNIX:F> in the note, the
+   reading view and the PDF. Shown as a quiet chip; the full date is the tooltip. */
+.discord-timestamp {
+  background: var(--background-modifier-hover);
+  border-radius: 4px;
+  padding: 0 0.3em;
+  white-space: nowrap;
+  color: var(--text-normal);
+}

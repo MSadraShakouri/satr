@@ -12,7 +12,7 @@ declare global { interface Window { testEditor: SatrEditor } }
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);
@@ -61,7 +61,7 @@ test('a real block is monospace between its dollars only', async ({ page }) => {
 
 test('the reading view renders a broken pair as the markdown it is', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMarkdown } = await import('/src/markdown.ts');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
     const host = document.createElement('article');
     const render = (text: string) => {
       host.innerHTML = renderMarkdown(text);

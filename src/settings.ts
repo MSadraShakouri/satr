@@ -22,6 +22,12 @@ export interface Settings {
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
   pdfCss: string;
+  /** On launch: 'last' restores the tabs from last time; 'empty' adds a new empty
+   *  tab every time; 'away' adds one only after the app has been away for
+   *  newTabAfterMinutes (and restores the tabs otherwise). */
+  launchTabs: 'last' | 'empty' | 'away';
+  /** How long away, in minutes, before 'away' adds a new empty tab. */
+  newTabAfterMinutes: number;
   /** Settings format; 3 = roomier default line spacing. */
   version?: number;
 }
@@ -36,7 +42,9 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
 };
 const KEY = 'satr:settings';
 const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30 };
+/** The choices for "after being away", in minutes. */
+export const NEW_TAB_AFTER_CHOICES: [number, string][] = [[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [360, '6 hours'], [1440, '1 day']];
 
 export function loadSettings(): Settings {
   try {
@@ -53,6 +61,8 @@ export function loadSettings(): Settings {
     if (!(s.quickAction in QUICK_ACTIONS)) s.quickAction = '';
     if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
     if (typeof s.pdfCss !== 'string') s.pdfCss = '';
+    if (!['last', 'empty', 'away'].includes(s.launchTabs)) s.launchTabs = 'last';
+    s.newTabAfterMinutes = NEW_TAB_AFTER_CHOICES.some(([m]) => m === Number(s.newTabAfterMinutes)) ? Number(s.newTabAfterMinutes) : 30;
     s.hiddenTools = Array.isArray(s.hiddenTools) ? s.hiddenTools.filter((t) => typeof t === 'string') : [];
     return s;
   } catch { return { ...DEFAULTS }; }
@@ -155,6 +165,23 @@ export function openSettings(deps: SettingsDeps): void {
           </select>
         </div>
       </div>
+      <div class="setting-group-title">Tabs</div>
+      <div class="setting-group">
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">On launch</div><div class="setting-item-description">Restore the tabs from last time, or add an empty tab to them.</div></div>
+          <select class="dropdown" data-select="launchTabs">
+            <option value="last"${settings.launchTabs === 'last' ? ' selected' : ''}>Restore last tabs</option>
+            <option value="empty"${settings.launchTabs === 'empty' ? ' selected' : ''}>Always open a new empty tab</option>
+            <option value="away"${settings.launchTabs === 'away' ? ' selected' : ''}>Open a new tab after being away</option>
+          </select>
+        </div>
+        <div class="setting-item" data-away-row>
+          <div class="setting-item-info"><div class="setting-item-name">Away for</div><div class="setting-item-description">How long away before Satr opens a new empty tab.</div></div>
+          <select class="dropdown" data-select="newTabAfterMinutes">
+            ${NEW_TAB_AFTER_CHOICES.map(([m, label]) => `<option value="${m}"${settings.newTabAfterMinutes === m ? ' selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
       <div class="setting-group-title">PDF export</div>
       <div class="setting-group">
         <div class="setting-item mod-column">
@@ -207,6 +234,9 @@ export function openSettings(deps: SettingsDeps): void {
     </div>`;
 
   const renderValues = (): void => {
+    // The time only means something for "after being away"; the other choices
+    // do not show it.
+    el.querySelector<HTMLElement>('[data-away-row]')!.style.display = settings.launchTabs === 'away' ? '' : 'none';
     el.querySelector('[data-value="fontSize"]')!.textContent = `${settings.fontSize}px`;
     el.querySelector('[data-value="lineHeight"]')!.textContent = settings.lineHeight.toFixed(2);
     const preview = el.querySelector<HTMLElement>('.setting-item-preview')!;
@@ -237,9 +267,11 @@ export function openSettings(deps: SettingsDeps): void {
       savePrintOptions(notePath, printOptions);
       return;
     }
-    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"]');
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"]');
     if (!select) return;
     if (select.dataset.select === 'quickAction') settings.quickAction = select.value as QuickAction;
+    else if (select.dataset.select === 'launchTabs') settings.launchTabs = select.value as Settings['launchTabs'];
+    else if (select.dataset.select === 'newTabAfterMinutes') settings.newTabAfterMinutes = Number(select.value);
     else settings.mathDigits = select.value as Settings['mathDigits'];
     commit();
   });

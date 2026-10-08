@@ -23,6 +23,7 @@ import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
+import { keepTimestampsCurrent } from './timestamps';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
@@ -822,8 +823,11 @@ const flush = (): void => {
 };
 window.addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flush();
-  else if (document.visibilityState === 'visible') void refreshOnResume();
+  if (document.visibilityState === 'hidden') { flush(); markAway(); }
+  else if (document.visibilityState === 'visible') {
+    if (takeAwayTab()) newTab();
+    void refreshOnResume();
+  }
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
@@ -967,7 +971,20 @@ function showFile(path: string, content: string, after?: () => void, options?: {
 async function openFile(path: string, after?: () => void): Promise<void> {
   if (path === filePath) { after?.(); return; }
   const existing = tabs.findIndex((t) => t.path === path);
-  if (existing >= 0) { await switchTab(existing, after); return; }
+  if (existing >= 0) {
+    // Picked from an empty tab: that tab gives way to the one already open,
+    // so no empty tab is left behind.
+    if (!curTab().path && existing !== activeTab) {
+      const gone = activeTab;
+      if (!await leaveCurrent()) return;
+      tabs.splice(gone, 1);
+      activeTab = existing > gone ? existing - 1 : existing;
+      await openTab(curTab(), after);
+      return;
+    }
+    await switchTab(existing, after);
+    return;
+  }
   const opened = await backend.readText(path);
   if (opened.status !== 'text') {
     leftSidebar.hint(opened.status === 'too-large'
@@ -1197,11 +1214,20 @@ async function handleIncomingId(id: string): Promise<void> {
     closeMenu();
     closeTabSwitcher();
     closeSettings();
-    const path = externalPath(file.id, file.name);
+    // The same source again (shared, or opened from the file manager, while its
+    // tab is still open) is that tab, not a second one. The source identity is
+    // `viewId`; the temporary id changes every time, so the tab keeps its path
+    // and takes the newest id to read from.
+    const sameSource = file.viewId
+      ? [...externalFilesByPath].find(([p, f]) => f.viewId === file.viewId && tabs.some((tab) => tab.path === p))
+      : undefined;
+    const path = sameSource ? sameSource[0] : externalPath(file.id, file.name);
     externalFilesByPath.set(path, file);
     const existingTab = tabs.findIndex((tab) => tab.path === path);
     if (existingTab >= 0) {
       await switchTab(existingTab);
+      // Already showing it: read the newest copy the app was just handed.
+      if (curTab().path === path) await openIncomingPath(path);
     } else {
       if (!await leaveCurrent()) return;
       if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
@@ -1251,8 +1277,22 @@ function newTab(): void {
     showEmptyTab();
   })();
 }
-function closeTab(index: number): void {
-  if (tabs.length < 2 || !tabs[index]) return;
+/** Close a tab. Closing the last one leaves the default tab (the empty
+ *  "No file is open" page) in its place. Resolves once the close is done,
+ *  so the switcher can redraw from the new list. */
+async function closeTab(index: number): Promise<void> {
+  if (!tabs[index]) return;
+  if (tabs.length < 2) {
+    // The last tab: it becomes the empty tab, and the note it had can come back.
+    if (!tabs[index].path) return; // already the default tab
+    if (!await leaveCurrent()) return;
+    closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift();
+    tabs[0] = { path: '' };
+    activeTab = 0;
+    showEmptyTab();
+    renderNavButtons();
+    return;
+  }
   if (index !== activeTab) {
     if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs.splice(index, 1);
@@ -1260,13 +1300,59 @@ function closeTab(index: number): void {
     renderNavButtons();
     return;
   }
-  void (async () => {
-    if (!await leaveCurrent()) return;
-    if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
-    tabs.splice(index, 1);
-    activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
-    await openTab(curTab());
-  })();
+  if (!await leaveCurrent()) return;
+  if (tabs[index].path) { closedTabs.push({ path: tabs[index].path }); if (closedTabs.length > 20) closedTabs.shift(); }
+  tabs.splice(index, 1);
+  activeTab = Math.min(index, tabs.length - 1); // the next tab, or the new last one
+  await openTab(curTab());
+}
+
+/** The folder's own notes (not its subfolders), in alphabetical order. */
+async function folderNotes(folder: string): Promise<string[]> {
+  const entries = await backend.list(folder).catch(() => []);
+  return entries
+    .filter((e) => e.kind === 'file' && isNote(e.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((e) => e.path);
+}
+
+/** Open every note of a folder, in alphabetical order, as one block of tabs
+ *  placed after the current tab. A note already open moves into the block (its
+ *  own tab and view are kept). With `replace`, every other tab is closed
+ *  first (they can be reopened). */
+async function openFolderTabs(folder: string, replace: boolean): Promise<void> {
+  const paths = await folderNotes(folder);
+  if (!paths.length) { showNotice('This folder has no notes.', 3000); return; }
+  if (!await leaveCurrent()) return;
+  const block = paths.map((path) => tabs.find((t) => t.path === path) ?? { path });
+  const inBlock = new Set(paths);
+  if (replace) {
+    for (const tab of tabs) if (!inBlock.has(tab.path) && tab.path) { closedTabs.push({ path: tab.path }); if (closedTabs.length > 20) closedTabs.shift(); }
+    tabs = block;
+    activeTab = 0;
+  } else {
+    // Keep every tab that isn't part of the block, in order, and put the block
+    // in after the current tab. An empty current tab is replaced by the block.
+    const current = curTab();
+    const keepCurrent = Boolean(current.path) && !inBlock.has(current.path);
+    const before = [...tabs.slice(0, activeTab).filter((t) => !inBlock.has(t.path)), ...(keepCurrent ? [current] : [])];
+    const after = tabs.slice(activeTab + 1).filter((t) => !inBlock.has(t.path));
+    tabs = [...before, ...block, ...after];
+    activeTab = tabs.indexOf(block[0]);
+  }
+  await openTab(curTab());
+  renderNavButtons();
+}
+
+/** Close every tab but leave the default (empty) tab; the closed notes can
+ *  be reopened one by one. */
+async function closeAllTabs(): Promise<void> {
+  if (!await leaveCurrent()) return;
+  for (const tab of tabs) if (tab.path) { closedTabs.push({ path: tab.path }); if (closedTabs.length > 20) closedTabs.shift(); }
+  tabs = [{ path: '' }];
+  activeTab = 0;
+  showEmptyTab();
+  renderNavButtons();
 }
 function reopenClosedTab(): void {
   // A file opened from another app can't come back on its own: its permission
@@ -1523,7 +1609,7 @@ function showTabs(): void {
   void (async () => {
     if (!await leaveCurrent()) return;
     openTabSwitcher({
-      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab })),
+      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path })),
       preview: async (i) => {
         const path = tabs[i].path;
         if (!path) return '';
@@ -1540,6 +1626,7 @@ function showTabs(): void {
       canReopen: () => closedTabs.length > 0,
       reopen: reopenClosedTab,
       closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+      closeAll: closeAllTabs,
       move: moveTab,
     });
   })();
@@ -1723,19 +1810,6 @@ function find(replace = false): void {
   editor.openFind(replace);
 }
 
-// Android's own selection bar can ask for the same one action the toolbar has:
-// a "Line" item is appended to the WebView's selection menu in Java
-// (android/…/SatrWebView.java), the way Markor's whole-line selection is a
-// menu item there, and this is the page's half of it. The selection it makes
-// is the platform's, and the platform's own bar is the only menu over it —
-// the app has none of its own any more (see the note over the touch block in
-// src/editor.ts).
-declare global { interface Window { satrSelectionAction?: (action: string) => void } }
-window.satrSelectionAction = (action: string): void => {
-  if (action !== 'line') return;
-  if (mode !== 'edit') setMode('edit');
-  editor.expandToLines();
-};
 
 // A press on the bottom bar is never a press on the note. On the phone the
 // editable keeps its focus while the reader is editing, and a tap that reaches
@@ -1946,6 +2020,7 @@ function showSettings(): void {
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
   currentPath: () => filePath,
   exportFolder: (folder) => { toggleFiles(false); folderExport.open(folder); },
+  openFolderTabs: (folder, replace) => { toggleFiles(false); void openFolderTabs(folder, replace); },
   exportNote: (path) => { void exportFilePdf(path); },
   open: (path) => { toggleFiles(false); void openFile(path); },
   createNote: (dir) => void newFile(dir),
@@ -2021,6 +2096,7 @@ if (Capacitor.isNativePlatform()) {
 }
 document.addEventListener('satr:back', () => { handleBack(); });
 
+keepTimestampsCurrent(); // the relative timestamps ("in 3 hours") in the note and the reading view
 let bootReady = false;
 let queuedIncomingId = '';
 async function boot(): Promise<void> {
@@ -2046,8 +2122,35 @@ async function boot(): Promise<void> {
     dropSnapshot(); // the real note is on screen: lift the start-up copy
   }
 }
+/** When Satr went to the background (kept, so a launch after a kill counts too). */
+const AWAY_KEY = 'satr:awayAt';
+function markAway(): void { localStorage.setItem(AWAY_KEY, String(Date.now())); }
+/** Whether a new empty tab is due: the app was away for the \"New tab after being
+ *  away\" time. Clears the mark, so one absence gives one new tab. */
+function takeAwayTab(): boolean {
+  const since = Number(localStorage.getItem(AWAY_KEY));
+  localStorage.removeItem(AWAY_KEY);
+  // Only the empty-tab launch has an away time: a refresh or a return with
+  // "Restore last tabs" brings the tabs back, with no new tab.
+  const settings = loadSettings();
+  if (settings.launchTabs !== 'away') return false;
+  const minutes = settings.newTabAfterMinutes;
+  return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
+}
 async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
+  // A new empty tab at launch: the setting asks for one, or the app was away
+  // long enough. The tabs from last time stay where they were.
+  const launchTabs = loadSettings().launchTabs;
+  if (launchTabs === 'empty' || takeAwayTab()) {
+    const empty = tabs.findIndex((t) => !t.path);
+    if (empty >= 0) activeTab = empty;
+    else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
+    showEmptyTab();
+    renderNavButtons();
+    void leftSidebar.refresh();
+    return;
+  }
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
   let text = path ? await backend.read(path) : null;
@@ -2181,13 +2284,9 @@ toolbar.addEventListener('pointerdown', (event) => event.preventDefault());
 toolbar.addEventListener('mousedown', (event) => event.preventDefault());
 toolbar.addEventListener('click', (event) => {
   if ((event.target as HTMLElement).closest('[data-act="hide-keyboard"]')) {
-    // The keyboard, and only the keyboard. The app hides it through the
-    // platform (SystemBarsPlugin.java, the InputMethodManager), so the note
-    // keeps the focus and the caret the writer left; blurring the editable
-    // would put the keyboard away too, but it would drop the caret with it.
-    // A browser has no keyboard for the page to put away, so there the
-    // button still lets the editor go.
-    if (!hideKeyboard()) editor.view.contentDOM.blur();
+    // The down chevron lets the note go: blurring the editable hides the
+    // keyboard and the caret with it (the behaviour the writer asked to keep).
+    editor.view.contentDOM.blur();
     return;
   }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-command]');

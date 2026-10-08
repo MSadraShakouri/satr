@@ -24,7 +24,7 @@ const SIBLINGS: Record<string, string[]> = {
 
 test('a component is cut to the shortest prefix no sibling shares', async ({ page }) => {
   const out = await page.evaluate(async (siblings) => {
-    const m = await import('/src/pathShort.ts');
+    const m = await window.__satr.load('/src/pathShort.ts');
     const of = (dir: string): readonly string[] | null => siblings[dir] ?? null;
     return [
       m.shortestUnique('Documents', of('')),
@@ -43,7 +43,7 @@ test('a component is cut to the shortest prefix no sibling shares', async ({ pag
 
 test('a name is never cut to nothing, and an unknown sibling set cuts nothing', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const m = await import('/src/pathShort.ts');
+    const m = await window.__satr.load('/src/pathShort.ts');
     return [
       m.shortestUnique('Note', null),
       m.shortestUnique('N', ['Note', 'Notes']),
@@ -59,7 +59,7 @@ test('a name is never cut to nothing, and an unknown sibling set cuts nothing', 
 
 test('whole paths: the last component keeps its name, the first is the anchor', async ({ page }) => {
   const out = await page.evaluate(async (siblings) => {
-    const m = await import('/src/pathShort.ts');
+    const m = await window.__satr.load('/src/pathShort.ts');
     const of = (dir: string): readonly string[] | null => siblings[dir]
       ?? (dir === 'Documents/Uni/Semester 3' ? ['Accounting'] : null);
     return m.shortenPath('Documents/Uni/Semester 3/Accounting', of);
@@ -71,7 +71,7 @@ test('whole paths: the last component keeps its name, the first is the anchor', 
 
 test('with a base, the ancestors are read at their full paths', async ({ page }) => {
   const out = await page.evaluate(async (siblings) => {
-    const m = await import('/src/pathShort.ts');
+    const m = await window.__satr.load('/src/pathShort.ts');
     const asked: string[] = [];
     const of = (dir: string): readonly string[] | null => {
       asked.push(dir);
@@ -89,7 +89,7 @@ test('with a base, the ancestors are read at their full paths', async ({ page })
 
 test('the async form asks each folder once, and a folder that cannot be listed stays whole', async ({ page }) => {
   const out = await page.evaluate(async (siblings) => {
-    const m = await import('/src/pathShort.ts');
+    const m = await window.__satr.load('/src/pathShort.ts');
     let calls = 0;
     const names = async (dir: string): Promise<readonly string[] | null> => {
       calls += 1;

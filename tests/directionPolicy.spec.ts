@@ -17,7 +17,7 @@ declare global { interface Window { testEditor: SatrEditor } }
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000;font-size:16px';
     document.body.appendChild(host);
@@ -152,8 +152,8 @@ test('typing a mixed line never doubles the caret back', async ({ page }) => {
 
 test('a line with no letters of its own continues the line above it', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { sourceDirections } = await import('/src/direction.ts');
-    const { renderMarkdown } = await import('/src/markdown.ts');
+    const { sourceDirections } = await window.__satr.load('/src/direction.ts');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
     const dir = (text: string, line: number) => sourceDirections(text)[line];
     const rendered = (text: string) => {
       const host = document.createElement('article');
@@ -198,9 +198,9 @@ test('a line with no letters of its own continues the line above it', async ({ p
 
 test('the outline’s current heading is the one two thirds down the pane', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMarkdown } = await import('/src/markdown.ts');
-    const { previewScroll, editorScroll } = await import('/src/scrollSync.ts');
-    const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const { previewScroll, editorScroll } = await window.__satr.load('/src/scrollSync.ts');
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0 0 auto 0;height:400px;overflow:hidden;background:white;z-index:1000';
     document.body.appendChild(host);

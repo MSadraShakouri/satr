@@ -38,7 +38,7 @@ async function openHit(page: Page) {
 }
 
 const read = (page: Page) => page.evaluate(async () => {
-  const { EditorView } = await import('/node_modules/@codemirror/view/dist/index.js');
+  const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
   const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor'))!;
   const { from, to, anchor, head } = view.state.selection.main;
   return { text: view.state.doc.toString(), from, to, anchor, head };

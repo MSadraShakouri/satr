@@ -1,18 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
 
 // What is left of the phone's selection work once the bar itself is gone:
-// Markor's whole-line action — **Line** — on the two surfaces that are not the
-// app's own menu.
+// Markor's whole-line action — **Line** — on the one surface the app owns, the
+// keyboard toolbar.
 //
 // Android raises its own bar (Cut / Copy / Paste / Select all) for a selection
 // the WebView made, and the selection is the WebView's now (see the note in
 // tests/touchSelection.spec.ts), so there is no second menu for the app to
-// bring. What Markor adds to *its* bar is one item — the whole-line selection
-// (`TextViewUtils.getLineSelection` behind a `☰` item, frontend/textview/
-// HighlightingEditor.java) — and Satr adds the same item to Android's bar in
-// Java (android/…/SatrWebView.java), whose handler is the page call tested
-// here. The same action is on the keyboard toolbar, for a caret, where Markor
-// keeps it too.
+// bring. Satr used to add Markor's ☰ item to *Android's* bar from Java, with a
+// page hook behind it; that is gone — the toolbar carries the action, and a
+// stock bar is a bar whose placement is the platform's business (the Java
+// subclass and its shadowed layout are deleted).
 test.use({ hasTouch: true });
 
 const NOTE = [
@@ -77,19 +75,6 @@ test('the note is the platform’s to select: nothing tells it to keep its hands
   await selectWord(page, 'paragraph');
   await expect(page.locator('.selection-bar')).toHaveCount(0);
   await expect(page.locator('.selection-handles')).toHaveCount(0);
-});
-
-test('Android’s own Line item — Markor’s ☰ — grows the selection to the whole line', async ({ page }) => {
-  await boot(page);
-  await selectWord(page, 'task');
-  const line = await page.evaluate(async () => {
-    const before = window.getSelection()?.toString() ?? '';
-    window.satrSelectionAction!('line');
-    await new Promise((r) => window.setTimeout(r, 60));
-    return { before, after: window.getSelection()?.toString() ?? '' };
-  });
-  expect(line.before).toBe('task');
-  expect(line.after).toBe('- [ ] a task line to select whole');
 });
 
 test('the toolbar’s whole-line action does the same for a caret', async ({ page }) => {

@@ -11,7 +11,7 @@ declare global { interface Window { testEditor: SatrEditor } }
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
     document.body.appendChild(host);
@@ -31,7 +31,7 @@ async function setText(page: Page, text: string, caret = -1) {
 
 test('the writer’s own list number is kept, in both digit sets', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMarkdown } = await import('/src/markdown.ts');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
     const host = document.createElement('article');
     const read = (text: string) => {
       host.innerHTML = renderMarkdown(text);
@@ -66,8 +66,8 @@ test('the writer’s own list number is kept, in both digit sets', async ({ page
 // plain run — while the formula around it stays left to right (23).
 test('every Persian run in a formula reads right to left, the formula LTR', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('div');
     host.className = 'preview-pane';
     host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;width:520px;';
@@ -134,8 +134,8 @@ test('every Persian run in a formula reads right to left, the formula LTR', asyn
 
 test('a Persian \\text run inside a formula reads right to left, the formula LTR', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('div');
     host.className = 'preview-pane';
     host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;width:400px;';
@@ -314,8 +314,8 @@ test('the new-line button is Enter at the end of the line', async ({ page }) => 
 // separate boxes laid them out left to right (23).
 test('a Persian phrase in a formula keeps its word order, right to left', async ({ page }) => {
   const report = await page.evaluate(async () => {
-    const { renderMath } = await import('/src/math.ts');
-    const { layoutMath } = await import('/src/mathLayout.ts');
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
     const host = document.createElement('div');
     host.className = 'preview-pane';
     host.style.cssText = 'position:fixed;inset:0 auto auto 0;background:white;width:520px;';

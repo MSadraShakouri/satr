@@ -7,9 +7,9 @@ test.beforeEach(async ({ page }) => {
 
 test('a formula-heavy note round-trips its scroll between the two views', async ({ page }) => {
   const round = await page.evaluate(async () => {
-    const { renderMarkdown } = await import('/src/markdown.ts');
-    const { previewScroll, applyPreviewScroll, editorScroll, applyEditorScroll } = await import('/src/scrollSync.ts');
-    const { SatrEditor } = await import('/src/editor.ts');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const { previewScroll, applyPreviewScroll, editorScroll, applyEditorScroll } = await window.__satr.load('/src/scrollSync.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const src: string[] = [];
     for (let i = 0; i < 6; i += 1) {
       src.push(`paragraph ${i} with enough words to wrap onto a second visual row in a narrow column`);
@@ -49,8 +49,8 @@ test('a formula-heavy note round-trips its scroll between the two views', async 
 
 test('the switch re-measures math heights and compensates the scroll', async ({ page }) => {
   const out = await page.evaluate(async () => {
-    const { renderMarkdown } = await import('/src/markdown.ts');
-    const { previewScroll, applyPreviewScroll } = await import('/src/scrollSync.ts');
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const { previewScroll, applyPreviewScroll } = await window.__satr.load('/src/scrollSync.ts');
     const src: string[] = [];
     for (let i = 0; i < 6; i += 1) {
       src.push(`paragraph ${i} with enough words to wrap onto a second visual row in a narrow column`);

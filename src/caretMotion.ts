@@ -1,88 +1,86 @@
-// Caret motion across direction boundaries. In a mixed line like
-// «اب ABC د» the two sides of the RTL↔LTR junction are separate stops in
-// visual space, and each document position sitting on a junction renders on
-// one side or the other depending on which way the caret arrived. The stock
-// motion steps by position and then draws the caret at the default side, so
-// at a junction the caret jumps across the embedded run and doubles back.
+// Caret motion: one position a press, the way the platform's own fields do it.
 //
-// This walks the line's visual slots instead: every caret side that paints
-// somewhere is a stop; the stops are ordered by their x inside each visual
-// row (rows top to bottom, the row's own reading order deciding how they
-// chain at a soft wrap); and each stop remembers the position AND the side
-// the caret must take there, so it always paints where it just moved to.
-import { EditorSelection, EditorState, Prec, Transaction } from '@codemirror/state';
-import { Direction, EditorView, ViewPlugin, keymap, type ViewUpdate } from '@codemirror/view';
-
-type Stop = { pos: number; assoc: -1 | 1; x: number; top: number };
-
-// One stop per distinct caret slot (same visual row, same x). When a slot
-// hosts two boundary positions, the one chosen is the same one the eye is
-// next to: the smaller position on the slot's right face, the larger on its
-// left face — which is also the side typing will visibly change.
-function stopAt(stops: { pos: number; assoc: -1 | 1; x: number; top: number }[]): Stop {
-  const positions = [...new Set(stops.map((s) => s.pos))];
-  // A sample's assoc is the side that measured at this spot, so it is the
-  // side the caret must take to paint here again. It matters at a soft wrap,
-  // where the break position has two slots — the end of one row and the start
-  // of the next — and always asking for side +1 sent the caret back to the
-  // row it came from instead of stepping along the line (3).
-  if (positions.length === 1) return { pos: positions[0], assoc: stops[0].assoc, x: stops[0].x, top: stops[0].top };
-  const left = stops[0].assoc === -1;
-  const chosen = left
-    ? stops.reduce((a, b) => (a.pos <= b.pos ? a : b))
-    : stops.reduce((a, b) => (a.pos >= b.pos ? a : b));
-  return chosen;
-}
-
-/** The line's visual stops, in reading order for the line's base direction. */
-function lineStops(view: EditorView, head: number): Stop[] {
-  const line = view.state.doc.lineAt(head);
-  const samples: { pos: number; assoc: -1 | 1; x: number; top: number }[] = [];
-  for (let pos = line.from; pos <= line.to; pos += 1) {
-    for (const assoc of [-1, 1] as const) {
-      const rect = view.coordsAtPos(pos, assoc);
-      if (rect) samples.push({ pos, assoc, x: rect.left, top: rect.top });
-    }
-  }
-  // Group into visual rows (a soft-wrapped line has more than one).
-  const tops = [...new Set(samples.map((s) => Math.round(s.top)))].sort((a, b) => a - b);
-  const rowOf = (top: number): number => tops.findIndex((t) => Math.abs(t - top) <= 4);
-  const rows: (typeof samples)[] = tops.map(() => []);
-  for (const s of samples) rows[rowOf(s.top)].push(s);
-  const rtl = view.textDirectionAt(line.from) === Direction.RTL;
-  const stops: Stop[] = [];
-  for (const row of rows) {
-    const xs = [...new Set(row.map((s) => s.x))].sort((a, b) => a - b);
-    const rowStops = xs.map((x) => stopAt(row.filter((s) => Math.abs(s.x - x) <= 0.5)));
-    stops.push(...(rtl ? rowStops.reverse() : rowStops));
-  }
-  return stops;
-}
+// Read off the reference first. In a Persian line, Chrome's own ← / → step one
+// *logical* position a press and paint the caret at the paragraph's own side —
+// an arrow is a visual direction, and the visual right in an RTL paragraph is
+// the *previous* position, so the key mirrors exactly as it does in the
+// phone's text fields. Stepping by *drawing* position instead (the walk this
+// file used to do) is where the formula went wrong: the two faces of an inline
+// formula share slots, so a shift+→ from just after `$a^2 + b$` grew the
+// selection by the whole formula in one press — the skip the writer reported.
+// One position a press also keeps the `$` signs stoppable and the formula's
+// edges on the line's side; and it needs no special case for math at all. Math
+// and code never vote for a line's direction anywhere else in the app
+// (src/direction.ts), and a line that is nothing but math or code is LTR
+// there — so display math reads left to right whatever the note around it
+// says, and an inline formula is simply characters of its paragraph.
+//
+// The side is +1, "forward along the paragraph's own flow" — the same side the
+// edit filter below keeps — so a moved caret paints exactly where a typed one
+// does.
+//
+// The keys are read from a capture listener on the editor element rather than
+// from a keymap, because CodeMirror drops *every* key event while an IME
+// composition is open (@codemirror/view's InputState.handleEvent gives up on
+// key events while composing). Gboard keeps a word composed until it commits,
+// and that is where the phone's → was dead: the browser's own motion inside a
+// composition goes nowhere, and no keymap is even reached. Owning the two keys
+// here means the note answers them the same way whether or not a word is still
+// with the keyboard.
+import { EditorSelection, EditorState, Transaction } from '@codemirror/state';
+import { Direction, EditorView, ViewPlugin } from '@codemirror/view';
 
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
-  if (view.composing) return false;
   const sel = view.state.selection.main;
-  const stops = lineStops(view, sel.head);
-  const rtl = view.textDirectionAt(view.state.doc.lineAt(sel.head).from) === Direction.RTL;
-  // Visual right is larger x: the next stop in an LTR line, the previous one
-  // in an RTL line (whose reading order runs right to left).
-  const step = dir === (rtl ? -1 : 1) ? 1 : -1;
-  const current = view.coordsAtPos(sel.head, sel.assoc || -1);
-  if (!current) return false;
-  // Match the stop on the caret's own visual row first: on a soft-wrapped
-  // line the same x exists once per row, and a wrong-row match would send the
-  // caret up or down instead of stepping along the row.
-  let here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5 && Math.abs(s.top - current.top) <= 4);
-  if (here < 0) here = stops.findIndex((s) => Math.abs(s.x - current.left) <= 0.5);
-  const target = here < 0 ? null : stops[here + step];
-  if (!target) return false;
-  // Plain motion is a cursor at the stop, on the stop's side — the side is
-  // what paints the caret where the step visually landed. The range has to
-  // be wrapped in an EditorSelection, or the transaction drops its assoc.
-  const range = extend ? sel.extend(sel.anchor, target.pos, target.assoc) : EditorSelection.cursor(target.pos, target.assoc);
+  const line = view.state.doc.lineAt(sel.head);
+  // The line's direction is the app's own policy, worn as the line's `dir`
+  // attribute: the first strong letter with math and code masked out, and a
+  // line that is nothing but math or code is LTR (src/direction.ts).
+  const rtl = view.textDirectionAt(line.from) === Direction.RTL;
+  // The keys are visual: the visual right is the next position in an LTR
+  // paragraph and the previous one in an RTL paragraph. Flat document offsets,
+  // so a step across a line break lands on the previous line's end or the next
+  // line's start — the paragraph's own order, as the platform has it.
+  const step = rtl ? -dir : dir;
+  const target = sel.head + step;
+  if (target < 0 || target > view.state.doc.length) return false;
+  // assoc 1: the paragraph's own side, as the filter below keeps it. The range
+  // has to be wrapped in an EditorSelection, or the transaction drops its side.
+  const range = extend ? sel.extend(sel.anchor, target, 1) : EditorSelection.cursor(target, 1);
   view.dispatch({ selection: EditorSelection.create([range]) });
   return true;
 }
+
+/** The four keys of a physical keyboard, and Gboard's own arrow row: the IME
+ *  sends the same key codes, and an old one may report only the code. */
+function arrowDir(event: KeyboardEvent): -1 | 1 | 0 {
+  if (event.ctrlKey || event.metaKey || event.altKey) return 0;
+  if (event.key === 'ArrowLeft' || event.keyCode === 37) return -1;
+  if (event.key === 'ArrowRight' || event.keyCode === 39) return 1;
+  return 0;
+}
+
+const arrowKeys = ViewPlugin.fromClass(class {
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented) return; // a page listener before us took the key
+    const dir = arrowDir(event);
+    if (!dir) return;
+    if (!move(this.view, dir, event.shiftKey)) return;
+    // Claim the key: the browser's own motion would otherwise follow ours, and
+    // CodeMirror's keymaps would step a second time.
+    event.preventDefault();
+  };
+
+  constructor(readonly view: EditorView) {
+    // Capture, on the editor element: ahead of CodeMirror's own listener on
+    // the content element, and reached while a composition is open.
+    view.dom.addEventListener('keydown', this.onKeyDown, true);
+  }
+
+  destroy(): void {
+    this.view.dom.removeEventListener('keydown', this.onKeyDown, true);
+  }
+});
 
 // The caret follows the line, never the run it happens to sit next to.
 //
@@ -119,10 +117,4 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-export const caretMotion = [
-  lineSide,
-  Prec.highest(keymap.of([
-    { key: 'ArrowLeft', run: (view) => move(view, -1, false), shift: (view) => move(view, -1, true) },
-    { key: 'ArrowRight', run: (view) => move(view, 1, false), shift: (view) => move(view, 1, true) },
-  ])),
-];
+export const caretMotion = [lineSide, arrowKeys];
