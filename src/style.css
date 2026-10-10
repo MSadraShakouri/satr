@@ -1630,29 +1630,39 @@ body {
   font-size: 0.75rem;
   text-align: center;
 }
-/* The three-month track: the current page centred in a one-page viewport;
-   the arrows and a horizontal swipe both slide it (src/datePicker.ts).
-   The swipe listens on the whole calendar — the weekday row included. */
-.timestamp-picker-calendar {
-  touch-action: pan-y;
-}
+/* The calendar is a native horizontal scroller — three months, the current
+   one centred. The browser owns the follow-finger, the fling, the snap and
+   the direction disambiguation (horizontal = turn, vertical = the sheet
+   scrolls); the sheet only hears where it settled (src/datePicker.ts).
+   scroll-snap-stop keeps one gesture to one month. */
 .timestamp-picker-viewport {
-  overflow: hidden;
-  touch-action: pan-y;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  direction: ltr; /* scrollLeft counts from the first page whatever the sheet's direction */
+  scrollbar-width: none;
+}
+.timestamp-picker-viewport::-webkit-scrollbar {
+  display: none;
 }
 .timestamp-picker-track {
   display: flex;
-  align-items: flex-start;
-  will-change: transform;
 }
 .timestamp-picker-page {
   flex: 0 0 100%;
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
 }
 .timestamp-picker-page:not(.is-current) {
   pointer-events: none;
+}
+.timestamp-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
 }
 .timestamp-picker-day {
   display: grid;
