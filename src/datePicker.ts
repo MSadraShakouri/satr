@@ -113,6 +113,9 @@ export function createTimestampPicker(): TimestampPicker {
   let seededSeconds: number | null = null;
   /** The month title replaced by month/year inputs, until applied or left. */
   let jumping = false;
+  /** Armed when the jump applies: the very next focus to land in the time row
+   *  is bounced to the title (keyboards that advance without a key event). */
+  let reentry = false;
   /** Sheets fading out after a close: a fresh open sweeps them out of the
    *  DOM at once, so nothing half-transparent is left catching taps. */
   const fading: HTMLElement[] = [];
@@ -244,13 +247,13 @@ export function createTimestampPicker(): TimestampPicker {
     const surface = sheet!.querySelector<HTMLElement>('.timestamp-picker-calendar')!;
     const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
     const track = () => sheet!.querySelector<HTMLElement>('.timestamp-picker-track')!;
-    let drag: { id: number; x0: number; y0: number; lastX: number; lastT: number; v: number; engaged: boolean } | null = null;
+    let drag: { id: number; x0: number; y0: number; xe: number; base: number; lastX: number; lastT: number; v: number; engaged: boolean } | null = null;
     let swallowClick = false;
     surface.addEventListener('touchstart', (event) => {
       if (drag || event.touches.length !== 1) return;
       const touch = event.touches[0] as Touch & { touchType?: string };
       if (touch.touchType === 'stylus') return;
-      drag = { id: touch.identifier, x0: touch.clientX, y0: touch.clientY, lastX: touch.clientX, lastT: event.timeStamp, v: 0, engaged: false };
+      drag = { id: touch.identifier, x0: touch.clientX, y0: touch.clientY, xe: touch.clientX, base: -viewport.clientWidth, lastX: touch.clientX, lastT: event.timeStamp, v: 0, engaged: false };
     }, { passive: true });
     surface.addEventListener('touchmove', (event) => {
       if (!drag) return;
@@ -262,17 +265,23 @@ export function createTimestampPicker(): TimestampPicker {
       drag.lastX = touch.clientX;
       drag.lastT = event.timeStamp;
       if (!drag.engaged) {
-        // Horizontal dominion only: a vertical drag keeps scrolling the sheet.
-        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) + 4) {
+        // Horizontal dominion, decided fast: a real finger is never perfectly
+        // level, so claim the drag before the browser turns it into a sheet
+        // scroll. A vertical drag keeps scrolling the sheet.
+        if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) + 2) {
           drag.engaged = true;
-          // Grab a still track: a slide from an earlier turn stops here.
+          drag.xe = touch.clientX;
+          // Catch a mid-slide track where it is — a settle from an earlier
+          // turn hands its current position over to the finger.
+          const matrix = getComputedStyle(track()).transform;
+          drag.base = matrix === 'none' ? -viewport.clientWidth : new DOMMatrixReadOnly(matrix).m41;
           settle?.cancel();
           settle = null;
-          track().style.transform = `translateX(${-viewport.clientWidth}px)`;
+          track().style.transform = `translateX(${drag.base}px)`;
         } else return;
       }
       event.preventDefault();
-      track().style.transform = `translateX(${-viewport.clientWidth + dx}px)`;
+      track().style.transform = `translateX(${drag.base + touch.clientX - drag.xe}px)`;
     }, { passive: false });
     const end = (event: TouchEvent, cancelled: boolean): void => {
       if (!drag) return;
@@ -283,22 +292,23 @@ export function createTimestampPicker(): TimestampPicker {
       swallowClick = true;
       window.setTimeout(() => { swallowClick = false; }, 350);
       const touch = [...event.changedTouches].find((item) => item.identifier === state.id);
-      const dx = cancelled ? 0 : (touch ? touch.clientX - state.x0 : 0);
+      const dx = cancelled ? 0 : (touch ? touch.clientX - state.xe : 0);
+      const pulled = state.base + dx; // where the finger left the track
       const width = viewport.clientWidth;
+      const distance = pulled + width; // signed travel from the centre
       // A turn: a real pull (a quarter of the calendar) or a flick — fast AND
       // travelled a little, so a slow short drag always springs home.
-      const flick = Math.abs(state.v) > 0.5 && Math.abs(dx) > 32;
-      if (!cancelled && (Math.abs(dx) > width / 4 || flick)) {
+      const flick = Math.abs(state.v) > 0.5 && Math.abs(distance) > 32;
+      if (!cancelled && (Math.abs(distance) > width / 4 || flick)) {
         // The turn completes in the direction the finger was going.
-        const from = -width + dx;
-        turnMonth(dx < 0 ? 1 : -1, from / width);
+        turnMonth(distance < 0 ? 1 : -1, pulled / width);
       } else {
         // A short drag springs back to the current month. The style parks at
         // the centre first: when the animation ends, the style is what shows.
         const el = track();
         el.style.transform = `translateX(${-width}px)`;
         settle = el.animate(
-          [{ transform: `translateX(${-width + dx}px)` }, { transform: `translateX(${-width}px)` }],
+          [{ transform: `translateX(${pulled}px)` }, { transform: `translateX(${-width}px)` }],
           { duration: 200, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
         );
       }
@@ -393,16 +403,31 @@ export function createTimestampPicker(): TimestampPicker {
       const parts = calParts(tag(), monthStart(viewMonth!));
       const delta = (year - parts.year) * 12 + (month - parts.month);
       jumping = false;
-      if (!delta) { render(); return; }
+      // From here the keyboard's business is done: the focus belongs to the
+      // title, so the IME closes instead of walking into the time row.
+      reentry = true;
+      const heading = sheet.querySelector<HTMLElement>('.timestamp-picker-month')!;
+      if (!delta) { render(); heading.focus(); return; }
       // The whole distance at once; the slide starts from where the old month
       // now sits — one page over — so the pages pass as content.
       viewMonth = addMonths(viewMonth!, delta);
       render();
+      heading.focus();
       const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport');
       const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track');
       if (!viewport || !track) return;
       slideTrack(track, viewport.clientWidth, delta > 0 ? 0 : -2 * viewport.clientWidth);
     };
+    // Some keyboards deliver the advance key as a next-action that moves the
+    // focus with no key event at all — nothing to intercept. The guard is the
+    // focus itself: whatever moved it, if it lands in the time row straight
+    // after an applied jump, it goes to the title instead.
+    sheet.addEventListener('focusin', (event) => {
+      if (reentry && (event.target as HTMLElement).closest?.('.timestamp-picker-time')) {
+        sheet?.querySelector<HTMLElement>('.timestamp-picker-month')?.focus();
+      }
+      reentry = false;
+    });
     // Enter applies the jump; focus leaving the title applies it too. A mere
     // change (tabbing from the month to the year, a fill) must NOT: half a
     // date would jump the grid and tear the second field away mid-edit.
