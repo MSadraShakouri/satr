@@ -221,17 +221,17 @@ pre code {
 .hljs-meta, .hljs-built_in { color: #ec7500; }
 .hljs-punctuation { color: #5c5c5c; }
 
-/* Tables: centred, as in the reading view. A table is one figure: it moves
-   whole to the next page rather than splitting — unless it is taller than a
-   page, when there is nowhere whole to put it and Paged.js breaks it anyway
-   (avoid is best-effort in CSS fragmentation). The wrapper (src/markdown.ts)
-   stays plain: it must not scroll or clip on paper. */
+/* Tables: centred, as in the reading view. A table splits at row boundaries
+   so pages stay full; how many rows must travel together is decided by the
+   keepTableRows hook (src/printTables.ts) during pagination, not here — a
+   blanket break-inside: avoid emptied the foot of a page when a single row
+   didn't fit. The wrapper (src/markdown.ts) stays plain: it must not scroll
+   or clip on paper. */
 table {
   margin: 0 auto 0.9em;
   border-collapse: collapse;
   width: max-content;
   max-width: 100%;
-  break-inside: avoid;
 }
 .table-wrapper {
   overflow: visible;

@@ -225,21 +225,47 @@ test('print: <!-- table: ltr --> holds an RTL note\'s table at left to right', a
   expect(sides.firstLeft).toBeLessThan(sides.secondLeft);
 });
 
-test('print: a table that fits moves whole to the next page instead of splitting', async ({ page }) => {
+// A known page geometry: 320×520 of content area, 40px rows, a filler
+// paragraph of a chosen height — so "how many rows fit" is arithmetic.
+const GEOMETRY = `@page { size: 400px 600px; margin: 40px; }
+p { margin: 0; }
+td { height: 40px; padding: 0 6px; border: 0; font-size: 12px; line-height: 1; }`;
+const bodyRowCount = (page: import('@playwright/test').Page) =>
+  page.locator('.pagedjs_page').evaluateAll((pages) => pages.map((page) => page.querySelectorAll('tbody tr').length));
+
+test('print: a table that fits the space left on the page is not split', async ({ page }) => {
+  const rows = Array.from({ length: 5 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
+  const markdown = `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${rows}\n`;
+  await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 200px; }`);
+  expect(await bodyRowCount(page)).toEqual([5]);
+});
+
+test('print: a table too big for the space left splits at a row, and pages stay full', async ({ page }) => {
   const rows = Array.from({ length: 8 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
   const markdown = `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${rows}\n\nTrailing paragraph.\n`;
-  // A tiny page: the table cannot fit where the intro leaves it.
-  await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, '@page { size: 400px 500px; margin: 40px; }');
-  const pages = await page.locator('.pagedjs_page').evaluateAll((pages) => pages.map((page) => ({
-    rows: page.querySelectorAll('tr').length,
-    complete: page.querySelectorAll('.pagedjs_page_content table').length > 0
-      ? page.querySelectorAll('tr').length
-      : 0,
-  })));
-  const withRows = pages.filter((p) => p.rows > 0);
-  // Exactly one page holds the table, with every row of it.
-  expect(withRows.length).toBe(1);
-  expect(withRows[0].rows).toBe(9); // header + separator-less body rows
+  await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 200px; }`);
+  // Six rows on the first page (the space that was left), the rest overleaf —
+  // never the whole table pushed away leaving half a page of nothing.
+  expect(await bodyRowCount(page)).toEqual([6, 2]);
+  // The continuation carries no header row (the writer asked for none).
+  expect(await page.locator('.pagedjs_page:nth-of-type(2) thead tr').count()).toBe(0);
+});
+
+test('print: a split never strands fewer than two rows on either side', async ({ page }) => {
+  // Room for the header and a single body row: that row would sit alone at
+  // the foot of the page. The whole table moves instead.
+  const rows = Array.from({ length: 5 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
+  const markdown = `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${rows}\n`;
+  await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 420px; }`);
+  expect(await bodyRowCount(page)).toEqual([0, 5]);
+  // The table's header went over with it — the fragment on page one is gone.
+  expect(await page.locator('.pagedjs_page:nth-of-type(1) table').count()).toBe(0);
+
+  // Room for seven of eight rows: one would carry over alone. The break
+  // moves back a row, so six stay and two travel.
+  const eight = Array.from({ length: 8 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
+  await printHtml(page, `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${eight}\n`, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 160px; }`);
+  expect(await bodyRowCount(page)).toEqual([6, 2]);
 });
 
 test('print: a table taller than a page still prints all of its rows', async ({ page }) => {
@@ -278,4 +304,64 @@ test('a directive is never misapplied when another table sits nested in a list',
   // The nested table takes the policy's own answer for its own cells, never
   // the top-level table's comment.
   expect(dirs).toEqual(['rtl', 'ltr']);
+});
+
+// ---- Panning vs the drawer gesture ----
+
+const wideTable = (n: number) => `| ${Array.from({ length: n }, (_, i) => `column ${i + 1}`).join(' | ')} |\n|${Array.from({ length: n }, () => ' --- ').join('|')}|\n| ${Array.from({ length: n }, (_, i) => `c${i + 1}`).join(' | ')} |\n`;
+
+/** One finger: a down, the dx steps as moves, an up — synthetic, so the
+ *  drawer's own listeners see exactly what a real pan looks like. */
+async function drag(page: Page, selector: string, steps: number[]): Promise<void> {
+  await page.evaluate(({ selector, steps }) => {
+    const target = document.querySelector<HTMLElement>(selector)!;
+    const box = target.getBoundingClientRect();
+    const x0 = box.left + box.width / 2;
+    const y0 = box.top + box.height / 2;
+    const fire = (dx: number, type: string, live: boolean): void => {
+      const x = x0 + dx;
+      const touch = new Touch({ identifier: 1, target, clientX: x, clientY: y0, pageX: x, pageY: y0 });
+      target.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live ? [touch] : [], targetTouches: live ? [touch] : [], changedTouches: [touch],
+      }));
+    };
+    fire(0, 'touchstart', true);
+    for (const dx of steps) fire(dx, 'touchmove', true);
+    fire(steps[steps.length - 1], 'touchend', false);
+  }, { selector, steps });
+}
+
+test('panning a wide table never opens a drawer, in either direction', async ({ page }) => {
+  await bootApp(page, `Intro.\n\n${wideTable(16)}`);
+  await page.locator('#app #preview-toggle').click();
+  await expect(page.locator('#app #preview .table-wrapper > table')).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const wrapper = document.querySelector('#app #preview .table-wrapper') as HTMLElement;
+    const pannable = wrapper.scrollWidth > wrapper.clientWidth + 1;
+    const workspace = document.querySelector('.workspace') as HTMLElement;
+    const state = () => ({ left: document.body.classList.contains('files-open'), right: document.body.classList.contains('outline-open'), moved: workspace.style.transform !== '' });
+    window.setTimeout(() => void 0, 0);
+    return { pannable, state };
+  });
+  expect(result.pannable).toBe(true);
+  // The pan back toward the first column (finger rightward) is the one that
+  // used to slide the whole note aside and open the file drawer.
+  await drag(page, '#app #preview .table-wrapper', [12, 40, 90, 160, 240]);
+  await page.waitForTimeout(450);
+  expect(await page.evaluate(() => document.body.classList.contains('files-open'))).toBe(false);
+  // And the mirrored drag (finger leftward, toward the last column).
+  await drag(page, '#app #preview .table-wrapper', [-12, -40, -90, -160, -240]);
+  await page.waitForTimeout(450);
+  expect(await page.evaluate(() => document.body.classList.contains('outline-open'))).toBe(false);
+  // The drawer's grab never moved the note: the table keeps the gesture.
+  expect(await page.evaluate(() => (document.querySelector('.workspace') as HTMLElement).style.transform)).toBe('');
+});
+
+test('the same rightward swipe over prose still opens the file drawer', async ({ page }) => {
+  await bootApp(page, NOTE);
+  await page.locator('#app #preview-toggle').click();
+  await expect(page.locator('#app #preview .md-section p').first()).toBeVisible();
+  await drag(page, '#app #preview .md-section p', [12, 40, 90, 160, 240]);
+  await expect(page.locator('body.files-open')).toHaveCount(1);
 });

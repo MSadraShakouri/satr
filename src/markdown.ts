@@ -356,9 +356,12 @@ export function renderMarkdown(source: string): string {
       if (alignments[cellIndex]) cell.setAttribute('data-table-align', alignments[cellIndex]);
     }));
     // Wide tables pan inside a wrapper; the table itself is never clipped and
-    // keeps its own width (src/style.css: .table-wrapper).
+    // keeps its own width (src/style.css: .table-wrapper). data-pan-x tells
+    // the drawer gesture (src/drawers.ts) that this element owns horizontal
+    // drags in both directions.
     const wrapper = document.createElement('div');
     wrapper.className = 'table-wrapper';
+    wrapper.setAttribute('data-pan-x', '');
     table.replaceWith(wrapper);
     wrapper.appendChild(table);
   });
