@@ -244,16 +244,16 @@ test('print: a table too big for the space left splits at a row, and pages stay 
   const rows = Array.from({ length: 8 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
   const markdown = `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${rows}\n\nTrailing paragraph.\n`;
   await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 200px; }`);
-  // Six rows on the first page (the space that was left), the rest overleaf —
-  // never the whole table pushed away leaving half a page of nothing.
-  expect(await bodyRowCount(page)).toEqual([6, 2]);
+  // Six rows would fit, but the two left over are fewer than the minimum
+  // company: the break pulls back to five, three travel.
+  expect(await bodyRowCount(page)).toEqual([5, 3]);
   // The continuation carries no header row (the writer asked for none).
   expect(await page.locator('.pagedjs_page:nth-of-type(2) thead tr').count()).toBe(0);
 });
 
-test('print: a split never strands fewer than two rows on either side', async ({ page }) => {
-  // Room for the header and a single body row: that row would sit alone at
-  // the foot of the page. The whole table moves instead.
+test('print: a split never strands fewer than three rows on either side', async ({ page }) => {
+  // Room for the header alone: that is under the minimum at the foot of a
+  // page. The whole table moves instead.
   const rows = Array.from({ length: 5 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
   const markdown = `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${rows}\n`;
   await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 420px; }`);
@@ -262,10 +262,21 @@ test('print: a split never strands fewer than two rows on either side', async ({
   expect(await page.locator('.pagedjs_page:nth-of-type(1) table').count()).toBe(0);
 
   // Room for seven of eight rows: one would carry over alone. The break
-  // moves back a row, so six stay and two travel.
+  // moves back two rows, so five stay and three travel.
   const eight = Array.from({ length: 8 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
   await printHtml(page, `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${eight}\n`, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 160px; }`);
-  expect(await bodyRowCount(page)).toEqual([6, 2]);
+  expect(await bodyRowCount(page)).toEqual([5, 3]);
+
+  // Room for three of five rows: two would carry — giving one back would
+  // leave two behind, under the minimum, so the whole table goes over.
+  await printHtml(page, markdown, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 320px; }`);
+  expect(await bodyRowCount(page)).toEqual([0, 5]);
+
+  // Room for seven of nine: two would carry, and giving one back still
+  // leaves six — a legal split of six and three.
+  const nine = Array.from({ length: 9 }, (_, i) => `| r${i + 1} | ${i + 1} |`).join('\n');
+  await printHtml(page, `Intro paragraph.\n\n| A | B |\n| --- | --- |\n${nine}\n`, { columns: 1, direction: 'auto', mathAlign: 'center' }, `${GEOMETRY}\np:first-child { height: 160px; }`);
+  expect(await bodyRowCount(page)).toEqual([6, 3]);
 });
 
 test('print: a table taller than a page still prints all of its rows', async ({ page }) => {

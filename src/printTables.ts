@@ -6,16 +6,16 @@
 // repeated header a lone continuation row hangs there without a caption. This
 // hook (chunker.hooks.onOverflow, alongside keepHeadingWithContent, which it
 // chains after) moves the break so that at least MIN_TABLE_ROWS body rows sit
-// on the page and at least MIN_TABLE_ROWS carry over — and when that cannot
-// be, the whole table moves to the next page instead, wasting at most
-// MIN_TABLE_ROWS − 1 rows of paper. The blanket `table { break-inside: avoid }`
+// at the foot of a page and at least MIN_TABLE_ROWS carry over — and when
+// that cannot be, the whole table moves to the next page instead, wasting at
+// most MIN_TABLE_ROWS − 1 rows of paper. The blanket `table { break-inside: avoid }`
 // was the unbounded version of the same idea and is deliberately not in the
 // CSS: it emptied the foot of a page because a single row didn't fit.
 //
 // The header row is the table's shell, not one of the counted rows: a fragment
 // of header alone counts as nothing.
 
-export const MIN_TABLE_ROWS = 2;
+export const MIN_TABLE_ROWS = 3;
 
 function hasContent(fragment: DocumentFragment): boolean {
   return Boolean(fragment.textContent?.trim() || fragment.querySelector('img,svg,math,hr,input'));
@@ -60,26 +60,16 @@ export function keepTableRows(overflow: Range | undefined, rendered: HTMLElement
   }
 
   // Widow: the break would carry fewer than the minimum to the next page.
-  // How many rows the table still has left lives in the content template:
-  // the chunker moves rendered nodes out of it (the placed rows ARE the
-  // source rows — their data-ref has no second copy on a page), so whatever
-  // the template still holds after this row is what the next pages get.
-  const last = placedRows[placedRows.length - 1];
-  const ref = last.getAttribute('data-ref');
-  if (!ref) return;
-  const templateTable = [...doc.querySelectorAll('template')].map((t) => t.content).find((content) => content.querySelector('table'))?.querySelector('table');
-  const sourceRows = templateTable ? bodyRows(templateTable) : [];
-  const sourceRow = sourceRows.find((row) => row.getAttribute('data-ref') === ref);
-  if (!sourceRow) return;
-  const remaining = sourceRows.length - sourceRows.indexOf(sourceRow) - 1;
-  if (remaining >= MIN_TABLE_ROWS) return;
-  const give = MIN_TABLE_ROWS - remaining;
-  // Move the break earlier: the last `give` placed rows join the next page.
-  const anchor = fragment[fragment.length - 1 - give];
-  if (!anchor) return;
-  // If the page is then left with fewer than the minimum, take the whole
-  // table over instead (same loop guard as above).
-  if (placed - give < MIN_TABLE_ROWS) {
+  // What carries is exactly what was rendered past the cut — the placed rows
+  // fit, the rest of the rendered fragment is the carry — so the whole
+  // decision is local to this page. The break moves back just far enough
+  // that the carry meets the minimum; if that leaves the page's own foot
+  // under the minimum, the whole table goes over instead (same loop guard
+  // as the orphan above).
+  const carry = fragment.length - placed;
+  if (carry >= MIN_TABLE_ROWS) return;
+  const staying = placed - (MIN_TABLE_ROWS - carry);
+  if (staying < MIN_TABLE_ROWS) {
     const prefix = doc.createRange();
     prefix.selectNodeContents(rendered);
     prefix.setEndBefore(table);
@@ -87,6 +77,8 @@ export function keepTableRows(overflow: Range | undefined, rendered: HTMLElement
     overflow.setStartBefore(table);
     return overflow;
   }
+  const anchor = fragment[staying];
+  if (!anchor) return;
   overflow.setStartBefore(anchor);
   return overflow;
 }

@@ -1576,6 +1576,160 @@ body {
   cursor: pointer;
 }
 
+/* A timestamp chip in the reading view opens the date sheet (src/main.ts). */
+.preview-pane time.discord-timestamp {
+  cursor: pointer;
+}
+
+/* ---- The date picker (src/datePicker.ts) ----
+   Discord timestamp codes, written by hand from a calendar sheet. The sheet
+   is the bottom menu's (the .menu classes); the calendar answers in whatever
+   language and calendar Settings → Dates has chosen. */
+.timestamp-picker .menu-scroll {
+  max-height: min(70vh, 560px);
+}
+.timestamp-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 8px;
+}
+.timestamp-picker-month {
+  font-weight: 600;
+  text-align: center;
+}
+.timestamp-picker-step {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text-muted);
+}
+.timestamp-picker-step svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.timestamp-picker-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  padding-bottom: 4px;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  text-align: center;
+}
+.timestamp-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.timestamp-picker-day {
+  display: grid;
+  place-items: center;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--text-normal);
+  font-size: 0.875rem;
+}
+.timestamp-picker-day.is-blank {
+  pointer-events: none;
+}
+.timestamp-picker-day.is-selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.timestamp-picker-time {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+}
+.timestamp-picker-field {
+  width: 3.5em;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.9375rem;
+  text-align: center;
+}
+.timestamp-picker-field::-webkit-outer-spin-button,
+.timestamp-picker-field::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.timestamp-picker-colon {
+  color: var(--text-muted);
+}
+.timestamp-picker-now {
+  padding: 7px 14px;
+  margin-inline-start: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font-size: 0.8125rem;
+}
+.timestamp-picker-formats {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+}
+.timestamp-picker-format {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--text-normal);
+  text-align: start;
+}
+.timestamp-picker-format.is-selected {
+  background: var(--background-modifier-hover);
+}
+.timestamp-picker-format-name {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.timestamp-picker-format-sample {
+  font-size: 0.875rem;
+  unicode-bidi: plaintext;
+}
+.timestamp-picker-insert {
+  width: 100%;
+  padding: 12px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  unicode-bidi: plaintext;
+}
+.timestamp-picker-insert:active {
+  filter: brightness(0.92);
+}
+
 /* ---- Popovers (footnotes; src/popover.ts) ----
    Obsidian's .popover.hover-popover: page background, 1px border,
    --shadow-s, 8px corners, 450px wide at most (80vw on a phone); a footnote
