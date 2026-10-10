@@ -311,3 +311,55 @@ test('a rightward swipe turns back, and a nudge springs home', async ({ page }) 
   // The sheet never scrolled away under the swipes: the grid is still there.
   await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first()).toBeVisible();
 });
+
+// ---- A chip tapped in the editor edits its own code ----
+
+test('tapping a chip in the editor opens the sheet and rewrites that very code', async ({ page }) => {
+  const older = 1700000000;
+  const note = `First <t:${older}> second <t:${older}> third.\n`;
+  await boot(page, {}, note);
+  // The second of two identical codes: the tap must hit it, not count them.
+  const chips = page.locator('#app .cm-content .cm-lp-timestamp');
+  await expect(chips).toHaveCount(2);
+  await chips.nth(1).click();
+  const picker = sheet(page);
+  await expect(picker).toBeVisible();
+  await expect(picker.locator('.timestamp-picker-month')).toContainText(/2023/); // seeded with the code's own moment
+  await picker.locator('[data-stamp-jump]').click(); // jump somewhere unmistakable
+  await picker.locator('[data-stamp-jump-month]').fill('3');
+  await picker.locator('[data-stamp-jump-year]').fill('2031');
+  await picker.locator('[data-stamp-jump-year]').press('Enter');
+  await expect(picker.locator('.timestamp-picker-month')).toContainText('2031');
+  // A day click sets the moment; the jump only turned the pages to it.
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(14).click();
+  await picker.locator('[data-stamp-insert]').click();
+  const text = await noteText(page);
+  expect(text).toContain(`First <t:${older}>`);
+  expect(text).not.toContain(`second <t:${older}>`);
+  // And it is 15 March 2031, not a neighbouring month (the jump goes the whole way).
+  const rewritten = new Date(Number(/second <t:(\d{1,15})>/.exec(text)![1]) * 1000);
+  expect(rewritten.getUTCFullYear()).toBe(2031);
+  expect(rewritten.getUTCMonth()).toBe(2);
+  expect(rewritten.getUTCDate()).toBe(15);
+});
+
+test('the tap leaves the caret alone: the codes stay chips, and undo takes the rewrite back', async ({ page }) => {
+  const older = 1700000000;
+  const note = `First <t:${older}> second <t:${older}>.\n`;
+  await boot(page, {}, note);
+  const chips = page.locator('#app .cm-content .cm-lp-timestamp');
+  await expect(chips).toHaveCount(2);
+  await chips.nth(1).click();
+  const picker = sheet(page);
+  await picker.locator('[data-stamp-jump]').click();
+  await picker.locator('[data-stamp-jump-month]').fill('7');
+  await picker.locator('[data-stamp-jump-year]').fill('2029');
+  await picker.locator('[data-stamp-jump-year]').press('Enter');
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(9).click();
+  await picker.locator('[data-stamp-insert]').click();
+  expect(await noteText(page)).not.toBe(note);
+  // The mousedown never reached the editor: nothing revealed the raw code.
+  await expect(chips).toHaveCount(2);
+  await page.locator('#app .cm-content').press('Control+z');
+  expect(await noteText(page)).toBe(note);
+});

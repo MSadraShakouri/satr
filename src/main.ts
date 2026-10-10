@@ -1,6 +1,7 @@
 import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
+import { setTimestampChipTap } from './livePreview';
 import 'katex/dist/katex.min.css';
 import './style.css';
 import './externalFiles.css';
@@ -2197,6 +2198,26 @@ function flash(el: HTMLElement): void {
   el.classList.add('is-flashing');
   window.setTimeout(() => el.classList.remove('is-flashing'), 3000);
 }
+/** The date sheet opened over an exact `<t:…>` code: `initial` seeds the
+ *  moment, and Insert rewrites that range while it still holds a code — the
+ *  chips in both views land here (the editor's tap knows its own range; the
+ *  reading view finds it by occurrence). If the range went away while the
+ *  sheet was open, the code lands at the caret instead. */
+function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, found: { from: number; to: number } | null): void {
+  timestampPicker.open({
+    initial,
+    onInsert: (code) => {
+      const view = editor.view;
+      if (found && found.to <= view.state.doc.length && view.state.doc.sliceString(found.from, found.to).startsWith('<t:')) {
+        view.dispatch({ changes: { from: found.from, to: found.to, insert: code }, userEvent: 'input' });
+      } else {
+        const range = view.state.selection.main;
+        view.dispatch({ changes: { from: range.from, to: range.to, insert: code }, selection: { anchor: range.from + code.length }, userEvent: 'input' });
+      }
+    },
+  });
+}
+
 /** A `<t:…>` chip tapped in the reading view: the date sheet opens at its
  *  moment and format, and Insert rewrites the code that made it — the same
  *  occurrence if it can still be found (the second `<t:1700000000>` in the
@@ -2213,20 +2234,24 @@ function editTimestampFromChip(chip: HTMLElement): void {
     const from = match.index ?? 0;
     hits.push({ from, to: from + match[0].length, format: (match[1] ?? 'f') as TimestampFormat });
   }
-  const found = hits.filter((hit) => hit.format === format)[occurrence];
-  timestampPicker.open({
-    initial: { seconds, format },
-    onInsert: (code) => {
-      const view = editor.view;
-      if (found && view.state.doc.sliceString(found.from, found.to).startsWith('<t:')) {
-        view.dispatch({ changes: { from: found.from, to: found.to, insert: code }, userEvent: 'input' });
-      } else {
-        const range = view.state.selection.main;
-        view.dispatch({ changes: { from: range.from, to: range.to, insert: code }, selection: { anchor: range.from + code.length }, userEvent: 'input' });
-      }
-    },
-  });
+  const found = hits.filter((hit) => hit.format === format)[occurrence] ?? null;
+  editTimestampAt({ seconds, format }, found);
 }
+
+// A chip tapped in the editor opens the same sheet — seeded with this code's
+// moment, and Insert rewrites exactly the range under the chip. The position
+// comes from the DOM at tap time, never by counting occurrences.
+setTimestampChipTap((chip) => {
+  const view = editor.view;
+  const at = view.posAtDOM(chip, 0);
+  // The longest a code can be is 21 characters; a little more costs nothing.
+  const match = /^<t:-?\d{1,15}(?::[tTdDfFR])?>/.exec(view.state.doc.sliceString(at, at + 24));
+  if (!match) return;
+  const seconds = Number(chip.dataset.ts);
+  const format = (chip.dataset.format ?? 'f') as TimestampFormat;
+  if (!Number.isFinite(seconds)) return;
+  editTimestampAt({ seconds, format }, { from: at, to: at + match[0].length });
+});
 
 // A table tapped in the reading view asks for its whole direction: a menu
 // writes (or clears) the `<!-- table: rtl -->` comment on the line just

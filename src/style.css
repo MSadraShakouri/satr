@@ -1576,8 +1576,10 @@ body {
   cursor: pointer;
 }
 
-/* A timestamp chip in the reading view opens the date sheet (src/main.ts). */
-.preview-pane time.discord-timestamp {
+/* A timestamp chip in the reading view or the editor opens the date sheet
+   (src/main.ts); the editor's tap stops the caret from revealing the code. */
+.preview-pane time.discord-timestamp,
+.cm-content .cm-lp-timestamp {
   cursor: pointer;
 }
 

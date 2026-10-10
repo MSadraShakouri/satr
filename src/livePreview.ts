@@ -42,7 +42,11 @@ class FenceWidget extends WidgetType {
 }
 
 // <t:UNIX:F>: the time it names, in place of the code (src/timestamps.ts). The
-// relative ones keep themselves current (refreshTimestamps).
+// relative ones keep themselves current (refreshTimestamps). Tapping a chip
+// asks to edit that very code (setTimestampChipTap; main.ts opens the date
+// sheet) — the position is read from the DOM at tap time, so it can never go
+// stale, and the mousedown stops here so the caret stays off the code (a
+// caret on the code is the reveal, not the edit).
 class TimestampWidget extends WidgetType {
   constructor(readonly seconds: number, readonly format: TimestampFormat) { super(); }
   eq(other: TimestampWidget): boolean { return other.seconds === this.seconds && other.format === this.format; }
@@ -53,9 +57,20 @@ class TimestampWidget extends WidgetType {
     el.dataset.format = this.format;
     el.title = fullTimestamp(this.seconds);
     el.textContent = formatTimestamp(this.seconds, this.format);
+    el.addEventListener('mousedown', (event) => {
+      if (!chipTapHandler) return;
+      event.preventDefault();
+      event.stopPropagation();
+      chipTapHandler(el);
+    });
     return el;
   }
 }
+
+/** The editor's answer to a tapped chip; main.ts wires it to the date sheet. */
+type TimestampChipTap = (chip: HTMLElement) => void;
+let chipTapHandler: TimestampChipTap | null = null;
+export function setTimestampChipTap(handler: TimestampChipTap | null): void { chipTapHandler = handler; }
 
 const hidden = Decoration.replace({});
 const bullet = Decoration.mark({ class: 'cm-lp-bullet' });
