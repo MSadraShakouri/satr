@@ -52,7 +52,7 @@ test('the sheet writes the picked day and time as a code at the caret', async ({
   const picker = sheet(page);
   await expect(picker).toBeVisible();
   // The 15th of the month it opened at (today's month), 09:30, full format.
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').nth(14).click();
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(14).click();
   await picker.locator('[data-stamp-hour]').fill('9');
   await picker.locator('[data-stamp-minute]').fill('30');
   await picker.locator('.timestamp-picker-format[data-stamp-format="F"]').click();
@@ -75,7 +75,7 @@ test('the default format chip writes the bare code Discord treats as f', async (
   await openPicker(page);
   const picker = sheet(page);
   await expect(picker.locator('.timestamp-picker-format[data-stamp-format="f"]')).toHaveClass(/is-selected/);
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').nth(2).click();
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(2).click();
   await picker.locator('[data-stamp-insert]').click();
   expect(await noteText(page)).toMatch(/<t:\d{1,15}>/);
 });
@@ -88,7 +88,7 @@ test('tapping a chip in the reading view edits the code that made it', async ({ 
   await expect(picker).toBeVisible();
   // Seeded: November 2023, the 14th selected — the moment the code says.
   await expect(picker.locator('.timestamp-picker-month')).toContainText('November 2023');
-  await expect(picker.locator('.timestamp-picker-day.is-selected')).toHaveText('14');
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected')).toHaveText('14');
   // A different format: the very token is rewritten, not duplicated.
   await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
   await picker.locator('[data-stamp-insert]').click();
@@ -111,9 +111,9 @@ test('the grid answers in the chosen calendar and language', async ({ page }) =>
   // ("۱۴۰۵ مهر" today; the order is the language's business).
   await expect(picker.locator('.timestamp-picker-month')).toContainText(/[۰-۹]{4}/);
   await expect(picker.locator('.timestamp-picker-month')).toContainText(/[آ-ی]/);
-  await expect(picker.locator('.timestamp-picker-day:not(.is-blank)').first()).toHaveText(/[۰-۹]/);
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first()).toHaveText(/[۰-۹]/);
   // The code is calendar-free: the same moment either way.
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').last().click();
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').last().click();
   await picker.locator('[data-stamp-insert]').click();
   const code = /<t:(\d{1,15})>/.exec(await noteText(page));
   expect(code).toBeTruthy();
@@ -124,9 +124,9 @@ test('Now re-seeds the sheet with the current moment', async ({ page }) => {
   await boot(page);
   await openPicker(page);
   const picker = sheet(page);
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click(); // somewhere else
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click(); // somewhere else
   await picker.locator('[data-stamp-now]').click();
-  await expect(picker.locator('.timestamp-picker-day.is-selected')).toHaveText(String(new Date().getDate()));
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected')).toHaveText(String(new Date().getDate()));
   await picker.locator('[data-stamp-insert]').click();
   const code = /<t:(\d{1,15})>/.exec(await noteText(page));
   const now = Math.floor(Date.now() / 1000);
@@ -154,7 +154,7 @@ test('the month arrows step the way they point', async ({ page }) => {
   const picker = sheet(page);
   // Right = next month: its 1st, inserted.
   await picker.locator('[data-stamp-step="1"]').click();
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
   const nextCode = /<t:(\d{1,15})>/.exec(await noteText(page))!;
   const next = new Date(Number(nextCode[1]) * 1000);
@@ -164,7 +164,7 @@ test('the month arrows step the way they point', async ({ page }) => {
   // Left = the month before: its 1st.
   await openPicker(page);
   await sheet(page).locator('[data-stamp-step="-1"]').click();
-  await sheet(page).locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await sheet(page).locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await sheet(page).locator('[data-stamp-insert]').click();
   const codes = [...(await noteText(page)).matchAll(/<t:(\d{1,15})>/g)].map((m) => Number(m[1]));
   const previous = new Date(codes[codes.length - 1] * 1000);
@@ -182,7 +182,7 @@ test('the title opens a month and year box, in the calendar the grid is wearing'
   await picker.locator('[data-stamp-jump-year]').press('Enter');
   // The grid followed: January 2030 — the title says so, and the 1st is real.
   await expect(picker.locator('.timestamp-picker-month')).toContainText('2030');
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
   const jumped = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
   expect(jumped.getUTCFullYear()).toBe(2030);
@@ -199,7 +199,7 @@ test('the jump box counts in Jalali when the grid does', async ({ page }) => {
   await picker.locator('[data-stamp-jump-month]').fill('1');
   await picker.locator('[data-stamp-jump-year]').fill('1400');
   await picker.locator('[data-stamp-jump-year]').press('Enter');
-  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
   const jumped = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
   const newYear = Date.UTC(2021, 2, 21);
@@ -251,4 +251,63 @@ test('the chips and the Insert code follow the typing live', async ({ page }) =>
   await picker.locator('[data-stamp-minute]').fill('45');
   await expect(picker.locator('[data-stamp-insert]')).not.toHaveText(before!);
   await expect(sample).toHaveText(/9:45:00/);
+});
+
+// ---- Gestures: the calendar turns with a swipe, not only with the arrows ----
+
+/** One finger dragged across the calendar viewport, in synthetic steps. */
+async function swipeOn(page: Page, dxs: number[]): Promise<void> {
+  await page.evaluate(async (dxs) => {
+    const viewport = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    const box = viewport.getBoundingClientRect();
+    const x0 = box.left + box.width / 2;
+    const y0 = box.top + Math.min(80, box.height / 2);
+    const fire = (dx: number, type: string, live: boolean): void => {
+      const touch = new Touch({ identifier: 7, target: viewport, clientX: x0 + dx, clientY: y0, pageX: x0 + dx, pageY: y0 });
+      viewport.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live ? [touch] : [], targetTouches: live ? [touch] : [], changedTouches: [touch],
+      }));
+    };
+    fire(0, 'touchstart', true);
+    for (const dx of dxs) {
+      // A finger moves in real time; steps without gaps read as a flick.
+      await new Promise((resolve) => window.setTimeout(resolve, 24));
+      fire(dx, 'touchmove', true);
+    }
+    fire(dxs[dxs.length - 1], 'touchend', false);
+  }, dxs);
+  await page.waitForTimeout(450); // the settle slide, then the re-centre
+}
+
+test('a leftward swipe on the calendar turns to the next month', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const before = await picker.locator('.timestamp-picker-month').textContent();
+  await swipeOn(page, [-14, -60, -130, -210]);
+  expect(await picker.locator('.timestamp-picker-month').textContent()).not.toBe(before);
+  // The grid really moved: its first day, inserted, is the 1st of next month.
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const next = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
+  const now = new Date();
+  expect(next.getDate()).toBe(1);
+  expect(next.getMonth()).toBe((now.getMonth() + 1) % 12);
+});
+
+test('a rightward swipe turns back, and a nudge springs home', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const home = await picker.locator('.timestamp-picker-month').textContent();
+  await swipeOn(page, [-16, -70, -150, -230]); // away, to the next month
+  expect(await picker.locator('.timestamp-picker-month').textContent()).not.toBe(home);
+  await swipeOn(page, [16, 70, 150, 230]); // rightward: back to the month before
+  expect(await picker.locator('.timestamp-picker-month').textContent()).toBe(home);
+  // A short drag is not a turn: the current month comes back.
+  await swipeOn(page, [-8, -18, -26]);
+  expect(await picker.locator('.timestamp-picker-month').textContent()).toBe(home);
+  // The sheet never scrolled away under the swipes: the grid is still there.
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first()).toBeVisible();
 });

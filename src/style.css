@@ -1628,10 +1628,25 @@ body {
   font-size: 0.75rem;
   text-align: center;
 }
-.timestamp-picker-grid {
+/* The three-month track: the current page centred in a one-page viewport;
+   the arrows and a horizontal swipe both slide it (src/datePicker.ts). */
+.timestamp-picker-viewport {
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.timestamp-picker-track {
+  display: flex;
+  align-items: flex-start;
+  will-change: transform;
+}
+.timestamp-picker-page {
+  flex: 0 0 100%;
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
+}
+.timestamp-picker-page:not(.is-current) {
+  pointer-events: none;
 }
 .timestamp-picker-day {
   display: grid;
