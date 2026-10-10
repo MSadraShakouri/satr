@@ -431,7 +431,7 @@ body {
 /* Obsidian's .markdown-rendered blocks: 1rem around paragraphs, lists,
    quotes, code and tables; 2.5rem above a heading and 1rem below; lists
    indented 3ch with a hair between items. */
-.preview-pane :where(p, ul, ol, blockquote, pre, table) {
+.preview-pane :where(p, ul, ol, blockquote, pre, table, .table-wrapper) {
   margin-block: var(--p-spacing);
 }
 .preview-pane :where(h1, h2, h3, h4, h5, h6) {
@@ -440,7 +440,7 @@ body {
 .preview-pane article > :first-child,
 .preview-pane .md-section:first-of-type > :first-child,
 .preview-pane .inline-title + * > :first-child,
-.preview-pane .inline-title + :where(h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table) {
+.preview-pane .inline-title + :where(h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table, .table-wrapper) {
   margin-top: 0;
 }
 .preview-pane h1 {
@@ -775,6 +775,19 @@ body {
   display: table;
   overflow: auto;
   margin-inline: auto;
+}
+/* Wide tables pan: the wrapper scrolls while the table keeps its natural
+   width — shrinking it to fit (the old max-width: 100%) only squeezed the
+   cells until nothing was readable. Narrow tables stay centred: auto margins
+   collapse to zero when the table overflows, so the first column is always
+   reachable by scrolling. (src/markdown.ts wraps every table.) */
+.preview-pane .table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.preview-pane .table-wrapper > table {
+  margin-block: 0;
+  max-width: none;
 }
 .preview-pane th,
 .preview-pane td {
