@@ -134,11 +134,11 @@ export function createTimestampPicker(): TimestampPicker {
     window.setTimeout(() => { el.remove(); cover?.remove(); }, 220);
   };
 
-  /** The current page sits one page in: instant, and a no-op when the track
-   *  already rests there. */
+  /** The current page sits two pages in (five on the track): instant, and a
+   *  no-op when the track already rests there. */
   const centerTrack = (): void => {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
-    if (viewport) viewport.scrollLeft = viewport.clientWidth;
+    if (viewport) viewport.scrollLeft = 2 * viewport.clientWidth;
   };
 
   function render(): void {
@@ -150,13 +150,13 @@ export function createTimestampPicker(): TimestampPicker {
     if (!jumping) {
       heading.textContent = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
       heading.dir = 'auto';
-      titleIndex = 1;
+      titleIndex = 2;
     }
     const chosenParts = calParts(localeTag, chosen);
     const current = viewMonth;
     const dirText = getComputedStyle(sheet).direction;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
-    track.innerHTML = [-1, 0, 1].map((offset) => {
+    track.innerHTML = [-2, -1, 0, 1, 2].map((offset) => {
       const monthDate = addMonths(current, offset);
       const days = monthDays(monthDate);
       const lead = leadCells(localeTag, monthStart(monthDate), row);
@@ -219,7 +219,7 @@ export function createTimestampPicker(): TimestampPicker {
   function turnMonth(dir: -1 | 1): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
-    viewport.scrollTo({ left: viewport.clientWidth * (1 + dir), behavior: 'smooth' });
+    viewport.scrollTo({ left: viewport.clientWidth * (2 + dir), behavior: 'smooth' });
   }
 
   /** Arrow presses landing while a turn still glides chain through the
@@ -234,12 +234,12 @@ export function createTimestampPicker(): TimestampPicker {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport || !viewMonth) return;
     const width = viewport.clientWidth;
-    const index = Math.max(0, Math.min(2, Math.round(viewport.scrollLeft / width)));
-    if (index !== 1) {
-      viewMonth = addMonths(viewMonth, index - 1);
+    const index = Math.max(0, Math.min(4, Math.round(viewport.scrollLeft / width)));
+    if (index !== 2) {
+      viewMonth = addMonths(viewMonth, index - 2);
       render();
     } else {
-      titleIndex = 1;
+      titleIndex = 2;
     }
     if (pendingTurn) {
       const dir = (pendingTurn > 0 ? 1 : -1) as -1 | 1;
@@ -248,9 +248,9 @@ export function createTimestampPicker(): TimestampPicker {
     }
   }
 
-  /** Which page's month the title is wearing (0 left, 1 centre, 2 right).
+  /** Which page's month the title is wearing (0…4, the centre is 2).
    *  render() resets it: render owns the heading. */
-  let titleIndex = 1;
+  let titleIndex = 2;
   /** The title follows the finger: the page nearest the snap point names the
    *  month *while* the track moves — not after it stops. The grid and the
    *  chips stay until the settle; the title is cheap, it may anticipate. */
@@ -260,10 +260,10 @@ export function createTimestampPicker(): TimestampPicker {
     if (!viewport || !heading || !viewMonth || jumping) return;
     const width = viewport.clientWidth;
     if (!width) return;
-    const index = Math.max(0, Math.min(2, Math.round(viewport.scrollLeft / width)));
+    const index = Math.max(0, Math.min(4, Math.round(viewport.scrollLeft / width)));
     if (index === titleIndex) return;
     titleIndex = index;
-    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, index - 1)));
+    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, index - 2)));
   }
 
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
@@ -426,7 +426,7 @@ export function createTimestampPicker(): TimestampPicker {
         jumping = false;
         const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
         const dir = Number(step.dataset.stampStep) as -1 | 1;
-        if (viewport && Math.abs(viewport.scrollLeft - viewport.clientWidth) > 2) pendingTurn += dir;
+        if (viewport && Math.abs(viewport.scrollLeft - 2 * viewport.clientWidth) > 2) pendingTurn += dir;
         else turnMonth(dir);
         return;
       }
@@ -472,13 +472,16 @@ export function createTimestampPicker(): TimestampPicker {
       sheet!.classList.add('is-open');
     });
     // The scroll itself is the gesture: the browser owns the follow-finger,
-    // the fling and the snap (one page at a time); the sheet only hears
-    // where it came to rest.
+    // the fling and the snap (one page at a time); the sheet hears where it
+    // came to rest — scrollend is rest, and a debounced scroll covers
+    // engines without it. The title follows the finger on every scroll
+    // frame. (scrollsnapchange was wrong here: it fires when the snap
+    // TARGET changes — mid-drag — and the recentre landed under the finger.)
     const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
     let settleTimer = 0;
-    viewport.addEventListener('scrollsnapchange', normalize);
+    viewport.addEventListener('scrollend', normalize);
     viewport.addEventListener('scroll', () => {
-      followTitle(); // the month name tracks the finger as it moves
+      followTitle();
       window.clearTimeout(settleTimer);
       settleTimer = window.setTimeout(normalize, 120);
     });

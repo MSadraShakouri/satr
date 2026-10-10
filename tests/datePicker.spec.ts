@@ -266,10 +266,10 @@ test('the calendar is a native snap scroller, current month centred', async ({ p
   await boot(page);
   await openPicker(page);
   await expect(viewport(page)).toHaveCSS('scroll-snap-type', /x mandatory/);
-  expect(await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).toBe(3);
-  // The centre page sits exactly one page in.
+  expect(await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).toBe(5);
+  // The centre page sits two pages in: two of runway on either side.
   const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
 });
 
 test('a fling that settles on a neighbour page turns the month', async ({ page }) => {
@@ -277,16 +277,16 @@ test('a fling that settles on a neighbour page turns the month', async ({ page }
   await openPicker(page);
   const picker = sheet(page);
   const home = await picker.locator('.timestamp-picker-month').textContent();
-  // The gesture itself is the browser's; the sheet only hears the settle.
-  // A fling to the previous page: scrollLeft 0, then the snap-change fires.
+  // The gesture itself is the browser's; the sheet only hears the settle
+  // (scrollend, or the debounced scroll). A fling to the previous page:
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = 0;
-    el.dispatchEvent(new Event('scrollsnapchange'));
+    el.scrollLeft = el.clientWidth;
+    el.dispatchEvent(new Event('scrollend'));
   });
   expect(await picker.locator('.timestamp-picker-month').textContent()).not.toBe(home);
   // Re-centred at once: the swap was invisible.
   const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
   // The visible grid IS the month before: its first day, inserted, is the 1st.
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
@@ -304,7 +304,7 @@ test('the title follows the finger: the month names itself mid-drag', async ({ p
   // A quarter of the way toward the previous page: the title already wears
   // that month — it does not wait for the track to stop.
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = Math.round(el.clientWidth * 0.25);
+    el.scrollLeft = Math.round(el.clientWidth * 1.25); // three-quarters toward the previous page
     el.dispatchEvent(new Event('scroll'));
   });
   await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
@@ -312,7 +312,34 @@ test('the title follows the finger: the month names itself mid-drag', async ({ p
   await page.waitForTimeout(220); // past the settle debounce
   await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
   const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
+});
+
+test('two quick swipes one way turn two months, no resting between', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  // The first fling lands a page over; the second starts before anything
+  // has rested (the runway is why the track carries five months).
+  await viewport(page).evaluate((el) => {
+    el.scrollLeft = 3 * el.clientWidth;
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForTimeout(220); // settle: adopt +1, re-centre
+  await viewport(page).evaluate((el) => {
+    el.scrollLeft = 3 * el.clientWidth; // again, from the fresh centre
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForTimeout(220);
+  // Two months on: the visible first, inserted, says so.
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const reached = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
+  const now = new Date();
+  expect(reached.getDate()).toBe(1);
+  const expected = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+  expect(reached.getMonth()).toBe(expected.getMonth());
+  expect(reached.getFullYear()).toBe(expected.getFullYear());
 });
 
 test('a scroll that settles where it started keeps the month', async ({ page }) => {
@@ -321,12 +348,12 @@ test('a scroll that settles where it started keeps the month', async ({ page }) 
   const picker = sheet(page);
   const home = await picker.locator('.timestamp-picker-month').textContent();
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = el.clientWidth + 40; // a nudge off the centre page
+    el.scrollLeft = 2 * el.clientWidth + 40; // a nudge off the centre page
     el.dispatchEvent(new Event('scroll'));
   });
   await page.waitForTimeout(220); // past the settle debounce
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = el.clientWidth; // back home (the snap's own decision)
+    el.scrollLeft = 2 * el.clientWidth; // back home (the snap's own decision)
     el.dispatchEvent(new Event('scroll'));
   });
   await page.waitForTimeout(220);
