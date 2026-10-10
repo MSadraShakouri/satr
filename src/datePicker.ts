@@ -211,6 +211,17 @@ export function createTimestampPicker(): TimestampPicker {
   }
 
   // ---- The month turn, shared by the arrows and the swipe ----
+  /** The settle slide still running, if any. A new turn cancels it, and a
+   *  grabbing finger does too — a quick second swipe must land on a still,
+   *  centred track, never fight an animation that owns the transform. */
+  let settle: Animation | null = null;
+  function slideTrack(track: HTMLElement, width: number, from: number, duration = 200): void {
+    settle?.cancel();
+    settle = track.animate(
+      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${-width}px)` }],
+      { duration, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
+    );
+  }
   /** Re-render on the new month, then slide from where the old one sat to
    *  the centre, so the pages pass as content, not as a fade. */
   function turnMonth(dir: -1 | 1, fromOffset?: number): void {
@@ -223,25 +234,25 @@ export function createTimestampPicker(): TimestampPicker {
     const width = viewport.clientWidth;
     // Before the re-render the old track sat at `fromOffset` pages; sliding
     // from there to the centre carries the pages across.
-    const from = fromOffset !== undefined ? fromOffset * width : (dir > 0 ? 0 : -2 * width);
-    track.animate(
-      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${-width}px)` }],
-      { duration: 200, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
-    );
+    const from = fromOffset !== undefined ? Math.max(-2, Math.min(0, fromOffset)) * width : (dir > 0 ? 0 : -2 * width);
+    slideTrack(track, width, from);
   }
 
   function bindSwipe(): void {
+    // The whole calendar — the weekday row included; a swipe may land there
+    // as well as on the grid.
+    const surface = sheet!.querySelector<HTMLElement>('.timestamp-picker-calendar')!;
     const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
     const track = () => sheet!.querySelector<HTMLElement>('.timestamp-picker-track')!;
     let drag: { id: number; x0: number; y0: number; lastX: number; lastT: number; v: number; engaged: boolean } | null = null;
     let swallowClick = false;
-    viewport.addEventListener('touchstart', (event) => {
+    surface.addEventListener('touchstart', (event) => {
       if (drag || event.touches.length !== 1) return;
       const touch = event.touches[0] as Touch & { touchType?: string };
       if (touch.touchType === 'stylus') return;
       drag = { id: touch.identifier, x0: touch.clientX, y0: touch.clientY, lastX: touch.clientX, lastT: event.timeStamp, v: 0, engaged: false };
     }, { passive: true });
-    viewport.addEventListener('touchmove', (event) => {
+    surface.addEventListener('touchmove', (event) => {
       if (!drag) return;
       const touch = [...event.touches].find((item) => item.identifier === drag!.id);
       if (!touch) return;
@@ -252,8 +263,13 @@ export function createTimestampPicker(): TimestampPicker {
       drag.lastT = event.timeStamp;
       if (!drag.engaged) {
         // Horizontal dominion only: a vertical drag keeps scrolling the sheet.
-        if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) + 6) drag.engaged = true;
-        else return;
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) + 4) {
+          drag.engaged = true;
+          // Grab a still track: a slide from an earlier turn stops here.
+          settle?.cancel();
+          settle = null;
+          track().style.transform = `translateX(${-viewport.clientWidth}px)`;
+        } else return;
       }
       event.preventDefault();
       track().style.transform = `translateX(${-viewport.clientWidth + dx}px)`;
@@ -277,16 +293,19 @@ export function createTimestampPicker(): TimestampPicker {
         const from = -width + dx;
         turnMonth(dx < 0 ? 1 : -1, from / width);
       } else {
-        // A short drag springs back to the current month.
-        track().animate(
-          [{ transform: track().style.transform || `translateX(${-width}px)` }, { transform: `translateX(${-width}px)` }],
-          { duration: 160, easing: 'ease-out' },
+        // A short drag springs back to the current month. The style parks at
+        // the centre first: when the animation ends, the style is what shows.
+        const el = track();
+        el.style.transform = `translateX(${-width}px)`;
+        settle = el.animate(
+          [{ transform: `translateX(${-width + dx}px)` }, { transform: `translateX(${-width}px)` }],
+          { duration: 200, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
         );
       }
     };
-    viewport.addEventListener('touchend', (event) => end(event, false), { passive: true });
-    viewport.addEventListener('touchcancel', (event) => end(event, true), { passive: true });
-    viewport.addEventListener('click', (event) => {
+    surface.addEventListener('touchend', (event) => end(event, false), { passive: true });
+    surface.addEventListener('touchcancel', (event) => end(event, true), { passive: true });
+    surface.addEventListener('click', (event) => {
       if (!swallowClick) return;
       event.stopImmediatePropagation();
       event.preventDefault();
@@ -322,8 +341,10 @@ export function createTimestampPicker(): TimestampPicker {
           <div class="timestamp-picker-month" data-stamp-jump role="button" tabindex="0" aria-label="Choose a month and year"></div>
           <button type="button" class="timestamp-picker-step" data-stamp-step="1" aria-label="Next month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
         </div>
-        <div class="timestamp-picker-weekdays"></div>
-        <div class="timestamp-picker-viewport"><div class="timestamp-picker-track"></div></div>
+        <div class="timestamp-picker-calendar">
+          <div class="timestamp-picker-weekdays"></div>
+          <div class="timestamp-picker-viewport"><div class="timestamp-picker-track"></div></div>
+        </div>
         <div class="timestamp-picker-time">
           <input class="timestamp-picker-field" data-stamp-hour type="number" min="0" max="23" inputmode="numeric" enterkeyhint="next" aria-label="Hour">
           <span class="timestamp-picker-colon">:</span>
@@ -380,20 +401,37 @@ export function createTimestampPicker(): TimestampPicker {
       const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport');
       const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track');
       if (!viewport || !track) return;
-      const width = viewport.clientWidth;
-      const from = delta > 0 ? 0 : -2 * width;
-      track.animate(
-        [{ transform: `translateX(${from}px)` }, { transform: `translateX(${-width}px)` }],
-        { duration: 200, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
-      );
+      slideTrack(track, viewport.clientWidth, delta > 0 ? 0 : -2 * viewport.clientWidth);
     };
     // Enter applies the jump; focus leaving the title applies it too. A mere
     // change (tabbing from the month to the year, a fill) must NOT: half a
     // date would jump the grid and tear the second field away mid-edit.
-    // The keyboard's → itself walks month → year, then stops: year and minute
-    // carry enterkeyhint="done", so the chain never wanders into the time row.
+    // The keyboard's advance key — Tab, or the IME's → — is enforced here,
+    // not trusted to enterkeyhint: some keyboards walk the focusable list no
+    // matter what the hint promises. The chain is month → year, then it
+    // applies; hour → minute, then it stops. It can never wander into the
+    // other row.
     sheet.addEventListener('keydown', (event) => {
       const target = event.target as HTMLElement;
+      if (event.key === 'Tab' || event.key === 'ArrowRight') {
+        if (jumping && target.closest('[data-stamp-jump-month]')) {
+          event.preventDefault();
+          const yearField = sheet!.querySelector<HTMLInputElement>('[data-stamp-jump-year]')!;
+          yearField.focus();
+          yearField.select();
+          return;
+        }
+        if (jumping && target.closest('[data-stamp-jump-year]')) { event.preventDefault(); applyJump(); return; }
+        if (target.closest('[data-stamp-hour]')) {
+          event.preventDefault();
+          minute.focus();
+          minute.select();
+          return;
+        }
+        // The chain's last stop: the advance key does nothing further.
+        if (target.closest('[data-stamp-minute]')) event.preventDefault();
+        return;
+      }
       if (event.key === 'Enter' || event.key === ' ') {
         if (jumping && target.closest('[data-stamp-jump-month], [data-stamp-jump-year]')) {
           if (event.key === 'Enter') { event.preventDefault(); applyJump(); }

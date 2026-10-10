@@ -1631,7 +1631,11 @@ body {
   text-align: center;
 }
 /* The three-month track: the current page centred in a one-page viewport;
-   the arrows and a horizontal swipe both slide it (src/datePicker.ts). */
+   the arrows and a horizontal swipe both slide it (src/datePicker.ts).
+   The swipe listens on the whole calendar — the weekday row included. */
+.timestamp-picker-calendar {
+  touch-action: pan-y;
+}
 .timestamp-picker-viewport {
   overflow: hidden;
   touch-action: pan-y;

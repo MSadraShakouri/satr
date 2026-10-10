@@ -255,10 +255,12 @@ test('the chips and the Insert code follow the typing live', async ({ page }) =>
 
 // ---- Gestures: the calendar turns with a swipe, not only with the arrows ----
 
-/** One finger dragged across the calendar viewport, in synthetic steps. */
-async function swipeOn(page: Page, dxs: number[]): Promise<void> {
+/** One finger dragged across the calendar, in synthetic steps. `settleWait`
+ *  is how long to let the sheet sit after the release — pass a short time to
+ *  start the next gesture while the turn is still sliding. */
+async function swipeOn(page: Page, dxs: number[], settleWait = 450): Promise<void> {
   await page.evaluate(async (dxs) => {
-    const viewport = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    const viewport = document.querySelector<HTMLElement>('.timestamp-picker-calendar')!;
     const box = viewport.getBoundingClientRect();
     const x0 = box.left + box.width / 2;
     const y0 = box.top + Math.min(80, box.height / 2);
@@ -277,7 +279,7 @@ async function swipeOn(page: Page, dxs: number[]): Promise<void> {
     }
     fire(dxs[dxs.length - 1], 'touchend', false);
   }, dxs);
-  await page.waitForTimeout(450); // the settle slide, then the re-centre
+  await page.waitForTimeout(settleWait); // the settle slide, then the re-centre
 }
 
 test('a leftward swipe on the calendar turns to the next month', async ({ page }) => {
@@ -362,4 +364,61 @@ test('the tap leaves the caret alone: the codes stay chips, and undo takes the r
   await expect(chips).toHaveCount(2);
   await page.locator('#app .cm-content').press('Control+z');
   expect(await noteText(page)).toBe(note);
+});
+
+// ---- The advance key is enforced, not trusted to enterkeyhint ----
+
+test('the advance key walks month to year and hour to minute, then stops', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  await picker.locator('[data-stamp-jump]').click();
+  const month = picker.locator('[data-stamp-jump-month]');
+  const year = picker.locator('[data-stamp-jump-year]');
+  await expect(month).toBeFocused();
+  await month.press('ArrowRight'); // some keyboards ship advance as an arrow
+  await expect(year).toBeFocused();
+  await year.press('Tab'); // the chain ends at the year: it applies, it does not wander
+  await expect(picker.locator('[data-stamp-jump-year]')).toHaveCount(0);
+  const hour = picker.locator('[data-stamp-hour]');
+  const minute = picker.locator('[data-stamp-minute]');
+  await hour.click();
+  await hour.press('Tab');
+  await expect(minute).toBeFocused();
+  await minute.press('Tab'); // the last stop: the time row holds the focus
+  await expect(minute).toBeFocused();
+});
+
+test('a swipe grabs a mid-slide track: the settle lets go, the finger follows', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const home = await picker.locator('.timestamp-picker-month').textContent();
+  await swipeOn(page, [-16, -70, -150, -230], 60); // second gesture starts mid-slide
+  const once = await picker.locator('.timestamp-picker-month').textContent();
+  expect(once).not.toBe(home);
+  const fire = (dx: number, type: string, live: boolean): Promise<void> => page.evaluate(
+    (steps) => {
+      const surface = document.querySelector<HTMLElement>('.timestamp-picker-calendar')!;
+      const box = surface.getBoundingClientRect();
+      const x0 = box.left + box.width / 2;
+      const y0 = box.top + Math.min(80, box.height / 2);
+      const touch = new Touch({ identifier: 9, target: surface, clientX: x0 + steps[0], clientY: y0, pageX: x0 + steps[0], pageY: y0 });
+      surface.dispatchEvent(new TouchEvent(steps[1], {
+        bubbles: true, cancelable: true, composed: true,
+        touches: steps[2] ? [touch] : [], targetTouches: steps[2] ? [touch] : [], changedTouches: [touch],
+      }));
+    },
+    [dx, type, live],
+  );
+  // A new finger lands while the first turn is still sliding, and drags far
+  // enough to engage.
+  await fire(0, 'touchstart', true);
+  await fire(-20, 'touchmove', true);
+  // The slide from the first turn let go of the track: nothing animates it.
+  expect(await page.evaluate(() => document.querySelector<HTMLElement>('.timestamp-picker-track')!.getAnimations().length)).toBe(0);
+  await fire(-180, 'touchmove', true);
+  await fire(-180, 'touchend', false);
+  await page.waitForTimeout(450);
+  expect(await picker.locator('.timestamp-picker-month').textContent()).not.toBe(once); // two turns from home
 });
