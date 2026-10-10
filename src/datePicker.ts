@@ -18,10 +18,16 @@ const FORMAT_LABELS: Record<TimestampFormat, string> = {
   f: 'Date and time', F: 'Full — with the weekday', R: 'Relative',
 };
 
-/** Parts of a date as the chosen calendar counts them. */
+/** Persian and Arabic-Indic digits, read as Latin ones. */
+const latinDigits = (value: string): string => value
+  .replace(/[\u06F0-\u06F9]/g, (digit) => String(digit.charCodeAt(0) - 0x06F0))
+  .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660));
+
+/** Parts of a date as the chosen calendar counts them — in numbers, whatever
+ *  digits the locale writes them with (a Jalali year is ۱۴۰۵ on paper). */
 function calParts(tag: string, date: Date): { year: number; month: number; day: number } {
   const parts = new Intl.DateTimeFormat(tag, { year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(date);
-  const read = (type: string): number => Number(parts.find((part) => part.type === type)?.value.replace(/[^0-9]/g, ''));
+  const read = (type: string): number => Number(latinDigits(parts.find((part) => part.type === type)?.value ?? ''));
   return { year: read('year'), month: read('month'), day: read('day') };
 }
 
@@ -36,8 +42,8 @@ function monthStart(date: Date): Date {
 
 function addMonths(date: Date, months: number): Date {
   let walk = monthStart(date);
-  for (; months > 0; months -= 1) { walk.setDate(walk.getDate() - 1); walk = monthStart(walk); }
-  for (; months < 0; months += 1) { walk.setDate(walk.getDate() + 40); walk = monthStart(walk); }
+  for (; months > 0; months -= 1) { walk.setDate(walk.getDate() + 40); walk = monthStart(walk); }
+  for (; months < 0; months += 1) { walk.setDate(walk.getDate() - 1); walk = monthStart(walk); }
   return walk;
 }
 
@@ -98,6 +104,11 @@ export function createTimestampPicker(): TimestampPicker {
    *  edited chip keeps the seconds it had — until the writer touches the
    *  time themselves, which is theirs to round. */
   let seededSeconds: number | null = null;
+  /** The month title replaced by month/year inputs, until applied or left. */
+  let jumping = false;
+  /** Sheets fading out after a close: a fresh open sweeps them out of the
+   *  DOM at once, so nothing half-transparent is left catching taps. */
+  const fading: HTMLElement[] = [];
 
   const tag = timestampLocaleTag;
   const number = (value: number): string => new Intl.NumberFormat(tag()).format(value);
@@ -107,6 +118,8 @@ export function createTimestampPicker(): TimestampPicker {
     sheet = null; backdrop = null; onInsert = null;
     el.classList.add('is-closing');
     cover?.classList.remove('is-open');
+    fading.push(el);
+    if (cover) fading.push(cover);
     window.setTimeout(() => { el.remove(); cover?.remove(); }, 220);
   };
 
@@ -119,8 +132,10 @@ export function createTimestampPicker(): TimestampPicker {
     const lead = leadCells(localeTag, first, row);
     const title = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
     const heading = sheet.querySelector<HTMLElement>('.timestamp-picker-month')!;
-    heading.textContent = title;
-    heading.dir = 'auto';
+    if (!jumping) {
+      heading.textContent = title;
+      heading.dir = 'auto';
+    }
     const weekdays = sheet.querySelector<HTMLElement>('.timestamp-picker-weekdays')!;
     weekdays.innerHTML = row.map((name) => `<span>${escapeHtml(name)}</span>`).join('');
     weekdays.dir = 'auto';
@@ -142,22 +157,45 @@ export function createTimestampPicker(): TimestampPicker {
     });
     const insert = sheet.querySelector<HTMLButtonElement>('[data-stamp-insert]')!;
     insert.textContent = `<${code(unix)}>`;
+    syncTime();
   }
 
   const code = (unix: number): string => (format === 'f' ? `t:${unix}` : `t:${unix}:${format}`);
+  /** What the time fields say right now, and whether it is a real time.
+   *  Empty or impossible (25 o'clock, 99 minutes) is invalid, live. */
+  function timeState(): { hour: number; minute: number; valid: boolean } {
+    const hourField = sheet?.querySelector<HTMLInputElement>('[data-stamp-hour]');
+    const minuteField = sheet?.querySelector<HTMLInputElement>('[data-stamp-minute]');
+    const hourRaw = hourField?.value.trim() ?? '';
+    const minuteRaw = minuteField?.value.trim() ?? '';
+    const hour = Number(hourRaw);
+    const minute = Number(minuteRaw);
+    const valid = hourRaw !== '' && minuteRaw !== ''
+      && Number.isInteger(hour) && Number.isInteger(minute)
+      && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+    return { hour, minute, valid };
+  }
   const unixOf = (date: Date): number => {
     const at = new Date(date);
-    const hour = Number(sheet?.querySelector<HTMLInputElement>('[data-stamp-hour]')?.value ?? at.getHours());
-    const minute = Number(sheet?.querySelector<HTMLInputElement>('[data-stamp-minute]')?.value ?? at.getMinutes());
-    at.setHours(
-      Number.isFinite(hour) ? Math.min(23, Math.max(0, hour)) : 0,
-      Number.isFinite(minute) ? Math.min(59, Math.max(0, minute)) : 0,
-      seededSeconds ?? 0, 0);
+    const { hour, minute } = timeState();
+    at.setHours(Math.min(23, Math.max(0, hour)), Math.min(59, Math.max(0, minute)), seededSeconds ?? 0, 0);
     return Math.floor(at.getTime() / 1000);
   };
+  /** Refuse an impossible time at once: the field reddens, Insert greys out. */
+  function syncTime(): void {
+    if (!sheet) return;
+    const { valid } = timeState();
+    sheet.querySelector<HTMLInputElement>('[data-stamp-hour]')?.classList.toggle('is-invalid', !valid);
+    sheet.querySelector<HTMLInputElement>('[data-stamp-minute]')?.classList.toggle('is-invalid', !valid);
+    const insert = sheet.querySelector<HTMLButtonElement>('[data-stamp-insert]');
+    if (insert) insert.disabled = !valid;
+  }
 
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
-    close();
+    // A second open (a double-tap on the toolbar) replaces the sheet at once:
+    // no fading copy may linger in the DOM to catch the next tap or locator.
+    if (sheet) { sheet.remove(); backdrop?.remove(); sheet = null; backdrop = null; onInsert = null; }
+    for (const el of fading.splice(0)) el.remove();
     if (isMenuOpen()) closeMenu();
     onInsert = options.onInsert;
     format = options.initial?.format ?? 'f';
@@ -178,7 +216,7 @@ export function createTimestampPicker(): TimestampPicker {
       <div class="menu-scroll">
         <div class="timestamp-picker-head">
           <button type="button" class="timestamp-picker-step" data-stamp-step="-1" aria-label="Previous month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
-          <div class="timestamp-picker-month"></div>
+          <div class="timestamp-picker-month" data-stamp-jump role="button" tabindex="0" aria-label="Choose a month and year"></div>
           <button type="button" class="timestamp-picker-step" data-stamp-step="1" aria-label="Next month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
         </div>
         <div class="timestamp-picker-weekdays"></div>
@@ -203,12 +241,56 @@ export function createTimestampPicker(): TimestampPicker {
     hour.value = String(start.getHours());
     minute.value = String(start.getMinutes());
     sheet.addEventListener('input', (event) => {
-      if ((event.target as HTMLElement).closest('.timestamp-picker-time')) seededSeconds = null;
+      if ((event.target as HTMLElement).closest('.timestamp-picker-time')) {
+        seededSeconds = null;
+        // Live: the chips and the Insert code re-word on every keystroke,
+        // an impossible time reddens its field and greys Insert out.
+        render();
+      }
+    });
+    // The month title, tapped: two fields in the calendar's own count.
+    const enterJump = (): void => {
+      const heading = sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!;
+      const parts = calParts(tag(), monthStart(viewMonth!));
+      jumping = true;
+      heading.innerHTML = '<input class="timestamp-picker-field timestamp-picker-jump-month" data-stamp-jump-month type="number" min="1" max="12" aria-label="Month" placeholder="M">'
+        + '<input class="timestamp-picker-field timestamp-picker-jump-year" data-stamp-jump-year type="number" min="1" max="9999" aria-label="Year" placeholder="YYYY">';
+      const monthField = heading.querySelector<HTMLInputElement>('[data-stamp-jump-month]')!;
+      monthField.value = String(parts.month);
+      heading.querySelector<HTMLInputElement>('[data-stamp-jump-year]')!.value = String(parts.year);
+      monthField.focus();
+      monthField.select();
+    };
+    const applyJump = (): void => {
+      if (!jumping || !sheet) return;
+      const month = Number(sheet.querySelector<HTMLInputElement>('[data-stamp-jump-month]')?.value);
+      const year = Number(sheet.querySelector<HTMLInputElement>('[data-stamp-jump-year]')?.value);
+      if (!Number.isInteger(month) || !Number.isInteger(year) || month < 1 || month > 12 || year < 1) return;
+      const parts = calParts(tag(), monthStart(viewMonth!));
+      const delta = (year - parts.year) * 12 + (month - parts.month);
+      if (delta) viewMonth = addMonths(viewMonth!, delta);
+      jumping = false;
+      render();
+    };
+    // Enter applies the jump; focus leaving the title applies it too. A mere
+    // change (tabbing from the month to the year, a fill) must NOT: half a
+    // date would jump the grid and tear the second field away mid-edit.
+    sheet.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      if ((event.target as HTMLElement).closest('[data-stamp-jump-month], [data-stamp-jump-year]')) { event.preventDefault(); applyJump(); }
+    });
+    sheet.addEventListener('focusout', (event) => {
+      if (!jumping) return;
+      const to = event.relatedTarget as Node | null;
+      const heading = sheet!.querySelector('.timestamp-picker-month');
+      if (!to || !(to instanceof Node && heading?.contains(to))) applyJump();
     });
     sheet.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
       const step = target.closest<HTMLElement>('[data-stamp-step]');
-      if (step) { viewMonth = addMonths(viewMonth!, Number(step.dataset.stampStep)); render(); return; }
+      if (step) { jumping = false; viewMonth = addMonths(viewMonth!, Number(step.dataset.stampStep)); render(); return; }
+      if (target.closest('[data-stamp-jump-month], [data-stamp-jump-year]')) return;
+      if (target.closest('[data-stamp-jump]')) { enterJump(); return; }
       if (target.closest('[data-stamp-now]')) {
         const now = new Date();
         seededSeconds = now.getSeconds();

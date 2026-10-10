@@ -147,3 +147,108 @@ test('Escape and the backdrop close the sheet, writing nothing', async ({ page }
   await expect(sheet(page)).toHaveCount(0);
   expect(await noteText(page)).toBe(NOTE);
 });
+
+test('the month arrows step the way they point', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  // Right = next month: its 1st, inserted.
+  await picker.locator('[data-stamp-step="1"]').click();
+  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const nextCode = /<t:(\d{1,15})>/.exec(await noteText(page))!;
+  const next = new Date(Number(nextCode[1]) * 1000);
+  const now = new Date();
+  expect(next.getDate()).toBe(1);
+  expect(next.getMonth()).toBe((now.getMonth() + 1) % 12);
+  // Left = the month before: its 1st.
+  await openPicker(page);
+  await sheet(page).locator('[data-stamp-step="-1"]').click();
+  await sheet(page).locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await sheet(page).locator('[data-stamp-insert]').click();
+  const codes = [...(await noteText(page)).matchAll(/<t:(\d{1,15})>/g)].map((m) => Number(m[1]));
+  const previous = new Date(codes[codes.length - 1] * 1000);
+  expect(previous.getDate()).toBe(1);
+  expect(previous.getMonth()).toBe((now.getMonth() + 11) % 12);
+});
+
+test('the title opens a month and year box, in the calendar the grid is wearing', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  await picker.locator('[data-stamp-jump]').click();
+  await picker.locator('[data-stamp-jump-month]').fill('1');
+  await picker.locator('[data-stamp-jump-year]').fill('2030');
+  await picker.locator('[data-stamp-jump-year]').press('Enter');
+  // The grid followed: January 2030 — the title says so, and the 1st is real.
+  await expect(picker.locator('.timestamp-picker-month')).toContainText('2030');
+  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const jumped = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
+  expect(jumped.getUTCFullYear()).toBe(2030);
+  expect(jumped.getUTCMonth()).toBe(0);
+  expect(jumped.getUTCDate()).toBe(1);
+});
+
+test('the jump box counts in Jalali when the grid does', async ({ page }) => {
+  await boot(page, { timestampLocale: 'fa', timestampCalendar: 'auto' });
+  await openPicker(page);
+  const picker = sheet(page);
+  await picker.locator('[data-stamp-jump]').click();
+  // Farvardin 1400 — Jalali New Year, 21 March 2021.
+  await picker.locator('[data-stamp-jump-month]').fill('1');
+  await picker.locator('[data-stamp-jump-year]').fill('1400');
+  await picker.locator('[data-stamp-jump-year]').press('Enter');
+  await picker.locator('.timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const jumped = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
+  const newYear = Date.UTC(2021, 2, 21);
+  expect(Math.abs(jumped.getTime() - newYear)).toBeLessThan(36 * 3600 * 1000);
+});
+
+test('an impossible time is refused live, a keystroke fixes it', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const insert = picker.locator('[data-stamp-insert]');
+  const hour = picker.locator('[data-stamp-hour]');
+  const minute = picker.locator('[data-stamp-minute]');
+  await hour.fill('25');
+  await expect(insert).toBeDisabled();
+  await expect(hour).toHaveClass(/is-invalid/);
+  await minute.fill('99');
+  await expect(insert).toBeDisabled();
+  await expect(minute).toHaveClass(/is-invalid/);
+  await hour.fill('9');
+  await minute.fill('30');
+  await expect(hour).not.toHaveClass(/is-invalid/);
+  await expect(insert).toBeEnabled();
+  // A cleared field is refused too.
+  await minute.fill('');
+  await expect(insert).toBeDisabled();
+  await minute.fill('05'); // a leading zero is still a real minute
+  await expect(insert).toBeEnabled();
+  // What lands is exactly the time shown.
+  await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
+  await picker.locator('[data-stamp-insert]').click();
+  const at = new Date(Number(/<t:(\d{1,15}):T>/.exec(await noteText(page))![1]) * 1000);
+  expect(at.getHours()).toBe(9);
+  expect(at.getMinutes()).toBe(5);
+});
+
+test('the chips and the Insert code follow the typing live', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
+  await picker.locator('[data-stamp-hour]').fill('9');
+  await picker.locator('[data-stamp-minute]').fill('5');
+  const sample = picker.locator('.timestamp-picker-format[data-stamp-format="T"] .timestamp-picker-format-sample');
+  await expect(sample).toHaveText(/9:05:00/);
+  // The button says the exact code the moment carries now.
+  await expect(picker.locator('[data-stamp-insert]')).toHaveText(/<t:\d{1,15}:T>/);
+  const before = await picker.locator('[data-stamp-insert]').textContent();
+  await picker.locator('[data-stamp-minute]').fill('45');
+  await expect(picker.locator('[data-stamp-insert]')).not.toHaveText(before!);
+  await expect(sample).toHaveText(/9:45:00/);
+});

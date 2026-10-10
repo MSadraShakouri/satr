@@ -20,8 +20,8 @@ export const TIMESTAMP_LOCALES: Array<[string, string]> = [
   ['en', 'English'],
   ['fa', 'فارسی'],
   ['ar', 'العربية'],
-  ['de', 'Deutsch'],
-  ['fr', 'Français'],
+  ['es', 'Español'],
+  ['zh', '中文'],
 ];
 
 /** The calendars Settings → Dates offers. 'auto' is the language's own

@@ -98,8 +98,8 @@ test('a relative timestamp counts down while it is on screen', async ({ page }) 
 // ---- Settings → Dates: whose words, which calendar ----
 
 test.describe('the date style', () => {
-  // The device says German here: the timestamps must not listen to it.
-  test.use({ locale: 'de-DE' });
+  // The browser says Chinese here: the timestamps must not listen to it.
+  test.use({ locale: 'zh-CN' });
 
   test('by default the words follow the app language, never the device', async ({ page }) => {
     await page.goto('/');
@@ -107,7 +107,7 @@ test.describe('the date style', () => {
       const { formatTimestamp } = await window.__satr.load('/src/timestamps.ts');
       return formatTimestamp(1700000000, 'd');
     });
-    // English order (M/D/Y), not German (D.M.Y).
+    // English order (M/D/Y), not Chinese (Y/M/D).
     expect(out).toBe('11/14/2023');
   });
 

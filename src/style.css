@@ -1676,6 +1676,32 @@ body {
 .timestamp-picker-colon {
   color: var(--text-muted);
 }
+.timestamp-picker-month {
+  padding: 4px 10px;
+  border-radius: 10px;
+  color: var(--text-normal);
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.timestamp-picker-month input {
+  font-weight: 400;
+}
+.timestamp-picker-month:active {
+  background: var(--background-modifier-hover);
+}
+.timestamp-picker-month input {
+  width: 4.5em;
+  text-align: center;
+}
+.timestamp-picker-field.is-invalid {
+  border-color: #e93147;
+  color: #e93147;
+}
+.timestamp-picker-insert:disabled {
+  opacity: 0.45;
+}
 .timestamp-picker-now {
   padding: 7px 14px;
   margin-inline-start: 8px;
