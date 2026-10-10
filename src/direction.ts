@@ -150,7 +150,10 @@ function proseText(element: Element): string {
 
 /** The same policy over semantic blocks, before HTML is shared by preview
  * and PDF. Explicit user dir attributes are honoured. Containers follow
- * their first directional child so list markers/quote borders match too. */
+ * their first directional child so list markers/quote borders match too.
+ * The table element carries its own dir (its first cell's): a table's
+ * column order follows the note, and the attribute — unlike the section
+ * wrappers it sits in — survives the print path, which unwraps sections. */
 export function applyReadingDirections(root: HTMLElement): void {
   const nodes = [...root.querySelectorAll<HTMLElement>(`${BLOCKS},pre,.math-display`)];
   const leaves = nodes.filter((el) => !el.parentElement?.closest('pre,code,.math-display,.math-flow,.katex')
@@ -176,7 +179,7 @@ export function applyReadingDirections(root: HTMLElement): void {
   });
   const directions = resolveDirections(withCarried(units));
   leaves.forEach((el, index) => el.setAttribute('dir', ownDirections[index] ?? directions[starts[index]]));
-  for (const el of [...root.querySelectorAll<HTMLElement>('li,blockquote,ul,ol,.md-section')].reverse()) {
+  for (const el of [...root.querySelectorAll<HTMLElement>('li,blockquote,ul,ol,table,.md-section')].reverse()) {
     if (el.getAttribute('dir') === 'ltr' || el.getAttribute('dir') === 'rtl') continue;
     el.setAttribute('dir', el.querySelector('[dir]')?.getAttribute('dir') ?? strongDirection(proseText(el)) ?? 'ltr');
   }

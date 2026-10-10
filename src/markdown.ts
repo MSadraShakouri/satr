@@ -123,6 +123,9 @@ marked.use({
 // the space's notes, dims the broken ones and opens the rest on tap.
 // Images: ![alt](src) and ![[name.png]] become centred pictures, loaded by
 // src/images.ts; "|300" or "|300x200" after the alt text or name sets the size.
+// A table's own direction: `<!-- table: rtl -->`, `<!-- table: ltr -->` or
+// `<!-- table: auto -->` on the line just above the table.
+export const TABLE_DIRECTIVE = /^\s*<!--\s*table:\s*(rtl|ltr|auto)\s*-->\s*$/i;
 const WIKI = /^(!?)\[\[([^\[\]|#\n]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?\]\]/;
 // <img> for src/images.ts to fill in. "alt|300" / "alt|300x200" (or just
 // "300") sets the width (and height), as in Obsidian.
@@ -268,6 +271,31 @@ export function renderMarkdown(source: string): string {
     sections.push({ html: marked.parser(single), token, start, end: line });
   }
   const sourceLine = (transformed: number): number => origin[Math.min(transformed, origin.length - 1)] ?? transformed;
+  // A `<!-- table: rtl -->` (or ltr / auto) comment on the line just above a
+  // table sets that whole table's direction — the entire table, column order
+  // included, not the per-cell `:---` alignment. The comment renders as
+  // nothing (on GitHub too), and without one the table follows the note like
+  // any other block (src/direction.ts). Only the last comment before the
+  // table counts; one that isn't followed by a table stays an invisible
+  // comment. `tableDirs` is indexed in table order, like the DOM pass below.
+  const tableDirs: Array<'ltr' | 'rtl' | undefined> = [];
+  const consumedDirectives: Array<{ token: Token; html: string; start: number; end: number }> = [];
+  for (let index = 0; index < sections.length; index += 1) {
+    const section = sections[index];
+    const directive = section.token.type === 'html' ? TABLE_DIRECTIVE.exec(section.token.raw ?? '') : null;
+    if (directive) {
+      const word = directive[1].toLowerCase();
+      const next = sections[index + 1];
+      if (next?.token.type === 'table') {
+        tableDirs.push(word === 'rtl' ? 'rtl' : word === 'ltr' ? 'ltr' : undefined);
+        consumedDirectives.push(section);
+        index += 1; // the table itself is handled when the loop reaches it
+      }
+      continue;
+    }
+    if (section.token.type === 'table') tableDirs.push(undefined);
+  }
+  for (const spent of consumedDirectives) sections.splice(sections.indexOf(spent), 1);
   const html = sections.map((section, index) => `<div class="md-section" data-sec="${index}">${section.html}</div>`).join('')
     + footnotesSectionHtml();
 
@@ -310,13 +338,29 @@ export function renderMarkdown(source: string): string {
     const start = Number(list.getAttribute('start') ?? '1') || 1;
     list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(start + itemIndex)));
   });
+  let domTables = 0;
   document.querySelectorAll('table').forEach((table, tableIndex) => {
+    domTables += 1;
     const firstRow = table.querySelector<HTMLTableRowElement>('thead tr');
     if (firstRow && [...firstRow.cells].every((cell) => !cell.textContent?.trim())) firstRow.remove();
+    // A whole-table direction set by hand: `<!-- table: rtl -->` (or ltr /
+    // auto) on the line just above the table. `applyReadingDirections` gives
+    // the table its own dir from its first cell; an explicit one wins. The
+    // directives were counted over top-level sections only, so they are
+    // applied only when the DOM holds exactly that many tables — a table
+    // nested in a list would otherwise take the next table's comment.
+    const manual = domTables === tableDirs.length ? tableDirs[tableIndex] : undefined;
+    if (manual === 'ltr' || manual === 'rtl') table.setAttribute('dir', manual);
     const alignments = tableAlignments[tableIndex] ?? [];
     table.querySelectorAll('tr').forEach((row) => row.querySelectorAll('th,td').forEach((cell, cellIndex) => {
       if (alignments[cellIndex]) cell.setAttribute('data-table-align', alignments[cellIndex]);
     }));
+    // Wide tables pan inside a wrapper; the table itself is never clipped and
+    // keeps its own width (src/style.css: .table-wrapper).
+    const wrapper = document.createElement('div');
+    wrapper.className = 'table-wrapper';
+    table.replaceWith(wrapper);
+    wrapper.appendChild(table);
   });
   // Marked can leave bare prose beside a display formula. Give these
   // fragments their own direction just like an ordinary paragraph.
