@@ -150,6 +150,7 @@ export function createTimestampPicker(): TimestampPicker {
     if (!jumping) {
       heading.textContent = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
       heading.dir = 'auto';
+      titleIndex = 1;
     }
     const chosenParts = calParts(localeTag, chosen);
     const current = viewMonth;
@@ -237,12 +238,32 @@ export function createTimestampPicker(): TimestampPicker {
     if (index !== 1) {
       viewMonth = addMonths(viewMonth, index - 1);
       render();
+    } else {
+      titleIndex = 1;
     }
     if (pendingTurn) {
       const dir = (pendingTurn > 0 ? 1 : -1) as -1 | 1;
       pendingTurn -= dir;
       turnMonth(dir);
     }
+  }
+
+  /** Which page's month the title is wearing (0 left, 1 centre, 2 right).
+   *  render() resets it: render owns the heading. */
+  let titleIndex = 1;
+  /** The title follows the finger: the page nearest the snap point names the
+   *  month *while* the track moves — not after it stops. The grid and the
+   *  chips stay until the settle; the title is cheap, it may anticipate. */
+  function followTitle(): void {
+    const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
+    const heading = sheet?.querySelector<HTMLElement>('.timestamp-picker-month');
+    if (!viewport || !heading || !viewMonth || jumping) return;
+    const width = viewport.clientWidth;
+    if (!width) return;
+    const index = Math.max(0, Math.min(2, Math.round(viewport.scrollLeft / width)));
+    if (index === titleIndex) return;
+    titleIndex = index;
+    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, index - 1)));
   }
 
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
@@ -309,7 +330,7 @@ export function createTimestampPicker(): TimestampPicker {
           const nextFor = el.closest('[data-stamp-jump-month]') ? '[data-stamp-jump-year]'
             : el.closest('[data-stamp-hour]') ? '[data-stamp-minute]' : null;
           const next = nextFor ? sheet!.querySelector<HTMLInputElement>(nextFor) : null;
-          if (next) { next.focus(); next.select(); }
+          if (next) next.focus();
           else if (el.closest('[data-stamp-minute]')) sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus();
         }
       }
@@ -331,7 +352,6 @@ export function createTimestampPicker(): TimestampPicker {
       monthField.value = String(parts.month);
       heading.querySelector<HTMLInputElement>('[data-stamp-jump-year]')!.value = String(parts.year);
       monthField.focus();
-      monthField.select();
     };
     const applyJump = (): void => {
       if (!jumping || !sheet) return;
@@ -359,13 +379,6 @@ export function createTimestampPicker(): TimestampPicker {
       if (reentry && el.closest?.('.timestamp-picker-time')) {
         sheet?.querySelector<HTMLElement>('.timestamp-picker-month')?.focus();
       }
-      // A field taking the focus takes it whole: typing replaces, the way
-      // time pickers read — the fields are pre-filled. Only when the focus
-      // stayed: selecting a field the guard just bounced would steal the
-      // focus straight back (and bounce again, forever).
-      if (el.matches?.('[data-stamp-hour], [data-stamp-minute], [data-stamp-jump-month], [data-stamp-jump-year]') && document.activeElement === el) {
-        (el as HTMLInputElement).select();
-      }
     });
     // Enter decides the chain: the catchable action key arrives as Enter
     // (enterkeyhint only labels it), and each field's Enter moves where the
@@ -380,9 +393,7 @@ export function createTimestampPicker(): TimestampPicker {
       if (jumping && target.closest('[data-stamp-jump-month]')) {
         if (event.key === 'Enter') {
           event.preventDefault();
-          const yearField = sheet!.querySelector<HTMLInputElement>('[data-stamp-jump-year]')!;
-          yearField.focus();
-          yearField.select();
+          sheet!.querySelector<HTMLInputElement>('[data-stamp-jump-year]')!.focus();
         }
         return;
       }
@@ -393,7 +404,6 @@ export function createTimestampPicker(): TimestampPicker {
       if (event.key === 'Enter' && target.closest('[data-stamp-hour]')) {
         event.preventDefault();
         minute.focus();
-        minute.select();
         return;
       }
       if (event.key === 'Enter' && target.closest('[data-stamp-minute]')) {
@@ -411,11 +421,6 @@ export function createTimestampPicker(): TimestampPicker {
     });
     sheet.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
-      // A tap on a field selects it whole — after the tap's own caret
-      // placement, which is why focusin's select is not enough. Typing
-      // replaces, the way time pickers read.
-      const field = target.closest<HTMLInputElement>('[data-stamp-hour], [data-stamp-minute], [data-stamp-jump-month], [data-stamp-jump-year]');
-      if (field) { field.select(); return; }
       const step = target.closest<HTMLElement>('[data-stamp-step]');
       if (step) {
         jumping = false;
@@ -473,6 +478,7 @@ export function createTimestampPicker(): TimestampPicker {
     let settleTimer = 0;
     viewport.addEventListener('scrollsnapchange', normalize);
     viewport.addEventListener('scroll', () => {
+      followTitle(); // the month name tracks the finger as it moves
       window.clearTimeout(settleTimer);
       settleTimer = window.setTimeout(normalize, 120);
     });

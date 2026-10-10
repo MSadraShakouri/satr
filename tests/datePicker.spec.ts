@@ -296,6 +296,25 @@ test('a fling that settles on a neighbour page turns the month', async ({ page }
   expect(previous.getMonth()).toBe((now.getMonth() + 11) % 12);
 });
 
+test('the title follows the finger: the month names itself mid-drag', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const home = await picker.locator('.timestamp-picker-month').textContent();
+  // A quarter of the way toward the previous page: the title already wears
+  // that month — it does not wait for the track to stop.
+  await viewport(page).evaluate((el) => {
+    el.scrollLeft = Math.round(el.clientWidth * 0.25);
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
+  // And when the track settles there, it stays that month, re-centred.
+  await page.waitForTimeout(220); // past the settle debounce
+  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
+  const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
+  expect(Math.abs(left - width)).toBeLessThanOrEqual(2);
+});
+
 test('a scroll that settles where it started keeps the month', async ({ page }) => {
   await boot(page);
   await openPicker(page);
@@ -398,13 +417,15 @@ test('two digits advance by themselves: month, hour, and done on the minute', as
   const month = picker.locator('[data-stamp-jump-month]');
   const year = picker.locator('[data-stamp-jump-year]');
   await expect(month).toBeFocused();
+  await month.fill(''); // the writer backspaces the pre-filled month
   await month.type('1');
   await expect(year).not.toBeFocused(); // "1" may still become "12"
   await month.type('2'); // "12": the month is full — the year is next
   await expect(year).toBeFocused();
-  await year.type('203'); // four digits is a year, not a trigger: no advance
+  await year.fill('');
+  await year.type('203'); // three digits may still grow: no advance
+  await year.type('0'); // 2030, full but a year: no advance, Enter applies
   await expect(year).toBeFocused();
-  await year.type('0'); // 2030, still no advance: Enter applies
   await year.press('Enter');
   await expect(picker.locator('[data-stamp-jump-year]')).toHaveCount(0);
   // The post-apply guard shields the time row for a beat; let it rest.
@@ -412,11 +433,12 @@ test('two digits advance by themselves: month, hour, and done on the minute', as
   // The time row: 2 digits in the hour hop to the minute, 2 in the minute close.
   const hour = picker.locator('[data-stamp-hour]');
   const minute = picker.locator('[data-stamp-minute]');
-  await hour.click();
+  await hour.fill('');
   await hour.type('9');
   await expect(minute).not.toBeFocused();
   await hour.type('5'); // 95 is impossible — but the field is full; the chain moves
   await expect(minute).toBeFocused();
+  await minute.fill('');
   await minute.type('3');
   await expect(minute).toBeFocused();
   await minute.type('0'); // 30: done — the keyboard lands on the title
@@ -451,7 +473,7 @@ test('junk keys meet digits-only fields; typing replaces the pre-filled value', 
   await openPicker(page);
   const picker = sheet(page);
   const hour = picker.locator('[data-stamp-hour]');
-  await hour.click(); // takes the field whole: the current time is selected
+  await hour.fill('');
   await hour.pressSequentially('2a5'); // "a" meets the digits-only field and dies
   await expect(hour).toHaveValue('25');
   await expect(picker.locator('[data-stamp-minute]')).toBeFocused(); // full: the chain moves
