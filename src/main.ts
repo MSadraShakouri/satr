@@ -2441,40 +2441,56 @@ window.visualViewport?.addEventListener('resize', layoutToolbar);
 window.visualViewport?.addEventListener('scroll', layoutToolbar);
 window.addEventListener('resize', layoutToolbar);
 
-// The sheet's place under the keyboard: --keyboard-lift is how much of the
-// page the keyboard covers (0 when it is down) and --sheet-room the height it
-// leaves above it, so a bottom sheet sits on top of the keyboard instead of
-// behind it (src/style.css: .menu.mod-bottom-sheet). The lift follows every
-// viewport event — the sheet slides with the keyboard — while the room is
-// written once the keyboard has settled, so the sheet's height does not churn
-// through the animation.
+// The sheet's place under the keyboard. The keyboard floats over the page
+// (interactive-widget=resizes-visual, index.html): nothing resizes — not the
+// page, and not a sheet, whose box keeps its height and its content where they
+// were. --keyboard-lift is the covered height (0 when the keyboard is down),
+// and each open bottom sheet gets a --sheet-lift: it follows the keyboard up
+// as far as it can without climbing off the top of the screen, and the
+// keyboard covers what is left. Both are written in the same frame as the
+// event that changed them — nothing is corrected on a later beat than the
+// motion it answers.
 let sheetRoomTimer: number | undefined;
 function layoutKeyboardInset(): void {
-  const lift = Math.round(keyboardOverlap());
+  const viewport = window.visualViewport;
+  const visibleHeight = viewport?.height ?? window.innerHeight;
+  const visibleTop = viewport?.offsetTop ?? 0;
+  const lift = Math.max(0, Math.round(window.innerHeight - (visibleTop + visibleHeight)));
+  const room = Math.max(0, Math.round(window.innerHeight - lift)); // where the visible area ends
   const root = document.documentElement.style;
   root.setProperty('--keyboard-lift', `${lift}px`);
+  for (const sheet of document.querySelectorAll<HTMLElement>('.menu.mod-bottom-sheet')) {
+    const risen = Math.min(lift, Math.max(0, room - sheet.offsetHeight));
+    sheet.style.setProperty('--sheet-lift', `${risen}px`);
+  }
   window.clearTimeout(sheetRoomTimer);
-  sheetRoomTimer = window.setTimeout(() => {
-    root.setProperty('--sheet-room', `${Math.max(0, Math.round(window.innerHeight - lift))}px`);
-    keepFocusedFieldVisible();
-  }, 120);
+  sheetRoomTimer = window.setTimeout(keepFocusedFieldVisible, 120);
 }
-// A field inside a bottom sheet stays above the keyboard too: when the room
-// settles, the focused field is brought back into view — inside the sheet's
-// own scroll, where the finger left it, and not a pixel when it already shows
-// (scrollIntoView's "nearest" does nothing then). The editor is left alone:
-// its caret has its own story (layoutToolbar).
+// The field the finger is in, above the keys: a sheet that could not move (no
+// room above it) or a keyboard taller than the room it left would otherwise
+// keep the focused row underneath. The scroll happens inside the sheet's own
+// scroll container, by the smallest distance, once the keyboard has settled —
+// never mid-motion, and never in the editor, whose caret has its own story
+// (revealSoon, layoutToolbar).
 function keepFocusedFieldVisible(): void {
   const active = document.activeElement as HTMLElement | null;
-  if (!active?.closest('.mod-bottom-sheet')) return;
-  if (!document.body.classList.contains('keyboard-up')) return;
-  active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const scroller = active?.closest<HTMLElement>('.menu-scroll');
+  const viewport = window.visualViewport;
+  if (!active || !scroller || !viewport) return;
+  const visibleBottom = viewport.offsetTop + viewport.height;
+  const over = active.getBoundingClientRect().bottom - (visibleBottom - 8);
+  if (over > 0) scroller.scrollTop += over;
 }
 window.visualViewport?.addEventListener('resize', layoutKeyboardInset);
 window.visualViewport?.addEventListener('scroll', layoutKeyboardInset);
 window.addEventListener('resize', layoutKeyboardInset);
 layoutKeyboardInset();
-document.addEventListener('focusin', () => window.requestAnimationFrame(layoutToolbar));
+document.addEventListener('focusin', () => {
+  window.requestAnimationFrame(layoutToolbar);
+  // A field tapped while the keyboard is already up can sit under it: give the
+  // platform's own reveal a beat, then bring it above the keys if it did not.
+  window.setTimeout(keepFocusedFieldVisible, 200);
+});
 document.addEventListener('focusout', () => window.setTimeout(layoutToolbar, 50));
 // Never take focus from the editor (that would close the keyboard).
 toolbar.addEventListener('pointerdown', (event) => event.preventDefault());

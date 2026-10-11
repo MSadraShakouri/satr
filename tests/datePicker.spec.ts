@@ -800,12 +800,21 @@ test('switching calendars keeps both names put: only the highlight moves', async
   expect(persian.title).not.toBe(gregorian.title); // while the grid really did switch
 });
 
-test('a keyboard over the page lifts the sheet onto it, and it comes back down', async ({ page }) => {
+test('a keyboard over the page never resizes the sheet, nor pushes it off the top', async ({ page }) => {
   await boot(page);
   await openPicker(page);
   const picker = sheet(page);
   await expect(picker).toHaveClass(/is-open/);
   await page.waitForTimeout(400); // the slide-in settles
+  // The box keeps its size with the keyboard up, whatever the keyboard does to
+  // the page: that is what index.html's interactive-widget=resizes-visual is
+  // for, and what the sheet must never need again.
+  const meta = await page.evaluate(() => document.querySelector('meta[name="viewport"]')!.getAttribute('content')!);
+  expect(meta).toContain('interactive-widget=resizes-visual');
+  const rest = await page.evaluate(() => {
+    const rect = (document.querySelector('.timestamp-picker') as HTMLElement).getBoundingClientRect();
+    return { width: rect.width, height: rect.height, top: rect.top };
+  });
   await picker.locator('[data-stamp-hour]').click(); // a field focused: the on-screen keyboard is coming
   // Chrome's default: the keyboard covers the page and only the visual viewport
   // shrinks (a page zoom does the same thing to the same numbers).
@@ -820,21 +829,25 @@ test('a keyboard over the page lifts the sheet onto it, and it comes back down',
     return {
       visibleBottom: vv.offsetTop + vv.height,
       lift: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')),
-      top: rect.top, bottom: rect.bottom, height: rect.height,
+      width: rect.width, height: rect.height, top: rect.top,
       hourBottom: hour.getBoundingClientRect().bottom,
     };
   });
   expect(raised.lift).toBeGreaterThan(120); // the keyboard is up, and the app knows it
-  expect(raised.bottom).toBeLessThanOrEqual(raised.visibleBottom + 1); // the sheet sits on top of it,
-  expect(raised.top).toBeGreaterThanOrEqual(-1); // on the screen,
-  expect(raised.height).toBeLessThanOrEqual(raised.visibleBottom + 1); // never taller than the room it has,
-  expect(raised.hourBottom).toBeLessThanOrEqual(raised.visibleBottom + 1); // and the field under the finger stays above the keys
+  expect(Math.abs(raised.height - rest.height)).toBeLessThanOrEqual(1); // the box keeps its height...
+  expect(Math.abs(raised.width - rest.width)).toBeLessThanOrEqual(1); // ...and its width:
+  expect(raised.top).toBeGreaterThanOrEqual(-1); // it never climbs off the top of the screen,
+  expect(raised.hourBottom).toBeLessThanOrEqual(raised.visibleBottom + 1); // and the field under the finger is scrolled clear of the keys
   await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 }); // the keyboard goes
   await page.waitForTimeout(400);
   const back = await page.evaluate(() => {
     const rect = (document.querySelector('.timestamp-picker') as HTMLElement).getBoundingClientRect();
-    return { bottom: rect.bottom, inner: window.innerHeight, lift: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')) };
+    return {
+      bottom: rect.bottom, height: rect.height, inner: window.innerHeight,
+      lift: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')),
+    };
   });
   expect(back.lift).toBe(0);
-  expect(Math.abs(back.bottom - back.inner)).toBeLessThanOrEqual(1); // the sheet is back down
+  expect(Math.abs(back.bottom - back.inner)).toBeLessThanOrEqual(1); // the sheet is back down,
+  expect(Math.abs(back.height - rest.height)).toBeLessThanOrEqual(1); // and it was the same box all along
 });

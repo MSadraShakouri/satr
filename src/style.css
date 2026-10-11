@@ -1588,10 +1588,12 @@ body {
    is the bottom menu's (the .menu classes); the calendar answers in whatever
    language and calendar Settings → Dates has chosen. */
 .timestamp-picker .menu-scroll {
-  /* 70% of the screen, 560px, and never taller than the room left above the
-     keyboard (--sheet-room settles once the keyboard has, so the height does
-     not churn while it animates). */
-  max-height: min(70vh, 560px, calc(var(--sheet-room, 100vh) - 16px));
+  /* 70% of the screen, at most 560px — and never anything the keyboard can
+     change: the keyboard floats over the page (index.html's interactive-widget
+     = resizes-visual), so vh stands still while it is up and the sheet's box
+     keeps its size. The keyboard covers what it must; the field under the
+     finger is scrolled clear of it (main.ts). */
+  max-height: min(70vh, 560px);
 }
 .timestamp-picker-head {
   display: flex;
@@ -2646,9 +2648,9 @@ input.mod-no-match {
   position: fixed;
   z-index: 41;
   right: var(--safe-right);
-  /* The keyboard's overlap with the page (--keyboard-lift, kept by main.ts):
-     a sheet sits on top of the keyboard, never behind it. 0 when it is down. */
-  bottom: var(--keyboard-lift, 0px);
+  /* The lift main.ts clamps per sheet: it follows the keyboard up as far as
+     it can without climbing off the top of the screen. 0 when it is down. */
+  bottom: var(--sheet-lift, 0px);
   left: var(--safe-left);
   max-width: 560px;
   margin: 0 auto;
@@ -2657,7 +2659,11 @@ input.mod-no-match {
   box-shadow: var(--shadow-s);
   color: var(--text-normal);
   transform: translateY(100%);
-  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+  /* bottom rides the keyboard (--sheet-lift, clamped by main.ts): the sheet
+     follows the keyboard up as far as it can without leaving the screen, and
+     the keyboard covers whatever is left. The transition is what keeps a late
+     or stepwise signal from reading as a snap — the sheet glides. */
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1), bottom 0.17s ease-out;
   touch-action: none;
 }
 .menu.mod-bottom-sheet.is-open {
