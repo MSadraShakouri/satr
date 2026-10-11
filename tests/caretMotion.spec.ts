@@ -111,3 +111,21 @@ test('a wrapped paragraph is walked downwards, one position a press', async ({ p
   }
   expect(new Set(up.map((s) => s.top)).size).toBeGreaterThan(1);
 });
+
+test('arrows walk through digits of a date on a Persian line', async ({ page }) => {
+  const persian = 'سلام این یک خط فارسی است';
+  const date = '2026/10/11';
+  await draft(page, `${persian} ${date}`, persian.length + 1);
+  const xs: number[] = [];
+  for (let i = 0; i < date.length; i += 1) {
+    const x = await page.evaluate(() => {
+      const view = window.testEditor.view;
+      const r = view.coordsAtPos(view.state.selection.main.head, 1);
+      return r ? Math.round(r.left) : NaN;
+    });
+    xs.push(x);
+    await page.keyboard.press('ArrowLeft');
+  }
+  const moved = new Set(xs).size;
+  expect(moved, `caret must move through the date: ${JSON.stringify(xs)}`).toBeGreaterThan(3);
+});

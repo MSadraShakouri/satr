@@ -27,8 +27,8 @@
 // composition goes nowhere, and no keymap is even reached. Owning the two keys
 // here means the note answers them the same way whether or not a word is still
 // with the keyboard.
-import { EditorSelection, EditorState, Transaction } from '@codemirror/state';
-import { Direction, EditorView, ViewPlugin } from '@codemirror/view';
+import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction } from '@codemirror/state';
+import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { inMath } from './mathSource';
 
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
@@ -118,40 +118,46 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-// On an RTL line the caret follows the LINE, not a number/punctuation run.
-// Unicode still lays digits out as 2026; only inline `$…$` is its own LTR
-// caret. Backticks, fences, and “date characters” are not special. Arrows
-// are unchanged.
-const rtlLineCaret = ViewPlugin.fromClass(class {
-  constructor(readonly view: EditorView) {
-    const orig = view.coordsAtPos.bind(view);
-    view.coordsAtPos = (pos: number, side = 1) => {
-      const line = view.state.doc.lineAt(pos);
-      if (side <= 0 || view.textDirectionAt(line.from) !== Direction.RTL) return orig(pos, side);
-      if (inMath(view.state, pos)) return orig(pos, side);
-      const at = orig(pos, side);
-      if (!at || pos <= line.from) return at;
-      try {
-        const start = view.domAtPos(line.from);
-        const end = view.domAtPos(pos);
-        const range = document.createRange();
-        const clamp = (node: Node, offset: number) =>
-          node.nodeType === Node.TEXT_NODE ? Math.min(offset, (node.nodeValue ?? '').length) : offset;
-        range.setStart(start.node, clamp(start.node, start.offset));
-        range.setEnd(end.node, clamp(end.node, end.offset));
-        const mid = (at.top + at.bottom) / 2;
-        let left = at.left;
-        for (const rect of range.getClientRects()) {
-          if (rect.width <= 0 && rect.height <= 0) continue;
-          if (mid < rect.top - 1 || mid > rect.bottom + 1) continue;
-          if (rect.left < left) left = rect.left;
-        }
-        return { left, right: left, top: at.top, bottom: at.bottom };
-      } catch {
-        return at;
-      }
-    };
-  }
+// CM6 bidi (Unicode): after Persian letters, digits become a number run.
+// CS (, . :) between two numbers joins them; at the end of a number it
+// becomes a neutral and the *next* digit opens a new run — the caret jump
+// on YYYY/MM/DD and 12:30. ET (# $ % and currency) glues to EN the same
+// way. `/` and `-` are NI in CM6 but split dates the same. Isolating each
+// digit+separator sequence as one LTR run stops the extra run so you can
+// still walk through 2026. Inline `$…$` is already its own run; leave it.
+// Read off LowTypes in @codemirror/view (charType).
+const CS_ET_SEP = ',.:/#$%\\-¢£¤¥°±\u00a0';
+const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩][0-9۰-۹٠-٩${CS_ET_SEP}]*`, 'g');
+const numberIsolate = Decoration.mark({
+  attributes: { style: 'unicode-bidi: isolate; direction: ltr' },
+  bidiIsolate: Direction.LTR,
 });
 
-export const caretMotion = [lineSide, arrowKeys, rtlLineCaret];
+function numberIsolates(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const { from, to } of view.visibleRanges) {
+    const text = view.state.doc.sliceString(from, to);
+    NUMBER_RUN.lastIndex = 0;
+    for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
+      const start = from + match.index;
+      if (inMath(view.state, start)) continue;
+      builder.add(start, start + match[0].length, numberIsolate);
+    }
+  }
+  return builder.finish();
+}
+
+const numberRuns = ViewPlugin.fromClass(class {
+  isolates: DecorationSet;
+  constructor(view: EditorView) { this.isolates = numberIsolates(view); }
+  update(update: ViewUpdate) {
+    if (update.docChanged || update.viewportChanged) this.isolates = numberIsolates(update.view);
+  }
+}, {
+  provide: (plugin) => {
+    const access = (view: EditorView) => view.plugin(plugin)?.isolates ?? Decoration.none;
+    return Prec.lowest([EditorView.decorations.of(access), EditorView.bidiIsolatedRanges.of(access)]);
+  },
+});
+
+export const caretMotion = [lineSide, arrowKeys, numberRuns];
