@@ -29,6 +29,7 @@
 // with the keyboard.
 import { EditorSelection, EditorState, Transaction } from '@codemirror/state';
 import { Direction, EditorView, ViewPlugin } from '@codemirror/view';
+import { inMath } from './mathSource';
 
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   const sel = view.state.selection.main;
@@ -117,48 +118,40 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-// YYYY/MM/DD (and 12:30) on a Persian line: after `/` or `:` the next digits
-// become their own run and the caret jumps onto them (to the right). The
-// date/time is one thing; the caret stays on the left of it. Digits still
-// read 2026. Arrows are unchanged.
-const isDateChar = (c: string | undefined) => !!c && /[0-9۰-۹٠-٩/:.\-]/.test(c);
-function dateRunAt(text: string, offset: number) {
-  let i = offset;
-  if (!isDateChar(text[i]) && i > 0 && isDateChar(text[i - 1])) i -= 1;
-  if (!isDateChar(text[i])) return null;
-  let from = i, to = i + 1;
-  while (from > 0 && isDateChar(text[from - 1])) from -= 1;
-  while (to < text.length && isDateChar(text[to])) to += 1;
-  if (![...text.slice(from, to)].some((c) => /[0-9۰-۹٠-٩]/.test(c))) return null;
-  return { from, to };
-}
-
-const rtlDateCaret = ViewPlugin.fromClass(class {
+// On an RTL line the caret follows the LINE, not a number/punctuation run.
+// Unicode still lays digits out as 2026; only inline `$…$` is its own LTR
+// caret. Backticks, fences, and “date characters” are not special. Arrows
+// are unchanged.
+const rtlLineCaret = ViewPlugin.fromClass(class {
   constructor(readonly view: EditorView) {
     const orig = view.coordsAtPos.bind(view);
     view.coordsAtPos = (pos: number, side = 1) => {
       const line = view.state.doc.lineAt(pos);
       if (side <= 0 || view.textDirectionAt(line.from) !== Direction.RTL) return orig(pos, side);
-      const run = dateRunAt(line.text, pos - line.from);
-      if (!run) return orig(pos, side);
+      if (inMath(view.state, pos)) return orig(pos, side);
+      const at = orig(pos, side);
+      if (!at || pos <= line.from) return at;
       try {
-        const start = view.domAtPos(line.from + run.from);
-        const end = view.domAtPos(line.from + run.to);
+        const start = view.domAtPos(line.from);
+        const end = view.domAtPos(pos);
         const range = document.createRange();
-        range.setStart(start.node, start.offset);
-        range.setEnd(end.node, end.offset);
-        let left = Infinity, top = 0, bottom = 0;
+        const clamp = (node: Node, offset: number) =>
+          node.nodeType === Node.TEXT_NODE ? Math.min(offset, (node.nodeValue ?? '').length) : offset;
+        range.setStart(start.node, clamp(start.node, start.offset));
+        range.setEnd(end.node, clamp(end.node, end.offset));
+        const mid = (at.top + at.bottom) / 2;
+        let left = at.left;
         for (const rect of range.getClientRects()) {
           if (rect.width <= 0 && rect.height <= 0) continue;
-          if (rect.left < left) { left = rect.left; top = rect.top; bottom = rect.bottom; }
+          if (mid < rect.top - 1 || mid > rect.bottom + 1) continue;
+          if (rect.left < left) left = rect.left;
         }
-        if (left === Infinity) return orig(pos, side);
-        return { left, right: left, top, bottom };
+        return { left, right: left, top: at.top, bottom: at.bottom };
       } catch {
-        return orig(pos, side);
+        return at;
       }
     };
   }
 });
 
-export const caretMotion = [lineSide, arrowKeys, rtlDateCaret];
+export const caretMotion = [lineSide, arrowKeys, rtlLineCaret];

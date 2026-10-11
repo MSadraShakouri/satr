@@ -130,6 +130,28 @@ test('typing 12:30 on a Persian line keeps the caret on the left', async ({ page
   }
 });
 
+test('any mark between digits on a Persian line keeps the caret on the left', async ({ page }) => {
+  // Not a charset: `/` and `:` were two splits; the line owns the caret for
+  // every mark. Inline `$…$` is the only new run, and is not in this list.
+  const marks = [...'/:-.,+*%=#@!?;~^&|\\\'"`()[]{}<>'];
+  for (const mark of marks) {
+    await typeAt(page, 'سلام |', '');
+    const xs: number[] = [];
+    for (const key of ['1', '2', mark, '3']) {
+      await page.keyboard.insertText(key);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      xs.push(await page.evaluate(() => {
+        const view = window.testEditor.view;
+        const rect = view.coordsAtPos(view.state.selection.main.head, view.state.selection.main.assoc);
+        return rect ? Math.round(rect.left) : NaN;
+      }));
+    }
+    for (let i = 1; i < xs.length; i += 1) {
+      expect(xs[i], `12${mark}3 after ${['1', '2', mark, '3'][i]}: ${JSON.stringify(xs)}`).toBeLessThanOrEqual(xs[i - 1] + 0.5);
+    }
+  }
+});
+
 test('an English line keeps its caret on the right, even after a Persian word', async ({ page }) => {
   await typeAt(page, 'hello |', '');
   await page.keyboard.insertText('x');
