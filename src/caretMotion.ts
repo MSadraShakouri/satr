@@ -117,10 +117,11 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-// YYYY/MM/DD on a Persian line: after `/` the month becomes its own run and
-// the caret jumps onto it (to the right). The date is one thing; the caret
-// stays on the left of it. Digits still read 2026. Arrows are unchanged.
-const isDateChar = (c: string | undefined) => !!c && /[0-9۰-۹٠-٩/.\-]/.test(c);
+// YYYY/MM/DD (and 12:30) on a Persian line: after `/` or `:` the next digits
+// become their own run and the caret jumps onto them (to the right). The
+// date/time is one thing; the caret stays on the left of it. Digits still
+// read 2026. Arrows are unchanged.
+const isDateChar = (c: string | undefined) => !!c && /[0-9۰-۹٠-٩/:.\-]/.test(c);
 function dateRunAt(text: string, offset: number) {
   let i = offset;
   if (!isDateChar(text[i]) && i > 0 && isDateChar(text[i - 1])) i -= 1;

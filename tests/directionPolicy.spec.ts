@@ -111,6 +111,25 @@ test('typing YYYY/MM/DD on a Persian line keeps the caret on the left', async ({
   }
 });
 
+test('typing 12:30 on a Persian line keeps the caret on the left', async ({ page }) => {
+  await typeAt(page, 'سلام |', '');
+  const seen: { key: string; x: number | null }[] = [];
+  for (const key of [...'12:30']) {
+    await page.keyboard.insertText(key);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    seen.push(await page.evaluate((key) => {
+      const view = window.testEditor.view;
+      const rect = view.coordsAtPos(view.state.selection.main.head, view.state.selection.main.assoc);
+      return { key, x: rect ? Math.round(rect.left) : null };
+    }, key));
+  }
+  let last = seen[0];
+  for (const state of seen) {
+    expect(state.x, `after ${state.key}: ${JSON.stringify(seen)}`).toBeLessThanOrEqual((last.x ?? 0) + 0.5);
+    last = state;
+  }
+});
+
 test('an English line keeps its caret on the right, even after a Persian word', async ({ page }) => {
   await typeAt(page, 'hello |', '');
   await page.keyboard.insertText('x');
