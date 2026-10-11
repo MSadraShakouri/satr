@@ -2413,12 +2413,15 @@ preview.addEventListener('click', (event) => {
 // when it resizes the WebView (Capacitor's adjustResize).
 let fullHeight = 0;
 let fullHeightWidth = 0;
+// Whether the on-screen keyboard is really up (layoutKeyboardInset reads it).
+let keyboardIsUp = false;
 function layoutToolbar(): void {
   const viewport = window.visualViewport;
   const height = viewport?.height ?? window.innerHeight;
   if (window.innerWidth !== fullHeightWidth) { fullHeightWidth = window.innerWidth; fullHeight = 0; }
   fullHeight = Math.max(fullHeight, height, window.innerHeight);
   const keyboardUp = fullHeight - height > 120;
+  keyboardIsUp = keyboardUp;
   const show = keyboardUp && editor.hasFocus && mode === 'edit';
   document.body.classList.toggle('keyboard-open', show);
   // Any field with the keyboard up (find bar, sidebar search): no bottom bar.
@@ -2444,28 +2447,40 @@ window.addEventListener('resize', layoutToolbar);
 // The sheet's place under the keyboard. The keyboard floats over the page
 // (interactive-widget=resizes-visual, index.html): nothing resizes — not the
 // page, and not a sheet, whose box keeps its height and its content where they
-// were. --keyboard-lift is the covered height (0 when the keyboard is down),
-// and each open bottom sheet gets a --sheet-lift: it follows the keyboard up
-// as far as it can without climbing off the top of the screen, and the
-// keyboard covers what is left. Both are written in the same frame as the
-// event that changed them — nothing is corrected on a later beat than the
-// motion it answers.
+// were. --keyboard-lift is the covered height; each open bottom sheet gets a
+// --sheet-lift: it follows the keyboard up as far as it can without climbing
+// off the top of the screen, and the keyboard covers what is left. Both are
+// written in the same frame as the event that changed them — nothing is
+// corrected on a later beat than the motion it answers.
 let sheetRoomTimer: number | undefined;
 function layoutKeyboardInset(): void {
   const viewport = window.visualViewport;
   const visibleHeight = viewport?.height ?? window.innerHeight;
   const visibleTop = viewport?.offsetTop ?? 0;
-  const lift = Math.max(0, Math.round(window.innerHeight - (visibleTop + visibleHeight)));
-  const room = Math.max(0, Math.round(window.innerHeight - lift)); // where the visible area ends
-  const root = document.documentElement.style;
-  root.setProperty('--keyboard-lift', `${lift}px`);
+  const overlap = Math.max(0, Math.round(window.innerHeight - (visibleTop + visibleHeight)));
+  // A browser's own chrome is not the keyboard: the URL bar showing hides some
+  // 50px, and bouncing a sheet for it left a sliver of the page under the
+  // sheet. Only a real keyboard moves a sheet, by the same test the toolbar
+  // makes; a caret's scroll margins still count every hidden pixel
+  // (keyboardOverlap, obscuredBottom).
+  const lift = keyboardIsUp ? overlap : 0;
+  document.documentElement.style.setProperty('--keyboard-lift', `${overlap}px`);
+  const room = Math.round(window.innerHeight - lift);
   for (const sheet of document.querySelectorAll<HTMLElement>('.menu.mod-bottom-sheet')) {
-    const risen = Math.min(lift, Math.max(0, room - sheet.offsetHeight));
-    sheet.style.setProperty('--sheet-lift', `${risen}px`);
+    sheet.style.setProperty('--sheet-lift', `${Math.min(lift, Math.max(0, room - sheet.offsetHeight))}px`);
   }
   window.clearTimeout(sheetRoomTimer);
   sheetRoomTimer = window.setTimeout(keepFocusedFieldVisible, 120);
 }
+// A sheet that appears while the keyboard is already up (or between two
+// viewport events) takes its lift as soon as it is in the DOM. The lift waits
+// for the next frame: a sheet is filled in the same task it is appended, and
+// only then does it know its own height.
+new MutationObserver((records) => {
+  const appeared = records.some((record) => Array.from(record.addedNodes).some(
+    (node) => node instanceof HTMLElement && node.classList.contains('mod-bottom-sheet')));
+  if (appeared) window.requestAnimationFrame(layoutKeyboardInset);
+}).observe(document.body, { childList: true });
 // The field the finger is in, above the keys: a sheet that could not move (no
 // room above it) or a keyboard taller than the room it left would otherwise
 // keep the focused row underneath. The scroll happens inside the sheet's own

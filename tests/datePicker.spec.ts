@@ -851,3 +851,60 @@ test('a keyboard over the page never resizes the sheet, nor pushes it off the to
   expect(Math.abs(back.bottom - back.inner)).toBeLessThanOrEqual(1); // the sheet is back down,
   expect(Math.abs(back.height - rest.height)).toBeLessThanOrEqual(1); // and it was the same box all along
 });
+
+test('a browser bar is not a keyboard: nothing lifts, no sliver under the sheet', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  await page.waitForTimeout(400); // the slide-in settles
+  await expect(sheet(page)).toHaveClass(/is-open/);
+  // A phone browser's URL bar showing: the visual viewport is short by ~56px
+  // with no keyboard anywhere (a page zoom gives the same numbers).
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 844 / 788 });
+  await page.waitForTimeout(400);
+  const state = await page.evaluate(() => {
+    const picker = document.querySelector('.timestamp-picker') as HTMLElement;
+    const rect = picker.getBoundingClientRect();
+    const under = document.elementFromPoint(window.innerWidth / 2, window.innerHeight - 6) as HTMLElement | null;
+    return {
+      overlap: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')),
+      lift: getComputedStyle(picker).getPropertyValue('--sheet-lift').trim(),
+      bottom: rect.bottom,
+      inner: window.innerHeight,
+      under: under?.closest('.timestamp-picker') !== null,
+    };
+  });
+  expect(state.overlap).toBeGreaterThan(30); // the browser's chrome is really showing...
+  expect(state.lift).toBe('0px'); // ...and it is not a keyboard: nothing lifts,
+  expect(Math.abs(state.bottom - state.inner)).toBeLessThanOrEqual(1); // the sheet keeps to the bottom edge,
+  expect(state.under).toBe(true); // and the very bottom pixel is the sheet's own: no sliver under it
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+});
+
+test('a sheet opened while the keyboard is already up rides it at once', async ({ page }) => {
+  await boot(page);
+  // The keyboard is up before the sheet exists.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 844 / 620 });
+  await page.waitForTimeout(400);
+  await openPicker(page);
+  await page.waitForTimeout(450); // the sheet's slide-in
+  const state = await page.evaluate(() => {
+    const picker = document.querySelector('.timestamp-picker') as HTMLElement;
+    const rect = picker.getBoundingClientRect();
+    const viewport = window.visualViewport!;
+    return {
+      keyboard: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')),
+      lift: parseFloat(getComputedStyle(picker).getPropertyValue('--sheet-lift')),
+      top: rect.top,
+      height: rect.height,
+      visibleTop: viewport.offsetTop,
+      visibleHeight: viewport.height,
+    };
+  });
+  expect(state.keyboard).toBeGreaterThan(200); // the keyboard is up
+  expect(state.lift).toBeGreaterThan(30); // the sheet rose the moment it was in the DOM,
+  expect(state.top).toBeGreaterThanOrEqual(state.visibleTop - 1); // and as far as it could: the whole box stays on screen
+  expect(state.height).toBeLessThanOrEqual(state.visibleHeight + 1);
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+});
