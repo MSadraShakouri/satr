@@ -1588,7 +1588,10 @@ body {
    is the bottom menu's (the .menu classes); the calendar answers in whatever
    language and calendar Settings → Dates has chosen. */
 .timestamp-picker .menu-scroll {
-  max-height: min(70vh, 560px);
+  /* 70% of the screen, 560px, and never taller than the room left above the
+     keyboard (--sheet-room settles once the keyboard has, so the height does
+     not churn while it animates). */
+  max-height: min(70vh, 560px, calc(var(--sheet-room, 100vh) - 16px));
 }
 .timestamp-picker-head {
   display: flex;
@@ -1751,11 +1754,14 @@ body {
   color: inherit;
   height: 1.3em;
 }
-.timestamp-picker-month [data-stamp-jump-month] {
-  width: 1.8em;
+/* Only as wide as the digits each field holds. These must out-rank the shape
+   rule above (which sets width: auto), or an input falls back to its own
+   default width and the box runs wider than the whole sheet. */
+.timestamp-picker-month input.timestamp-picker-field[data-stamp-jump-month] {
+  width: calc(2ch + 10px);
 }
-.timestamp-picker-month [data-stamp-jump-year] {
-  width: 3.4em;
+.timestamp-picker-month input.timestamp-picker-field[data-stamp-jump-year] {
+  width: calc(4ch + 10px);
 }
 .timestamp-picker-month input:focus {
   outline: none;
@@ -1795,10 +1801,15 @@ body {
   color: var(--text-normal);
   font-size: 0.8125rem;
 }
-.timestamp-picker-cal-swap {
+/* Both calendars are always on the button, in one fixed order; the one the
+   sheet wears is highlighted, and nothing changes places when it switches. */
+.timestamp-picker-cal-option {
   color: var(--text-faint);
 }
-.timestamp-picker-cal-alt {
+.timestamp-picker-cal-option.is-active {
+  color: var(--text-normal); /* colour only: the highlight must not nudge the width */
+}
+.timestamp-picker-cal-swap {
   color: var(--text-faint);
 }
 .timestamp-picker-formats {
@@ -2635,7 +2646,9 @@ input.mod-no-match {
   position: fixed;
   z-index: 41;
   right: var(--safe-right);
-  bottom: 0;
+  /* The keyboard's overlap with the page (--keyboard-lift, kept by main.ts):
+     a sheet sits on top of the keyboard, never behind it. 0 when it is down. */
+  bottom: var(--keyboard-lift, 0px);
   left: var(--safe-left);
   max-width: 560px;
   margin: 0 auto;

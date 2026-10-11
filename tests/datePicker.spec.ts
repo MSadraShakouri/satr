@@ -744,3 +744,97 @@ test('junk keys meet digits-only fields; typing replaces the pre-filled value', 
   await expect(hour).toHaveValue('21');
   await expect(picker.locator('[data-stamp-minute]')).toBeFocused(); // full: the chain moves
 });
+
+// ---- The sheet's shape: the jump box's width, the switch's order, the keyboard ----
+
+test('the month and year box is only as wide as its digits', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  await picker.locator('[data-stamp-jump]').click();
+  await expect(picker.locator('[data-stamp-jump-month]')).toBeFocused();
+  const box = await page.evaluate(() => {
+    const box = (selector: string): DOMRect => document.querySelector(selector)!.getBoundingClientRect();
+    const head = box('.timestamp-picker-head');
+    const month = box('[data-stamp-jump-month]');
+    const year = box('[data-stamp-jump-year]');
+    return {
+      headLeft: head.left, headRight: head.right,
+      monthWidth: month.width, yearWidth: year.width,
+      left: month.left, right: year.right,
+    };
+  });
+  expect(box.monthWidth).toBeGreaterThan(20); // room for two digits
+  expect(box.monthWidth).toBeLessThan(64);
+  expect(box.yearWidth - box.monthWidth).toBeGreaterThan(8); // and the year is two digits wider
+  expect(box.yearWidth).toBeLessThan(96);
+  expect(box.left).toBeGreaterThanOrEqual(box.headLeft - 1); // the box holds the title's slot, it does not run over it
+  expect(box.right).toBeLessThanOrEqual(box.headRight + 1);
+});
+
+test('switching calendars keeps both names put: only the highlight moves', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const button = picker.locator('[data-stamp-cal]');
+  const read = () => page.evaluate(() => {
+    const button = document.querySelector('[data-stamp-cal]') as HTMLElement;
+    const options = [...button.querySelectorAll<HTMLElement>('[data-stamp-cal-option]')];
+    return {
+      order: options.map((option) => `${option.dataset.stampCalOption}${option.classList.contains('is-active') ? '*' : ''}`),
+      names: options.map((option) => option.textContent),
+      places: options.map((option) => Math.round(option.getBoundingClientRect().left)),
+      row: [...document.querySelectorAll('.timestamp-picker-today, [data-stamp-cal], .timestamp-picker-now')].map((el) => Math.round(el.getBoundingClientRect().left)),
+      title: document.querySelector('.timestamp-picker-month')!.textContent,
+    };
+  });
+  const gregorian = await read();
+  expect(gregorian.order).toEqual(['gregory*', 'persian']);
+  await button.click();
+  await page.waitForTimeout(150);
+  const persian = await read();
+  expect(persian.order).toEqual(['gregory', 'persian*']); // the highlight moved...
+  expect(persian.names).toEqual(gregorian.names); // ...and nothing else did: same words,
+  expect(persian.places).toEqual(gregorian.places); // same places, Today and Now where they were
+  expect(persian.row).toEqual(gregorian.row);
+  expect(persian.title).not.toBe(gregorian.title); // while the grid really did switch
+});
+
+test('a keyboard over the page lifts the sheet onto it, and it comes back down', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  await expect(picker).toHaveClass(/is-open/);
+  await page.waitForTimeout(400); // the slide-in settles
+  await picker.locator('[data-stamp-hour]').click(); // a field focused: the on-screen keyboard is coming
+  // Chrome's default: the keyboard covers the page and only the visual viewport
+  // shrinks (a page zoom does the same thing to the same numbers).
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+  await page.waitForTimeout(400);
+  const raised = await page.evaluate(() => {
+    const sheet = document.querySelector('.timestamp-picker') as HTMLElement;
+    const hour = document.querySelector('[data-stamp-hour]') as HTMLElement;
+    const vv = window.visualViewport!;
+    const rect = sheet.getBoundingClientRect();
+    return {
+      visibleBottom: vv.offsetTop + vv.height,
+      lift: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')),
+      top: rect.top, bottom: rect.bottom, height: rect.height,
+      hourBottom: hour.getBoundingClientRect().bottom,
+    };
+  });
+  expect(raised.lift).toBeGreaterThan(120); // the keyboard is up, and the app knows it
+  expect(raised.bottom).toBeLessThanOrEqual(raised.visibleBottom + 1); // the sheet sits on top of it,
+  expect(raised.top).toBeGreaterThanOrEqual(-1); // on the screen,
+  expect(raised.height).toBeLessThanOrEqual(raised.visibleBottom + 1); // never taller than the room it has,
+  expect(raised.hourBottom).toBeLessThanOrEqual(raised.visibleBottom + 1); // and the field under the finger stays above the keys
+  await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 }); // the keyboard goes
+  await page.waitForTimeout(400);
+  const back = await page.evaluate(() => {
+    const rect = (document.querySelector('.timestamp-picker') as HTMLElement).getBoundingClientRect();
+    return { bottom: rect.bottom, inner: window.innerHeight, lift: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-lift')) };
+  });
+  expect(back.lift).toBe(0);
+  expect(Math.abs(back.bottom - back.inner)).toBeLessThanOrEqual(1); // the sheet is back down
+});

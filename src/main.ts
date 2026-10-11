@@ -2440,6 +2440,40 @@ function layoutToolbar(): void {
 window.visualViewport?.addEventListener('resize', layoutToolbar);
 window.visualViewport?.addEventListener('scroll', layoutToolbar);
 window.addEventListener('resize', layoutToolbar);
+
+// The sheet's place under the keyboard: --keyboard-lift is how much of the
+// page the keyboard covers (0 when it is down) and --sheet-room the height it
+// leaves above it, so a bottom sheet sits on top of the keyboard instead of
+// behind it (src/style.css: .menu.mod-bottom-sheet). The lift follows every
+// viewport event — the sheet slides with the keyboard — while the room is
+// written once the keyboard has settled, so the sheet's height does not churn
+// through the animation.
+let sheetRoomTimer: number | undefined;
+function layoutKeyboardInset(): void {
+  const lift = Math.round(keyboardOverlap());
+  const root = document.documentElement.style;
+  root.setProperty('--keyboard-lift', `${lift}px`);
+  window.clearTimeout(sheetRoomTimer);
+  sheetRoomTimer = window.setTimeout(() => {
+    root.setProperty('--sheet-room', `${Math.max(0, Math.round(window.innerHeight - lift))}px`);
+    keepFocusedFieldVisible();
+  }, 120);
+}
+// A field inside a bottom sheet stays above the keyboard too: when the room
+// settles, the focused field is brought back into view — inside the sheet's
+// own scroll, where the finger left it, and not a pixel when it already shows
+// (scrollIntoView's "nearest" does nothing then). The editor is left alone:
+// its caret has its own story (layoutToolbar).
+function keepFocusedFieldVisible(): void {
+  const active = document.activeElement as HTMLElement | null;
+  if (!active?.closest('.mod-bottom-sheet')) return;
+  if (!document.body.classList.contains('keyboard-up')) return;
+  active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+window.visualViewport?.addEventListener('resize', layoutKeyboardInset);
+window.visualViewport?.addEventListener('scroll', layoutKeyboardInset);
+window.addEventListener('resize', layoutKeyboardInset);
+layoutKeyboardInset();
 document.addEventListener('focusin', () => window.requestAnimationFrame(layoutToolbar));
 document.addEventListener('focusout', () => window.setTimeout(layoutToolbar, 50));
 // Never take focus from the editor (that would close the keyboard).

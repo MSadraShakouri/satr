@@ -193,12 +193,14 @@ export function createTimestampPicker(): TimestampPicker {
       heading.dir = 'auto';
       titleIndex = 2;
     }
+    // The calendar switch: both calendars stay where they are, in one fixed
+    // order, and only the highlight moves to the one the sheet is wearing.
     const calButton = sheet.querySelector<HTMLButtonElement>('[data-stamp-cal]');
     if (calButton) {
       const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
-      calButton.innerHTML = active === 'persian'
-        ? '<strong>شمسی</strong><span class="timestamp-picker-cal-swap">\u21c4</span><span class="timestamp-picker-cal-alt">Gregorian</span>'
-        : '<strong>Gregorian</strong><span class="timestamp-picker-cal-swap">\u21c4</span><span class="timestamp-picker-cal-alt">شمسی</span>';
+      for (const option of calButton.querySelectorAll<HTMLElement>('[data-stamp-cal-option]')) {
+        option.classList.toggle('is-active', option.dataset.stampCalOption === active);
+      }
     }
     const current = viewMonth;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
@@ -329,7 +331,7 @@ export function createTimestampPicker(): TimestampPicker {
         <div class="timestamp-picker-viewport"><div class="timestamp-picker-track"></div></div>
         <div class="timestamp-picker-nowrow">
           <button type="button" class="timestamp-picker-today" data-stamp-today>Today</button>
-          <button type="button" class="timestamp-picker-cal" data-stamp-cal aria-label="Switch calendar"></button>
+          <button type="button" class="timestamp-picker-cal" data-stamp-cal aria-label="Switch calendar"><span class="timestamp-picker-cal-option" data-stamp-cal-option="gregory">Gregorian</span><span class="timestamp-picker-cal-swap">⇄</span><span class="timestamp-picker-cal-option" data-stamp-cal-option="persian">شمسی</span></button>
           <button type="button" class="timestamp-picker-now" data-stamp-now>Now</button>
         </div>
         <div class="timestamp-picker-time">
