@@ -36,12 +36,7 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   // The line's direction is the app's own policy, worn as the line's `dir`
   // attribute: the first strong letter with math and code masked out, and a
   // line that is nothing but math or code is LTR (src/direction.ts).
-  //
-  // Empty line: no letters, so there is no text to follow. Right is next,
-  // always — English mapping, not the line above's RTL and not the keyboard
-  // language (the writer: "English should be right is next always … for
-  // empty lines"). A line that has letters still uses the line's own direction.
-  const rtl = line.length > 0 && view.textDirectionAt(line.from) === Direction.RTL;
+  const rtl = view.textDirectionAt(line.from) === Direction.RTL;
   // The keys are visual: the visual right is the next position in an LTR
   // paragraph and the previous one in an RTL paragraph. Flat document offsets,
   // so a step across a line break lands on the previous line's end or the next
@@ -70,10 +65,7 @@ const arrowKeys = ViewPlugin.fromClass(class {
     if (event.defaultPrevented) return; // a page listener before us took the key
     const dir = arrowDir(event);
     if (!dir) return;
-    // Empty line: always claim the key, even when we cannot step (start/end of
-    // the note), so the IME cannot apply its keyboard-language mapping.
-    const empty = this.view.state.doc.lineAt(this.view.state.selection.main.head).length === 0;
-    if (!move(this.view, dir, event.shiftKey) && !empty) return;
+    if (!move(this.view, dir, event.shiftKey)) return;
     // Claim the key: the browser's own motion would otherwise follow ours, and
     // CodeMirror's keymaps would step a second time.
     event.preventDefault();

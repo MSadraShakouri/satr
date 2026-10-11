@@ -47,26 +47,6 @@ async function walk(page: Page, key: string, steps: number) {
   return out;
 }
 
-test('an empty line always takes right as next, even under Persian', async ({ page }) => {
-  // No letters → no language to follow. → is the next position, ← the previous,
-  // the same as English. The Persian line above still mirrors.
-  const persian = 'سلام این یک خط فارسی است';
-  const below = 'ادامه دارد اینجا';
-  await draft(page, `${persian}\n\n${below}`, persian.length + 1);
-  await page.keyboard.press('ArrowRight');
-  const right = await page.evaluate(() => window.testEditor.view.state.selection.main.head);
-  expect(right, '→ from the empty line is the next line, not the Persian above').toBe(persian.length + 2);
-  await page.evaluate((n) => window.testEditor.setSelection(n), persian.length + 1);
-  await page.keyboard.press('ArrowLeft');
-  const left = await page.evaluate(() => window.testEditor.view.state.selection.main.head);
-  expect(left, '← from the empty line is the line above').toBe(persian.length);
-  // The Persian line itself is unchanged: → still walks back.
-  await page.evaluate(() => window.testEditor.setSelection(2));
-  await page.keyboard.press('ArrowRight');
-  const onPersian = await page.evaluate(() => window.testEditor.view.state.selection.main.head);
-  expect(onPersian, '→ on the Persian line still walks back').toBe(1);
-});
-
 test('a press is one position through a mixed Persian/English line, with no bounce', async ({ page }) => {
   await draft(page, 'اب ABC د', 0);
   // RTL base: the visual left is forward, so ← walks 1, 2, 3 … one a press.
