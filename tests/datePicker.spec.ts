@@ -1031,3 +1031,18 @@ test("the keyboard's own rectangle places the sheet when the browser reports one
   });
   expect(Math.abs(back.bottom - back.inner)).toBeLessThanOrEqual(1);
 });
+
+test('?kbdebug=1 puts the numbers on the screen, the bar’s clearance included', async ({ page }) => {
+  // A phone has no console: the readout is the bug report. It carries the
+  // keyboard's own numbers and the bottom bar's clearance, which is
+  // --safe-bottom alone (env() on the web, the plugin in the APK).
+  await boot(page);
+  await page.goto('/?kbdebug=1');
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+  await expect(page.locator('#kb-debug')).toBeVisible();
+  const text = (await page.locator('#kb-debug').textContent()) ?? '';
+  expect(text).toContain('screen ');
+  expect(text).toMatch(/kb \d+ hidden \d+/);
+  expect(text).toMatch(/safe --safe-bottom \d+ env \d+ innerBottom \d+/);
+  expect(text).toMatch(/navbar [\d.]+\.\.[\d.]+ \(gap \d+\)/);
+});

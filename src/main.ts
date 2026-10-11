@@ -221,12 +221,27 @@ function paintKeyboardDebug(): void {
   const rect = virtualKeyboard?.boundingRect;
   const sheet = document.querySelector<HTMLElement>('.menu.mod-bottom-sheet.is-open');
   const box = sheet?.getBoundingClientRect();
+  const nav = document.querySelector<HTMLElement>('.mobile-navbar');
+  const navBox = nav?.getBoundingClientRect();
+  // The bottom bar's clearance is --safe-bottom alone; on the web that is
+  // env(safe-area-inset-bottom), which this probe reads back as a number.
+  let probe = document.getElementById('kb-env-probe');
+  if (!probe) {
+    probe = document.createElement('div');
+    probe.id = 'kb-env-probe';
+    probe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;padding-bottom:env(safe-area-inset-bottom, 0px)';
+    document.body.append(probe);
+  }
+  const envBottom = Math.round(parseFloat(getComputedStyle(probe).paddingBottom) || 0);
+  const safeBottom = Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom')) || 0);
   readout.textContent = [
     `screen ${Math.round(window.screen.width)}x${Math.round(window.screen.height)} window ${window.innerWidth}x${window.innerHeight}`,
     `vv h ${Math.round(viewport?.height ?? -1)} top ${Math.round(viewport?.offsetTop ?? -1)} bottom ${Math.round((viewport?.offsetTop ?? 0) + (viewport?.height ?? 0))}`,
     `vk ${rect && rect.height > 0 ? `${Math.round(rect.top)}..${Math.round(rect.bottom)}` : 'no'}`,
     `kb ${keyboardHeight()} hidden ${Math.round(hiddenByViewport())} lift ${document.documentElement.style.getPropertyValue('--sheet-lift') || '0px'} room ${document.documentElement.style.getPropertyValue('--sheet-room') || '-'}`,
     box ? `sheet ${Math.round(box.top)}..${Math.round(box.bottom)}` : 'sheet no',
+    `safe --safe-bottom ${safeBottom} env ${envBottom} innerBottom ${window.innerHeight}`,
+    navBox ? `navbar ${Math.round(navBox.top)}..${Math.round(navBox.bottom)} (gap ${Math.round(window.innerHeight - navBox.bottom)})` : 'navbar none',
   ].join('\n');
 }
 /** Height hidden at the bottom of the screen: keyboard overlap + toolbar. */
