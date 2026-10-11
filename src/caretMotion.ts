@@ -160,4 +160,27 @@ const numberRuns = ViewPlugin.fromClass(class {
   },
 });
 
-export const caretMotion = [lineSide, arrowKeys, numberRuns];
+function numberRunEnd(text: string, offset: number): boolean {
+  NUMBER_RUN.lastIndex = 0;
+  for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
+    if (offset === match.index + match[0].length) return true;
+  }
+  return false;
+}
+
+// At the end of that isolate the caret has two homes. Typing already
+// pins assoc +1 (the line’s side — left on a Persian line). Selecting
+// or moving there left assoc at 0, so the native caret sat on the
+// number’s LTR right while the next key still went in on the left.
+// Same pin, no wrap of coords.
+const numberEndSide = EditorState.transactionFilter.of((tr) => {
+  if (tr.newSelection.ranges.length !== 1) return tr;
+  const main = tr.newSelection.main;
+  if (!main.empty || main.assoc === 1) return tr;
+  if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
+  const line = tr.newDoc.lineAt(main.head);
+  if (!numberRunEnd(line.text, main.head - line.from)) return tr;
+  return [tr, { selection: EditorSelection.create([EditorSelection.cursor(main.head, 1)]), sequential: true }];
+});
+
+export const caretMotion = [lineSide, arrowKeys, numberRuns, numberEndSide];
