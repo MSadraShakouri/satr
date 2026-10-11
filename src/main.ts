@@ -2445,11 +2445,13 @@ window.visualViewport?.addEventListener('scroll', layoutToolbar);
 window.addEventListener('resize', layoutToolbar);
 
 // The sheet's place under the keyboard. The keyboard floats over the page
-// (interactive-widget=resizes-visual, index.html): nothing resizes — not the
-// page, and not a sheet, whose box keeps its height and its content where they
-// were. --keyboard-lift is the covered height; each open bottom sheet gets a
-// --sheet-lift: it follows the keyboard up as far as it can without climbing
-// off the top of the screen, and the keyboard covers what is left. Both are
+// (interactive-widget=resizes-visual, index.html): the page never resizes — and
+// a sheet never hides under the keys. --sheet-lift is the keyboard's height
+// while it is up: a bottom sheet sits exactly on top of it, so nothing of the
+// sheet is behind the keys and no page shows between them. --sheet-room is the
+// height still visible; each sheet's scroll area caps itself at it
+// (src/style.css), so whatever the keyboard leaves, the whole sheet fits in it
+// and scrolls inside — the Insert button and the chips stay reachable. Both are
 // written in the same frame as the event that changed them — nothing is
 // corrected on a later beat than the motion it answers.
 let sheetRoomTimer: number | undefined;
@@ -2464,10 +2466,11 @@ function layoutKeyboardInset(): void {
   // makes; a caret's scroll margins still count every hidden pixel
   // (keyboardOverlap, obscuredBottom).
   const lift = keyboardIsUp ? overlap : 0;
-  document.documentElement.style.setProperty('--keyboard-lift', `${overlap}px`);
-  const room = Math.round(window.innerHeight - lift);
+  const root = document.documentElement.style;
+  root.setProperty('--keyboard-lift', `${overlap}px`);
+  root.setProperty('--sheet-room', `${Math.max(0, Math.round(visibleHeight))}px`);
   for (const sheet of document.querySelectorAll<HTMLElement>('.menu.mod-bottom-sheet')) {
-    sheet.style.setProperty('--sheet-lift', `${Math.min(lift, Math.max(0, room - sheet.offsetHeight))}px`);
+    sheet.style.setProperty('--sheet-lift', `${lift}px`);
   }
   window.clearTimeout(sheetRoomTimer);
   sheetRoomTimer = window.setTimeout(keepFocusedFieldVisible, 120);

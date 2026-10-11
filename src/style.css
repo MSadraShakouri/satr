@@ -1588,12 +1588,10 @@ body {
    is the bottom menu's (the .menu classes); the calendar answers in whatever
    language and calendar Settings → Dates has chosen. */
 .timestamp-picker .menu-scroll {
-  /* 70% of the screen, at most 560px — and never anything the keyboard can
-     change: the keyboard floats over the page (index.html's interactive-widget
-     = resizes-visual), so vh stands still while it is up and the sheet's box
-     keeps its size. The keyboard covers what it must; the field under the
-     finger is scrolled clear of it (main.ts). */
-  max-height: min(70vh, 560px);
+  /* 70% of the screen, at most 560px, and never taller than the room left
+     above the keyboard: the sheet then ends exactly on the keyboard's top edge
+     with nothing of it behind the keys. */
+  max-height: min(70vh, 560px, calc(var(--sheet-room, 100vh) - 16px));
 }
 .timestamp-picker-head {
   display: flex;
@@ -2648,8 +2646,8 @@ input.mod-no-match {
   position: fixed;
   z-index: 41;
   right: var(--safe-right);
-  /* The lift main.ts clamps per sheet: it follows the keyboard up as far as
-     it can without climbing off the top of the screen. 0 when it is down. */
+  /* The keyboard's height (main.ts) while it is up: the sheet ends exactly on
+     the keyboard's top edge, never behind it. 0 when the keyboard is down. */
   bottom: var(--sheet-lift, 0px);
   left: var(--safe-left);
   max-width: 560px;
@@ -2682,7 +2680,10 @@ input.mod-no-match {
   opacity: 0.6;
 }
 .menu-scroll {
-  max-height: 60vh;
+  /* The keyboard's room (--sheet-room, kept by main.ts) caps a sheet so the
+     whole of it stays above the keys; 100vh when there is no keyboard, where
+     60vh decides as it always did. */
+  max-height: min(60vh, calc(var(--sheet-room, 100vh) - 16px));
   overflow-y: auto;
   padding: 8px 16px max(16px, var(--safe-bottom));
   overscroll-behavior: contain;
