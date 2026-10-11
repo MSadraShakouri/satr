@@ -32,6 +32,10 @@ async function openPicker(page: Page): Promise<void> {
 }
 
 const sheet = (page: Page) => page.locator('.timestamp-picker');
+/** The settle: the track adopted where the scroll rested and re-centred. */
+const settled = (page: Page) => expect.poll(() => page.locator('.timestamp-picker-viewport').evaluate(
+  (el) => Math.abs(el.scrollLeft - 2 * el.clientWidth),
+), { timeout: 5000 }).toBeLessThanOrEqual(2);
 const noteText = (page: Page) => page.evaluate(async () => {
   const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
   return EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!.state.doc.toString();
@@ -53,8 +57,9 @@ test('the sheet writes the picked day and time as a code at the caret', async ({
   await expect(picker).toBeVisible();
   // The 15th of the month it opened at (today's month), 09:30, full format.
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(14).click();
-  await picker.locator('[data-stamp-hour]').fill('9');
+  await picker.locator('[data-stamp-hour]').fill('09');
   await picker.locator('[data-stamp-minute]').fill('30');
+  await picker.locator('[data-stamp-second]').fill('00');
   await picker.locator('.timestamp-picker-format[data-stamp-format="F"]').click();
   await picker.locator('[data-stamp-insert]').click();
   await expect(picker).toHaveCount(0);
@@ -89,6 +94,8 @@ test('tapping a chip in the reading view edits the code that made it', async ({ 
   // Seeded: November 2023, the 14th selected — the moment the code says.
   await expect(picker.locator('.timestamp-picker-month')).toContainText('November 2023');
   await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected')).toHaveText('14');
+  // The seconds ride in the open now: 1700000000 ends :20, the slot shows it.
+  await expect(picker.locator('[data-stamp-second]')).toHaveValue('20');
   // A different format: the very token is rewritten, not duplicated.
   await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
   await picker.locator('[data-stamp-insert]').click();
@@ -125,7 +132,7 @@ test('Now re-seeds the sheet with the current moment', async ({ page }) => {
   await openPicker(page);
   const picker = sheet(page);
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click(); // somewhere else
-  await picker.locator('[data-stamp-now]').click();
+  await picker.locator('[data-stamp-today]').click();
   await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected')).toHaveText(String(new Date().getDate()));
   await picker.locator('[data-stamp-insert]').click();
   const code = /<t:(\d{1,15})>/.exec(await noteText(page));
@@ -156,7 +163,8 @@ test('the month arrows step the way they point', async ({ page }) => {
   // re-renders, so wait for the title to move before touching the grid.
   const home = await picker.locator('.timestamp-picker-month').textContent();
   await picker.locator('[data-stamp-step="1"]').click();
-  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
+  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!); // the title turns mid-glide
+  await settled(page); // the grid turns at rest
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
   const nextCode = /<t:(\d{1,15})>/.exec(await noteText(page))!;
@@ -169,6 +177,7 @@ test('the month arrows step the way they point', async ({ page }) => {
   const away = await sheet(page).locator('.timestamp-picker-month').textContent();
   await sheet(page).locator('[data-stamp-step="-1"]').click();
   await expect(sheet(page).locator('.timestamp-picker-month')).not.toHaveText(away!);
+  await settled(page);
   await sheet(page).locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await sheet(page).locator('[data-stamp-insert]').click();
   const codes = [...(await noteText(page)).matchAll(/<t:(\d{1,15})>/g)].map((m) => Number(m[1]));
@@ -211,34 +220,38 @@ test('the jump box counts in Jalali when the grid does', async ({ page }) => {
   expect(Math.abs(jumped.getTime() - newYear)).toBeLessThan(36 * 3600 * 1000);
 });
 
-test('an impossible time is refused live, a keystroke fixes it', async ({ page }) => {
+test('a slot is red only when provably impossible, and holds the advance', async ({ page }) => {
   await boot(page);
   await openPicker(page);
   const picker = sheet(page);
   const insert = picker.locator('[data-stamp-insert]');
   const hour = picker.locator('[data-stamp-hour]');
   const minute = picker.locator('[data-stamp-minute]');
-  await hour.fill('25');
-  await expect(insert).toBeDisabled();
+  await hour.click();
+  await hour.pressSequentially('2');
+  await expect(hour).not.toHaveClass(/is-invalid/); // 2 may yet be 20\u201323: waiting is not wrong
+  await expect(insert).toBeEnabled();
+  await hour.pressSequentially('5'); // 25: proved impossible
   await expect(hour).toHaveClass(/is-invalid/);
-  await minute.fill('99');
   await expect(insert).toBeDisabled();
-  await expect(minute).toHaveClass(/is-invalid/);
-  await hour.fill('9');
-  await minute.fill('30');
+  await expect(minute).not.toBeFocused(); // the advance holds until it is fixed
+  await hour.press('Backspace'); // back to 2, waiting again
   await expect(hour).not.toHaveClass(/is-invalid/);
   await expect(insert).toBeEnabled();
-  // A cleared field is refused too.
-  await minute.fill('');
-  await expect(insert).toBeDisabled();
-  await minute.fill('05'); // a leading zero is still a real minute
+  await hour.pressSequentially('1'); // the register shifts: 21, legal \u2014 the chain moves
+  await expect(minute).toBeFocused();
+  await minute.pressSequentially('7'); // 7x is already over 59: red at one digit
+  await expect(minute).toHaveClass(/is-invalid/);
+  await minute.press('Backspace');
+  await minute.pressSequentially('30'); // 30: legal, on to the seconds
+  await expect(picker.locator('[data-stamp-second]')).toBeFocused();
   await expect(insert).toBeEnabled();
-  // What lands is exactly the time shown.
+  // What lands is exactly the padded time shown: 21:30.
   await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
   await picker.locator('[data-stamp-insert]').click();
   const at = new Date(Number(/<t:(\d{1,15}):T>/.exec(await noteText(page))![1]) * 1000);
-  expect(at.getHours()).toBe(9);
-  expect(at.getMinutes()).toBe(5);
+  expect(at.getHours()).toBe(21);
+  expect(at.getMinutes()).toBe(30);
 });
 
 test('the chips and the Insert code follow the typing live', async ({ page }) => {
@@ -246,14 +259,20 @@ test('the chips and the Insert code follow the typing live', async ({ page }) =>
   await openPicker(page);
   const picker = sheet(page);
   await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
-  await picker.locator('[data-stamp-hour]').fill('9');
-  await picker.locator('[data-stamp-minute]').fill('5');
+  const hour = picker.locator('[data-stamp-hour]');
+  await hour.click();
+  await hour.pressSequentially('09'); // shown padded as it lands
+  await expect(hour).toHaveValue('09');
+  await picker.locator('[data-stamp-minute]').pressSequentially('05'); // on to the seconds
+  await picker.locator('[data-stamp-second]').pressSequentially('00'); // done
   const sample = picker.locator('.timestamp-picker-format[data-stamp-format="T"] .timestamp-picker-format-sample');
   await expect(sample).toHaveText(/9:05:00/);
   // The button says the exact code the moment carries now.
   await expect(picker.locator('[data-stamp-insert]')).toHaveText(/<t:\d{1,15}:T>/);
   const before = await picker.locator('[data-stamp-insert]').textContent();
-  await picker.locator('[data-stamp-minute]').fill('45');
+  const minute = picker.locator('[data-stamp-minute]');
+  await minute.click();
+  await minute.pressSequentially('45');
   await expect(picker.locator('[data-stamp-insert]')).not.toHaveText(before!);
   await expect(sample).toHaveText(/9:45:00/);
 });
@@ -277,16 +296,14 @@ test('a fling that settles on a neighbour page turns the month', async ({ page }
   await openPicker(page);
   const picker = sheet(page);
   const home = await picker.locator('.timestamp-picker-month').textContent();
-  // The gesture itself is the browser's; the sheet only hears the settle
-  // (scrollend, or the debounced scroll). A fling to the previous page:
+  // The gesture itself is the browser's; the sheet only hears the settle.
+  // A fling to the previous page, then the quiet that settles it:
   await viewport(page).evaluate((el) => {
     el.scrollLeft = el.clientWidth;
-    el.dispatchEvent(new Event('scrollend'));
+    el.dispatchEvent(new Event('scroll'));
   });
+  await settled(page);
   expect(await picker.locator('.timestamp-picker-month').textContent()).not.toBe(home);
-  // Re-centred at once: the swap was invisible.
-  const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
   // The visible grid IS the month before: its first day, inserted, is the 1st.
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
@@ -358,6 +375,92 @@ test('a scroll that settles where it started keeps the month', async ({ page }) 
   });
   await page.waitForTimeout(220);
   expect(await picker.locator('.timestamp-picker-month').textContent()).toBe(home);
+});
+
+test('every month is a fixed six-week grid: the sheet never changes height', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const cells = await viewport(page).evaluate((el) => [...el.querySelectorAll('.timestamp-picker-page')].map((p) => p.querySelectorAll('.timestamp-picker-day').length));
+  expect(cells).toEqual([42, 42, 42, 42, 42]);
+  const height = await picker.evaluate((el) => el.getBoundingClientRect().height);
+  // Turn two months: the grid is the same shape, the sheet the same height.
+  await viewport(page).evaluate((el) => { el.scrollLeft = 0; el.dispatchEvent(new Event('scroll')); });
+  await settled(page);
+  await page.waitForTimeout(250);
+  expect(await picker.evaluate((el) => el.getBoundingClientRect().height)).toBe(height);
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)')).toHaveCount(31, { timeout: 5000 }).catch(() => {});
+});
+
+test('the runway grows mid-scroll: a six-page run finds real months all the way', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const now = new Date();
+  // Six pages in one continuous scroll, no rest between: the track must grow
+  // ahead of the finger and the title must follow it.
+  await viewport(page).evaluate(async (el) => {
+    const width = el.clientWidth;
+    for (let step = 1; step <= 6; step += 1) {
+      el.scrollLeft = width * (2 + step);
+      el.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve) => window.setTimeout(resolve, 16));
+    }
+  });
+  expect(await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).toBeGreaterThan(8);
+  // Rest: the month six on is adopted, re-centred, and its 1st is real.
+  await page.waitForTimeout(400); // past the settle debounce
+  const expected = new Date(now.getFullYear(), now.getMonth() + 6, 1);
+  const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
+  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const reached = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
+  expect(reached.getFullYear()).toBe(expected.getFullYear());
+  expect(reached.getMonth()).toBe(expected.getMonth());
+  expect(reached.getDate()).toBe(1);
+  // A step the other way grows the track backwards, compensated in place.
+  await openPicker(page);
+  await viewport(page).evaluate((el) => {
+    el.scrollLeft = Math.round(el.clientWidth * 0.5);
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await expect(viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).resolves.toBeGreaterThanOrEqual(6);
+  await page.waitForTimeout(400); // the re-snap, then the settle: centred on the month before
+  const after = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
+  expect(Math.abs(after[0] - 2 * after[1])).toBeLessThanOrEqual(2);
+});
+
+test('Today moves the date and Now moves the time, each keeping the other', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const now = new Date();
+  // A date elsewhere and a typed time.
+  await viewport(page).evaluate((el) => { el.scrollLeft = el.clientWidth; el.dispatchEvent(new Event('scroll')); });
+  await settled(page);
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(14).click();
+  const hour = picker.locator('[data-stamp-hour]');
+  await hour.click();
+  await hour.pressSequentially('04');
+  await picker.locator('[data-stamp-minute]').pressSequentially('30');
+  await picker.locator('[data-stamp-second]').pressSequentially('00');
+  await picker.locator('[data-stamp-today]').click(); // the date -> today, 04:30 kept
+  await picker.locator('.timestamp-picker-format[data-stamp-format="t"]').click();
+  await picker.locator('[data-stamp-insert]').click();
+  let at = new Date(Number(/<t:(\d{1,15}):t>/.exec(await noteText(page))![1]) * 1000);
+  expect(at.getDate()).toBe(now.getDate());
+  expect(at.getMonth()).toBe(now.getMonth());
+  expect(at.getHours()).toBe(4);
+  expect(at.getMinutes()).toBe(30);
+  // Now: the time follows the clock; the date stays today's.
+  await openPicker(page);
+  await picker.locator('[data-stamp-now]').click();
+  await picker.locator('[data-stamp-insert]').click();
+  const codes = [...(await noteText(page)).matchAll(/<t:(\d{1,15})>/g)].map((m) => Number(m[1]));
+  at = new Date(codes[codes.length - 1] * 1000);
+  expect(Math.abs(at.getTime() - Date.now())).toBeLessThan(120_000);
+  expect(at.getDate()).toBe(now.getDate());
 });
 
 // ---- A chip tapped in the editor edits its own code ----
@@ -435,40 +538,40 @@ test('Enter walks month to year and applies; arrows stay the caret\u2019s', asyn
   expect(focused).toBe(true);
 });
 
-test('two digits advance by themselves: month, hour, and done on the minute', async ({ page }) => {
+test('two digits advance by themselves, and 95 holds the chain', async ({ page }) => {
   await boot(page);
   await openPicker(page);
   const picker = sheet(page);
-  // The jump box: 2 digits in the month hop to the year; 4 in the year stay.
+  // The jump box: a two-digit month hands over to the year; a year does not.
   await picker.locator('[data-stamp-jump]').click();
   const month = picker.locator('[data-stamp-jump-month]');
   const year = picker.locator('[data-stamp-jump-year]');
   await expect(month).toBeFocused();
-  await month.fill(''); // the writer backspaces the pre-filled month
-  await month.type('1');
-  await expect(year).not.toBeFocused(); // "1" may still become "12"
-  await month.type('2'); // "12": the month is full — the year is next
+  await month.fill('');
+  await month.pressSequentially('1');
+  await expect(year).not.toBeFocused(); // 1 may still become 12
+  await month.pressSequentially('2'); // 12: the year is next
   await expect(year).toBeFocused();
-  await year.fill('');
-  await year.type('203'); // three digits may still grow: no advance
-  await year.type('0'); // 2030, full but a year: no advance, Enter applies
-  await expect(year).toBeFocused();
-  await year.press('Enter');
+  await year.pressSequentially('2030'); // four digits is a year, not a trigger
+  await year.press('Enter'); // the jump applies; the keyboard lands on the title
   await expect(picker.locator('[data-stamp-jump-year]')).toHaveCount(0);
-  // The post-apply guard shields the time row for a beat; let it rest.
-  await page.waitForTimeout(350);
-  // The time row: 2 digits in the hour hop to the minute, 2 in the minute close.
+  await page.waitForTimeout(350); // the post-apply guard rests
+  // The time row: 9 alone waits (shown 09, but it may become 95)...
   const hour = picker.locator('[data-stamp-hour]');
   const minute = picker.locator('[data-stamp-minute]');
-  await hour.fill('');
-  await hour.type('9');
+  const second = picker.locator('[data-stamp-second]');
+  await hour.click();
+  await hour.pressSequentially('9');
   await expect(minute).not.toBeFocused();
-  await hour.type('5'); // 95 is impossible — but the field is full; the chain moves
+  await hour.pressSequentially('5'); // 95: impossible - red, and nothing moves
+  await expect(hour).toHaveClass(/is-invalid/);
+  await expect(minute).not.toBeFocused();
+  await hour.press('Backspace');
+  await hour.pressSequentially('15'); // the register shifts 9+1 then 1+5: 15, on to the minute
   await expect(minute).toBeFocused();
-  await minute.fill('');
-  await minute.type('3');
-  await expect(minute).toBeFocused();
-  await minute.type('0'); // 30: done — the keyboard lands on the title
+  await minute.pressSequentially('30'); // on to the seconds
+  await expect(second).toBeFocused();
+  await second.pressSequentially('45'); // done - the keyboard lands on the title
   const onTitle = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.stampJump !== undefined);
   expect(onTitle).toBe(true);
 });
@@ -501,7 +604,7 @@ test('junk keys meet digits-only fields; typing replaces the pre-filled value', 
   const picker = sheet(page);
   const hour = picker.locator('[data-stamp-hour]');
   await hour.fill('');
-  await hour.pressSequentially('2a5'); // "a" meets the digits-only field and dies
-  await expect(hour).toHaveValue('25');
+  await hour.pressSequentially('2a1'); // "a" meets the digits-only field and dies
+  await expect(hour).toHaveValue('21');
   await expect(picker.locator('[data-stamp-minute]')).toBeFocused(); // full: the chain moves
 });

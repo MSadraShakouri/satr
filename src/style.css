@@ -1640,6 +1640,7 @@ body {
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
+  overflow-anchor: none; /* the picker compensates its own prepends; the browser's anchoring would fight it */
   direction: ltr; /* scrollLeft counts from the first page whatever the sheet's direction */
   scrollbar-width: none;
 }
@@ -1733,6 +1734,7 @@ body {
 .timestamp-picker-insert:disabled {
   opacity: 0.45;
 }
+.timestamp-picker-today,
 .timestamp-picker-now {
   padding: 7px 14px;
   margin-inline-start: 8px;

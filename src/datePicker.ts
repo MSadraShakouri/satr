@@ -107,10 +107,26 @@ export function createTimestampPicker(): TimestampPicker {
   let chosen: Date | null = null;
   let format: TimestampFormat = 'f';
   let onInsert: ((code: string) => void) | null = null;
-  /** The seconds of a seeded moment. The sheet has no seconds field, so an
-   *  edited chip keeps the seconds it had — until the writer touches the
-   *  time themselves, which is theirs to round. */
-  let seededSeconds: number | null = null;
+  /** The time row is a row of digit slots: behind each field a buffer holds
+   *  what was typed, and the field always SHOWS two digits, zero-padded and
+   *  live — typing 9 into the hour shows 09 at once. A slot can never be
+   *  empty (backspace stops at 00) and is red only when it is PROVABLY
+   *  impossible: a lone first digit already over the ceiling (3+ hours,
+   *  6+ minutes and seconds) or a complete two over it. Waiting is never
+   *  wrong. */
+  const slots: Record<'hour' | 'minute' | 'second', string> = { hour: '', minute: '', second: '' };
+  /** The writer has focused a slot without typing yet: the first digit
+   *  replaces, the way a slot takes a new value. */
+  const fresh: Record<'hour' | 'minute' | 'second', boolean> = { hour: false, minute: false, second: false };
+  const SLOT_MAX: Record<'hour' | 'minute' | 'second', number> = { hour: 23, minute: 59, second: 59 };
+  const padded = (buffer: string): string => buffer.padStart(2, '0');
+  const slotNum = (name: 'hour' | 'minute' | 'second'): number => Number(slots[name] || '0');
+  const slotRed = (name: 'hour' | 'minute' | 'second'): boolean => {
+    const buffer = slots[name];
+    if (!buffer) return false;
+    if (buffer.length === 2) return Number(buffer) > SLOT_MAX[name];
+    return Number(buffer) * 10 > SLOT_MAX[name];
+  };
   /** The month title replaced by month/year inputs, until applied or left. */
   let jumping = false;
   /** Armed when the jump applies: the very next focus to land in the time row
@@ -134,12 +150,34 @@ export function createTimestampPicker(): TimestampPicker {
     window.setTimeout(() => { el.remove(); cover?.remove(); }, 220);
   };
 
-  /** The current page sits two pages in (five on the track): instant, and a
-   *  no-op when the track already rests there. */
+  /** The current page sits two pages in (five on the track at rest): instant,
+   *  and a no-op when the track already rests there. */
   const centerTrack = (): void => {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (viewport) viewport.scrollLeft = 2 * viewport.clientWidth;
   };
+
+  /** One month as a page: the weekday row and a FIXED six-week grid — 42
+   *  cells whatever the month, so no page grows or shrinks and the sheet
+   *  never changes height under the finger. */
+  function pageHTML(monthDate: Date, isCurrent: boolean): string {
+    const localeTag = tag();
+    const row = weekdayRow(localeTag);
+    const days = monthDays(monthDate);
+    const lead = leadCells(localeTag, monthStart(monthDate), row);
+    const chosenParts = chosen ? calParts(localeTag, chosen) : null;
+    const cells = Array.from({ length: lead }, () => '<span class="timestamp-picker-day is-blank"></span>').join('')
+      + days.map((day, index) => {
+        const parts = calParts(localeTag, day);
+        const selected = isCurrent && chosenParts !== null
+          && parts.year === chosenParts.year && parts.month === chosenParts.month && parts.day === chosenParts.day;
+        return `<button type="button" class="timestamp-picker-day${selected ? ' is-selected' : ''}" data-stamp-day="${index}" aria-label="${number(parts.day)}" aria-pressed="${selected}"${isCurrent ? '' : ' tabindex="-1"'}>${number(parts.day)}</button>`;
+      }).join('')
+      + Array.from({ length: 42 - lead - days.length }, () => '<span class="timestamp-picker-day is-blank"></span>').join('');
+    const weekdays = `<div class="timestamp-picker-weekdays" dir="auto">${row.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</div>`;
+    const dirText = sheet ? getComputedStyle(sheet).direction : 'ltr';
+    return `<div class="timestamp-picker-page${isCurrent ? ' is-current' : ''}"${isCurrent ? '' : ' aria-hidden="true"'} style="direction:${dirText}">${weekdays}<div class="timestamp-picker-grid">${cells}</div></div>`;
+  }
 
   function render(): void {
     if (!sheet || !viewMonth || !chosen) return;
@@ -152,23 +190,10 @@ export function createTimestampPicker(): TimestampPicker {
       heading.dir = 'auto';
       titleIndex = 2;
     }
-    const chosenParts = calParts(localeTag, chosen);
     const current = viewMonth;
-    const dirText = getComputedStyle(sheet).direction;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
-    track.innerHTML = [-2, -1, 0, 1, 2].map((offset) => {
-      const monthDate = addMonths(current, offset);
-      const days = monthDays(monthDate);
-      const lead = leadCells(localeTag, monthStart(monthDate), row);
-      const cells = Array.from({ length: lead }, () => '<span class="timestamp-picker-day is-blank"></span>').join('')
-        + days.map((day, index) => {
-          const parts = calParts(localeTag, day);
-          const selected = parts.year === chosenParts.year && parts.month === chosenParts.month && parts.day === chosenParts.day;
-          return `<button type="button" class="timestamp-picker-day${selected ? ' is-selected' : ''}" data-stamp-day="${index}" aria-label="${number(parts.day)}" aria-pressed="${selected}"${offset === 0 ? '' : ' tabindex="-1"'}>${number(parts.day)}</button>`;
-        }).join('');
-      const weekdays = `<div class="timestamp-picker-weekdays" dir="auto">${row.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</div>`;
-      return `<div class="timestamp-picker-page${offset === 0 ? ' is-current' : ''}" data-page-offset="${offset}"${offset === 0 ? '' : ' aria-hidden="true"'} style="direction:${dirText}">${weekdays}<div class="timestamp-picker-grid">${cells}</div></div>`;
-    }).join('');
+    track.innerHTML = [-2, -1, 0, 1, 2].map((offset) => pageHTML(addMonths(current, offset), offset === 0)).join('');
+    anchor = -2;
     centerTrack();
     // The format chips and the Insert button say the same moment the grid does.
     const picked = chosen;
@@ -184,32 +209,23 @@ export function createTimestampPicker(): TimestampPicker {
   }
 
   const code = (unix: number): string => (format === 'f' ? `t:${unix}` : `t:${unix}:${format}`);
-  /** What the time fields say right now, and whether it is a real time.
-   *  Empty or impossible (25 o'clock, 99 minutes) is invalid, live. */
-  function timeState(): { hour: number; minute: number; valid: boolean } {
-    const hourRaw = sheet?.querySelector<HTMLInputElement>('[data-stamp-hour]')?.value.trim() ?? '';
-    const minuteRaw = sheet?.querySelector<HTMLInputElement>('[data-stamp-minute]')?.value.trim() ?? '';
-    const hour = Number(hourRaw);
-    const minute = Number(minuteRaw);
-    const valid = hourRaw !== '' && minuteRaw !== ''
-      && Number.isInteger(hour) && Number.isInteger(minute)
-      && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
-    return { hour, minute, valid };
-  }
+  /** The moment the row says: the chosen date carries the date, the slots
+   *  the time — a waiting slot (buffer 9, shown 09) reads as its padded
+   *  value, so the code is always whole. */
   const unixOf = (date: Date): number => {
     const at = new Date(date);
-    const { hour, minute } = timeState();
-    at.setHours(Math.min(23, Math.max(0, hour)), Math.min(59, Math.max(0, minute)), seededSeconds ?? 0, 0);
+    at.setHours(slotNum('hour'), slotNum('minute'), slotNum('second'), 0);
     return Math.floor(at.getTime() / 1000);
   };
-  /** Refuse an impossible time at once: the field reddens, Insert greys out. */
+  /** Red sticks to the impossible field alone; Insert greys out for that
+   *  alone — waiting never blocks the writer. */
   function syncTime(): void {
     if (!sheet) return;
-    const { valid } = timeState();
-    sheet.querySelector<HTMLInputElement>('[data-stamp-hour]')?.classList.toggle('is-invalid', !valid);
-    sheet.querySelector<HTMLInputElement>('[data-stamp-minute]')?.classList.toggle('is-invalid', !valid);
+    for (const name of ['hour', 'minute', 'second'] as const) {
+      sheet.querySelector<HTMLInputElement>(`[data-stamp-${name}]`)?.classList.toggle('is-invalid', slotRed(name));
+    }
     const insert = sheet.querySelector<HTMLButtonElement>('[data-stamp-insert]');
-    if (insert) insert.disabled = !valid;
+    if (insert) insert.disabled = (['hour', 'minute', 'second'] as const).some(slotRed);
   }
 
   // ---- The month turn ----
@@ -219,12 +235,17 @@ export function createTimestampPicker(): TimestampPicker {
   function turnMonth(dir: -1 | 1): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
-    viewport.scrollTo({ left: viewport.clientWidth * (2 + dir), behavior: 'smooth' });
+    viewport.scrollTo({ left: viewport.clientWidth * (-anchor + dir), behavior: 'smooth' });
   }
 
   /** Arrow presses landing while a turn still glides chain through the
    *  settle, one month each, instead of being swallowed mid-flight. */
   let pendingTurn = 0;
+  /** The calendar-month offset of the track's FIRST page relative to
+   *  `viewMonth` — -2 after every render, drifting as runway grows. */
+  let anchor = -2;
+  /** Which absolute page index the title is wearing; render() resets it. */
+  let titleIndex = 2;
 
   /** The track came to rest: whichever page the scroll ended on IS the month
    *  now — re-render with it centred (render() re-centres at once, so the
@@ -232,14 +253,16 @@ export function createTimestampPicker(): TimestampPicker {
    *  scroll debounce covers engines without it. */
   function normalize(): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
-    if (!viewport || !viewMonth) return;
+    const track = sheet?.querySelector<HTMLElement>('.timestamp-picker-track');
+    if (!viewport || !track || !viewMonth) return;
     const width = viewport.clientWidth;
-    const index = Math.max(0, Math.min(4, Math.round(viewport.scrollLeft / width)));
-    if (index !== 2) {
-      viewMonth = addMonths(viewMonth, index - 2);
-      render();
+    const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
+    const offset = anchor + index;
+    if (offset !== 0) {
+      viewMonth = addMonths(viewMonth, offset);
+      render(); // recentres at once: anchor -2, five pages; runway regrows on demand
     } else {
-      titleIndex = 2;
+      titleIndex = index;
     }
     if (pendingTurn) {
       const dir = (pendingTurn > 0 ? 1 : -1) as -1 | 1;
@@ -248,22 +271,20 @@ export function createTimestampPicker(): TimestampPicker {
     }
   }
 
-  /** Which page's month the title is wearing (0…4, the centre is 2).
-   *  render() resets it: render owns the heading. */
-  let titleIndex = 2;
   /** The title follows the finger: the page nearest the snap point names the
    *  month *while* the track moves — not after it stops. The grid and the
    *  chips stay until the settle; the title is cheap, it may anticipate. */
   function followTitle(): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     const heading = sheet?.querySelector<HTMLElement>('.timestamp-picker-month');
-    if (!viewport || !heading || !viewMonth || jumping) return;
+    const track = sheet?.querySelector<HTMLElement>('.timestamp-picker-track');
+    if (!viewport || !heading || !track || !viewMonth || jumping) return;
     const width = viewport.clientWidth;
     if (!width) return;
-    const index = Math.max(0, Math.min(4, Math.round(viewport.scrollLeft / width)));
+    const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
     if (index === titleIndex) return;
     titleIndex = index;
-    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, index - 2)));
+    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, anchor + index)));
   }
 
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
@@ -276,7 +297,6 @@ export function createTimestampPicker(): TimestampPicker {
     format = options.initial?.format ?? 'f';
     const start = options.initial ? new Date(options.initial.seconds * 1000) : new Date();
     chosen = start;
-    seededSeconds = options.initial ? start.getSeconds() : null;
     jumping = false;
     viewMonth = monthStart(start);
     backdrop = document.createElement('div');
@@ -297,9 +317,12 @@ export function createTimestampPicker(): TimestampPicker {
         </div>
         <div class="timestamp-picker-viewport"><div class="timestamp-picker-track"></div></div>
         <div class="timestamp-picker-time">
-          <input class="timestamp-picker-field" data-stamp-hour type="text" inputmode="numeric" maxlength="2" enterkeyhint="next" aria-label="Hour">
+          <button type="button" class="timestamp-picker-today" data-stamp-today>Today</button>
+          <input class="timestamp-picker-field" data-stamp-hour type="text" inputmode="numeric" enterkeyhint="next" aria-label="Hour">
           <span class="timestamp-picker-colon">:</span>
-          <input class="timestamp-picker-field" data-stamp-minute type="text" inputmode="numeric" maxlength="2" enterkeyhint="done" aria-label="Minute">
+          <input class="timestamp-picker-field" data-stamp-minute type="text" inputmode="numeric" enterkeyhint="next" aria-label="Minute">
+          <span class="timestamp-picker-colon">:</span>
+          <input class="timestamp-picker-field" data-stamp-second type="text" inputmode="numeric" enterkeyhint="done" aria-label="Second">
           <button type="button" class="timestamp-picker-now" data-stamp-now>Now</button>
         </div>
         <div class="timestamp-picker-formats">
@@ -313,32 +336,72 @@ export function createTimestampPicker(): TimestampPicker {
       </div>`;
     const hour = sheet.querySelector<HTMLInputElement>('[data-stamp-hour]')!;
     const minute = sheet.querySelector<HTMLInputElement>('[data-stamp-minute]')!;
-    hour.value = String(start.getHours());
-    minute.value = String(start.getMinutes());
+    const second = sheet.querySelector<HTMLInputElement>('[data-stamp-second]')!;
+    slots.hour = String(start.getHours()).padStart(2, '0');
+    slots.minute = String(start.getMinutes()).padStart(2, '0');
+    slots.second = String(start.getSeconds()).padStart(2, '0');
+    hour.value = padded(slots.hour);
+    minute.value = padded(slots.minute);
+    second.value = padded(slots.second);
     sheet.addEventListener('input', (event) => {
       const el = event.target as HTMLInputElement;
-      // The fields count digits: anything a paste or a stray key brought is
-      // stripped, and a field that is full moves the writer on by itself —
-      // two digits in the month mean the year is next, in the hour the
-      // minute, in the minute done. No keyboard's action key decides that.
-      const cap = el.closest('[data-stamp-jump-month], [data-stamp-hour], [data-stamp-minute]') ? 2
-        : el.closest('[data-stamp-jump-year]') ? 4 : 0;
-      if (cap) {
-        const digits = latinDigits(el.value).replace(/\D/g, '').slice(0, cap);
+      const monthField = el.closest<HTMLInputElement>('[data-stamp-jump-month]');
+      const yearField = el.closest<HTMLInputElement>('[data-stamp-jump-year]');
+      if (yearField) {
+        const digits = latinDigits(el.value).replace(/\D/g, '').slice(0, 4);
         if (el.value !== digits) el.value = digits;
-        if (digits.length === cap) {
-          const nextFor = el.closest('[data-stamp-jump-month]') ? '[data-stamp-jump-year]'
-            : el.closest('[data-stamp-hour]') ? '[data-stamp-minute]' : null;
-          const next = nextFor ? sheet!.querySelector<HTMLInputElement>(nextFor) : null;
-          if (next) next.focus();
-          else if (el.closest('[data-stamp-minute]')) sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus();
+        return;
+      }
+      if (monthField) {
+        const digits = latinDigits(el.value).replace(/\D/g, '').slice(0, 2);
+        if (el.value !== digits) el.value = digits;
+        monthField.classList.toggle('is-invalid', digits.length === 2 && Number(digits) > 12);
+        if (digits.length === 2 && Number(digits) >= 1 && Number(digits) <= 12) {
+          sheet!.querySelector<HTMLInputElement>('[data-stamp-jump-year]')!.focus();
+        }
+        return;
+      }
+      const name = el.closest('[data-stamp-hour]') ? 'hour'
+        : el.closest('[data-stamp-minute]') ? 'minute'
+        : el.closest('[data-stamp-second]') ? 'second' : null;
+      if (!name) return;
+      // The register: the browser shows the padded buffer plus whatever the
+      // writer just did; the diff against it is the keystroke. First digit
+      // after a focus replaces, the rest shift the register along; removing
+      // characters pops it — never past 00.
+      const kind = (event as InputEvent).inputType ?? '';
+      if (kind.startsWith('delete')) {
+        slots[name] = slots[name].slice(0, -1); // never past 00
+      } else if (kind === 'insertReplacementText') {
+        // A programmatic value-set (autofill, tests): the whole value IS the
+        // new buffer, no register arithmetic.
+        slots[name] = latinDigits(el.value).replace(/\D/g, '').slice(-2);
+        fresh[name] = false;
+      } else {
+        let typed = ((event as InputEvent).data ?? '').replace(/\D/g, '');
+        if (!typed) {
+          // A composition or a paste: the digits are whatever arrived whole.
+          const afterDigits = latinDigits(el.value).replace(/\D/g, '');
+          const before = padded(slots[name]);
+          typed = afterDigits.startsWith(before) ? afterDigits.slice(before.length) : afterDigits.slice(-2);
+        }
+        if (typed) {
+          if (fresh[name]) { slots[name] = typed[0]; typed = typed.slice(1); fresh[name] = false; }
+          for (const digit of typed) slots[name] = (slots[name] + digit).slice(-2);
         }
       }
-      if (el.closest('.timestamp-picker-time')) {
-        seededSeconds = null;
-        // Live: the chips and the Insert code re-word on every keystroke,
-        // an impossible time reddens its field and greys Insert out.
-        render();
+      el.value = padded(slots[name]);
+      const atEnd = slots[name].length;
+      el.setSelectionRange(atEnd, atEnd);
+      syncTime();
+      render(); // the chips and the Insert code follow every digit
+      // Completed and legal: the chain moves by itself. Completed and
+      // impossible: the field is red and HOLDS the advance until fixed.
+      if (slots[name].length === 2 && !slotRed(name)) {
+        const nextFor = name === 'hour' ? '[data-stamp-minute]' : name === 'minute' ? '[data-stamp-second]' : null;
+        const next = nextFor ? sheet!.querySelector<HTMLInputElement>(nextFor) : null;
+        if (next) next.focus();
+        else sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus(); // seconds: done
       }
     });
     // The month title, tapped: two fields in the calendar's own count.
@@ -379,6 +442,10 @@ export function createTimestampPicker(): TimestampPicker {
       if (reentry && el.closest?.('.timestamp-picker-time')) {
         sheet?.querySelector<HTMLElement>('.timestamp-picker-month')?.focus();
       }
+      const name = el.closest?.('[data-stamp-hour]') ? 'hour'
+        : el.closest?.('[data-stamp-minute]') ? 'minute'
+        : el.closest?.('[data-stamp-second]') ? 'second' : null;
+      if (name) fresh[name] = true;
     });
     // Enter decides the chain: the catchable action key arrives as Enter
     // (enterkeyhint only labels it), and each field's Enter moves where the
@@ -403,12 +470,17 @@ export function createTimestampPicker(): TimestampPicker {
       }
       if (event.key === 'Enter' && target.closest('[data-stamp-hour]')) {
         event.preventDefault();
-        minute.focus();
+        if (!slotRed('hour')) minute.focus(); // impossible: the advance holds
         return;
       }
       if (event.key === 'Enter' && target.closest('[data-stamp-minute]')) {
         event.preventDefault();
-        sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus();
+        if (!slotRed('minute')) second.focus();
+        return;
+      }
+      if (event.key === 'Enter' && target.closest('[data-stamp-second]')) {
+        event.preventDefault();
+        if (!slotRed('second')) sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus();
         return;
       }
       if (!jumping && target.closest('[data-stamp-jump]')) { event.preventDefault(); enterJump(); }
@@ -426,19 +498,34 @@ export function createTimestampPicker(): TimestampPicker {
         jumping = false;
         const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
         const dir = Number(step.dataset.stampStep) as -1 | 1;
-        if (viewport && Math.abs(viewport.scrollLeft - 2 * viewport.clientWidth) > 2) pendingTurn += dir;
+        if (viewport && Math.abs(viewport.scrollLeft - -anchor * viewport.clientWidth) > 2) pendingTurn += dir;
         else turnMonth(dir);
         return;
       }
       if (target.closest('[data-stamp-jump-month], [data-stamp-jump-year]')) return;
       if (target.closest('[data-stamp-jump]')) { enterJump(); return; }
+      if (target.closest('[data-stamp-today]')) {
+        // Today's date, the typed time kept.
+        const today = new Date();
+        const at = new Date(today);
+        at.setHours(slotNum('hour'), slotNum('minute'), slotNum('second'), 0);
+        chosen = at;
+        viewMonth = monthStart(today);
+        render();
+        return;
+      }
       if (target.closest('[data-stamp-now]')) {
+        // The current hh:mm:ss, the picked date kept.
         const now = new Date();
-        seededSeconds = now.getSeconds();
-        chosen = now;
-        viewMonth = monthStart(now);
-        hour.value = String(now.getHours());
-        minute.value = String(now.getMinutes());
+        slots.hour = String(now.getHours()).padStart(2, '0');
+        slots.minute = String(now.getMinutes()).padStart(2, '0');
+        slots.second = String(now.getSeconds()).padStart(2, '0');
+        hour.value = padded(slots.hour);
+        minute.value = padded(slots.minute);
+        second.value = padded(slots.second);
+        const at = new Date(chosen!);
+        at.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0);
+        chosen = at;
         render();
         return;
       }
@@ -449,11 +536,14 @@ export function createTimestampPicker(): TimestampPicker {
         // A day click with the jump box open cancels the jump: the grid under
         // the finger is the one that answers.
         if (jumping) { jumping = false; render(); }
-        const pageOffset = Number(day.closest<HTMLElement>('.timestamp-picker-page')!.dataset.pageOffset);
-        const picked = monthDays(addMonths(viewMonth!, pageOffset))[Number(day.dataset.stampDay)];
+        // The page's month comes from where it sits on the track: the anchor
+        // knows, whatever the runway has grown to.
+        const track = sheet!.querySelector<HTMLElement>('.timestamp-picker-track')!;
+        const pageIndex = Array.from(track.children).indexOf(day.closest<HTMLElement>('.timestamp-picker-page')!);
+        const picked = monthDays(addMonths(viewMonth!, anchor + pageIndex))[Number(day.dataset.stampDay)];
         if (picked) {
           const at = new Date(picked);
-          at.setHours(Number(hour.value) || 0, Number(minute.value) || 0, 0, 0);
+          at.setHours(slotNum('hour'), slotNum('minute'), slotNum('second'), 0);
           chosen = at;
           render();
         }
@@ -475,12 +565,48 @@ export function createTimestampPicker(): TimestampPicker {
     // the fling and the snap (one page at a time); the sheet hears where it
     // came to rest — scrollend is rest, and a debounced scroll covers
     // engines without it. The title follows the finger on every scroll
-    // frame. (scrollsnapchange was wrong here: it fires when the snap
-    // TARGET changes — mid-drag — and the recentre landed under the finger.)
+    // frame. The runway grows MID-SCROLL, in the direction of travel, long
+    // before a fling can reach an end: appending costs nothing; prepending
+    // is compensated in the same frame (scrollLeft += one page), with
+    // overflow-anchor off — this handler is the only anchor there is. A
+    // ten-page fling finds real months all the way.
     const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
     let settleTimer = 0;
-    viewport.addEventListener('scrollend', normalize);
+    const growRunway = (): void => {
+      if (!viewMonth) return;
+      const width = viewport.clientWidth || 1;
+      const pages = track.children.length;
+      if ((pages - 1) * width - viewport.scrollLeft < width) {
+        track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, anchor + pages), false));
+      }
+      if (viewport.scrollLeft < width) {
+        track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, anchor - 1), false));
+        anchor -= 1;
+        viewport.scrollLeft += width;
+      }
+      // A sheet that lives long enough trims the far tail — never near the
+      // finger, and never the compensating maths.
+      if (track.children.length > 29 && viewport.scrollLeft < (track.children.length - 9) * width) {
+        track.lastElementChild?.remove();
+      }
+    };
+    // Rest is scrollend — but a scroll still warm (this frame or the last)
+    // is not rest: the adoption waits for a beat of quiet, then the debounced
+    // settle takes it. A real fling ends quiet; a run of programmatic jumps
+    // must not adopt under the writer's finger.
+    let lastScrollT = 0;
+    viewport.addEventListener('scrollend', () => {
+      if (performance.now() - lastScrollT < 80) {
+        window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(normalize, 120);
+      } else {
+        normalize();
+      }
+    });
     viewport.addEventListener('scroll', () => {
+      lastScrollT = performance.now();
+      growRunway();
       followTitle();
       window.clearTimeout(settleTimer);
       settleTimer = window.setTimeout(normalize, 120);
