@@ -196,7 +196,9 @@ export function createTimestampPicker(): TimestampPicker {
     const calButton = sheet.querySelector<HTMLButtonElement>('[data-stamp-cal]');
     if (calButton) {
       const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
-      calButton.textContent = active === 'persian' ? 'Gregorian' : 'شمسی';
+      calButton.innerHTML = active === 'persian'
+        ? '<strong>شمسی</strong><span class="timestamp-picker-cal-swap">\u21c4</span><span class="timestamp-picker-cal-alt">Gregorian</span>'
+        : '<strong>Gregorian</strong><span class="timestamp-picker-cal-swap">\u21c4</span><span class="timestamp-picker-cal-alt">شمسی</span>';
     }
     const current = viewMonth;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
@@ -613,6 +615,20 @@ export function createTimestampPicker(): TimestampPicker {
     const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
     let settleTimer = 0;
+    /** The finger owns the deltas from touchstart to touchend: prepends and
+     *  their compensating scrollLeft write are safe exactly in that window —
+     *  a drag's next move is relative, so the correction is invisible. A
+     *  finger-UP fling gets no prepends (its momentum is absolute): it has
+     *  the runway from the last rest, and a monster fling that exhausts it
+     *  settles at the wall — one clean adopt, never a fight. */
+    let fingerDown = false;
+    viewport.addEventListener('touchstart', () => { fingerDown = true; }, { passive: true });
+    const fingerUp = (): void => {
+      fingerDown = false;
+      if (settleTimer) { window.clearTimeout(settleTimer); settleTimer = window.setTimeout(normalize, 120); }
+    };
+    viewport.addEventListener('touchend', fingerUp, { passive: true });
+    viewport.addEventListener('touchcancel', fingerUp, { passive: true });
     const growRunway = (): void => {
       if (!viewMonth) return;
       const width = viewport.clientWidth || 1;
@@ -620,38 +636,47 @@ export function createTimestampPicker(): TimestampPicker {
       if ((pages - 1) * width - viewport.scrollLeft < width) {
         track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, anchor + pages), false));
       }
-      if (viewport.scrollLeft < width) {
-        // Prepend freely: the browser's own scroll anchoring keeps the
-        // viewport pinned on the visible page — no manual scrollLeft write
-        // to fight a live fling (that fight was the leftward breakage).
+      if (fingerDown && viewport.scrollLeft < width * 1.5) {
+        // While the finger drags: prepend and compensate at once — the very
+        // next touchmove is relative to where we just put the track, so the
+        // correction cannot be seen, and a second swipe always has a page
+        // to land on. The margin is a page and a half: mandatory snap
+        // quantises positions to whole pages, so "within one page" can be
+        // swallowed by the rounding.
         track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, anchor - 1), false));
         anchor -= 1;
+        viewport.scrollLeft += width;
       }
-      // A sheet that lives long enough trims the far tail — never near the
-      // finger, and never the compensating maths.
-      if (track.children.length > 29 && viewport.scrollLeft < (track.children.length - 9) * width) {
+      // The far tail trims only with the finger up, far from the finger.
+      if (!fingerDown && track.children.length > 29 && viewport.scrollLeft < (track.children.length - 9) * width) {
         track.lastElementChild?.remove();
       }
     };
-    // Rest is scrollend — but a scroll still warm (this frame or the last)
-    // is not rest: the adoption waits for a beat of quiet, then the debounced
-    // settle takes it. A real fling ends quiet; a run of programmatic jumps
-    // must not adopt under the writer's finger.
+    // Rest is scrollend — but neither a scroll still warm (this frame or the
+    // last) nor a finger still down is rest: the adoption waits for quiet
+    // AND a lifted finger, then the debounced settle takes it. Nothing
+    // rebuilds or recentres under the writer's hand — the mid-drag adopt
+    // was the second-swipe breakage.
     let lastScrollT = 0;
-    viewport.addEventListener('scrollend', () => {
-      if (performance.now() - lastScrollT < 80) {
+    const rest = (): void => {
+      if (fingerDown || performance.now() - lastScrollT < 80) {
         window.clearTimeout(settleTimer);
-        settleTimer = window.setTimeout(normalize, 120);
+        settleTimer = window.setTimeout(rest, 120);
       } else {
+        settleTimer = 0;
         normalize();
       }
+    };
+    viewport.addEventListener('scrollend', () => {
+      if (performance.now() - lastScrollT < 80) rest();
+      else normalize();
     });
     viewport.addEventListener('scroll', () => {
       lastScrollT = performance.now();
       growRunway();
       followTitle();
       window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(normalize, 120);
+      settleTimer = window.setTimeout(rest, 120);
     });
     render();
   }

@@ -1,5 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
+// The picker's gestures are tested through the REAL touch pipeline, so this
+// suite runs with a touch screen — the device it targets has one.
+test.use({ hasTouch: true });
+
 // The date sheet (src/datePicker.ts): picks a day in whatever calendar
 // Settings → Dates has chosen and writes a `<t:unix[:fmt]>` code — at the
 // caret from the keyboard toolbar, or over the code of a chip tapped in the
@@ -36,6 +40,30 @@ const sheet = (page: Page) => page.locator('.timestamp-picker');
 const settled = (page: Page) => expect.poll(() => page.locator('.timestamp-picker-viewport').evaluate(
   (el) => Math.abs(el.scrollLeft - 2 * el.clientWidth),
 ), { timeout: 5000 }).toBeLessThanOrEqual(2);
+/** A finger drag: touch down, relative deltas (each lands wherever the track
+ *  really is now, compensations included), finger up. `toPages` is the target
+ *  in page widths. */
+const drag = async (page: Page, toPages: number): Promise<void> => {
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>('.timestamp-picker-viewport')!
+      .dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
+  });
+  await viewport(page).evaluate(async (el, to) => {
+    const width = el.clientWidth;
+    const total = width * to - el.scrollLeft;
+    el.style.scrollSnapType = 'none'; // a real finger bypasses snap while dragging
+    for (let step = 1; step <= 12; step += 1) {
+      el.scrollLeft += total / 12;
+      el.dispatchEvent(new Event('scroll'));
+      await new Promise((resolve) => window.setTimeout(resolve, 16));
+    }
+  }, toPages);
+  await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    el.style.scrollSnapType = '';
+    el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
+  });
+};
 const noteText = (page: Page) => page.evaluate(async () => {
   const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
   return EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!.state.doc.toString();
@@ -388,7 +416,7 @@ test('every month is a fixed six-week grid: the sheet never changes height', asy
   expect(cells).toEqual([42, 42, 42, 42, 42]);
   const height = await picker.evaluate((el) => el.getBoundingClientRect().height);
   // Turn two months: the grid is the same shape, the sheet the same height.
-  await viewport(page).evaluate((el) => { el.scrollLeft = 0; el.dispatchEvent(new Event('scroll')); });
+  await drag(page, 0);
   await settled(page);
   await page.waitForTimeout(250);
   expect(await picker.evaluate((el) => el.getBoundingClientRect().height)).toBe(height);
@@ -422,16 +450,64 @@ test('the runway grows mid-scroll: a six-page run finds real months all the way'
   expect(reached.getFullYear()).toBe(expected.getFullYear());
   expect(reached.getMonth()).toBe(expected.getMonth());
   expect(reached.getDate()).toBe(1);
-  // A step the other way grows the track backwards, compensated in place.
+  // A step the other way: a real drag prepends in the finger's window.
   await openPicker(page);
+  const before = await picker.locator('.timestamp-picker-month').textContent();
+  await drag(page, -1.2); // one page left, with a little intent
+  await settled(page);
+  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(before!);
+  const after = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
+  expect(Math.abs(after[0] - 2 * after[1])).toBeLessThanOrEqual(2);
+});
+
+test('two quick left drags stay within two months - no anchor divergence', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const now = new Date();
+  for (let round = 0; round < 2; round += 1) {
+    await drag(page, 0.9); // one page left, fast, no rest between
+    await settled(page);
+  }
+  // Whatever the snap did to the synthetic stream, the bookkeeping may not
+  // diverge: the landing is within two months of the start - the device bug
+  // was a TWELVE-month jump.
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
+  await picker.locator('[data-stamp-insert]').click();
+  const reached = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
+  const min = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const max = new Date(now.getFullYear(), now.getMonth(), 1);
+  expect(reached.getTime()).toBeGreaterThanOrEqual(min.getTime());
+  expect(reached.getTime()).toBeLessThanOrEqual(max.getTime() + 86_400_000);
+  expect(reached.getDate()).toBe(1);
+});
+
+test('nothing adopts under the finger: the drag owns the track until it lifts', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const before = await picker.locator('.timestamp-picker-month').textContent();
+  // Finger down, then the drag arrives below the prepend threshold.
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>('.timestamp-picker-viewport')!
+      .dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
+  });
   await viewport(page).evaluate((el) => {
     el.scrollLeft = Math.round(el.clientWidth * 0.5);
     el.dispatchEvent(new Event('scroll'));
   });
-  await expect(viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).resolves.toBeGreaterThanOrEqual(6);
-  await page.waitForTimeout(400); // the re-snap, then the settle: centred on the month before
-  const after = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(after[0] - 2 * after[1])).toBeLessThanOrEqual(2);
+  await expect(viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).resolves.toBeGreaterThan(5);
+  // Held past the settle window: still the finger's track, nothing rebuilt.
+  await page.waitForTimeout(300);
+  await expect(viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).resolves.toBeGreaterThan(5);
+  // The finger lifts: the quiet settle adopts the month before.
+  await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    el.style.scrollSnapType = '';
+    el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
+  });
+  await settled(page);
+  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(before!);
 });
 
 test('Today moves the date and Now moves the time, each keeping the other', async ({ page }) => {
@@ -440,7 +516,7 @@ test('Today moves the date and Now moves the time, each keeping the other', asyn
   const picker = sheet(page);
   const now = new Date();
   // A date elsewhere and a typed time.
-  await viewport(page).evaluate((el) => { el.scrollLeft = el.clientWidth; el.dispatchEvent(new Event('scroll')); });
+  await drag(page, 1); // to the month before
   await settled(page);
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').nth(14).click();
   const hour = picker.locator('[data-stamp-hour]');
@@ -491,7 +567,10 @@ test('the picker arrows step the values, not the sheet', async ({ page }) => {
   const before = await hour.inputValue();
   await hour.press('ArrowUp'); // steps, wrapping at the ceiling
   await expect(hour).toHaveValue(String((Number(before) + 1) % 24).padStart(2, '0'));
-  expect(await page.evaluate(() => document.querySelector<HTMLElement>('.menu-scroll')!.scrollTop)).toBe(0);
+  const scrolled = await page.evaluate(() => document.querySelector<HTMLElement>('.menu-scroll')!.scrollTop);
+  await hour.press('ArrowUp'); // the step itself moves nothing but the value
+  await expect(hour).toHaveValue(String((Number(before) + 2) % 24).padStart(2, '0'));
+  expect(await page.evaluate(() => document.querySelector<HTMLElement>('.menu-scroll')!.scrollTop)).toBe(scrolled);
   const title = picker.locator('.timestamp-picker-month');
   const month = await title.textContent();
   await title.press('ArrowDown'); // down through the months

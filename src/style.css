@@ -1655,12 +1655,9 @@ body {
   flex-direction: column;
   scroll-snap-align: center;
   scroll-snap-stop: always;
-  overflow-anchor: none; /* only the visible month anchors: the browser holds the viewport when pages are prepended */
+  overflow-anchor: none; /* prepends are compensated explicitly, in the finger's window */
   user-select: none;
   -webkit-user-select: none;
-}
-.timestamp-picker-page.is-current {
-  overflow-anchor: auto;
 }
 .timestamp-picker-page:not(.is-current) {
   pointer-events: none;
@@ -1744,19 +1741,25 @@ body {
 .timestamp-picker-month input.timestamp-picker-field {
   width: auto;
   min-width: 0;
-  padding: 2px 4px;
-  border-radius: 8px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid var(--text-faint);
+  border-radius: 0;
+  background: none;
   font-size: inherit;
-  font-weight: 400;
+  font-weight: inherit;
+  color: inherit;
+  height: 1.3em;
 }
 .timestamp-picker-month [data-stamp-jump-month] {
-  width: 2.2em;
+  width: 1.8em;
 }
 .timestamp-picker-month [data-stamp-jump-year] {
-  width: 4.2em;
+  width: 3.4em;
 }
 .timestamp-picker-month input:focus {
   outline: none;
+  border-bottom-color: var(--text-accent);
 }
 .timestamp-picker-field.is-invalid {
   border-color: #e93147;
@@ -1782,12 +1785,21 @@ body {
   font-size: 0.8125rem;
 }
 .timestamp-picker-cal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 12px;
   border: 0;
   border-radius: 14px;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: 0.8125rem;
+}
+.timestamp-picker-cal-swap {
+  color: var(--text-faint);
+}
+.timestamp-picker-cal-alt {
+  color: var(--text-faint);
 }
 .timestamp-picker-formats {
   display: grid;
