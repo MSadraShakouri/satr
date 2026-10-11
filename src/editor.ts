@@ -750,6 +750,11 @@ export class SatrEditor {
   private isReadOnly = false;
   /** The space after a sign, as the settings have it (src/autoSpace.ts). */
   private autoSpaceOn = false;
+  /** Bring the caret's line back into view after a beat — the keyboard has
+   *  taken the bottom of the screen and the caret must step clear of it. Set
+   *  by the constructor; src/main.ts calls it, because a browser that reports
+   *  the keyboard's own rectangle never resizes the viewport to react to. */
+  revealCaretSoon: (delay: number) => void = () => undefined;
   constructor(parent: HTMLElement, onChange: () => void, options?: {
     title?: string;
     onRename?: (base: string) => string | null;
@@ -884,6 +889,7 @@ export class SatrEditor {
       window.clearTimeout(revealTimer);
       revealTimer = window.setTimeout(() => window.requestAnimationFrame(revealCaret), delay);
     };
+    this.revealCaretSoon = revealSoon;
     let touchTimer: number | undefined;
     // The selection is the platform's. There is no word-finding, no tap
     // counting, no drag of our own and nothing prevented here at all: double

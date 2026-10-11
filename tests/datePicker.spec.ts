@@ -971,3 +971,63 @@ test('the grid starts at 1 in whichever calendar the sheet wears', async ({ page
   expect(currentDays(gregorian)).toContain(now.getDate()); // today is in the month the sheet shows
   await expect(picker.locator('.timestamp-picker-month')).toContainText(String(now.getFullYear()));
 });
+
+test("the keyboard's own rectangle places the sheet when the browser reports one", async ({ page }) => {
+  // Chromium's VirtualKeyboard API: the OS's keyboard rectangle, in client
+  // coordinates — the exact edge a sheet must sit on, whatever the visual
+  // viewport says. On a real Chrome Android phone the two disagree by the
+  // browser chrome's strip, and a sheet placed by the visual viewport floats
+  // above the keys with the dimmed page showing underneath it.
+  await page.addInitScript(() => {
+    const listeners: Array<() => void> = [];
+    const keyboard = {
+      overlaysContent: false,
+      boundingRect: { top: 0, bottom: 0, height: 0, left: 0, right: 0, width: 0, x: 0, y: 0 },
+      addEventListener: (type: string, listener: () => void): void => { if (type === 'geometrychange') listeners.push(listener); },
+      raise(top: number, bottom: number): void {
+        keyboard.boundingRect = { top, bottom, height: bottom - top, left: 0, right: 390, width: 390, x: 0, y: top };
+        for (const listener of listeners) listener();
+      },
+    };
+    Object.defineProperty(navigator, 'virtualKeyboard', { value: keyboard, configurable: true });
+    (window as unknown as { __keyboard: typeof keyboard }).__keyboard = keyboard;
+  });
+  await boot(page);
+  await openPicker(page);
+  await expect(sheet(page)).toHaveClass(/is-open/);
+  await page.waitForTimeout(400);
+  const optedIn = await page.evaluate(() => (navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }).virtualKeyboard.overlaysContent);
+  expect(optedIn).toBe(true); // the app takes the geometry and leaves the browser's own resizing alone
+  const rest = await page.evaluate(() => {
+    const picker = document.querySelector('.timestamp-picker') as HTMLElement;
+    return { bottom: Math.round(picker.getBoundingClientRect().bottom), inner: window.innerHeight };
+  });
+  expect(Math.abs(rest.bottom - rest.inner)).toBeLessThanOrEqual(1); // down: on the screen's bottom edge
+  // The keyboard comes up. Only its rectangle says so — the visual viewport is
+  // untouched, exactly as a real browser reports it with overlaysContent.
+  await page.evaluate(() => (window as unknown as { __keyboard: { raise(t: number, b: number): void } }).__keyboard.raise(620, 844));
+  await page.waitForTimeout(300);
+  const raised = await page.evaluate(() => {
+    const picker = document.querySelector('.timestamp-picker') as HTMLElement;
+    const scroll = picker.querySelector('.menu-scroll') as HTMLElement;
+    const rect = picker.getBoundingClientRect();
+    const viewport = window.visualViewport!;
+    return {
+      bottom: Math.round(rect.bottom), top: Math.round(rect.top), height: Math.round(rect.height),
+      edge: 620, scrollMax: scroll.clientHeight,
+      vvHeight: Math.round(viewport.height),
+    };
+  });
+  expect(raised.vvHeight).toBe(844); // the viewport never moved: the rectangle is the only witness
+  expect(Math.abs(raised.bottom - raised.edge)).toBeLessThanOrEqual(1); // the sheet ends exactly on the keyboard's top edge
+  expect(raised.top).toBeGreaterThanOrEqual(-1); // whole, on the screen
+  expect(raised.scrollMax).toBeLessThanOrEqual(raised.edge + 1); // and its scroll area answers the room above the keys
+  // The keyboard leaves: the rectangle empties and the sheet comes back down.
+  await page.evaluate(() => (window as unknown as { __keyboard: { raise(t: number, b: number): void } }).__keyboard.raise(0, 0));
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => {
+    const picker = document.querySelector('.timestamp-picker') as HTMLElement;
+    return { bottom: Math.round(picker.getBoundingClientRect().bottom), inner: window.innerHeight };
+  });
+  expect(Math.abs(back.bottom - back.inner)).toBeLessThanOrEqual(1);
+});
