@@ -111,3 +111,45 @@ test('a wrapped paragraph is walked downwards, one position a press', async ({ p
   }
   expect(new Set(up.map((s) => s.top)).size).toBeGreaterThan(1);
 });
+
+async function dateLine(page: Page, above: string, date: string) {
+  await draft(page, `${above}\n${date}`, above.length + 1);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  return page.evaluate(() => {
+    const view = window.testEditor.view;
+    const line = view.state.doc.line(2);
+    const el = [...view.dom.querySelectorAll('.cm-line')][1] as HTMLElement;
+    const box = el.getBoundingClientRect();
+    const caret = view.coordsAtPos(line.from, 1);
+    const text = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE) as Text | undefined;
+    const digit = document.createRange();
+    if (text) { digit.setStart(text, 0); digit.setEnd(text, 1); }
+    const first = text ? digit.getBoundingClientRect() : null;
+    const last = view.coordsAtPos(line.to - 1, 1);
+    return {
+      dir: el.getAttribute('dir'),
+      caretX: caret ? Math.round(caret.left) : null,
+      boxLeft: Math.round(box.left),
+      boxRight: Math.round(box.right),
+      firstX: first ? Math.round(first.left) : null,
+      lastX: last ? Math.round(last.left) : null,
+    };
+  });
+}
+
+test('a date-only line’s caret follows the line’s dir, not LTR', async ({ page }) => {
+  const report = await dateLine(page, 'سلام این یک خط فارسی است', '2026-10-11');
+  expect(report.dir, JSON.stringify(report)).toBe('rtl');
+  // Not the LTR home (left of the 2): the line's start, the right edge.
+  expect(Math.abs(report.caretX! - report.boxRight), JSON.stringify(report)).toBeLessThan(16);
+  expect(report.caretX!, JSON.stringify(report)).toBeGreaterThan(report.firstX! + 8);
+  expect(report.firstX!, 'digits still read 2026').toBeLessThan(report.lastX!);
+});
+
+test('a date-only line under English keeps the caret on the left', async ({ page }) => {
+  const report = await dateLine(page, 'hello world this is english', '2026-10-11');
+  expect(report.dir, JSON.stringify(report)).toBe('ltr');
+  expect(Math.abs(report.caretX! - report.boxLeft), JSON.stringify(report))
+    .toBeLessThan(Math.abs(report.caretX! - report.boxRight));
+  expect(report.firstX!).toBeLessThan(report.lastX!);
+});

@@ -29,6 +29,18 @@
 // with the keyboard.
 import { EditorSelection, EditorState, Transaction } from '@codemirror/state';
 import { Direction, EditorView, ViewPlugin } from '@codemirror/view';
+import { strongDirection } from './direction';
+
+// A line that is only a date or a number: digits, no Persian or English
+// letter. The line already has a dir (it continues the line above). The
+// caret used to sit LTR anyway, because the digits are an LTR run. Item 2:
+// the caret follows that line dir; the digits still read 2026.
+function isDateOrNumberLine(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (strongDirection(t) !== null) return false;
+  return /[0-9۰-۹٠-٩]/.test(t);
+}
 
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   const sel = view.state.selection.main;
@@ -117,4 +129,23 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-export const caretMotion = [lineSide, arrowKeys];
+// Date-only line: at the start, paint the caret on the line's side — right
+// if the line is Persian — not on the left of the 2. Arrows and end-of-line
+// are left alone (items 1 and 3).
+const dateLineCaret = ViewPlugin.fromClass(class {
+  constructor(readonly view: EditorView) {
+    const orig = view.coordsAtPos.bind(view);
+    view.coordsAtPos = (pos: number, side = 1) => {
+      const line = view.state.doc.lineAt(pos);
+      if (pos !== line.from || side <= 0 || !isDateOrNumberLine(line.text)) return orig(pos, side);
+      if (view.textDirectionAt(line.from) !== Direction.RTL) return orig(pos, side);
+      const { node } = view.domAtPos(line.from);
+      const el = (node.nodeType === Node.TEXT_NODE ? node.parentElement : node as Element | null)?.closest('.cm-line');
+      if (!el) return orig(pos, side);
+      const box = el.getBoundingClientRect();
+      return { left: box.right, right: box.right, top: box.top, bottom: box.bottom };
+    };
+  }
+});
+
+export const caretMotion = [lineSide, arrowKeys, dateLineCaret];
