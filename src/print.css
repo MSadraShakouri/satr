@@ -148,11 +148,15 @@ img {
 }
 
 /* Code: a light grey box, monospace, always left to right, preview colours */
-/* Images: centred, at most the text width, never split across pages */
+/* Images: centred, at most the text width, never split across pages. An
+   unsized picture is also capped at 9cm tall — about the width of a phone's
+   reading column — so a photo from the note does not print the height of the
+   page. A `|300`-style size from the note always wins up to these caps;
+   Settings → PDF custom CSS can override both. */
 img.md-image {
   display: block;
   max-width: 100%;
-  max-height: 22cm;
+  max-height: 9cm;
   height: auto;
   margin: 0.8em auto;
   break-inside: avoid;
@@ -217,12 +221,20 @@ pre code {
 .hljs-meta, .hljs-built_in { color: #ec7500; }
 .hljs-punctuation { color: #5c5c5c; }
 
-/* Tables: centred, as in the reading view */
+/* Tables: centred, as in the reading view. A table splits at row boundaries
+   so pages stay full; how many rows must travel together is decided by the
+   keepTableRows hook (src/printTables.ts) during pagination, not here — a
+   blanket break-inside: avoid emptied the foot of a page when a single row
+   didn't fit. The wrapper (src/markdown.ts) stays plain: it must not scroll
+   or clip on paper. */
 table {
   margin: 0 auto 0.9em;
   border-collapse: collapse;
   width: max-content;
   max-width: 100%;
+}
+.table-wrapper {
+  overflow: visible;
 }
 th, td {
   padding: 4px 9px;

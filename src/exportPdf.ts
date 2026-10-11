@@ -21,6 +21,7 @@ import { renderMarkdown } from './markdown';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
 import { keepHeadingWithContent } from './printHeadings';
+import { keepTableRows } from './printTables';
 import { loadPrintOptions, printDirection, validPrintOptions, type PrintOptions } from './printOptions';
 import { assembleColumns, columnPageCss, COLUMN_WIDTH_PX, PAGE_HEIGHT_MM, PAGE_WIDTH_MM, PAGE_WIDTH_PX } from './printColumns';
 
@@ -209,6 +210,7 @@ async function exportDocuments(documents: ExportDocument[], name: string, collec
     doc.head.appendChild(script);
     if (!win.PagedPolyfill) throw new Error('Paged.js did not load');
     win.PagedPolyfill.chunker.hooks.onOverflow.register(keepHeadingWithContent);
+    win.PagedPolyfill.chunker.hooks.onOverflow.register(keepTableRows);
     await win.PagedPolyfill.preview();
     if (columns === 2) assembleColumns(doc, dir, numbering);
     numberFootnotes(doc);

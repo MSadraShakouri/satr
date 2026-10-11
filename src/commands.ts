@@ -5,6 +5,7 @@ import { deleteLine, moveLineDown, moveLineUp, redo, undo } from '@codemirror/co
 import { EditorSelection, type ChangeSpec, type Line } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { insertDelimiter } from './delimiterInput';
+import { createTimestampPicker } from './datePicker';
 import { editFootnote } from './footnoteDialog';
 import { findLatexMath } from './mathNormalize';
 import { showNotice } from './notice';
@@ -189,7 +190,25 @@ export function selectWholeLines(view: EditorView): boolean {
   return true;
 }
 
+// One picker for the whole app; the sheet is a singleton like Settings'.
+export const timestampPicker = createTimestampPicker();
+
+/** Opens the date sheet; the code it writes lands at the caret, selected after
+ *  itself, as any inserted text would. */
+export function insertTimestamp(view: EditorView): boolean {
+  timestampPicker.open({
+    onInsert: (code) => {
+      const range = view.state.selection.main;
+      view.dispatch({ changes: { from: range.from, to: range.to, insert: code }, selection: { anchor: range.from + code.length }, userEvent: 'input', scrollIntoView: true });
+    },
+  });
+  return true;
+}
+
+export const closeTimestampPicker = (): void => timestampPicker.close();
+
 export const toolbarCommands: Record<string, (view: EditorView) => boolean> = {
+  timestamp: insertTimestamp,
   undo, redo,
   heading: cycleHeading,
   bullet: toggleBullet,

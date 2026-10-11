@@ -4,6 +4,7 @@
 // kept by src/theme.ts as before.
 import { loadPrintOptions, savePrintOptions, type PrintOptions } from './printOptions';
 import { setTheme, themeChoice, type ThemeChoice } from './theme';
+import { formatTimestamp, setTimestampStyle, TIMESTAMP_CALENDARS, TIMESTAMP_LOCALES } from './timestamps';
 
 export interface Settings {
   fontSize: number;
@@ -18,6 +19,12 @@ export interface Settings {
   spaceAfterPunctuation: boolean;
   /** Digits shown inside formulas (preview + PDF only; the note keeps what was typed). */
   mathDigits: 'auto' | 'english' | 'persian';
+  /** The language Discord-style timestamps say their words in: 'auto' is the
+   *  app's own language, never the device's (src/timestamps.ts). */
+  timestampLocale: string;
+  /** The calendar they count by: 'auto' is the language's own; 'persian' is
+   *  Jalali whatever the language. */
+  timestampCalendar: string;
   /** PDF page numbers, bottom centre. */
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
@@ -42,7 +49,7 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
 };
 const KEY = 'satr:settings';
 const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30 };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30 };
 /** The choices for "after being away", in minutes. */
 export const NEW_TAB_AFTER_CHOICES: [number, string][] = [[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [360, '6 hours'], [1440, '1 day']];
 
@@ -59,6 +66,8 @@ export function loadSettings(): Settings {
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
     s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));
     if (!(s.quickAction in QUICK_ACTIONS)) s.quickAction = '';
+    if (!TIMESTAMP_LOCALES.some(([value]) => value === s.timestampLocale)) s.timestampLocale = 'auto';
+    if (!TIMESTAMP_CALENDARS.some(([value]) => value === s.timestampCalendar)) s.timestampCalendar = 'auto';
     if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
     if (typeof s.pdfCss !== 'string') s.pdfCss = '';
     if (!['last', 'empty', 'away'].includes(s.launchTabs)) s.launchTabs = 'last';
@@ -155,6 +164,25 @@ export function openSettings(deps: SettingsDeps): void {
           </select>
         </div>
       </div>
+      <div class="setting-group-title">Dates</div>
+      <div class="setting-group">
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Language</div><div class="setting-item-description">The words and digits of <code>&lt;t:…&gt;</code> timestamps. Auto is the app's own language — not the device's.</div></div>
+          <select class="dropdown" data-select="timestampLocale" aria-label="Language">
+            ${TIMESTAMP_LOCALES.map(([value, label]) => `<option value="${value}"${settings.timestampLocale === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Calendar</div><div class="setting-item-description">Auto counts by the language's own calendar — Jalali for Persian.</div></div>
+          <select class="dropdown" data-select="timestampCalendar" aria-label="Calendar">
+            ${TIMESTAMP_CALENDARS.map(([value, label]) => `<option value="${value}"${settings.timestampCalendar === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="setting-item mod-column">
+          <div class="setting-item-info"><div class="setting-item-name">Sample</div></div>
+          <div class="setting-item-description" data-timestamp-sample dir="auto"></div>
+        </div>
+      </div>
       <div class="setting-group-title">Navigation bar</div>
       <div class="setting-group">
         <div class="setting-item">
@@ -237,6 +265,11 @@ export function openSettings(deps: SettingsDeps): void {
     // The time only means something for "after being away"; the other choices
     // do not show it.
     el.querySelector<HTMLElement>('[data-away-row]')!.style.display = settings.launchTabs === 'away' ? '' : 'none';
+    const sample = el.querySelector<HTMLElement>('[data-timestamp-sample]');
+    if (sample) {
+      const at = Math.floor(Date.now() / 1000) - 86400;
+      sample.textContent = `<t:${at}> → ${formatTimestamp(at, 'F')} · ${formatTimestamp(at, 'R')}`;
+    }
     el.querySelector('[data-value="fontSize"]')!.textContent = `${settings.fontSize}px`;
     el.querySelector('[data-value="lineHeight"]')!.textContent = settings.lineHeight.toFixed(2);
     const preview = el.querySelector<HTMLElement>('.setting-item-preview')!;
@@ -245,7 +278,14 @@ export function openSettings(deps: SettingsDeps): void {
     preview.style.fontSize = `${settings.fontSize / 16}rem`;
     preview.style.lineHeight = String(settings.lineHeight);
   };
-  const commit = (): void => { save(settings); deps.apply(settings); renderValues(); };
+  // The sample answers at once: the date style is pushed here as well as by
+  // the app's apply (which re-words the notes' rendered chips).
+  const commit = (): void => {
+    save(settings);
+    setTimestampStyle(settings.timestampLocale, settings.timestampCalendar);
+    deps.apply(settings);
+    renderValues();
+  };
   renderValues();
 
   el.addEventListener('input', (event) => {
@@ -267,11 +307,13 @@ export function openSettings(deps: SettingsDeps): void {
       savePrintOptions(notePath, printOptions);
       return;
     }
-    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"]');
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"]');
     if (!select) return;
     if (select.dataset.select === 'quickAction') settings.quickAction = select.value as QuickAction;
     else if (select.dataset.select === 'launchTabs') settings.launchTabs = select.value as Settings['launchTabs'];
     else if (select.dataset.select === 'newTabAfterMinutes') settings.newTabAfterMinutes = Number(select.value);
+    else if (select.dataset.select === 'timestampLocale') settings.timestampLocale = select.value;
+    else if (select.dataset.select === 'timestampCalendar') settings.timestampCalendar = select.value;
     else settings.mathDigits = select.value as Settings['mathDigits'];
     commit();
   });

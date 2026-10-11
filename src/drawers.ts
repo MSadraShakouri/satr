@@ -221,8 +221,13 @@ export function initDrawers(options: DrawerOptions) {
       const opening = sign(which) * dx > 0;
       // Only a drag away from the settled edge counts.
       if ((opening && startShift >= dragWidth) || (!opening && startShift <= 0)) return;
-      // Horizontally scrollable content under the finger wins.
+      // Horizontally scrollable content under the finger wins. A pannable
+      // table (data-pan-x, src/markdown.ts) owns horizontal drags in BOTH
+      // directions: it used to hand the gesture to the drawer at its scroll
+      // edge — exactly when a reader pulling the table back to its first
+      // column had the whole page slide out from under the finger.
       for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
+        if (el.dataset.panX !== undefined) { abort(); return; }
         if (el.scrollWidth <= el.clientWidth) continue;
         if (!['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
         if ((dx > 0 && el.scrollLeft > 0) || (dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1)) {

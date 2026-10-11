@@ -1,11 +1,12 @@
 import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
+import { setTimestampChipTap } from './livePreview';
 import 'katex/dist/katex.min.css';
 import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
-import { renderMarkdown } from './markdown';
+import { renderMarkdown, TABLE_DIRECTIVE } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
 import { footnoteLayout } from './footnoteDialog';
@@ -18,12 +19,12 @@ import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
-import { normalizeMathIn } from './commands';
+import { closeTimestampPicker, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
-import { keepTimestampsCurrent } from './timestamps';
+import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, type TimestampFormat } from './timestamps';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
@@ -69,6 +70,7 @@ app.innerHTML = `
         <button tabindex="-1" data-command="ordered" aria-label="Numbered list"><svg viewBox="0 0 24 24"><path d="M10 12h11M10 18h11M10 6h11M4 10h2M4 6h1v4M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
         <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg></button>
         <button tabindex="-1" data-command="math" aria-label="Math"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></button>
+        <button tabindex="-1" data-command="timestamp" aria-label="Date"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></button>
         <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
         <button tabindex="-1" data-command="line" aria-label="Select whole line"><svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 18h16"/><path d="M4 12h16"/></svg></button>
         <button tabindex="-1" data-command="deleteLine" aria-label="Delete line"><svg viewBox="0 0 24 24"><path d="M10 11v6M14 11v6M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
@@ -1214,6 +1216,7 @@ async function handleIncomingId(id: string): Promise<void> {
     closeMenu();
     closeTabSwitcher();
     closeSettings();
+    closeTimestampPicker();
     // The same source again (shared, or opened from the file manager, while its
     // tab is still open) is that tab, not a second one. The source identity is
     // `viewId`; the temporary id changes every time, so the tab keeps its path
@@ -1971,6 +1974,9 @@ editor.view.dom.addEventListener('input', refreshOutlineSoon);
 
 // Settings (src/settings.ts): the raised gear at the bottom of the left
 // drawer, as Obsidian's. The theme is chosen there.
+/** The date style (Settings → Dates) as last applied, so a change is known
+ *  from a re-open of Settings that changed nothing. */
+let timestampStyleApplied: string | null = null;
 function applySettings(settings: Settings): void {
   const root = document.documentElement.style;
   // The Settings size is a base in the sheet's own unit: 16px is 1rem, and
@@ -1986,6 +1992,20 @@ function applySettings(settings: Settings): void {
   editor.remeasure();
   setHighlightAll(settings.highlightAll);
   setMathDigits(settings.mathDigits);
+  const stampStyle = `${settings.timestampLocale}\n${settings.timestampCalendar}`;
+  if (stampStyle !== timestampStyleApplied) {
+    const first = timestampStyleApplied === null;
+    timestampStyleApplied = stampStyle;
+    setTimestampStyle(settings.timestampLocale, settings.timestampCalendar);
+    // The first application is at boot, before any note shows; afterwards a
+    // change re-words every rendered chip (the editor's widgets keep their
+    // elements) and re-renders the reading view.
+    if (!first) {
+      restyleTimestamps(document);
+      previewDirty = true;
+      if (previewVisible()) renderPreview();
+    }
+  }
   if (previewVisible()) renderPreview();
   toolbar.querySelectorAll<HTMLElement>('button[data-command]').forEach((b) => { b.hidden = settings.hiddenTools.includes(b.dataset.command!); });
   updateToolbarFades();
@@ -2178,10 +2198,127 @@ function flash(el: HTMLElement): void {
   el.classList.add('is-flashing');
   window.setTimeout(() => el.classList.remove('is-flashing'), 3000);
 }
+/** The date sheet opened over an exact `<t:…>` code: `initial` seeds the
+ *  moment, and Insert rewrites that range while it still holds a code — the
+ *  chips in both views land here (the editor's tap knows its own range; the
+ *  reading view finds it by occurrence). If the range went away while the
+ *  sheet was open, the code lands at the caret instead. */
+function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, found: { from: number; to: number } | null): void {
+  timestampPicker.open({
+    initial,
+    onInsert: (code) => {
+      const view = editor.view;
+      if (found && found.to <= view.state.doc.length && view.state.doc.sliceString(found.from, found.to).startsWith('<t:')) {
+        view.dispatch({ changes: { from: found.from, to: found.to, insert: code }, userEvent: 'input' });
+      } else {
+        const range = view.state.selection.main;
+        view.dispatch({ changes: { from: range.from, to: range.to, insert: code }, selection: { anchor: range.from + code.length }, userEvent: 'input' });
+      }
+    },
+  });
+}
+
+/** A `<t:…>` chip tapped in the reading view: the date sheet opens at its
+ *  moment and format, and Insert rewrites the code that made it — the same
+ *  occurrence if it can still be found (the second `<t:1700000000>` in the
+ *  note stays the second), otherwise the caret gets a fresh one. */
+function editTimestampFromChip(chip: HTMLElement): void {
+  const seconds = Number(chip.dataset.ts);
+  const format = (chip.dataset.format ?? 'f') as TimestampFormat;
+  if (!Number.isFinite(seconds)) return;
+  const same = [...preview.querySelectorAll<HTMLElement>(`time.discord-timestamp[data-ts="${seconds}"][data-format="${format}"]`)];
+  const occurrence = Math.max(0, same.indexOf(chip));
+  const text = editor.view.state.doc.toString();
+  const hits: { from: number; to: number; format: TimestampFormat }[] = [];
+  for (const match of text.matchAll(new RegExp(`<t:${seconds}(?::([tTdDfFR]))?>`, 'g'))) {
+    const from = match.index ?? 0;
+    hits.push({ from, to: from + match[0].length, format: (match[1] ?? 'f') as TimestampFormat });
+  }
+  const found = hits.filter((hit) => hit.format === format)[occurrence] ?? null;
+  editTimestampAt({ seconds, format }, found);
+}
+
+// A chip tapped in the editor opens the same sheet — seeded with this code's
+// moment, and Insert rewrites exactly the range under the chip. The position
+// comes from the DOM at tap time, never by counting occurrences.
+setTimestampChipTap((chip) => {
+  const view = editor.view;
+  const at = view.posAtDOM(chip, 0);
+  // The longest a code can be is 21 characters; a little more costs nothing.
+  const match = /^<t:-?\d{1,15}(?::[tTdDfFR])?>/.exec(view.state.doc.sliceString(at, at + 24));
+  if (!match) return;
+  const seconds = Number(chip.dataset.ts);
+  const format = (chip.dataset.format ?? 'f') as TimestampFormat;
+  if (!Number.isFinite(seconds)) return;
+  editTimestampAt({ seconds, format }, { from: at, to: at + match[0].length });
+});
+
+// A table tapped in the reading view asks for its whole direction: a menu
+// writes (or clears) the `<!-- table: rtl -->` comment on the line just
+// above it — the same directive the renderer reads (src/markdown.ts). The
+// edit is an ordinary editor transaction, so undo takes it back.
+function openTableDirectionMenu(table: HTMLElement): void {
+  const section = table.closest<HTMLElement>('.md-section[data-line]');
+  if (!section) return;
+  // The table's first source line, 0-based.
+  const tableLine = Number(section.dataset.line);
+  if (!Number.isFinite(tableLine) || tableLine < 0 || tableLine > editor.view.state.doc.lines) return;
+  // The directive the renderer honours: the nearest line above the table that
+  // is a `<!-- table: … -->` comment, over blank lines. The first line that
+  // is neither settles it.
+  const findDirective = (): { at: number; word: 'rtl' | 'ltr' | 'auto' } | null => {
+    const doc = editor.view.state.doc;
+    for (let above = tableLine - 1; above >= 0 && tableLine - above <= 3; above -= 1) {
+      const text = doc.line(above + 1).text;
+      if (!text.trim()) continue;
+      const match = TABLE_DIRECTIVE.exec(text);
+      return match ? { at: above + 1, word: match[1].toLowerCase() as 'rtl' | 'ltr' | 'auto' } : null;
+    }
+    return null;
+  };
+  const current = findDirective()?.word ?? 'auto';
+  const apply = (next: 'rtl' | 'ltr' | null): void => {
+    const view = editor.view;
+    const doc = view.state.doc;
+    const found = findDirective();
+    const changes = [];
+    if (found) {
+      const line = doc.line(found.at);
+      if (next === null) {
+        // Gone, and the blank that separated it from the table goes too, so
+        // no double blank is left behind.
+        let to = Math.min(line.to + 1, doc.length);
+        if (found.at < doc.lines && !doc.line(found.at + 1).text.trim()) to = Math.min(doc.line(found.at + 1).to + 1, doc.length);
+        changes.push({ from: line.from, to });
+      } else {
+        changes.push({ from: line.from, to: line.to, insert: `<!-- table: ${next} -->` });
+      }
+    } else if (next !== null) {
+      const line = doc.line(Math.min(tableLine + 1, doc.lines));
+      changes.push({ from: line.from, insert: `<!-- table: ${next} -->\n` });
+    }
+    if (changes.length) view.dispatch({ changes, userEvent: 'input' });
+  };
+  openMenu([
+    { title: 'Automatic — follows the note', checked: current === 'auto', action: () => apply(null) },
+    { title: 'Left to right', checked: current === 'ltr', action: () => apply('ltr') },
+    { title: 'Right to left', checked: current === 'rtl', action: () => apply('rtl') },
+  ], { title: 'Table direction' });
+}
+
 preview.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const wiki = target.closest<HTMLElement>('a.internal-link');
   if (wiki) { event.preventDefault(); openLink(wiki.dataset.href ?? '', wiki.dataset.heading ?? ''); return; }
+  // A timestamp chip in the reading view opens the date sheet wearing its
+  // own moment and format; Insert rewrites the very code that made it.
+  const stamp = target.closest<HTMLElement>('time.discord-timestamp');
+  if (stamp && previewVisible()) { editTimestampFromChip(stamp); return; }
+  // A tap on a table asks for its whole direction: a menu writes (or clears)
+  // a `<!-- table: rtl -->` comment on the line just above it — the same
+  // directive the renderer reads (src/markdown.ts). One undo step apiece.
+  const table = target.closest<HTMLElement>('.table-wrapper > table');
+  if (table && previewVisible()) { openTableDirectionMenu(table); return; }
   const copy = target.closest<HTMLButtonElement>('.copy-code-button');
   if (copy) {
     event.preventDefault();
