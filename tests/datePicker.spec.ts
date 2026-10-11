@@ -240,7 +240,10 @@ test('a slot is red only when provably impossible, and holds the advance', async
   await expect(insert).toBeEnabled();
   await hour.pressSequentially('1'); // the register shifts: 21, legal \u2014 the chain moves
   await expect(minute).toBeFocused();
-  await minute.pressSequentially('7'); // 7x is already over 59: red at one digit
+  await minute.pressSequentially('7'); // shown 07: a real minute, never red
+  await expect(minute).not.toHaveClass(/is-invalid/);
+  await minute.press('Backspace');
+  await minute.pressSequentially('70'); // 70, complete and impossible: red
   await expect(minute).toHaveClass(/is-invalid/);
   await minute.press('Backspace');
   await minute.pressSequentially('30'); // 30: legal, on to the seconds
@@ -463,6 +466,38 @@ test('Today moves the date and Now moves the time, each keeping the other', asyn
   expect(at.getDate()).toBe(now.getDate());
 });
 
+test('the sheet can switch the calendar it wears, in place', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const title = picker.locator('.timestamp-picker-month');
+  const gregorian = await title.textContent();
+  await picker.locator('[data-stamp-cal]').click(); // -> Persian
+  await expect(title).not.toHaveText(gregorian!);
+  // The same instant, re-worded: today inserted from the Jalali grid is the
+  // same unix second the clock says.
+  await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected').click();
+  await picker.locator('[data-stamp-insert]').click();
+  const code = Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]);
+  expect(Math.abs(code - Math.floor(Date.now() / 1000))).toBeLessThan(120);
+});
+
+test('the picker arrows step the values, not the sheet', async ({ page }) => {
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const hour = picker.locator('[data-stamp-hour]');
+  await hour.click();
+  const before = await hour.inputValue();
+  await hour.press('ArrowUp'); // steps, wrapping at the ceiling
+  await expect(hour).toHaveValue(String((Number(before) + 1) % 24).padStart(2, '0'));
+  expect(await page.evaluate(() => document.querySelector<HTMLElement>('.menu-scroll')!.scrollTop)).toBe(0);
+  const title = picker.locator('.timestamp-picker-month');
+  const month = await title.textContent();
+  await title.press('ArrowDown'); // down through the months
+  await expect(title).not.toHaveText(month!);
+});
+
 // ---- A chip tapped in the editor edits its own code ----
 
 test('tapping a chip in the editor opens the sheet and rewrites that very code', async ({ page }) => {
@@ -571,9 +606,9 @@ test('two digits advance by themselves, and 95 holds the chain', async ({ page }
   await expect(minute).toBeFocused();
   await minute.pressSequentially('30'); // on to the seconds
   await expect(second).toBeFocused();
-  await second.pressSequentially('45'); // done - the keyboard lands on the title
-  const onTitle = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.stampJump !== undefined);
-  expect(onTitle).toBe(true);
+  await second.pressSequentially('45'); // done - the keyboard closes, quietly
+  await expect(second).not.toBeFocused();
+  await expect(picker).toBeVisible();
 });
 
 test('a keyboard that advances with no key event is met by the focus guard', async ({ page }) => {

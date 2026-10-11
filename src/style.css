@@ -1640,7 +1640,6 @@ body {
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
-  overflow-anchor: none; /* the picker compensates its own prepends; the browser's anchoring would fight it */
   direction: ltr; /* scrollLeft counts from the first page whatever the sheet's direction */
   scrollbar-width: none;
 }
@@ -1656,6 +1655,12 @@ body {
   flex-direction: column;
   scroll-snap-align: center;
   scroll-snap-stop: always;
+  overflow-anchor: none; /* only the visible month anchors: the browser holds the viewport when pages are prepended */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.timestamp-picker-page.is-current {
+  overflow-anchor: auto;
 }
 .timestamp-picker-page:not(.is-current) {
   pointer-events: none;
@@ -1690,6 +1695,11 @@ body {
   gap: 8px;
   padding: 12px 0 4px;
 }
+.timestamp-picker-time .timestamp-picker-field {
+  width: 2.6em;
+  padding: 6px 2px;
+  font-variant-numeric: tabular-nums;
+}
 .timestamp-picker-field {
   width: 3.5em;
   padding: 6px 8px;
@@ -1708,6 +1718,9 @@ body {
 .timestamp-picker-colon {
   color: var(--text-muted);
 }
+.timestamp-picker {
+  -webkit-tap-highlight-color: transparent;
+}
 .timestamp-picker-month {
   padding: 4px 10px;
   border-radius: 10px;
@@ -1716,6 +1729,11 @@ body {
   font-weight: 600;
   user-select: none;
   -webkit-user-select: none;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 .timestamp-picker-month input {
   font-weight: 400;
@@ -1723,9 +1741,22 @@ body {
 .timestamp-picker-month:active {
   background: var(--background-modifier-hover);
 }
-.timestamp-picker-month input {
-  width: 4.5em;
-  text-align: center;
+.timestamp-picker-month input.timestamp-picker-field {
+  width: auto;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 8px;
+  font-size: inherit;
+  font-weight: 400;
+}
+.timestamp-picker-month [data-stamp-jump-month] {
+  width: 2.2em;
+}
+.timestamp-picker-month [data-stamp-jump-year] {
+  width: 4.2em;
+}
+.timestamp-picker-month input:focus {
+  outline: none;
 }
 .timestamp-picker-field.is-invalid {
   border-color: #e93147;
@@ -1734,14 +1765,28 @@ body {
 .timestamp-picker-insert:disabled {
   opacity: 0.45;
 }
+.timestamp-picker-nowrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
 .timestamp-picker-today,
 .timestamp-picker-now {
   padding: 7px 14px;
-  margin-inline-start: 8px;
   border: 0;
   border-radius: 14px;
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+  font-size: 0.8125rem;
+}
+.timestamp-picker-cal {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: none;
+  color: var(--text-muted);
   font-size: 0.8125rem;
 }
 .timestamp-picker-formats {

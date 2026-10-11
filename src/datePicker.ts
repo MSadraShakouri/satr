@@ -110,10 +110,9 @@ export function createTimestampPicker(): TimestampPicker {
   /** The time row is a row of digit slots: behind each field a buffer holds
    *  what was typed, and the field always SHOWS two digits, zero-padded and
    *  live — typing 9 into the hour shows 09 at once. A slot can never be
-   *  empty (backspace stops at 00) and is red only when it is PROVABLY
-   *  impossible: a lone first digit already over the ceiling (3+ hours,
-   *  6+ minutes and seconds) or a complete two over it. Waiting is never
-   *  wrong. */
+   *  empty (backspace stops at 00) and is red only when the value it SHOWS
+   *  is impossible — a complete two digits over the ceiling. What you see is
+   *  what you get: 03 is a real hour, never a warning. */
   const slots: Record<'hour' | 'minute' | 'second', string> = { hour: '', minute: '', second: '' };
   /** The writer has focused a slot without typing yet: the first digit
    *  replaces, the way a slot takes a new value. */
@@ -121,12 +120,8 @@ export function createTimestampPicker(): TimestampPicker {
   const SLOT_MAX: Record<'hour' | 'minute' | 'second', number> = { hour: 23, minute: 59, second: 59 };
   const padded = (buffer: string): string => buffer.padStart(2, '0');
   const slotNum = (name: 'hour' | 'minute' | 'second'): number => Number(slots[name] || '0');
-  const slotRed = (name: 'hour' | 'minute' | 'second'): boolean => {
-    const buffer = slots[name];
-    if (!buffer) return false;
-    if (buffer.length === 2) return Number(buffer) > SLOT_MAX[name];
-    return Number(buffer) * 10 > SLOT_MAX[name];
-  };
+  const slotRed = (name: 'hour' | 'minute' | 'second'): boolean =>
+    slots[name].length === 2 && Number(slots[name]) > SLOT_MAX[name];
   /** The month title replaced by month/year inputs, until applied or left. */
   let jumping = false;
   /** Armed when the jump applies: the very next focus to land in the time row
@@ -136,7 +131,15 @@ export function createTimestampPicker(): TimestampPicker {
    *  DOM at once, so nothing half-transparent is left catching taps. */
   const fading: HTMLElement[] = [];
 
-  const tag = timestampLocaleTag;
+  /** The calendar the sheet wears: the Dates setting, or the in-sheet
+   *  override — a way to change the system right here. The code inserted is
+   *  a unix number and calendar-blind either way; the note's words stay the
+   *  Dates setting's business. */
+  let calendarOverride: 'gregory' | 'persian' | null = null;
+  const tag = (): string => {
+    const base = timestampLocaleTag();
+    return calendarOverride ? `${base.split('-u-ca-')[0]}-u-ca-${calendarOverride}` : base;
+  };
   const number = (value: number): string => new Intl.NumberFormat(tag()).format(value);
 
   const close = (): void => {
@@ -189,6 +192,11 @@ export function createTimestampPicker(): TimestampPicker {
       heading.textContent = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
       heading.dir = 'auto';
       titleIndex = 2;
+    }
+    const calButton = sheet.querySelector<HTMLButtonElement>('[data-stamp-cal]');
+    if (calButton) {
+      const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
+      calButton.textContent = active === 'persian' ? 'Gregorian' : 'شمسی';
     }
     const current = viewMonth;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
@@ -298,6 +306,7 @@ export function createTimestampPicker(): TimestampPicker {
     const start = options.initial ? new Date(options.initial.seconds * 1000) : new Date();
     chosen = start;
     jumping = false;
+    calendarOverride = null;
     viewMonth = monthStart(start);
     backdrop = document.createElement('div');
     backdrop.className = 'menu-backdrop';
@@ -316,14 +325,17 @@ export function createTimestampPicker(): TimestampPicker {
           <button type="button" class="timestamp-picker-step" data-stamp-step="1" aria-label="Next month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
         </div>
         <div class="timestamp-picker-viewport"><div class="timestamp-picker-track"></div></div>
-        <div class="timestamp-picker-time">
+        <div class="timestamp-picker-nowrow">
           <button type="button" class="timestamp-picker-today" data-stamp-today>Today</button>
+          <button type="button" class="timestamp-picker-cal" data-stamp-cal aria-label="Switch calendar"></button>
+          <button type="button" class="timestamp-picker-now" data-stamp-now>Now</button>
+        </div>
+        <div class="timestamp-picker-time">
           <input class="timestamp-picker-field" data-stamp-hour type="text" inputmode="numeric" enterkeyhint="next" aria-label="Hour">
           <span class="timestamp-picker-colon">:</span>
           <input class="timestamp-picker-field" data-stamp-minute type="text" inputmode="numeric" enterkeyhint="next" aria-label="Minute">
           <span class="timestamp-picker-colon">:</span>
           <input class="timestamp-picker-field" data-stamp-second type="text" inputmode="numeric" enterkeyhint="done" aria-label="Second">
-          <button type="button" class="timestamp-picker-now" data-stamp-now>Now</button>
         </div>
         <div class="timestamp-picker-formats">
           ${TIMESTAMP_FORMATS.map((value) => `
@@ -401,7 +413,7 @@ export function createTimestampPicker(): TimestampPicker {
         const nextFor = name === 'hour' ? '[data-stamp-minute]' : name === 'minute' ? '[data-stamp-second]' : null;
         const next = nextFor ? sheet!.querySelector<HTMLInputElement>(nextFor) : null;
         if (next) next.focus();
-        else sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus(); // seconds: done
+        else el.blur(); // seconds done: one quiet keyboard close, no focus slam
       }
     });
     // The month title, tapped: two fields in the calendar's own count.
@@ -456,6 +468,28 @@ export function createTimestampPicker(): TimestampPicker {
     // focusin guard and the apply-on-focusout below.
     sheet.addEventListener('keydown', (event) => {
       const target = event.target as HTMLElement;
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        const slotName = target.closest?.('[data-stamp-hour]') ? 'hour'
+          : target.closest?.('[data-stamp-minute]') ? 'minute'
+          : target.closest?.('[data-stamp-second]') ? 'second' : null;
+        if (slotName) {
+          // The picker's own arrows: the value steps, wrapping at the
+          // ceiling — and the sheet does not scroll a pixel.
+          event.preventDefault();
+          const max = SLOT_MAX[slotName];
+          const value = (slotNum(slotName) + (event.key === 'ArrowUp' ? 1 : -1) + max + 1) % (max + 1);
+          slots[slotName] = String(value).padStart(2, '0');
+          (target as HTMLInputElement).value = padded(slots[slotName]);
+          syncTime();
+          render();
+          return;
+        }
+        if (!jumping && target.closest?.('[data-stamp-jump]')) {
+          event.preventDefault();
+          turnMonth(event.key === 'ArrowUp' ? 1 : -1);
+          return;
+        }
+      }
       if (event.key !== 'Enter' && event.key !== ' ') return;
       if (jumping && target.closest('[data-stamp-jump-month]')) {
         if (event.key === 'Enter') {
@@ -480,7 +514,7 @@ export function createTimestampPicker(): TimestampPicker {
       }
       if (event.key === 'Enter' && target.closest('[data-stamp-second]')) {
         event.preventDefault();
-        if (!slotRed('second')) sheet!.querySelector<HTMLElement>('.timestamp-picker-month')!.focus();
+        if (!slotRed('second')) (target as HTMLElement).blur(); // the keyboard closes, quietly
         return;
       }
       if (!jumping && target.closest('[data-stamp-jump]')) { event.preventDefault(); enterJump(); }
@@ -512,6 +546,12 @@ export function createTimestampPicker(): TimestampPicker {
         chosen = at;
         viewMonth = monthStart(today);
         render();
+        return;
+      }
+      if (target.closest('[data-stamp-cal]')) {
+        const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
+        calendarOverride = active === 'persian' ? 'gregory' : 'persian';
+        render(); // the same Dates, re-worded — the grid answers in place
         return;
       }
       if (target.closest('[data-stamp-now]')) {
@@ -581,9 +621,11 @@ export function createTimestampPicker(): TimestampPicker {
         track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, anchor + pages), false));
       }
       if (viewport.scrollLeft < width) {
+        // Prepend freely: the browser's own scroll anchoring keeps the
+        // viewport pinned on the visible page — no manual scrollLeft write
+        // to fight a live fling (that fight was the leftward breakage).
         track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, anchor - 1), false));
         anchor -= 1;
-        viewport.scrollLeft += width;
       }
       // A sheet that lives long enough trims the far tail — never near the
       // finger, and never the compensating maths.
