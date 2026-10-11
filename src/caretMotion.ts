@@ -117,4 +117,47 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-export const caretMotion = [lineSide, arrowKeys];
+// YYYY/MM/DD on a Persian line: after `/` the month becomes its own run and
+// the caret jumps onto it (to the right). The date is one thing; the caret
+// stays on the left of it. Digits still read 2026. Arrows are unchanged.
+const isDateChar = (c: string | undefined) => !!c && /[0-9۰-۹٠-٩/.\-]/.test(c);
+function dateRunAt(text: string, offset: number) {
+  let i = offset;
+  if (!isDateChar(text[i]) && i > 0 && isDateChar(text[i - 1])) i -= 1;
+  if (!isDateChar(text[i])) return null;
+  let from = i, to = i + 1;
+  while (from > 0 && isDateChar(text[from - 1])) from -= 1;
+  while (to < text.length && isDateChar(text[to])) to += 1;
+  if (![...text.slice(from, to)].some((c) => /[0-9۰-۹٠-٩]/.test(c))) return null;
+  return { from, to };
+}
+
+const rtlDateCaret = ViewPlugin.fromClass(class {
+  constructor(readonly view: EditorView) {
+    const orig = view.coordsAtPos.bind(view);
+    view.coordsAtPos = (pos: number, side = 1) => {
+      const line = view.state.doc.lineAt(pos);
+      if (side <= 0 || view.textDirectionAt(line.from) !== Direction.RTL) return orig(pos, side);
+      const run = dateRunAt(line.text, pos - line.from);
+      if (!run) return orig(pos, side);
+      try {
+        const start = view.domAtPos(line.from + run.from);
+        const end = view.domAtPos(line.from + run.to);
+        const range = document.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        let left = Infinity, top = 0, bottom = 0;
+        for (const rect of range.getClientRects()) {
+          if (rect.width <= 0 && rect.height <= 0) continue;
+          if (rect.left < left) { left = rect.left; top = rect.top; bottom = rect.bottom; }
+        }
+        if (left === Infinity) return orig(pos, side);
+        return { left, right: left, top, bottom };
+      } catch {
+        return orig(pos, side);
+      }
+    };
+  }
+});
+
+export const caretMotion = [lineSide, arrowKeys, rtlDateCaret];

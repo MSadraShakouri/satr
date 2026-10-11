@@ -82,6 +82,35 @@ test('a digit typed in a Persian line keeps the caret on the line’s side', asy
   expect(latin.x, 'Latin run').toBe(latin.min); // the line still decides
 });
 
+test('typing YYYY/MM/DD on a Persian line keeps the caret on the left', async ({ page }) => {
+  await typeAt(page, 'سلام |', '');
+  const seen: { key: string; text: string; x: number | null; min: number | null; assoc: number }[] = [];
+  for (const key of [...'2026/10/11']) {
+    await page.keyboard.insertText(key);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    seen.push(await page.evaluate((key) => {
+      const view = window.testEditor.view;
+      const sel = view.state.selection.main;
+      const rect = view.coordsAtPos(sel.head, sel.assoc);
+      const left = view.coordsAtPos(sel.head, -1);
+      const right = view.coordsAtPos(sel.head, 1);
+      return {
+        key,
+        text: view.state.doc.toString(),
+        x: rect ? Math.round(rect.left) : null,
+        min: left && right ? Math.round(Math.min(left.left, right.left)) : null,
+        assoc: sel.assoc,
+      };
+    }, key));
+  }
+  expect(seen.at(-1)!.text).toBe('سلام 2026/10/11');
+  let last = seen[0];
+  for (const state of seen) {
+    expect(state.x, `after ${state.key}: ${JSON.stringify(seen)}`).toBeLessThanOrEqual((last.x ?? 0) + 0.5);
+    last = state;
+  }
+});
+
 test('an English line keeps its caret on the right, even after a Persian word', async ({ page }) => {
   await typeAt(page, 'hello |', '');
   await page.keyboard.insertText('x');
