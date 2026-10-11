@@ -3918,4 +3918,7 @@ textarea,
   padding: 0 0.3em;
   white-space: nowrap;
   color: var(--text-normal);
+  /* Own dir on the element (src/timestamps.ts): English “4 hours ago”
+     stays LTR inside a Persian line; Persian relative stays RTL. */
+  unicode-bidi: isolate;
 }

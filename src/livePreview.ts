@@ -12,7 +12,7 @@ import { inMath, mathSpans, overlapsMath } from './mathSource';
 import { spansHold } from './mathScan';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common';
-import { formatTimestamp, fullTimestamp, TIMESTAMP_START, type TimestampFormat } from './timestamps';
+import { formatTimestamp, fullTimestamp, timestampDir, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { editFootnote, findDefinition } from './footnoteDialog';
 
 // Bullets and checkboxes are MARKS over the real "-" / "[ ]" text (drawn
@@ -56,7 +56,9 @@ class TimestampWidget extends WidgetType {
     el.dataset.ts = String(this.seconds);
     el.dataset.format = this.format;
     el.title = fullTimestamp(this.seconds);
-    el.textContent = formatTimestamp(this.seconds, this.format);
+    const text = formatTimestamp(this.seconds, this.format);
+    el.textContent = text;
+    el.dir = timestampDir(text);
     el.addEventListener('mousedown', (event) => {
       if (!chipTapHandler) return;
       event.preventDefault();
