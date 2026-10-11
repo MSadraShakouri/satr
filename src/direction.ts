@@ -21,7 +21,7 @@ export function strongDirection(text: string): TextDirection | null {
  * and URLs don't vote. The line-number gutter and the outline tree follow
  * this. */
 export function majorityDirection(markdown: string): TextDirection {
-  const masked = maskMathAndCode(markdown);
+  const masked = maskMathAndCode(markdown.replace(/https?:\/\/\S+/g, ' '));
   let rtl = 0, ltr = 0;
   for (const ch of masked) {
     if (!/\p{L}/u.test(ch)) continue;
@@ -31,19 +31,20 @@ export function majorityDirection(markdown: string): TextDirection {
   return rtl > ltr ? 'rtl' : 'ltr';
 }
 
-// A line with no strong letter of its own continues the line above it: a new
-// line is written in the language you are writing in, and a `#`, a list
-// marker or a date never flips it. Only real prose proves otherwise — the
-// line's own first strong letter, once there is one, always wins.
-function withCarried(units: readonly DirectionUnit[]): DirectionUnit[] {
-  let carried: TextDirection | null = null;
+// A line with no strong letter of its own — a bare number, a date, a link, a
+// list marker, an empty line — takes the NOTE'S language, not the line above
+// it (the writer's call: a date under an English line came out English inside
+// a Persian note, so the line was LTR until the first Persian letter arrived
+// and then the whole line changed sides). A date now behaves exactly like
+// English words inside Persian prose — an LTR run laid out by the line's own
+// direction — and it never flips while the prose arrives. Real prose still
+// proves otherwise: a line's own first strong letter always wins, and an
+// English line inside a Persian note stays English. Math, code and metadata
+// still never vote: they are LTR by policy.
+function withFallback(units: readonly DirectionUnit[], fallback: TextDirection): DirectionUnit[] {
   return units.map((unit) => {
-    if (unit.excluded) return unit; // math, code and metadata never vote and never carry
-    if (unit.own) {
-      carried = unit.own;
-      return unit;
-    }
-    return carried ? { ...unit, own: carried } : unit;
+    if (unit.excluded) return unit; // math, code and metadata never vote
+    return unit.own ? unit : { ...unit, own: fallback };
   });
 }
 
@@ -137,7 +138,7 @@ export function sourceDirections(markdown: string): TextDirection[] {
       units[i - 1].heading = lines[i].trim()[0] === '=' ? 1 : 2;
     }
   }
-  return resolveDirections(withCarried(units));
+  return resolveDirections(withFallback(units, majorityDirection(maskedText)));
 }
 
 const BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dt,dd,summary,caption,.md-prose-fragment';
@@ -161,8 +162,10 @@ export function applyReadingDirections(root: HTMLElement): void {
   const units: DirectionUnit[] = [];
   const starts: number[] = [];
   const ownDirections: (TextDirection | null)[] = [];
+  const proseLines: string[] = [];
   leaves.forEach((el) => {
     const prose = proseText(el);
+    proseLines.push(prose);
     const explicit = el.getAttribute('dir');
     const own = explicit === 'rtl' || explicit === 'ltr' ? explicit : strongDirection(prose);
     const excluded = el.matches('pre,.math-display') || (!prose.trim() && Boolean(el.querySelector('.math-flow,.katex,code')));
@@ -177,7 +180,7 @@ export function applyReadingDirections(root: HTMLElement): void {
       excluded,
     }));
   });
-  const directions = resolveDirections(withCarried(units));
+  const directions = resolveDirections(withFallback(units, majorityDirection(proseLines.join('\n'))));
   leaves.forEach((el, index) => el.setAttribute('dir', ownDirections[index] ?? directions[starts[index]]));
   for (const el of [...root.querySelectorAll<HTMLElement>('li,blockquote,ul,ol,table,.md-section')].reverse()) {
     if (el.getAttribute('dir') === 'ltr' || el.getAttribute('dir') === 'rtl') continue;

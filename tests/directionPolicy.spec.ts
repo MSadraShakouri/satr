@@ -11,9 +11,12 @@ declare global { interface Window { testEditor: SatrEditor } }
 //      of the text the line just grew — through digits, spaces and English
 //      words alike — and in an English line right of it, the way a phone's own
 //      text fields behave.
-// 18 — a new line continues the line above it (a `#`, a list marker or a
-//      date never flips it), and a line's direction is only re-decided when
-//      real prose of the other language appears in it.
+// 18 — a line with no letter of its own (a `#`, a list marker, a date, an
+//      empty line) takes the NOTE'S language, not the line above it: in a
+//      Persian note a date stays Persian under an English line, a new line is
+//      written in the language of the note, and nothing flips sides when the
+//      prose arrives. A line's direction is re-decided only by its own real
+//      prose; math and code stay LTR.
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
@@ -150,7 +153,7 @@ test('typing a mixed line never doubles the caret back', async ({ page }) => {
   expect(english.map((s) => s.assoc)).toEqual(english.map(() => 1));
 });
 
-test('a line with no letters of its own continues the line above it', async ({ page }) => {
+test('a line with no letters of its own takes the note’s language', async ({ page }) => {
   const report = await page.evaluate(async () => {
     const { sourceDirections } = await window.__satr.load('/src/direction.ts');
     const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
@@ -161,6 +164,13 @@ test('a line with no letters of its own continues the line above it', async ({ p
       return [...host.querySelectorAll('p,li,h1,h2,h3')].map((el) => ({ dir: el.getAttribute('dir'), text: el.textContent?.slice(0, 24) ?? '' }));
     };
     return {
+      // The writer's cases: a date (or an empty line) under an English line in
+      // a Persian note is Persian, and stays Persian as the prose arrives.
+      dateAfterEnglish: dir('این یک متن فارسی است و ادامه دارد\nhello world\n2026-10-13', 2),
+      blankAfterEnglish: dir('این یک متن فارسی است و ادامه دارد\nhello world\n', 2),
+      dateUnderCode: dir('متن فارسی\n\n```\nconst x = 1\n```\n\n2026-10-14', 5),
+      englishNoteStaysEnglish: dir('hello world and more prose here\n2026-10-15', 1),
+      notFlippedByItsProse: dir('این یک متن فارسی است و ادامه دارد\n2026-10-16\nادامه', 1),
       blankAfterPersian: [dir('متن فارسی\n\n123\n\nادامه', 2), dir('متن فارسی\n\n123', 2)],
       blankLineThenText: dir('متن فارسی\n\n\n123', 3),
       headingEnglish: dir('# یادداشت\n\n123\n\nمتن', 2),
@@ -174,9 +184,16 @@ test('a line with no letters of its own continues the line above it', async ({ p
       provenStays: dir('English\n\nفارسی\n\n123\n\nادامه', 4),
       renderedBlank: rendered('متن فارسی\n\n123'),
       renderedNew: rendered('متن فارسی\n\n123\n\nادامه'),
+      renderedDateAfterEnglish: rendered('این یک متن فارسی است و ادامه دارد\n\nhello world\n\n2026-10-13'),
     };
   });
-  // A date-only line has no letters: it follows the Persian above it…
+  // A date-only line has no letters: the note's language decides, whatever is
+  // above it — an English line, a code block or an empty line.
+  expect(report.dateAfterEnglish).toBe('rtl');
+  expect(report.blankAfterEnglish).toBe('rtl');
+  expect(report.dateUnderCode).toBe('rtl');
+  expect(report.englishNoteStaysEnglish).toBe('ltr');
+  expect(report.notFlippedByItsProse).toBe('rtl');
   expect(report.blankAfterPersian).toEqual(['rtl', 'rtl']);
   // …even across an empty line, and under an English-looking heading of a
   // Persian note (`#` proves nothing, and the heading itself is Persian).
@@ -194,6 +211,7 @@ test('a line with no letters of its own continues the line above it', async ({ p
   // The reading view agrees with the source.
   expect(report.renderedBlank[1].dir).toBe('rtl');
   expect(report.renderedNew[1].dir).toBe('rtl');
+  expect(report.renderedDateAfterEnglish.at(-1)!.dir).toBe('rtl');
 });
 
 test('the outline’s current heading is the one two thirds down the pane', async ({ page }) => {
