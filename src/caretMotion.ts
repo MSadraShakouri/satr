@@ -160,27 +160,31 @@ const numberRuns = ViewPlugin.fromClass(class {
   },
 });
 
-function numberRunEnd(text: string, offset: number): boolean {
+/** −1 at the start of a number run, +1 at the end, else 0. */
+function numberRunEdge(text: string, offset: number): -1 | 0 | 1 {
   NUMBER_RUN.lastIndex = 0;
   for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
-    if (offset === match.index + match[0].length) return true;
+    if (offset === match.index) return -1;
+    if (offset === match.index + match[0].length) return 1;
   }
-  return false;
+  return 0;
 }
 
-// At the end of that isolate the caret has two homes. Typing already
-// pins assoc +1 (the line’s side — left on a Persian line). Selecting
-// or moving there left assoc at 0, so the native caret sat on the
-// number’s LTR right while the next key still went in on the left.
-// Same pin, no wrap of coords.
-const numberEndSide = EditorState.transactionFilter.of((tr) => {
-  if (tr.newSelection.ranges.length !== 1) return tr;
+// Both edges of that isolate have two homes. Outward assoc points at the
+// line, not the number: −1 before the first digit, +1 after the last.
+// Interior digits stay as they are so arrows still walk 2026. Typing is
+// left to lineSide; this only pins select/move (assoc 0, or arrows’ +1
+// at the start).
+const numberEdgeSide = EditorState.transactionFilter.of((tr) => {
+  if (tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
   const main = tr.newSelection.main;
-  if (!main.empty || main.assoc === 1) return tr;
+  if (!main.empty) return tr;
   if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
   const line = tr.newDoc.lineAt(main.head);
-  if (!numberRunEnd(line.text, main.head - line.from)) return tr;
-  return [tr, { selection: EditorSelection.create([EditorSelection.cursor(main.head, 1)]), sequential: true }];
+  if (inMath(tr.startState, main.head)) return tr;
+  const edge = numberRunEdge(line.text, main.head - line.from);
+  if (!edge || main.assoc === edge) return tr;
+  return [tr, { selection: EditorSelection.create([EditorSelection.cursor(main.head, edge)]), sequential: true }];
 });
 
-export const caretMotion = [lineSide, arrowKeys, numberRuns, numberEndSide];
+export const caretMotion = [lineSide, arrowKeys, numberRuns, numberEdgeSide];
