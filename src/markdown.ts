@@ -277,30 +277,27 @@ export function renderMarkdown(source: string): string {
   // nothing (on GitHub too), and without one the table follows the note like
   // any other block (src/direction.ts). Only the last comment before the
   // table counts; one that isn't followed by a table stays an invisible
-  // comment. `tableDirs` is indexed in table order, like the DOM pass below.
-  const tableDirs: Array<'ltr' | 'rtl' | undefined> = [];
-  const consumedDirectives: Array<{ token: Token; html: string; start: number; end: number }> = [];
+  // comment. The direction is written onto the table's own HTML here, so it
+  // travels with that very table: a table nested in a list (which is no
+  // section of its own) can never take another table's comment, and no
+  // counting of directives against DOM tables is needed.
+  const consumed: Array<(typeof sections)[number]> = [];
   for (let index = 0; index < sections.length; index += 1) {
     const section = sections[index];
     const directive = section.token.type === 'html' ? TABLE_DIRECTIVE.exec(section.token.raw ?? '') : null;
-    if (directive) {
-      const word = directive[1].toLowerCase();
-      const next = sections[index + 1];
-      if (next?.token.type === 'table') {
-        tableDirs.push(word === 'rtl' ? 'rtl' : word === 'ltr' ? 'ltr' : undefined);
-        consumedDirectives.push(section);
-        index += 1; // the table itself is handled when the loop reaches it
-      }
-      continue;
-    }
-    if (section.token.type === 'table') tableDirs.push(undefined);
+    if (!directive) continue;
+    const next = sections[index + 1];
+    if (next?.token.type !== 'table') continue;
+    const word = directive[1].toLowerCase();
+    if (word === 'rtl' || word === 'ltr') next.html = next.html.replace('<table', `<table data-table-dir="${word}"`);
+    consumed.push(section);
   }
-  for (const spent of consumedDirectives) sections.splice(sections.indexOf(spent), 1);
+  for (const spent of consumed) sections.splice(sections.indexOf(spent), 1);
   const html = sections.map((section, index) => `<div class="md-section" data-sec="${index}">${section.html}</div>`).join('')
     + footnotesSectionHtml();
 
   let safe = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true }, ADD_ATTR: ['data-satr-math', 'data-sec', 'data-href', 'data-heading', 'data-src'],
+    USE_PROFILES: { html: true }, ADD_ATTR: ['data-satr-math', 'data-sec', 'data-href', 'data-heading', 'data-src', 'data-table-dir'],
     FORBID_TAGS: ['style', 'script', 'iframe', 'svg', 'math'],
     FORBID_ATTR: ['style', 'onerror', 'onclick', 'onload'],
   });
@@ -338,18 +335,14 @@ export function renderMarkdown(source: string): string {
     const start = Number(list.getAttribute('start') ?? '1') || 1;
     list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(start + itemIndex)));
   });
-  let domTables = 0;
   document.querySelectorAll('table').forEach((table, tableIndex) => {
-    domTables += 1;
     const firstRow = table.querySelector<HTMLTableRowElement>('thead tr');
     if (firstRow && [...firstRow.cells].every((cell) => !cell.textContent?.trim())) firstRow.remove();
-    // A whole-table direction set by hand: `<!-- table: rtl -->` (or ltr /
-    // auto) on the line just above the table. `applyReadingDirections` gives
-    // the table its own dir from its first cell; an explicit one wins. The
-    // directives were counted over top-level sections only, so they are
-    // applied only when the DOM holds exactly that many tables — a table
-    // nested in a list would otherwise take the next table's comment.
-    const manual = domTables === tableDirs.length ? tableDirs[tableIndex] : undefined;
+    // A whole-table direction set by hand: `<!-- table: rtl -->` (or ltr)
+    // above the table travelled here on the table itself (data-table-dir,
+    // written above). `applyReadingDirections` gives the table its own dir
+    // from its first cell; an explicit one wins.
+    const manual = table.dataset.tableDir;
     if (manual === 'ltr' || manual === 'rtl') table.setAttribute('dir', manual);
     const alignments = tableAlignments[tableIndex] ?? [];
     table.querySelectorAll('tr').forEach((row) => row.querySelectorAll('th,td').forEach((cell, cellIndex) => {

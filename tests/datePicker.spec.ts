@@ -136,6 +136,24 @@ test('tapping a chip in the reading view edits the code that made it', async ({ 
   await expect(page.locator('#app #preview time.discord-timestamp[data-format="T"]')).toHaveCount(1);
 });
 
+test('a code inside a code span or a fence shifts nothing: the tapped chip edits its own code', async ({ page }) => {
+  // Neither renders as a chip, so neither may be counted when the chip is
+  // matched back to the note — the old count ran over the raw text and handed
+  // the rewrite to the first code it found, inside the backticks.
+  const codeSpan = `<t:1700000000:R>`;
+  const note = `The pattern \`${codeSpan}\` is code.\n\n\`\`\`\n${codeSpan}\n\`\`\`\n\nDue <t:1700000000:R> tomorrow.\n`;
+  await boot(page, {}, note);
+  await page.locator('#app #preview-toggle').click();
+  await expect(page.locator('#app #preview time.discord-timestamp')).toHaveCount(1);
+  await page.locator('#app #preview time.discord-timestamp').click();
+  const picker = sheet(page);
+  await expect(picker).toBeVisible();
+  await picker.locator('.timestamp-picker-format[data-stamp-format="T"]').click();
+  await picker.locator('[data-stamp-insert]').click();
+  await expect(picker).toHaveCount(0);
+  expect(await noteText(page)).toBe(`The pattern \`${codeSpan}\` is code.\n\n\`\`\`\n${codeSpan}\n\`\`\`\n\nDue <t:1700000000:T> tomorrow.\n`);
+});
+
 test('the grid answers in the chosen calendar and language', async ({ page }) => {
   await boot(page, { timestampLocale: 'fa', timestampCalendar: 'auto' });
   await openPicker(page);
@@ -419,7 +437,11 @@ test('every month is a fixed six-week grid: the sheet never changes height', asy
   await drag(page, 0);
   await settled(page);
   await page.waitForTimeout(250);
-  expect(await picker.evaluate((el) => el.getBoundingClientRect().height)).toBe(height);
+  // Sub-pixel: a layout pass may hand back 576.000061 for the same 576, so
+  // the two heights are compared with a tolerance that a real row would blow
+  // (a week of cells is ~40px).
+  const turned = await picker.evaluate((el) => el.getBoundingClientRect().height);
+  expect(Math.abs(turned - height)).toBeLessThanOrEqual(0.5);
   await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)')).toHaveCount(31, { timeout: 5000 }).catch(() => {});
 });
 

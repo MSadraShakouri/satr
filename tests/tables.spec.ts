@@ -317,6 +317,16 @@ test('a directive is never misapplied when another table sits nested in a list',
   expect(dirs).toEqual(['rtl', 'ltr']);
 });
 
+test('a directive above a table after a nested one stays on that table', async ({ page }) => {
+  // The nested table is no section of its own, so it never had a directive of
+  // its own to count: pairing directives with DOM tables handed the second
+  // comment to the nested table and left the table it belonged to bare.
+  const markdown = '| A | B |\n| --- | --- |\n| 1 | 2 |\n\n- item\n\n  | C | D |\n  | --- | --- |\n  | 3 | 4 |\n\n<!-- table: rtl -->\n\n| E | F |\n| --- | --- |\n| 5 | 6 |\n';
+  await rendered(page, markdown);
+  const dirs = await page.evaluate(() => [...document.querySelectorAll('#spec-host table')].map((t) => t.getAttribute('dir')));
+  expect(dirs).toEqual(['ltr', 'ltr', 'rtl']);
+});
+
 // ---- Panning vs the drawer gesture ----
 
 const wideTable = (n: number) => `| ${Array.from({ length: n }, (_, i) => `column ${i + 1}`).join(' | ')} |\n|${Array.from({ length: n }, () => ' --- ').join('|')}|\n| ${Array.from({ length: n }, (_, i) => `c${i + 1}`).join(' | ')} |\n`;
@@ -374,5 +384,21 @@ test('the same rightward swipe over prose still opens the file drawer', async ({
   await page.locator('#app #preview-toggle').click();
   await expect(page.locator('#app #preview .md-section p').first()).toBeVisible();
   await drag(page, '#app #preview .md-section p', [12, 40, 90, 160, 240]);
+  await expect(page.locator('body.files-open')).toHaveCount(1);
+});
+
+test('a swipe over a table that fits its pane still opens the drawer', async ({ page }) => {
+  // Every table sits in a wrapper carrying data-pan-x, but only one with
+  // something to pan owns the gesture. A table narrower than the pane used to
+  // refuse the drawer too — no scroll, no drawer, nothing.
+  await bootApp(page, 'Intro.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n');
+  await page.locator('#app #preview-toggle').click();
+  await expect(page.locator('#app #preview .table-wrapper > table')).toBeVisible();
+  const fits = await page.evaluate(() => {
+    const wrapper = document.querySelector('#app #preview .table-wrapper') as HTMLElement;
+    return wrapper.scrollWidth <= wrapper.clientWidth + 1;
+  });
+  expect(fits).toBe(true);
+  await drag(page, '#app #preview .table-wrapper', [12, 40, 90, 160, 240]);
   await expect(page.locator('body.files-open')).toHaveCount(1);
 });

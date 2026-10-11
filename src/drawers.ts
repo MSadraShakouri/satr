@@ -225,10 +225,14 @@ export function initDrawers(options: DrawerOptions) {
       // table (data-pan-x, src/markdown.ts) owns horizontal drags in BOTH
       // directions: it used to hand the gesture to the drawer at its scroll
       // edge — exactly when a reader pulling the table back to its first
-      // column had the whole page slide out from under the finger.
+      // column had the whole page slide out from under the finger. Only a
+      // table with something to pan owns it, though: the wrapper carries
+      // data-pan-x whether or not its table is wider than the pane, and a
+      // table that fits is not a reason to refuse the drawer (the check
+      // used to sit above the width test, so every table did).
       for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
-        if (el.dataset.panX !== undefined) { abort(); return; }
         if (el.scrollWidth <= el.clientWidth) continue;
+        if (el.dataset.panX !== undefined) { abort(); return; }
         if (!['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
         if ((dx > 0 && el.scrollLeft > 0) || (dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1)) {
           abort(); return;

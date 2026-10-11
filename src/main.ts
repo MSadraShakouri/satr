@@ -24,7 +24,8 @@ import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
-import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, type TimestampFormat } from './timestamps';
+import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
+import { maskMathAndCode } from './mathScan';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
@@ -1998,12 +1999,13 @@ function applySettings(settings: Settings): void {
     timestampStyleApplied = stampStyle;
     setTimestampStyle(settings.timestampLocale, settings.timestampCalendar);
     // The first application is at boot, before any note shows; afterwards a
-    // change re-words every rendered chip (the editor's widgets keep their
-    // elements) and re-renders the reading view.
+    // change re-words every rendered chip in place (the editor's widgets keep
+    // their elements, so the re-render below cannot reach them) and marks the
+    // reading view for the one render at the end of this function — a hidden
+    // preview catches up when it is next shown (src/main.ts: previewDirty).
     if (!first) {
       restyleTimestamps(document);
       previewDirty = true;
-      if (previewVisible()) renderPreview();
     }
   }
   if (previewVisible()) renderPreview();
@@ -2218,23 +2220,47 @@ function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, 
   });
 }
 
+/** The `occurrence`-th `<t:…>` code in `from..to` naming this moment and
+ *  format. Math and code are masked out first (src/mathScan.ts — the mask the
+ *  renderer's own policy uses, offsets kept): a code inside a fence, a code
+ *  span or a formula never renders a chip, so counting it would hand the
+ *  writer a different code from the one they tapped. Every hit is the code
+ *  itself, so the range needs no second look. */
+function findTimestampCode(from: number, to: number, seconds: number, format: TimestampFormat, occurrence: number): { from: number; to: number } | null {
+  const doc = editor.view.state.doc;
+  const masked = maskMathAndCode(doc.sliceString(from, to));
+  const hits: Array<{ from: number; to: number }> = [];
+  for (const match of masked.matchAll(/<t:-?\d{1,15}(?::[tTdDfFR])?>/g)) {
+    const parsed = TIMESTAMP_START.exec(match[0]);
+    if (!parsed || Number(parsed[1]) !== seconds || (parsed[2] ?? 'f') !== format) continue;
+    const at = from + (match.index ?? 0);
+    hits.push({ from: at, to: at + match[0].length });
+  }
+  return hits[occurrence] ?? null;
+}
+
 /** A `<t:…>` chip tapped in the reading view: the date sheet opens at its
  *  moment and format, and Insert rewrites the code that made it — the same
- *  occurrence if it can still be found (the second `<t:1700000000>` in the
- *  note stays the second), otherwise the caret gets a fresh one. */
+ *  occurrence if it can still be found, otherwise the caret gets a fresh one.
+ *  The search starts in the chip's own section (data-line / data-lines), so a
+ *  twin elsewhere in the note is never picked, and falls back to the whole
+ *  note when the section holds no such code (a stale tag, or a chip in a part
+ *  of the DOM that no section owns). */
 function editTimestampFromChip(chip: HTMLElement): void {
   const seconds = Number(chip.dataset.ts);
   const format = (chip.dataset.format ?? 'f') as TimestampFormat;
   if (!Number.isFinite(seconds)) return;
   const same = [...preview.querySelectorAll<HTMLElement>(`time.discord-timestamp[data-ts="${seconds}"][data-format="${format}"]`)];
-  const occurrence = Math.max(0, same.indexOf(chip));
-  const text = editor.view.state.doc.toString();
-  const hits: { from: number; to: number; format: TimestampFormat }[] = [];
-  for (const match of text.matchAll(new RegExp(`<t:${seconds}(?::([tTdDfFR]))?>`, 'g'))) {
-    const from = match.index ?? 0;
-    hits.push({ from, to: from + match[0].length, format: (match[1] ?? 'f') as TimestampFormat });
+  const doc = editor.view.state.doc;
+  let found: { from: number; to: number } | null = null;
+  const anchor = chip.closest<HTMLElement>('[data-line]');
+  if (anchor) {
+    const start = Math.min(Math.max(Number(anchor.dataset.line) || 0, 0), doc.lines - 1);
+    const span = Math.max(1, Number(anchor.dataset.lines) || 1);
+    const inSection = same.filter((el) => anchor.contains(el));
+    found = findTimestampCode(doc.line(start + 1).from, doc.line(Math.min(start + span, doc.lines)).to, seconds, format, Math.max(0, inSection.indexOf(chip)));
   }
-  const found = hits.filter((hit) => hit.format === format)[occurrence] ?? null;
+  if (!found) found = findTimestampCode(0, doc.length, seconds, format, Math.max(0, same.indexOf(chip)));
   editTimestampAt({ seconds, format }, found);
 }
 
