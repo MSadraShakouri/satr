@@ -3907,13 +3907,9 @@ body.external-file-active .notice {
   /* Its bottom sits at the middle of the pill; the white draws over it. */
   bottom: var(--pill-overlap, 0px);
   box-sizing: border-box;
-  display: flex;
-  /* Top-anchored: the bottom of this box is tucked behind the pill, so centring
-     in it would push the text down into the white. */
-  align-items: flex-start;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 14px calc(9px + var(--pill-overlap, 0px));
+  display: block;
+  min-height: 0;
+  padding: 0;
   border: 0;
   font: inherit;
   color: inherit;
@@ -3950,6 +3946,16 @@ body.external-file-active .notice {
 }
 .pill-gray[hidden] {
   display: none;
+}
+/* The row keeps its size; the button is only a clip. Height animation then
+   recedes the gray without squashing padding or type on the last pixels. */
+.pill-gray-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 12px 14px calc(9px + var(--pill-overlap, 0px));
 }
 .pill-gray svg {
   width: 18px;

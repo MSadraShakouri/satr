@@ -592,11 +592,11 @@ function update(): void {
 let mathWarningCount = 0;
 let mathConfirmTimer: number | undefined;
 
-/** Unfolds upward from the pill the gray sits on: height alone, no movement, so
- *  the white part below it never shifts by a pixel. Measure the open size
- *  first; animating from a 0 we already applied reads as nothing. Fold is the
- *  same height tween reversed — text stays until the box clips it. */
+/** Unfolds upward from the pill the gray sits on: height of the clip shell
+ *  only. The inner row keeps its size; overflow clips it. Cancelling a finished
+ *  fold before hiding it would flash the full bar for a frame. */
 const pillAnimation = new WeakMap<HTMLElement, Animation>();
+const PILL_GROW_MS = 280;
 function growFromPill(el: HTMLElement, open: boolean): void {
   // A fold still in flight must not hide what came after it: the editor's own
   // change starts a fold the moment the note converts, and the receipt is shown
@@ -621,13 +621,14 @@ function growFromPill(el: HTMLElement, open: boolean): void {
     el.style.height = '0px';
     el.style.overflow = 'hidden';
     void el.offsetHeight;
-    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: 280, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
+    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: PILL_GROW_MS, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
     pillAnimation.set(el, unfold);
     unfold.onfinish = (): void => {
       if (pillAnimation.get(el) !== unfold) return; // superseded
       pillAnimation.delete(el);
+      el.style.height = ''; el.style.overflow = '';
       unfold.cancel();
-      el.style.height = ''; el.style.overflow = ''; layoutToolbar();
+      layoutToolbar();
     };
     return;
   }
@@ -635,13 +636,17 @@ function growFromPill(el: HTMLElement, open: boolean): void {
   const height = el.getBoundingClientRect().height;
   if (height <= 0) { el.hidden = true; return; }
   el.style.overflow = 'hidden';
-  const fold = el.animate([{ height: `${height}px` }, { height: '0px' }], { duration: 420, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+  // Ease-in: into the pill without stalling on the last pixels, where a
+  // decelerate-then-snap was reading as a jump.
+  const fold = el.animate([{ height: `${height}px` }, { height: '0px' }], { duration: PILL_GROW_MS, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
   pillAnimation.set(el, fold);
   fold.onfinish = (): void => {
     if (pillAnimation.get(el) !== fold) return; // superseded
     pillAnimation.delete(el);
+    el.hidden = true;
+    el.style.height = ''; el.style.overflow = '';
     fold.cancel();
-    el.hidden = true; el.style.height = ''; el.style.overflow = ''; layoutToolbar();
+    layoutToolbar();
   };
 }
 
@@ -665,7 +670,7 @@ function updateMathWarning(): void {
   if (count === mathWarningCount) return;
   mathWarningCount = count;
   const offer = count > 0
-    ? `${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span>`
+    ? `<span class="pill-gray-inner">${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span></span>`
     : '';
   for (const warning of mathWarnings) {
     if (offer) warning.innerHTML = offer;
@@ -681,14 +686,15 @@ function confirmMathWarning(converted: number): void {
   const said = `${converted} formula${converted === 1 ? '' : 's'} converted`;
   for (const warning of mathWarnings) {
     holdPill(warning);
-    warning.innerHTML = `${MENU_ICONS.normalize}<span dir="auto">${said}</span>`;
+    warning.innerHTML = `<span class="pill-gray-inner">${MENU_ICONS.normalize}<span dir="auto">${said}</span></span>`;
     warning.classList.add('is-done');
     warning.parentElement?.classList.add('has-math-warning');
   }
   // -1 so the timer below always recomputes: the receipt is showing, and the
   // count it replaced is no longer what the bar should be saying.
+  // 2500ms: the same stay as the "Normalized N formulas" notice (src/commands.ts).
   mathWarningCount = -1;
-  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 4000);
+  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2500);
 }
 function runNormalize(): void {
   if (mode !== 'edit') setMode('edit');
