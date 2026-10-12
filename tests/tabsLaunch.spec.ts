@@ -106,3 +106,40 @@ test('Always open a new empty tab: every launch adds one, whatever the time sett
   await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
   expect(await tabCount(page)).toBe(3);
 });
+
+const lastScreen = {
+  v: 1, w: 390, h: 844, root: 'theme-light', style: '', body: '',
+  html: '<div id="old-note-flash">OLDNOTEFLASH</div>', css: '', scroll: [] as [number, number][],
+};
+
+test('empty-tab launch shows the logo, not the last note', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((snap) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 3, launchTabs: 'empty' }));
+    localStorage.setItem('satr:snapshot', JSON.stringify(snap));
+  }, lastScreen);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  const cover = page.locator('#boot-snapshot');
+  await expect(cover).toBeVisible();
+  await expect(cover).toHaveClass(/is-splash/);
+  await expect(cover).not.toContainText('OLDNOTEFLASH');
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+});
+
+test('restore last tabs still paints the last screen first', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((snap) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 3, launchTabs: 'last' }));
+    localStorage.setItem('satr:snapshot', JSON.stringify(snap));
+  }, lastScreen);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#boot-snapshot')).toContainText('OLDNOTEFLASH');
+});

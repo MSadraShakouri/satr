@@ -3814,6 +3814,15 @@ textarea,
   pointer-events: none;
   background: var(--background-primary);
 }
+#boot-snapshot.is-splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#boot-snapshot.is-splash img {
+  width: 96px;
+  height: 96px;
+}
 
 /* Contextual numeric lines must honour their inferred paragraph base. */
 .cm-editor .cm-line[dir] { unicode-bidi: isolate; }

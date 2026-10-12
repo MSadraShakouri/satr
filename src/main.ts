@@ -33,7 +33,7 @@ import { createFolderExport } from './folderExport';
 import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
-import { dropSnapshot, keepSnapshots } from './snapshot';
+import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
@@ -916,7 +916,7 @@ window.addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') { flush(); markAway(); }
   else if (document.visibilityState === 'visible') {
-    if (takeAwayTab()) newTab();
+    if (takeAwayTab()) { showSplash(); newTab(); }
     void refreshOnResume();
   }
 });
@@ -1362,11 +1362,12 @@ async function switchTab(index: number, after?: () => void): Promise<void> {
 }
 function newTab(): void {
   void (async () => {
-    if (!await leaveCurrent()) return;
+    if (!await leaveCurrent()) { dropSnapshot(); return; }
     const empty = tabs.findIndex((t) => !t.path);
     if (empty >= 0) activeTab = empty;
     else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
     showEmptyTab();
+    dropSnapshot();
   })();
 }
 /** Close a tab. Closing the last one leaves the default tab (the empty
@@ -2248,9 +2249,9 @@ function takeAwayTab(): boolean {
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
 }
 async function openFirstNote(): Promise<void> {
-  await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   // A new empty tab at launch: the setting asks for one, or the app was away
-  // long enough. The tabs from last time stay where they were.
+  // long enough. Show it before file access, so the last note never sits
+  // on screen behind a permission sheet.
   const launchTabs = loadSettings().launchTabs;
   if (launchTabs === 'empty' || takeAwayTab()) {
     const empty = tabs.findIndex((t) => !t.path);
@@ -2258,9 +2259,10 @@ async function openFirstNote(): Promise<void> {
     else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
     showEmptyTab();
     renderNavButtons();
-    void leftSidebar.refresh();
+    void ensureFileAccess().then(() => { void leftSidebar.refresh(); });
     return;
   }
+  await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
   let text = path ? await backend.read(path) : null;
