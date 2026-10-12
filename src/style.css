@@ -3906,6 +3906,7 @@ body.external-file-active .notice {
   right: 0;
   /* Its bottom sits at the middle of the pill; the white draws over it. */
   bottom: var(--pill-overlap, 0px);
+  box-sizing: border-box;
   display: flex;
   /* Top-anchored: the bottom of this box is tucked behind the pill, so centring
      in it would push the text down into the white. */

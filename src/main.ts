@@ -593,13 +593,18 @@ let mathWarningCount = 0;
 let mathConfirmTimer: number | undefined;
 
 /** Unfolds upward from the pill the gray sits on: height alone, no movement, so
- *  the white part below it never shifts by a pixel. */
+ *  the white part below it never shifts by a pixel. Measure the open size
+ *  first; animating from a 0 we already applied reads as nothing. Fold is the
+ *  same height tween reversed — text stays until the box clips it. */
 const pillAnimation = new WeakMap<HTMLElement, Animation>();
 function growFromPill(el: HTMLElement, open: boolean): void {
   // A fold still in flight must not hide what came after it: the editor's own
   // change starts a fold the moment the note converts, and the receipt is shown
   // over the top of it. One animation at a time, or the stale one wins.
   pillAnimation.get(el)?.cancel();
+  pillAnimation.delete(el);
+  el.style.height = '';
+  el.style.overflow = '';
   const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // The keyboard toolbar's gray sits inside a strip that is display:none
   // whenever the keyboard is down, so there is nothing to unfold and nothing to
@@ -611,36 +616,31 @@ function growFromPill(el: HTMLElement, open: boolean): void {
   if (open) {
     el.hidden = false;
     if (still) return;
+    const height = el.getBoundingClientRect().height;
+    if (height <= 0) return;
     el.style.height = '0px';
     el.style.overflow = 'hidden';
-    const height = el.scrollHeight;
-    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: 280, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' });
+    void el.offsetHeight;
+    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: 280, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
     pillAnimation.set(el, unfold);
     unfold.onfinish = (): void => {
       if (pillAnimation.get(el) !== unfold) return; // superseded
       pillAnimation.delete(el);
+      unfold.cancel();
       el.style.height = ''; el.style.overflow = ''; layoutToolbar();
     };
     return;
   }
   if (still) { el.hidden = true; return; }
+  const height = el.getBoundingClientRect().height;
+  if (height <= 0) { el.hidden = true; return; }
   el.style.overflow = 'hidden';
-  const height = el.scrollHeight;
-  // The way down is unhurried and even: the slide curve used everywhere else is
-  // front-loaded, which reads as a snatch rather than a settle.
-  // The gray is anchored to the bottom of the pill, so as it collapses its top
-  // edge travels down — straight through the text, which used to ride down
-  // behind the pill and vanish. The text is gone before the box starts moving,
-  // and the box then closes on nothing.
-  const fold = el.animate([
-    { height: `${height}px`, opacity: 1 },
-    { height: `${height}px`, opacity: 0, offset: 0.5 },
-    { height: '0px', opacity: 0 },
-  ], { duration: 420, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' });
+  const fold = el.animate([{ height: `${height}px` }, { height: '0px' }], { duration: 420, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
   pillAnimation.set(el, fold);
   fold.onfinish = (): void => {
     if (pillAnimation.get(el) !== fold) return; // superseded
     pillAnimation.delete(el);
+    fold.cancel();
     el.hidden = true; el.style.height = ''; el.style.overflow = ''; layoutToolbar();
   };
 }
@@ -688,7 +688,7 @@ function confirmMathWarning(converted: number): void {
   // -1 so the timer below always recomputes: the receipt is showing, and the
   // count it replaced is no longer what the bar should be saying.
   mathWarningCount = -1;
-  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2000);
+  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 4000);
 }
 function runNormalize(): void {
   if (mode !== 'edit') setMode('edit');
