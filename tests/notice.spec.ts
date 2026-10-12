@@ -27,6 +27,7 @@ test('a notice on the note is a rectangle from the centre of each circle', async
       right: (preview.left + preview.width / 2) - banner.right,
       height: banner.height,
       radius: style.borderRadius,
+      border: style.borderTopWidth,
       align: style.textAlign,
       wrap: style.whiteSpace,
       hit: atFiles && (atFiles.id === 'files' || atFiles.closest('#files') !== null),
@@ -36,6 +37,7 @@ test('a notice on the note is a rectangle from the centre of each circle', async
   expect(Math.abs(gap.right), JSON.stringify(gap)).toBeLessThan(3);
   expect(Math.abs(gap.height - 44), JSON.stringify(gap)).toBeLessThan(2);
   expect(gap.radius === '0px' || gap.radius === '0', JSON.stringify(gap)).toBe(true);
+  expect(gap.border === '0px' || gap.border === '0', JSON.stringify(gap)).toBe(true);
   expect(gap.align, JSON.stringify(gap)).toBe('center');
   expect(gap.wrap, JSON.stringify(gap)).toBe('nowrap');
   expect(gap.hit, JSON.stringify(gap)).toBe(true);

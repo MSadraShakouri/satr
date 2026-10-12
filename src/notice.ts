@@ -1,8 +1,8 @@
 // In-app notice: on the note, a 44px rectangle behind the files and preview
 // circles (centre to centre, so the circles are the ends), one centred line,
-// no wrap. Slides with the drawers. On a full-screen page (settings, export,
-// tab switcher) it is the old full-width banner. It slides in, hides by
-// itself, and a tap dismisses it.
+// no wrap. Same gray as the LaTeX bar, no outline. Fades in place. Slides
+// with the drawers. On a full-screen page (settings, export, tab switcher)
+// it is the old full-width banner. It hides by itself, and a tap dismisses it.
 
 export interface NoticeHandle { hide(): void }
 
@@ -23,7 +23,7 @@ export function showNotice(message: string, ms = 4000): NoticeHandle {
   el.dir = 'auto';
   el.textContent = message;
   container.appendChild(el);
-  el.animate([{ opacity: 0, transform: 'translateY(-100%)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: 'cubic-bezier(0, 0.55, 0.45, 1)' });
+  el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'cubic-bezier(0, 0.55, 0.45, 1)' });
   let timer = 0;
   const hide = (): void => {
     window.clearTimeout(timer);

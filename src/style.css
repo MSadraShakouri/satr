@@ -3671,9 +3671,13 @@ textarea,
   height: 44px;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--background-modifier-border);
+  border: 0;
   border-radius: 0;
-  background: var(--background-secondary);
+  /* Same opaque gray as the LaTeX bar under the bottom pill. */
+  background:
+    linear-gradient(var(--background-modifier-hover), var(--background-modifier-hover)),
+    var(--background-primary);
+  box-shadow: var(--shadow-xs);
   color: var(--text-normal);
   font-size: 0.75rem;
   font-weight: 500;
@@ -3705,7 +3709,10 @@ body.external-file-active .notice {
   height: auto;
   padding: 1em 1.5em;
   overflow: visible;
+  border: 1px solid var(--background-modifier-border);
   border-radius: 24px;
+  background: var(--background-secondary);
+  box-shadow: none;
   line-height: 1.3;
   text-align: start;
   white-space: normal;
