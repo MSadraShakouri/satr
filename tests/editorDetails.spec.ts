@@ -197,6 +197,34 @@ test('there is room under the last line, and Enter brings the new line into view
   expect(visible).toBe(true);
 });
 
+test('Enter keeps the caret three body lines below the top', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => {
+    const outer = window.testEditor.view.dom.parentElement as HTMLElement;
+    outer.style.height = '420px';
+  });
+  await setText(page, Array.from({ length: 80 }, (_, i) => `line ${i} of a note long enough to scroll`).join('\n'));
+  await page.evaluate(() => {
+    const view = window.testEditor.view;
+    const pos = view.state.doc.line(40).from;
+    view.dispatch({ selection: { anchor: pos } });
+    const coords = view.coordsAtPos(pos)!;
+    const box = view.scrollDOM.getBoundingClientRect();
+    view.scrollDOM.scrollTop += coords.top - box.top;
+    view.focus();
+  });
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  const gap = await page.evaluate(() => {
+    const view = window.testEditor.view;
+    const caret = view.coordsAtPos(view.state.selection.main.head)!;
+    const box = view.scrollDOM.getBoundingClientRect();
+    return { above: caret.top - box.top, line: view.defaultLineHeight };
+  });
+  expect(gap.above, JSON.stringify(gap)).toBeGreaterThan(gap.line * 2.5);
+  expect(gap.above, JSON.stringify(gap)).toBeLessThan(gap.line * 3.5);
+});
+
 // The room under the note is for scrolling by hand: the view must not spend it
 // while typing. At the end of a note the caret walks down through the room
 // instead of the page chasing it; in the middle of a note, where the next

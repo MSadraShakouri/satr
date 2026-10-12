@@ -804,7 +804,13 @@ export class SatrEditor {
       // hidden. The caret is brought up gently afterwards instead (below).
       // Room under the last line: enough to bring it up past the middle of the
       // screen and keep writing at the bottom.
-      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
+      // Top: three body lines, so the line being written cannot sit against
+      // the glass the way the bottom rule keeps it off the keys. Measured
+      // from the editor's own line height, not a fixed pixel gap.
+      EditorView.scrollMargins.of(() => (touching ? null : {
+        top: 3 * (this.view?.defaultLineHeight ?? 0),
+        bottom: 24 + (options?.obscuredBottom?.() ?? 0),
+      })),
       headingFolding,
       wikiLinks,
       EditorView.lineWrapping,
@@ -878,7 +884,7 @@ export class SatrEditor {
       if (!coords) return;
       const box = this.view.scrollDOM.getBoundingClientRect();
       const bottom = box.bottom - (options?.obscuredBottom?.() ?? 0) - 24;
-      const top = box.top + 8;
+      const top = box.top + 3 * this.view.defaultLineHeight;
       const delta = coords.bottom > bottom ? coords.bottom - bottom : coords.top < top ? coords.top - top : 0;
       if (Math.abs(delta) < 1) return;
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
