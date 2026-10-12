@@ -912,13 +912,10 @@ const flush = (): void => {
   if (saveTimer !== undefined) saveNow();
   rememberView();
 };
-window.addEventListener('pagehide', flush);
+window.addEventListener('pagehide', () => { flush(); markAway(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { flush(); markAway(); }
-  else if (document.visibilityState === 'visible') {
-    if (takeAwayTab()) { showSplash(); newTab(); }
-    void refreshOnResume();
-  }
+  if (document.visibilityState === 'hidden') onBackground();
+  else if (document.visibilityState === 'visible') onForeground();
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
@@ -1362,12 +1359,16 @@ async function switchTab(index: number, after?: () => void): Promise<void> {
 }
 function newTab(): void {
   void (async () => {
-    if (!await leaveCurrent()) { dropSnapshot(); return; }
-    const empty = tabs.findIndex((t) => !t.path);
-    if (empty >= 0) activeTab = empty;
-    else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
-    showEmptyTab();
-    dropSnapshot();
+    try {
+      if (!await leaveCurrent()) { dropSnapshot(); return; }
+      const empty = tabs.findIndex((t) => !t.path);
+      if (empty >= 0) activeTab = empty;
+      else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
+      showEmptyTab();
+      dropSnapshot();
+    } finally {
+      launchTabInFlight = false;
+    }
   })();
 }
 /** Close a tab. Closing the last one leaves the default tab (the empty
@@ -2187,7 +2188,8 @@ function handleBack(): boolean {
 if (Capacitor.isNativePlatform()) {
   void CapacitorApp.addListener('backButton', () => { handleBack(); });
   void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-    if (isActive) void refreshOnResume();
+    if (isActive) onForeground();
+    else onBackground();
   });
 } else {
   // The guard entry: back pops it (popstate), we handle the press and put it
@@ -2236,24 +2238,38 @@ async function boot(): Promise<void> {
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
 const AWAY_KEY = 'satr:awayAt';
 function markAway(): void { localStorage.setItem(AWAY_KEY, String(Date.now())); }
-/** Whether a new empty tab is due: the app was away for the \"New tab after being
- *  away\" time. Clears the mark, so one absence gives one new tab. */
-function takeAwayTab(): boolean {
-  const since = Number(localStorage.getItem(AWAY_KEY));
-  localStorage.removeItem(AWAY_KEY);
-  // Only the empty-tab launch has an away time: a refresh or a return with
-  // "Restore last tabs" brings the tabs back, with no new tab.
+/** A new empty tab is due: always-empty, or away long enough. Restore-last
+ *  never. The away mark stays until we actually open the tab. */
+function dueEmptyTab(): boolean {
   const settings = loadSettings();
+  if (settings.launchTabs === 'empty') return true;
   if (settings.launchTabs !== 'away') return false;
+  const since = Number(localStorage.getItem(AWAY_KEY));
   const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
+}
+function onBackground(): void { flush(); markAway(); }
+/** Home / recents leave the WebView alive: boot does not run again. Android
+ *  often skips visibilitychange; Capacitor appStateChange is the pause/resume
+ *  we can trust. One in-flight switch so the two signals cannot open two tabs. */
+let launchTabInFlight = false;
+function onForeground(): void {
+  void refreshOnResume();
+  if (!dueEmptyTab()) return;
+  if (launchTabInFlight) return;
+  if (!curTab().path) return;
+  launchTabInFlight = true;
+  localStorage.removeItem(AWAY_KEY);
+  showSplash();
+  newTab();
 }
 async function openFirstNote(): Promise<void> {
   // A new empty tab at launch: the setting asks for one, or the app was away
   // long enough. Show it before file access, so the last note never sits
   // on screen behind a permission sheet.
-  const launchTabs = loadSettings().launchTabs;
-  if (launchTabs === 'empty' || takeAwayTab()) {
+  const openEmpty = dueEmptyTab();
+  localStorage.removeItem(AWAY_KEY);
+  if (openEmpty) {
     const empty = tabs.findIndex((t) => !t.path);
     if (empty >= 0) activeTab = empty;
     else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }

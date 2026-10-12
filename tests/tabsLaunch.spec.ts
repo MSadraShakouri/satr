@@ -71,6 +71,29 @@ test('coming back to the visible app after being away adds the empty tab too', a
   expect(await tabCount(page)).toBe(3);
 });
 
+test('Always open a new empty tab: coming back without a full start opens one too', async ({ page }) => {
+  await boot(page, { launchTabs: 'last' });
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await page.evaluate(() => {
+    localStorage.setItem('satr:settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('satr:settings')!), launchTabs: 'empty' }));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(3);
+});
+
+test('Restore last tabs: coming back never adds a tab', async ({ page }) => {
+  await boot(page, { launchTabs: 'last' });
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await page.evaluate((key) => {
+    localStorage.setItem(key, String(Date.now() - 10 * 24 * 60 * 60_000));
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, AWAY_KEY);
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await expect(page.locator('body')).not.toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(2);
+});
+
 test('the Tabs settings save their choices', async ({ page }) => {
   await boot(page, {});
   await page.evaluate(async () => {
