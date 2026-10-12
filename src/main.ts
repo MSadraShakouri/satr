@@ -1714,9 +1714,9 @@ function showTabActions(): void {
     { title: 'New tab', icon: icon('<path d="M5 12h14"/><path d="M12 5v14"/>'), action: () => newTab() },
     { title: 'Reopen closed tab', icon: icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), disabled: closedTabs.length === 0, action: () => reopenClosedTab() },
     'separator',
-    { title: 'Close current tab', icon: icon('<path d="M18 6 6 18M6 6l12 12"/>'), warning: true, disabled: emptyOnly, action: () => { void closeTab(activeTab); } },
-    { title: 'Close other tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: n < 2, action: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); } },
     { title: 'Close all tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: tabs.every((t) => !t.path), action: () => { void closeAllTabs(); } },
+    { title: 'Close other tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: n < 2, action: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); } },
+    { title: 'Close current tab', icon: icon('<path d="M18 6 6 18M6 6l12 12"/>'), warning: true, disabled: emptyOnly, action: () => { void closeTab(activeTab); } },
   ]);
 }
 

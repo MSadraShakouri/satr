@@ -108,8 +108,8 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
         { title: 'New tab', icon: ICONS.plus, action: () => { closeTabSwitcher(); deps.newTab(); } },
         { title: 'Reopen closed tab', icon: ICONS.undo, disabled: !deps.canReopen(), action: () => { closeTabSwitcher(); deps.reopen(); } },
         'separator',
-        { title: 'Close other tabs', icon: ICONS.archiveX, warning: true, disabled: n < 2, action: () => { deps.closeOthers(); render(); } },
         { title: 'Close all tabs', icon: ICONS.archiveX, warning: true, disabled: deps.tabs().every((t) => t.empty), action: () => { void deps.closeAll().then(render); } },
+        { title: 'Close other tabs', icon: ICONS.archiveX, warning: true, disabled: n < 2, action: () => { deps.closeOthers(); render(); } },
       ]);
     }
   });
