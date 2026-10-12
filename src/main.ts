@@ -8,7 +8,7 @@ import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown, TABLE_DIRECTIVE } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
-import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
+import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll, typingTop } from './scrollSync';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
@@ -256,12 +256,15 @@ let syncingScroll = false;
 // See holdEditorPosition().
 let holdUntil = 0;
 let holdLine = 0;
+/** Three body lines below the pane top — the typing band, not the glass. */
+const scrollBand = (): number => typingTop(editor.view);
 function follow(from: 'editor' | 'preview'): void {
   if (syncingScroll || restoringView || !splitView.matches) return;
   const generation = viewGeneration;
+  const y = scrollBand();
   syncingScroll = true;
-  if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view));
-  else applyEditorScroll(editor.view, previewScroll(previewPane, preview), () => generation === viewGeneration);
+  if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view, y), () => generation === viewGeneration, false, y);
+  else applyEditorScroll(editor.view, previewScroll(previewPane, preview, y), () => generation === viewGeneration, false, y);
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
 }
 
@@ -408,7 +411,8 @@ function offerSaveConflict(conflict: SaveConflict): void {
 function reloadOpenText(path: string, text: string, mtime: number): void {
   if (path !== filePath) return;
   const selection = editor.view.state.selection.main;
-  const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const y = scrollBand();
+  const position = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
   const wasRestoring = restoringView;
   restoringView = true;
   editor.replaceValue(text);
@@ -422,8 +426,8 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  if (mode === 'preview') applyPreviewScroll(previewPane, preview, position);
-  else applyEditorScroll(editor.view, position);
+  if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, false, y);
+  else applyEditorScroll(editor.view, position, () => true, false, y);
   restoringView = wasRestoring;
   ownScroll(250);
   void showNotice('Updated from the version on disk.', 2500);
@@ -698,7 +702,8 @@ function setMode(next: Mode, restoredLine?: number): void {
   const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
   // pane reports scrollTop 0, which is what used to send preview to the top.
-  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view));
+  const y = scrollBand();
+  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y));
   mode = next;
   document.body.dataset.mode = mode;
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
@@ -710,9 +715,9 @@ function setMode(next: Mode, restoredLine?: number): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
-    applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true);
+    applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
   } else {
-    applyEditorScroll(editor.view, position, () => generation === viewGeneration, true);
+    applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);
   }
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
@@ -837,10 +842,11 @@ for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
   previewPane.addEventListener(type, releaseHold, { passive: true, capture: true });
 }
 editor.view.scrollDOM.addEventListener('scroll', () => {
-  if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view) - holdLine) > 0.5) {
+  if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view, scrollBand()) - holdLine) > 0.5) {
     const generation = viewGeneration;
+    const y = scrollBand();
     syncingScroll = true;
-    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration);
+    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration, false, y);
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
     return;
   }
@@ -855,7 +861,8 @@ document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(previ
 function rememberView(): void {
   window.clearTimeout(viewTimer);
   if (restoringView) return;
-  const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const y = scrollBand();
+  const line = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
   const folds = editor.foldedLines();
   if (!filePath) return;
   const saved: SavedView = { mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) };
@@ -883,9 +890,9 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit')
     syncingScroll = true;
     if (mode === 'preview') {
       layoutMath(preview);
-      applyPreviewScroll(previewPane, preview, line);
+      applyPreviewScroll(previewPane, preview, line, current, false, scrollBand());
     } else {
-      applyEditorScroll(editor.view, line, current);
+      applyEditorScroll(editor.view, line, current, false, scrollBand());
       holdEditorPosition(line);
     }
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {

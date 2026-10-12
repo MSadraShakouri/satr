@@ -63,19 +63,21 @@ async function reopen(page: Page) {
 }
 async function position(page: Page) {
   return page.evaluate(async () => {
-    const path = '/src/scrollSync.ts'; const { editorScroll, previewScroll } = await window.__satr.load(path);
+    const path = '/src/scrollSync.ts'; const { editorScroll, previewScroll, typingTop } = await window.__satr.load(path);
+    const y = typingTop(window.appView);
     return document.body.dataset.mode === 'preview'
-      ? previewScroll(document.querySelector('.preview-pane')!, document.querySelector('#preview')!)
-      : editorScroll(window.appView);
+      ? previewScroll(document.querySelector('.preview-pane')!, document.querySelector('#preview')!, y)
+      : editorScroll(window.appView, y);
   });
 }
 async function scrollTo(page: Page, line: number) {
   await page.evaluate(async (line) => {
-    const path = '/src/scrollSync.ts'; const { applyEditorScroll, applyPreviewScroll } = await window.__satr.load(path);
+    const path = '/src/scrollSync.ts'; const { applyEditorScroll, applyPreviewScroll, typingTop } = await window.__satr.load(path);
+    const y = typingTop(window.appView);
     const pane = document.body.dataset.mode === 'preview' ? document.querySelector<HTMLElement>('.preview-pane')! : window.appView.scrollDOM;
     pane.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); // genuine reader intent releases the restore hold
-    if (document.body.dataset.mode === 'preview') applyPreviewScroll(pane, document.querySelector('#preview')!, line);
-    else applyEditorScroll(window.appView, line);
+    if (document.body.dataset.mode === 'preview') applyPreviewScroll(pane, document.querySelector('#preview')!, line, () => true, false, y);
+    else applyEditorScroll(window.appView, line, () => true, false, y);
     for (let i = 0; i < 4; i++) await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }, line);
   await expect.poll(async () => Math.abs(await position(page) - line)).toBeLessThan(0.1);

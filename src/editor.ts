@@ -19,6 +19,7 @@ import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
+import { typingTop } from './scrollSync';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -808,7 +809,7 @@ export class SatrEditor {
       // the glass the way the bottom rule keeps it off the keys. Measured
       // from the editor's own line height, not a fixed pixel gap.
       EditorView.scrollMargins.of(() => (touching ? null : {
-        top: 3 * (this.view?.defaultLineHeight ?? 0),
+        top: this.view ? typingTop(this.view) : 0,
         bottom: 24 + (options?.obscuredBottom?.() ?? 0),
       })),
       headingFolding,
@@ -884,7 +885,7 @@ export class SatrEditor {
       if (!coords) return;
       const box = this.view.scrollDOM.getBoundingClientRect();
       const bottom = box.bottom - (options?.obscuredBottom?.() ?? 0) - 24;
-      const top = box.top + 3 * this.view.defaultLineHeight;
+      const top = box.top + typingTop(this.view);
       const delta = coords.bottom > bottom ? coords.bottom - bottom : coords.top < top ? coords.top - top : 0;
       if (Math.abs(delta) < 1) return;
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
