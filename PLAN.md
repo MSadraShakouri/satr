@@ -7,8 +7,8 @@ does not matter and is not on this list.
 
 ## Next
 
-1. **Tab number digits, vertical centre.** Small, always visible, no APK.
-2. **Hold the tabs button** for new / reopen / close all / close others / close current.
+1. ~~**Tab number digits, vertical centre.**~~ Done.
+2. ~~**Hold the tabs button** for new / reopen / close all / close others / close current.~~ Done.
 3. **Notices** such as "loaded from file": they should not take the full width. They should sit with the source/preview, and respect (or sit behind) the side-pane and preview buttons as those move.
 4. **Selection between lines.** The highlight leaves a gap in the line spacing. Maybe grow the selection into that space — the writer is not sure that is the right approach.
 5. **Phantom space.** After `a)` / `a"` and the like, the keyboard holds a space until the next keystroke; the app fights it. Autocorrect must not insert that space, and must not dump it on the next character.

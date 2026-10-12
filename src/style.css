@@ -2799,14 +2799,20 @@ input.mod-no-match {
   position: relative;
 }
 .mobile-navbar-tabs-number {
+  /* Sit in the 26px icon square, not the 52px button — the extra line box
+     was what dropped the digit below the rounded rect. */
   position: absolute;
-  inset: 0;
+  width: 26px;
+  height: 26px;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: calc(1.625rem * 0.55);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
   pointer-events: none;
 }
 .mobile-tab-switcher {

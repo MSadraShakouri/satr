@@ -91,7 +91,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
         </div>
@@ -1706,6 +1706,20 @@ function openEmptyHit(path: string, from: number, to: number): void {
   });
 }
 
+function showTabActions(): void {
+  const icon = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  const n = tabs.length;
+  const emptyOnly = n < 2 && !tabs[0]?.path;
+  openMenu([
+    { title: 'New tab', icon: icon('<path d="M5 12h14"/><path d="M12 5v14"/>'), action: () => newTab() },
+    { title: 'Reopen closed tab', icon: icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), disabled: closedTabs.length === 0, action: () => reopenClosedTab() },
+    'separator',
+    { title: 'Close current tab', icon: icon('<path d="M18 6 6 18M6 6l12 12"/>'), warning: true, disabled: emptyOnly, action: () => { void closeTab(activeTab); } },
+    { title: 'Close other tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: n < 2, action: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); } },
+    { title: 'Close all tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: tabs.every((t) => !t.path), action: () => { void closeAllTabs(); } },
+  ]);
+}
+
 function showTabs(): void {
   void (async () => {
     if (!await leaveCurrent()) return;
@@ -1741,7 +1755,28 @@ const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
 const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
 const navMenu = document.querySelector<HTMLButtonElement>('#nav-menu')!;
 const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-number')!;
-document.querySelector('#nav-tabs')!.addEventListener('click', showTabs);
+const navTabs = document.querySelector<HTMLButtonElement>('#nav-tabs')!;
+// A tap opens the switcher; holding opens the tab menu (Close current tab
+// lives here — the switcher's own menu has no current-tab close).
+let tabsPress: { timer: number; long: boolean } | null = null;
+navTabs.addEventListener('pointerdown', () => {
+  if (tabsPress) window.clearTimeout(tabsPress.timer);
+  const press = { timer: 0, long: false };
+  press.timer = window.setTimeout(() => { press.long = true; showTabActions(); navigator.vibrate?.(10); }, 450);
+  tabsPress = press;
+});
+const cancelTabsPress = (): void => { if (tabsPress && !tabsPress.long) window.clearTimeout(tabsPress.timer); };
+navTabs.addEventListener('pointerup', cancelTabsPress);
+navTabs.addEventListener('pointercancel', cancelTabsPress);
+navTabs.addEventListener('pointerleave', cancelTabsPress);
+navTabs.addEventListener('contextmenu', (event) => event.preventDefault());
+navTabs.addEventListener('click', () => {
+  const press = tabsPress;
+  tabsPress = null;
+  if (press?.long) return;
+  if (press) window.clearTimeout(press.timer);
+  showTabs();
+});
 const svg = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 const MENU_ICONS = {
   menu: svg('<path d="M4 12h16"/><path d="M4 18h16"/><path d="M4 6h16"/>'),
