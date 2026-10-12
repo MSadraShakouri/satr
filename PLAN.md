@@ -33,8 +33,9 @@ asked. Tablet layout is later; no dual pane can be done now.
    not stay on the old note after minimize.
 10. **No dual pane in landscape.** Can be done now. Tablet support (the rest
     of the layout) is later.
-11. **Math text font.** Follows the system font; undesired. Maybe force
-    Vazir, or pick another font for math. Needs thought.
+11. **Math text font.** Persian inside a formula follows the **system**
+    font; undesired. Maybe force Vazir, or pick another font for math.
+    English in math has not been checked on other devices. Needs thought.
 12. **Selection between lines.** The highlight leaves a gap in the line
     spacing. Maybe grow the selection into that space — the writer is not
     sure that is the right approach.
