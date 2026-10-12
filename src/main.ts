@@ -46,6 +46,7 @@ const starter = demoNote;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <div class="app-shell">
+    <div class="notice-container" role="status"></div>
     <div class="topbar">
       <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="2" width="22" height="20" rx="4"/><rect x="4" y="5" width="2" height="14" rx="2" fill="currentColor"/></svg></button>
       <div class="topbar-actions">
@@ -2716,7 +2717,7 @@ previewPane.addEventListener('dblclick', (event) => {
 // Both drawers (src/drawers.ts): the same physics on both sides.
 const drawers = initDrawers({
   panels: { left: document.querySelector<HTMLElement>('#file-panel')!, right: rightPanel },
-  movers: [document.querySelector<HTMLElement>('.workspace')!, document.querySelector<HTMLElement>('.topbar')!, document.querySelector<HTMLElement>('#navbar-wrap')!],
+  movers: [document.querySelector<HTMLElement>('.workspace')!, document.querySelector<HTMLElement>('.topbar')!, document.querySelector<HTMLElement>('.notice-container')!, document.querySelector<HTMLElement>('#navbar-wrap')!],
   backdrop: document.querySelector<HTMLElement>('#backdrop')!,
   classes: { left: 'files-open', right: 'outline-open' },
   onOpening: (side) => {

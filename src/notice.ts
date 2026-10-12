@@ -1,7 +1,10 @@
 // In-app notice, after Obsidian's on a phone (Notice in its app.js, .notice
-// in app.css): a full-width banner at the top of the screen, below the safe
-// area, on the secondary background with a 1px border and rounded corners,
-// 12px medium text. It slides in, hides by itself, and a tap dismisses it.
+// in app.css): a banner at the top, on the secondary background with a 1px
+// border and rounded corners, 12px medium text. On the note it sits in the
+// gap between the files button and the preview button and slides with them
+// (the workspace). On a full-screen page (settings, export, tab switcher)
+// it is the old full-width banner. It slides in, hides by itself, and a tap
+// dismisses it.
 
 export interface NoticeHandle { hide(): void }
 
@@ -9,10 +12,13 @@ let container: HTMLElement | null = null;
 
 export function showNotice(message: string, ms = 4000): NoticeHandle {
   if (!container?.isConnected) {
-    container = document.createElement('div');
-    container.className = 'notice-container';
-    container.setAttribute('role', 'status');
-    document.body.appendChild(container);
+    container = document.querySelector('.notice-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'notice-container';
+      container.setAttribute('role', 'status');
+      document.body.appendChild(container);
+    }
   }
   const el = document.createElement('div');
   el.className = 'notice';

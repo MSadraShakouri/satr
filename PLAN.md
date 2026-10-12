@@ -14,11 +14,9 @@ asked. Tablet layout is later; no dual pane can be done now.
 3. **Folder row in the left sidebar.** `/folder · X files, Y folders` does
    not even show; the folder name truncates. Either drop that count, or wrap:
    name on one line, counts on another, separate.
-4. **Notices** (`loaded from file`, `Preparing the PDF…`, …): not full width.
-   Sit in the gap between the files button and the preview button (not behind
-   them). Part of the source/preview view — they move with the drawers, they
-   do not float on the whole screen. Settings / export / tab-switcher pages
-   keep a full-width banner (no those two buttons).
+4. ~~**Notices** (`loaded from file`, `Preparing the PDF…`, …).~~ Done:
+   gap between the files and preview buttons; they slide with the drawers.
+   Settings / export / tab-switcher keep a full-width banner.
 5. **Phantom space.** After `a)` / `a"` and the like, the keyboard holds a
    space until the next keystroke; the app fights it.
 6. **Opening an image.** It first tries as text, the app gets very slow; a

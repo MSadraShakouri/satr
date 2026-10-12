@@ -327,11 +327,13 @@ button:focus-visible {
    steady state the drawer's settle animation ends on, src/drawers.ts). */
 .files-open .workspace,
 .files-open .topbar,
+.files-open .notice-container,
 .files-open.is-hidden-nav .topbar {
   transform: translate3d(var(--drawer-width), 0, 0);
 }
 .outline-open .workspace,
 .outline-open .topbar,
+.outline-open .notice-container,
 .outline-open.is-hidden-nav .topbar {
   transform: translate3d(calc(-1 * var(--drawer-width)), 0, 0);
 }
@@ -3637,18 +3639,32 @@ textarea,
   -webkit-touch-callout: none;
 }
 
-/* Notices (src/notice.ts), Obsidian's phone style: a banner at the top. */
+/* Notices (src/notice.ts): in the gap between the files button and the
+   preview button, same band as the topbar, so they slide with the drawers
+   and never cover those two. Not behind the buttons — the sentence stays
+   readable and a tap to dismiss does not hit a button. */
 .notice-container {
-  position: fixed;
-  z-index: 60;
-  top: max(4px, var(--safe-top));
-  right: 0;
-  left: 0;
+  --notice-side: calc(12px + 44px + 8px);
+  position: absolute;
+  z-index: 5;
+  top: max(12px, var(--safe-top));
+  right: var(--notice-side);
+  left: var(--notice-side);
   display: flex;
   flex-direction: column-reverse;
   gap: 8px;
-  padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
   pointer-events: none;
+  transition: transform 0.3s ease-in-out;
+}
+/* Buttons gone: use the sides. A drawer open brings the buttons back. */
+.is-hidden-nav .notice-container {
+  right: 12px;
+  left: 12px;
+}
+.files-open.is-hidden-nav .notice-container,
+.outline-open.is-hidden-nav .notice-container {
+  right: var(--notice-side);
+  left: var(--notice-side);
 }
 .notice {
   width: 100%;
@@ -3663,6 +3679,20 @@ textarea,
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
+}
+/* Full-screen pages have no those two buttons: the old full-width banner,
+   above the page, not sliding with a drawer. */
+body:has(.settings-screen) .notice-container,
+body:has(.mobile-tab-switcher) .notice-container,
+body:has(.folder-export-screen:not([hidden])) .notice-container,
+body.external-file-active .notice-container {
+  position: fixed;
+  z-index: 60;
+  top: max(4px, var(--safe-top));
+  right: 0;
+  left: 0;
+  padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
+  transform: none !important;
 }
 
 /* Page breaks are for the PDF only (src/markdown.ts, src/exportPdf.ts). */
