@@ -3639,12 +3639,11 @@ textarea,
   -webkit-touch-callout: none;
 }
 
-/* Notices (src/notice.ts): in the gap between the files button and the
-   preview button, same band as the topbar, so they slide with the drawers
-   and never cover those two. Not behind the buttons — the sentence stays
-   readable and a tap to dismiss does not hit a button. */
+/* Notices (src/notice.ts): a 44px rectangle behind the files and preview
+   circles, from centre to centre, so the circles are the ends. One line,
+   centred, no wrap. Slides with the drawers. Not a pill. */
 .notice-container {
-  --notice-side: calc(12px + 44px + 8px);
+  --notice-side: calc(12px + 22px);
   position: absolute;
   z-index: 5;
   top: max(12px, var(--safe-top));
@@ -3656,7 +3655,8 @@ textarea,
   pointer-events: none;
   transition: transform 0.3s ease-in-out;
 }
-/* Buttons gone: use the sides. A drawer open brings the buttons back. */
+/* Buttons gone: the rectangle's edges show, still not a pill. A drawer
+   open brings the buttons back. */
 .is-hidden-nav .notice-container {
   right: 12px;
   left: 12px;
@@ -3668,14 +3668,18 @@ textarea,
 }
 .notice {
   width: 100%;
-  padding: 1em 1.5em;
+  height: 44px;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 24px;
+  border-radius: 0;
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: 0.75rem;
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 44px;
+  text-align: center;
+  white-space: nowrap;
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
@@ -3693,6 +3697,18 @@ body.external-file-active .notice-container {
   left: 0;
   padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
   transform: none !important;
+}
+body:has(.settings-screen) .notice,
+body:has(.mobile-tab-switcher) .notice,
+body:has(.folder-export-screen:not([hidden])) .notice,
+body.external-file-active .notice {
+  height: auto;
+  padding: 1em 1.5em;
+  overflow: visible;
+  border-radius: 24px;
+  line-height: 1.3;
+  text-align: start;
+  white-space: normal;
 }
 
 /* Page breaks are for the PDF only (src/markdown.ts, src/exportPdf.ts). */

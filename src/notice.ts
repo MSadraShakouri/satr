@@ -1,10 +1,8 @@
-// In-app notice, after Obsidian's on a phone (Notice in its app.js, .notice
-// in app.css): a banner at the top, on the secondary background with a 1px
-// border and rounded corners, 12px medium text. On the note it sits in the
-// gap between the files button and the preview button and slides with them
-// (the workspace). On a full-screen page (settings, export, tab switcher)
-// it is the old full-width banner. It slides in, hides by itself, and a tap
-// dismisses it.
+// In-app notice: on the note, a 44px rectangle behind the files and preview
+// circles (centre to centre, so the circles are the ends), one centred line,
+// no wrap. Slides with the drawers. On a full-screen page (settings, export,
+// tab switcher) it is the old full-width banner. It slides in, hides by
+// itself, and a tap dismisses it.
 
 export interface NoticeHandle { hide(): void }
 
