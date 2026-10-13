@@ -3951,6 +3951,7 @@ body.external-file-active .notice {
    recedes the gray without squashing padding or type on the last pixels. */
 .pill-gray-inner {
   display: flex;
+  flex-wrap: nowrap;
   align-items: flex-start;
   justify-content: center;
   gap: 8px;
@@ -3964,10 +3965,11 @@ body.external-file-active .notice {
   fill: none;
   stroke: currentColor;
 }
-.pill-gray span {
+.pill-gray-inner > span {
   /* The line box is the icon's height, so the two share a centre line and the
      text's cap height — not its box, which carries the descender space — is
      what ends up level with the icon. */
+  min-width: 0;
   line-height: 18px;
   margin-top: 1px;
   display: -webkit-box;
