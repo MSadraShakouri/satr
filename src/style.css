@@ -10,6 +10,17 @@
   src: url("/fonts/Vazir-Code.woff2") format("woff2");
   font-display: swap;
 }
+/* Persian (and other Arabic-script) words inside a formula: XB Zar, a
+   Naskh serif that sits with KaTeX. Latin stays KaTeX_Main. Subset to
+   Arabic so the file stays small; other scripts later. */
+@font-face {
+  font-family: "XB Zar";
+  src: url("../fonts/XBZar.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200D;
+}
 :root {
   /* Android's font scale, reported by SystemBarsPlugin. Chrome's default
      textZoom would scale the glyphs without touching the em context, which
@@ -551,21 +562,20 @@ body {
   padding-block: 0.15em;
 }
 /* Prose in a formula (\text{…}, auto-wrapped Persian, …): Latin glyphs
-   stay KaTeX; anything KaTeX has no face for (Persian, later CJK, …)
-   is Vazirmatn — the note's font — not the phone's serif. Symbols stay
-   KaTeX. */
+   stay KaTeX; Persian is XB Zar. Other scripts still fall through to
+   Vazirmatn until they get their own face. Symbols stay KaTeX. */
 .katex {
-  font-family: KaTeX_Main, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_Main, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .katex .textrm,
 .katex .text {
-  font-family: KaTeX_Main, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_Main, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .katex .textsf {
-  font-family: KaTeX_SansSerif, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_SansSerif, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .katex .texttt {
-  font-family: KaTeX_Typewriter, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_Typewriter, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 /* A prose run follows its own language: Persian reads right to left
    inside the formula, while the formula stays left to right. */

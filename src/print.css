@@ -278,19 +278,19 @@ tr {
 .math-flow.is-wrapped:not(.is-display) > .math-unit {
   padding-block: 0.15em;
 }
-/* Same stack as the screen: KaTeX for Latin, Vazirmatn for the rest. */
+/* Same stack as the screen: KaTeX for Latin, XB Zar for Persian. */
 .katex {
-  font-family: KaTeX_Main, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_Main, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .katex .textrm,
 .katex .text {
-  font-family: KaTeX_Main, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_Main, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .katex .textsf {
-  font-family: KaTeX_SansSerif, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_SansSerif, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .katex .texttt {
-  font-family: KaTeX_Typewriter, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+  font-family: KaTeX_Typewriter, "XB Zar", Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 /* A prose run inside a formula follows its own language, as on screen. */
 .katex .text {

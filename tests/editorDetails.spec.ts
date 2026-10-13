@@ -169,7 +169,7 @@ test('a Persian \\text run inside a formula reads right to left, the formula LTR
   expect(report!.flowDirection).toBe('ltr');
 });
 
-test('prose in a formula is KaTeX, then Vazirmatn for anything else', async ({ page }) => {
+test('prose in a formula is KaTeX, then XB Zar for Persian', async ({ page }) => {
   const families = await page.evaluate(async () => {
     const { renderMath } = await window.__satr.load('/src/math.ts');
     const host = document.createElement('div');
@@ -185,7 +185,7 @@ test('prose in a formula is KaTeX, then Vazirmatn for anything else', async ({ p
   });
   for (const [name, stack] of Object.entries(families)) {
     expect(stack, name).toMatch(/KaTeX_Main/);
-    expect(stack, name).toMatch(/Vazirmatn/);
+    expect(stack, name).toMatch(/XB Zar/);
     expect(stack.toLowerCase(), name).not.toMatch(/times new roman/);
   }
 });
