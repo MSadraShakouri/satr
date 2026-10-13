@@ -53,6 +53,25 @@ test('selection rows meet at their midpoints without overlapping', async ({ page
   }
 });
 
+test('selection rows still meet when lines are loose, including lists', async ({ page }) => {
+  await page.evaluate(() => document.documentElement.style.setProperty('--note-line-height', '1.85'));
+  for (const text of ['one two three\nfour five six\nseven eight nine', '- one\n- two\n- three']) {
+    const boxes = await selectionRows(page, text, 0, text.length);
+    const rows: Box[][] = [];
+    for (const box of boxes) {
+      const row = rows.find((r) => Math.abs(r[0].top - box.top) < 2);
+      if (row) row.push(box); else rows.push([box]);
+    }
+    expect(rows.length, text).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < rows.length; i += 1) {
+      const above = Math.max(...rows[i - 1].map((b) => b.bottom));
+      const below = Math.min(...rows[i].map((b) => b.top));
+      expect(Math.abs(below - above), `${text} rows ${i - 1} and ${i}`).toBeLessThanOrEqual(0.5);
+      expect(below, text).toBeGreaterThanOrEqual(above - 0.5);
+    }
+  }
+});
+
 test('the empty end of a selected line still meets its neighbours', async ({ page }) => {
   const text = 'first line of text\n\nthird line of text';
   const boxes = await selectionRows(page, text, 0, text.length);
