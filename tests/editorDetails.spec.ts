@@ -169,6 +169,27 @@ test('a Persian \\text run inside a formula reads right to left, the formula LTR
   expect(report!.flowDirection).toBe('ltr');
 });
 
+test('prose in a formula is KaTeX, then Vazirmatn for anything else', async ({ page }) => {
+  const families = await page.evaluate(async () => {
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const host = document.createElement('div');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;';
+    document.body.appendChild(host);
+    const family = (tex: string) => {
+      host.innerHTML = renderMath(tex, false);
+      const run = host.querySelector<HTMLElement>('.katex .text');
+      return run ? getComputedStyle(run).fontFamily : '';
+    };
+    return { latin: family(String.raw`\\text{if}`), persian: family(String.raw`\\text{سلام}`) };
+  });
+  for (const [name, stack] of Object.entries(families)) {
+    expect(stack, name).toMatch(/KaTeX_Main/);
+    expect(stack, name).toMatch(/Vazirmatn/);
+    expect(stack.toLowerCase(), name).not.toMatch(/times new roman/);
+  }
+});
+
 test('there is room under the last line, and Enter brings the new line into view', async ({ page }) => {
   const host = page.locator('.cm-editor').first();
   await page.evaluate(() => {

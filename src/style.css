@@ -550,9 +550,25 @@ body {
 .math-flow.is-wrapped:not(.is-display) > .math-unit {
   padding-block: 0.15em;
 }
-/* A prose run inside a formula (\text{…}, \textbf{…}) follows its own
-   language: Persian reads right to left inside the formula, while the
-   formula itself stays left to right (plaintext is the CSS of dir="auto"). */
+/* Prose in a formula (\text{…}, auto-wrapped Persian, …): Latin glyphs
+   stay KaTeX; anything KaTeX has no face for (Persian, later CJK, …)
+   is Vazirmatn — the note's font — not the phone's serif. Symbols stay
+   KaTeX. */
+.katex {
+  font-family: KaTeX_Main, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+}
+.katex .textrm,
+.katex .text {
+  font-family: KaTeX_Main, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+}
+.katex .textsf {
+  font-family: KaTeX_SansSerif, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+}
+.katex .texttt {
+  font-family: KaTeX_Typewriter, Vazirmatn, "Segoe UI", system-ui, sans-serif;
+}
+/* A prose run follows its own language: Persian reads right to left
+   inside the formula, while the formula stays left to right. */
 .preview-pane .katex .text {
   unicode-bidi: plaintext;
 }
