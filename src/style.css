@@ -343,6 +343,11 @@ button:focus-visible {
 .files-open.is-hidden-nav .topbar {
   transform: translate3d(var(--drawer-width), 0, 0);
 }
+/* The note is not tappable through the backdrop; keep the caret dead too. */
+.files-open .workspace,
+.outline-open .workspace {
+  pointer-events: none;
+}
 .outline-open .workspace,
 .outline-open .topbar,
 .outline-open .notice-container,

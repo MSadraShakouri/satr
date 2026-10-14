@@ -282,7 +282,13 @@ export function initDrawers(options: DrawerOptions) {
     engaged = false;
     id = -1;
   };
-  document.addEventListener('touchend', (event) => finish(event), { passive: true, capture: true });
+  document.addEventListener('touchend', (event) => {
+    const took = engaged;
+    finish(event);
+    // A swipe that started on the note would otherwise synthesise a click
+    // there: caret at the pointer, then the browser pulls the page back.
+    if (took) event.preventDefault();
+  }, { passive: false, capture: true });
   document.addEventListener('touchcancel', (event) => finish(event, true), { passive: true, capture: true });
 
   backdrop.addEventListener('click', () => {

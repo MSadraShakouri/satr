@@ -1126,6 +1126,14 @@ export class SatrEditor {
       ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
       : [EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
   }
+  /** Drop the caret (and keep it dropped) so a parent transform cannot be
+   *  fought by the browser keeping the insertion point on screen. */
+  setCaretOff(on: boolean): void {
+    this.view.contentDOM.blur();
+    this.view.dispatch({ effects: readOnlySlot.reconfigure(this.isReadOnly || on
+      ? [EditorState.readOnly.of(this.isReadOnly), EditorView.editable.of(false)]
+      : [EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
+  }
   setTitleEditable(on: boolean): void {
     const title = this.view.dom.querySelector<HTMLElement>('.cm-file-name');
     if (!title) return;

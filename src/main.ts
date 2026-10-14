@@ -2730,8 +2730,15 @@ const drawers = initDrawers({
     closePopover();
     restoreNavigation();
     (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down
+    // A visible caret in the note makes the browser keep that point on
+    // screen: as the page translates, it slides the note back under the
+    // finger. Preview has no caret, so it never did this.
+    editor.setCaretOff(true);
     if (side === 'right') sidebar.refresh();
     else window.requestAnimationFrame(() => leftSidebar.scrollToActive());
+  },
+  onSettled: (side, open) => {
+    if (!open) editor.setCaretOff(false);
   },
 });
 applySettings(loadSettings());
