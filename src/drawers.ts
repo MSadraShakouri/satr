@@ -74,10 +74,20 @@ export function initDrawers(options: DrawerOptions) {
   }
   /** Back to the steady state given by the body class (no visible jump). */
   function clear(side: Side): void {
-    for (const el of all(side)) { el.style.transition = ''; el.style.transform = ''; }
+    // Keep transition suppressed: restoring it in the same turn as dropping
+    // a fill:forwards animation lets Chrome ease .workspace back to identity
+    // (the note slides home while the drawer stays open).
+    for (const el of all(side)) {
+      el.style.transition = 'none';
+      el.style.transform = '';
+    }
     panels[side].style.visibility = '';
     backdrop.style.display = '';
     backdrop.style.opacity = '';
+    requestAnimationFrame(() => {
+      if (settleSide === side) return;
+      for (const el of all(side)) el.style.transition = '';
+    });
   }
   function cancelSettle(): void {
     if (settleSide === null) return;
@@ -112,13 +122,15 @@ export function initDrawers(options: DrawerOptions) {
         [{ transform: `translate3d(${s * from}px,0,0)` }, { transform: `translate3d(${s * end}px,0,0)` }], timing)),
       backdrop.animate([{ opacity: w ? from / w : 0 }, { opacity: open ? 1 : 0 }], timing),
     ];
-    settleAnims[0].onfinish = () => {
+    const lead = settleAnims[0];
+    lead.onfinish = () => {
+      if (settleAnims[0] !== lead) return;
       document.body.classList.toggle(classes[side], open);
-      clear(side);
       for (const anim of settleAnims) anim.cancel();
       settleAnims = [];
       settleSide = null;
       settleTarget = null;
+      clear(side);
       options.onSettled?.(side, open);
     };
   }

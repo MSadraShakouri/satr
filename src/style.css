@@ -330,7 +330,8 @@ button:focus-visible {
   padding-top: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+  /* No CSS transform transition: the drawer (src/drawers.ts) owns the slide.
+     A 0.45s ease here was the note sliding back after the open animation. */
   will-change: transform;
   touch-action: pan-y;
 }
