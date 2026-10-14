@@ -218,7 +218,7 @@ test('there is room under the last line, and Enter brings the new line into view
   expect(visible).toBe(true);
 });
 
-test('Enter keeps the caret three body lines below the top', async ({ page }) => {
+test('Enter leaves a visible caret where the writer already is', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(() => {
     const outer = window.testEditor.view.dom.parentElement as HTMLElement;
@@ -242,8 +242,9 @@ test('Enter keeps the caret three body lines below the top', async ({ page }) =>
     const box = view.scrollDOM.getBoundingClientRect();
     return { above: caret.top - box.top, line: view.defaultLineHeight };
   });
-  expect(gap.above, JSON.stringify(gap)).toBeGreaterThan(gap.line * 2.5);
-  expect(gap.above, JSON.stringify(gap)).toBeLessThan(gap.line * 3.5);
+  // The line was already at the visible edge. Enter must not spend the
+  // writer's scroll position just to create an artificial three-line band.
+  expect(gap.above, JSON.stringify(gap)).toBeLessThan(gap.line * 1.5);
 });
 
 // The room under the note is for scrolling by hand: the view must not spend it

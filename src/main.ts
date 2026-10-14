@@ -176,19 +176,41 @@ const virtualKeyboard = (navigator as Navigator & {
 if (virtualKeyboard) virtualKeyboard.overlaysContent = true;
 let fullHeight = 0;
 let fullHeightWidth = 0;
-/** The on-screen keyboard's height, 0 when it is down. */
-function keyboardHeight(): number {
-  const rect = virtualKeyboard?.boundingRect;
-  if (rect && rect.height > 0) {
-    const lift = Math.round(window.innerHeight - rect.top);
-    return Math.max(0, lift > 0 ? Math.min(lift, Math.round(window.innerHeight)) : Math.round(rect.height));
-  }
+/** Keep the largest layout/visual height seen at this width as the keyboard-up
+ *  comparison. The Capacitor WebView can resize the layout viewport itself;
+ *  unlike an overlay keyboard, that case must not also receive a CSS bottom
+ *  lift. */
+function updateViewportBaseline(): void {
   const viewport = window.visualViewport;
-  const height = viewport?.height ?? window.innerHeight;
   if (window.innerWidth !== fullHeightWidth) { fullHeightWidth = window.innerWidth; fullHeight = 0; }
-  fullHeight = Math.max(fullHeight, height, window.innerHeight);
-  const shrunk = fullHeight - height;
-  return shrunk > 120 ? shrunk : 0;
+  fullHeight = Math.max(fullHeight, window.innerHeight, viewport?.height ?? 0);
+}
+/** The keyboard rectangle is usable for positioning only while the layout
+ *  viewport still has its full height. If the WebView has already resized to
+ *  the keyboard, the rectangle's coordinates belong to the old viewport and
+ *  applying its height again makes a bottom sheet fly too high. */
+function virtualKeyboardEdge(): number | null {
+  updateViewportBaseline();
+  const rect = virtualKeyboard?.boundingRect;
+  if (!rect || rect.height <= 0 || fullHeight - window.innerHeight > 120) return null;
+  return rect.top > 0 && rect.top < window.innerHeight ? Math.round(rect.top) : null;
+}
+/** Whether the on-screen keyboard is up, independent of whether the WebView
+ *  overlays it or has already resized around it. */
+function keyboardIsUp(): boolean {
+  updateViewportBaseline();
+  if ((virtualKeyboard?.boundingRect.height ?? 0) > 0) return true;
+  return Math.max(fullHeight - window.innerHeight, hiddenByViewport()) > 120;
+}
+/** The keyboard's covered height in the layout viewport, or zero when the
+ *  layout viewport already ends above the keyboard. */
+function keyboardHeight(): number {
+  const edge = virtualKeyboardEdge();
+  if (edge !== null) return Math.max(0, Math.round(window.innerHeight - edge));
+  const overlap = hiddenByViewport();
+  // A visual viewport shorter than an unchanged layout viewport is an overlay
+  // keyboard only when the gap is substantial; a small gap is browser chrome.
+  return overlap > 120 && fullHeight - window.innerHeight <= 120 ? Math.round(overlap) : 0;
 }
 /** How much of the layout viewport the keyboard covers (0 when the WebView is
  *  resized for it instead, as in the Capacitor app): every hidden pixel, which
@@ -200,8 +222,13 @@ function keyboardOverlap(): number {
 /** Where the visible area ends, in client coordinates: the keyboard's own top
  *  edge, the visual viewport's bottom, or the window's. */
 function visibleBottomEdge(): number {
-  const rect = virtualKeyboard?.boundingRect;
-  if (rect && rect.height > 0 && rect.top > 0) return Math.round(rect.top);
+  const edge = virtualKeyboardEdge();
+  if (edge !== null) return edge;
+  updateViewportBaseline();
+  // With adjustResize the visual viewport can still describe the old screen
+  // while the fixed-position layout viewport has already ended above the
+  // keyboard. The latter is the coordinate system the sheet is positioned in.
+  if (fullHeight - window.innerHeight > 120) return window.innerHeight;
   const viewport = window.visualViewport;
   return viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
 }
@@ -2567,7 +2594,7 @@ preview.addEventListener('click', (event) => {
 // where there is not — the same test that works when the WebView is resized
 // for the keyboard instead, as in the Capacitor app).
 function layoutToolbar(): void {
-  const keyboardUp = keyboardHeight() > 0;
+  const keyboardUp = keyboardIsUp();
   const show = keyboardUp && editor.hasFocus && mode === 'edit';
   document.body.classList.toggle('keyboard-open', show);
   // Any field with the keyboard up (find bar, sidebar search): no bottom bar.
@@ -2605,19 +2632,27 @@ virtualKeyboard?.addEventListener('geometrychange', layoutKeyboard);
 // the root: a sheet created later reads them as they are, and nothing is
 // corrected on a later beat than the motion it answers. --keyboard-lift reports
 // every hidden pixel, the number the caret's scroll margins are built on.
-let lastKeyboardHeight = 0;
+let lastKeyboardUp = false;
 let sheetRoomTimer: number | undefined;
 function layoutKeyboardInset(): void {
+  // In a resize-content WebView the fixed-position containing block already
+  // ends at the keyboard. Applying the reported height as `bottom` as well
+  // would subtract it twice — the date sheet is the most obvious thing to fly
+  // high. `keyboardHeight()` is therefore the overlay lift only; a resized
+  // layout gets zero and its ordinary bottom edge is already correct.
   const lift = keyboardHeight();
   const root = document.documentElement.style;
-  root.setProperty('--keyboard-lift', `${Math.round(hiddenByViewport())}px`);
-  root.setProperty('--sheet-lift', `${lift}px`);
-  root.setProperty('--sheet-room', `${Math.max(0, Math.round(window.innerHeight - lift))}px`);
+  const overlap = keyboardOverlap();
+  root.setProperty('--keyboard-lift', `${Math.round(overlap)}px`);
+  root.setProperty('--sheet-lift', `${Math.round(lift)}px`);
+  const room = lift > 0 ? visibleBottomEdge() : window.innerHeight;
+  root.setProperty('--sheet-room', `${Math.max(0, Math.round(room))}px`);
   // The keyboard has come up: the caret steps clear of it. Nothing else pokes
-  // the editor — with overlaysContent the viewport does not shrink, so its own
+  // the editor — with overlaysContent the viewport does not move, so its own
   // visual-viewport listener would never hear about this keyboard.
-  if (lift > lastKeyboardHeight + 120) editor?.revealCaretSoon(160);
-  lastKeyboardHeight = lift;
+  const up = keyboardIsUp();
+  if (up && !lastKeyboardUp) editor?.revealCaretSoon(160);
+  lastKeyboardUp = up;
   window.clearTimeout(sheetRoomTimer);
   sheetRoomTimer = window.setTimeout(keepFocusedFieldVisible, 120);
 }

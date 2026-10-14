@@ -1,19 +1,19 @@
 // Editor ⇄ preview scroll position, the way Obsidian does it: a position is a
 // fractional source line — "the line at this height in the viewport, plus how
-// far into it we are". The app's height is three body lines down (the typing
-// band), not the glass edge; the outline passes two thirds instead. Obsidian's
-// MarkdownView reads it from the current mode (getScroll) and hands it to the
-// other one (setEphemeralState({scroll})) when switching; its reading view
-// interpolates inside sections that know their source line span. Satr's
+// far into it we are". The edit⇄preview origin is three body lines down (the
+// typing band), not the glass edge; the outline passes two thirds instead.
+// Obsidian's MarkdownView reads it from the current mode (getScroll) and hands
+// it to the other one (setEphemeralState({scroll})) when switching; its reading
+// view interpolates inside sections that know their source line span. Satr's
 // preview sections carry data-line/data-lines (src/markdown.ts), so both
 // directions map exactly at section boundaries and proportionally inside a
 // section.
 import { BlockType, EditorView, type BlockInfo } from '@codemirror/view';
 
-/** Body lines of keep-out above the caret, and the edit⇄preview origin. */
+/** Three body lines, in pixels — the edit⇄preview mapping anchor. */
 export const TYPING_TOP_LINES = 3;
 
-/** Three live body lines, in pixels — same number the caret uses at the top. */
+/** Three live body lines, in pixels. */
 export function typingTop(view: EditorView): number {
   return TYPING_TOP_LINES * view.defaultLineHeight;
 }

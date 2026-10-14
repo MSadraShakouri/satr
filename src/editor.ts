@@ -19,7 +19,6 @@ import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
-import { typingTop } from './scrollSync';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -803,13 +802,13 @@ export class SatrEditor {
       // selecting near the bottom then made CodeMirror jump the page at once,
       // because it counted the space the keyboard was about to cover as
       // hidden. The caret is brought up gently afterwards instead (below).
-      // Room under the last line: enough to bring it up past the middle of the
-      // screen and keep writing at the bottom.
-      // Top: three body lines, so the line being written cannot sit against
-      // the glass the way the bottom rule keeps it off the keys. Measured
-      // from the editor's own line height, not a fixed pixel gap.
+      // There is deliberately no top keep-out here. A caret that is already
+      // inside the visible editor must not make every keystroke scroll the
+      // note down until the line reaches an arbitrary band near the top; only
+      // a caret outside the actual visible edge needs a correction.
+      // Room under the last line still keeps writing clear of the keys.
       EditorView.scrollMargins.of(() => (touching ? null : {
-        top: this.view ? typingTop(this.view) : 0,
+        top: 0,
         bottom: 24 + (options?.obscuredBottom?.() ?? 0),
       })),
       headingFolding,
@@ -885,7 +884,10 @@ export class SatrEditor {
       if (!coords) return;
       const box = this.view.scrollDOM.getBoundingClientRect();
       const bottom = box.bottom - (options?.obscuredBottom?.() ?? 0) - 24;
-      const top = box.top + typingTop(this.view);
+      // Do not use the typing band here. It is the source/preview mapping
+      // anchor, not an extra visible-area boundary: a line in the first few
+      // rows is already on screen and should stay there while it is edited.
+      const top = box.top;
       const delta = coords.bottom > bottom ? coords.bottom - bottom : coords.top < top ? coords.top - top : 0;
       if (Math.abs(delta) < 1) return;
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
