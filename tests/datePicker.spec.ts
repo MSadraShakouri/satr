@@ -800,6 +800,22 @@ test('switching calendars keeps both names put: only the highlight moves', async
   expect(persian.title).not.toBe(gregorian.title); // while the grid really did switch
 });
 
+test('the sheet stands two thirds of the screen tall', async ({ page }) => {
+  await boot(page);
+  // A tall screen: a fixed pixel cap would leave the sheet short of the
+  // two thirds it is meant to stand, so the height must follow the screen.
+  await page.setViewportSize({ width: 390, height: 1100 });
+  await openPicker(page);
+  await expect(sheet(page)).toHaveClass(/is-open/);
+  await page.waitForTimeout(400); // the slide-in settles
+  const ratio = await page.evaluate(() => {
+    const rect = (document.querySelector('.timestamp-picker') as HTMLElement).getBoundingClientRect();
+    return rect.height / window.innerHeight;
+  });
+  expect(ratio).toBeGreaterThan(0.6);
+  expect(ratio).toBeLessThan(0.72);
+});
+
 test('a keyboard over the page: the sheet ends on its top edge, whole and reachable', async ({ page }) => {
   await boot(page);
   await openPicker(page);

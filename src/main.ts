@@ -9,6 +9,7 @@ import { SatrEditor } from './editor';
 import { renderMarkdown, TABLE_DIRECTIVE } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll, typingTop } from './scrollSync';
+import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
@@ -190,12 +191,21 @@ function keyboardHeight(): number {
   const shrunk = fullHeight - height;
   return shrunk > 120 ? shrunk : 0;
 }
+/** True when the viewport itself has already been resized for the keyboard,
+ *  so nothing of the layout viewport is hidden behind it: in the app,
+ *  SystemBarsPlugin gives the WebView a bottom margin as tall as the
+ *  keyboard (src/keyboard.ts). A browser never does this for us. */
+const viewportResizedForKeyboard = (): boolean => Capacitor.isNativePlatform();
 /** How much of the layout viewport the keyboard covers (0 when the WebView is
  *  resized for it instead, as in the Capacitor app): every hidden pixel, which
  *  is what the caret's scroll margins want — a sheet, which must sit on the
- *  keyboard's own edge, asks keyboardHeight(). */
+ *  keyboard's own edge, asks keyboardCoverPx for the same number. Counting
+ *  the measured keyboard height in the app as well double-counts it: the
+ *  scroll box already ends on the keyboard's top edge, so a bottom margin of
+ *  a whole keyboard on top collapsed the caret's band to the top of the
+ *  page and writing scrolled down until it sat there. */
 function keyboardOverlap(): number {
-  return Math.max(hiddenByViewport(), keyboardHeight());
+  return keyboardCoverPx(viewportResizedForKeyboard(), Math.max(hiddenByViewport(), keyboardHeight()));
 }
 /** Where the visible area ends, in client coordinates: the keyboard's own top
  *  edge, the visual viewport's bottom, or the window's. */
@@ -2596,28 +2606,38 @@ window.visualViewport?.addEventListener('scroll', layoutKeyboard);
 window.addEventListener('resize', layoutKeyboard);
 virtualKeyboard?.addEventListener('geometrychange', layoutKeyboard);
 
-// A bottom sheet's place under the keyboard. --sheet-lift is the keyboard's own
-// height: a sheet ends exactly on its top edge, so nothing of it is behind the
-// keys and no page shows between them. --sheet-room is the height still visible
-// above that edge, and every sheet's scroll area caps itself at it
-// (src/style.css) — whatever the keyboard leaves, the whole sheet fits above it
-// and scrolls inside, the Insert button and the chips included. Both live on
-// the root: a sheet created later reads them as they are, and nothing is
-// corrected on a later beat than the motion it answers. --keyboard-lift reports
-// every hidden pixel, the number the caret's scroll margins are built on.
+// A bottom sheet's place under the keyboard. --sheet-lift is how much of the
+// layout viewport the keyboard covers: a sheet lifted by it ends exactly on
+// the keyboard's top edge, so nothing of it is behind the keys and no page
+// shows between them. In the app the cover is 0 — the WebView is resized for
+// the keyboard (SystemBarsPlugin's bottom margin), so a sheet at bottom: 0
+// already ends on that edge, and lifting it by the measured keyboard height
+// again sent it flying a whole keyboard above the keys (src/keyboard.ts).
+// Doing nothing is the fix there; the lift is only for a browser, whose
+// layout viewport the keyboard really does cover. --sheet-room is the height
+// still visible above that edge, and every sheet's scroll area caps itself
+// at it (src/style.css) — whatever the keyboard leaves, the whole sheet fits
+// above it and scrolls inside, the Insert button and the chips included.
+// Both live on the root: a sheet created later reads them as they are, and
+// nothing is corrected on a later beat than the motion it answers.
+// --keyboard-lift reports every hidden pixel, the number the caret's scroll
+// margins are built on.
 let lastKeyboardHeight = 0;
 let sheetRoomTimer: number | undefined;
 function layoutKeyboardInset(): void {
-  const lift = keyboardHeight();
+  const measured = keyboardHeight();
+  const lift = keyboardCoverPx(viewportResizedForKeyboard(), measured);
   const root = document.documentElement.style;
-  root.setProperty('--keyboard-lift', `${Math.round(hiddenByViewport())}px`);
+  root.setProperty('--keyboard-lift', `${Math.round(keyboardOverlap())}px`);
   root.setProperty('--sheet-lift', `${lift}px`);
-  root.setProperty('--sheet-room', `${Math.max(0, Math.round(window.innerHeight - lift))}px`);
+  root.setProperty('--sheet-room', `${sheetRoomPx(window.innerHeight, lift)}px`);
   // The keyboard has come up: the caret steps clear of it. Nothing else pokes
   // the editor — with overlaysContent the viewport does not shrink, so its own
-  // visual-viewport listener would never hear about this keyboard.
-  if (lift > lastKeyboardHeight + 120) editor?.revealCaretSoon(160);
-  lastKeyboardHeight = lift;
+  // visual-viewport listener would never hear about this keyboard. (In the
+  // app the WebView's own resize is that listener's news, so the measured
+  // height, not the lift, is what this trigger watches.)
+  if (measured > lastKeyboardHeight + 120) editor?.revealCaretSoon(160);
+  lastKeyboardHeight = measured;
   window.clearTimeout(sheetRoomTimer);
   sheetRoomTimer = window.setTimeout(keepFocusedFieldVisible, 120);
 }

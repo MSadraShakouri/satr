@@ -265,13 +265,27 @@ test('spacing defaults migrate without resetting other chosen values', async ({ 
   expect(settings).toEqual([1.85, 1.85, 2.1, 1.5]);
 });
 
-test('tab number uses the alignment from before 77171fe', async ({ page }) => {
-  const count = page.locator('.mobile-navbar-tabs-number');
-  await expect(count).toHaveCSS('display', 'flex');
-  await expect(count).toHaveCSS('align-items', 'center');
-  await expect(count).toHaveCSS('justify-content', 'center');
-  await expect(count).toHaveCSS('top', '0px');
-  await expect(count).toHaveCSS('transform', 'none');
+test('the tab number sits in the middle of its icon', async ({ page }) => {
+  // Measured centres, not CSS values: whatever construction the stylesheet
+  // uses, the digit, its box and the icon must share one centre.
+  const centres = await page.evaluate(() => {
+    const button = document.querySelector('#nav-tabs')!;
+    const icon = button.querySelector('svg')!;
+    const number = button.querySelector<HTMLElement>('.mobile-navbar-tabs-number')!;
+    const centre = (rect: DOMRect) => ({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+    const range = document.createRange();
+    range.selectNodeContents(number);
+    return {
+      button: centre(button.getBoundingClientRect()),
+      icon: centre(icon.getBoundingClientRect()),
+      number: centre(number.getBoundingClientRect()),
+      digit: centre(range.getBoundingClientRect()),
+    };
+  });
+  for (const [name, point] of Object.entries(centres)) {
+    expect(Math.abs(point.x - centres.icon.x), `${name} horizontally`).toBeLessThanOrEqual(1);
+    expect(Math.abs(point.y - centres.icon.y), `${name} vertically`).toBeLessThanOrEqual(2);
+  }
 });
 
 test('Markor keyboard: the strip and auto-correct on, the underline gone', async ({ page }) => {
