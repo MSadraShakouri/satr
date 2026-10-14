@@ -1,12 +1,22 @@
 // Editor ⇄ preview scroll position, the way Obsidian does it: a position is a
-// fractional source line — "the line at the top edge of the viewport, plus
-// how far into it we are". Obsidian's MarkdownView reads it from the current
-// mode (getScroll) and hands it to the other one (setEphemeralState({scroll}))
-// when switching; its reading view interpolates inside sections that know
-// their source line span. Satr's preview sections carry data-line/data-lines
-// (src/markdown.ts), so both directions map exactly at section boundaries and
-// proportionally inside a section.
+// fractional source line — "the line at this height in the viewport, plus how
+// far into it we are". The app's height is three body lines down (the typing
+// band), not the glass edge; the outline passes two thirds instead. Obsidian's
+// MarkdownView reads it from the current mode (getScroll) and hands it to the
+// other one (setEphemeralState({scroll})) when switching; its reading view
+// interpolates inside sections that know their source line span. Satr's
+// preview sections carry data-line/data-lines (src/markdown.ts), so both
+// directions map exactly at section boundaries and proportionally inside a
+// section.
 import { BlockType, EditorView, type BlockInfo } from '@codemirror/view';
+
+/** Body lines of keep-out above the caret, and the edit⇄preview origin. */
+export const TYPING_TOP_LINES = 3;
+
+/** Three live body lines, in pixels — same number the caret uses at the top. */
+export function typingTop(view: EditorView): number {
+  return TYPING_TOP_LINES * view.defaultLineHeight;
+}
 
 function scrollInstantly(el: HTMLElement, top: number): void {
   el.scrollTo({ top, behavior: 'instant' as ScrollBehavior });
@@ -31,7 +41,7 @@ export function editorScroll(view: EditorView, anchor = 0): number {
   return first + (last - first + 1) * into;
 }
 
-export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false): void {
+export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0): void {
   const { doc } = view.state;
   if (!(position > 0)) { scrollInstantly(view.scrollDOM, 0); return; }
   const index = Math.min(doc.lines - 1, Math.floor(position));
@@ -41,7 +51,7 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
     if (!view.dom.isConnected || view.state.doc !== doc || !isCurrent()) return;
     const block = textBlock(view.lineBlockAt(line.from));
     const target = view.documentTop + block.top + fraction * block.height;
-    const top = view.scrollDOM.getBoundingClientRect().top;
+    const top = view.scrollDOM.getBoundingClientRect().top + anchor;
     scrollInstantly(view.scrollDOM, view.scrollDOM.scrollTop + target - top);
   };
   // Off-screen line heights are estimates until CodeMirror measures them:
@@ -83,7 +93,7 @@ export function previewScroll(pane: HTMLElement, preview: HTMLElement, anchor = 
   return passed;
 }
 
-export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false): void {
+export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0): void {
   const place = (): void => {
     if (!isCurrent()) return;
     if (!(position > 0)) { scrollInstantly(pane, 0); return; }
@@ -104,7 +114,7 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
       }
     }
     if (target === null) target = list[list.length - 1].getBoundingClientRect().bottom;
-    scrollInstantly(pane, pane.scrollTop + target - pane.getBoundingClientRect().top);
+    scrollInstantly(pane, pane.scrollTop + target - (pane.getBoundingClientRect().top + anchor));
   };
   place();
   if (!settle) return;

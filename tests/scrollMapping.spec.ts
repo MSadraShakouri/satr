@@ -78,3 +78,44 @@ test('the switch re-measures math heights and compensates the scroll', async ({ 
   });
   expect(Math.abs(out.after - 12)).toBeLessThanOrEqual(0.2);
 });
+
+test('read and place at the typing band round-trip the same source line', async ({ page }) => {
+  const round = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const { previewScroll, applyPreviewScroll, editorScroll, applyEditorScroll, typingTop } = await window.__satr.load('/src/scrollSync.ts');
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
+    const src: string[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      src.push(`paragraph ${i} with enough words to wrap onto a second visual row in a narrow column`);
+      src.push('');
+    }
+    const source = src.join('\n');
+    const pane = document.createElement('div');
+    pane.style.cssText = 'position:fixed;inset:0 auto auto 0;width:320px;height:400px;overflow:auto;background:white';
+    const preview = document.createElement('div');
+    preview.innerHTML = renderMarkdown(source);
+    pane.appendChild(preview);
+    document.body.appendChild(pane);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0 0 auto 340px;width:320px;height:400px;overflow:hidden';
+    document.body.appendChild(host);
+    const editor = new SatrEditor(host, () => {});
+    editor.setValue(source);
+    await document.fonts.ready;
+    const view = (editor as unknown as { view: Parameters<typeof editorScroll>[0] }).view;
+    const y = typingTop(view);
+    const out: { p: number; back: number; eback: number }[] = [];
+    for (const p of [4, 10, 16]) {
+      applyPreviewScroll(pane, preview, p, () => true, false, y);
+      const back = previewScroll(pane, preview, y);
+      applyEditorScroll(view, p, () => true, false, y);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      out.push({ p, back: Math.round(back * 100) / 100, eback: Math.round(editorScroll(view, y) * 100) / 100 });
+    }
+    return out;
+  });
+  for (const step of round) {
+    expect(Math.abs(step.back - step.p), JSON.stringify(round)).toBeLessThanOrEqual(0.15);
+    expect(Math.abs(step.eback - step.p), JSON.stringify(round)).toBeLessThanOrEqual(0.15);
+  }
+});

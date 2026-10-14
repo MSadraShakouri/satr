@@ -55,9 +55,43 @@ test('the reading view shows the time for a timestamp, and leaves code alone', a
     return renderMarkdown(note);
   }, NOTE);
   expect(html).toContain('class="discord-timestamp"');
+  expect(html).toContain('dir="ltr"');
   expect(html.match(/class="discord-timestamp"/g)?.length).toBe(2); // the code span is not one
   expect(html).toContain('data-format="F"');
   expect(html).toMatch(/<code[^>]*>&lt;t:1700000000:R&gt;<\/code>/);
+});
+
+test('in a Persian line an English relative chip stays 4 hours ago, not hours ago 4', async ({ page }) => {
+  const ago = Math.floor(Date.now() / 1000) - 4 * 3600;
+  const note = `سلام <t:${ago}:R> دنیا\n`;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((body) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', body);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+  }, note);
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+  const chip = page.locator('#app .cm-lp-timestamp');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toHaveAttribute('dir', 'ltr');
+  const report = await chip.evaluate((el) => {
+    const node = el.firstChild as Text;
+    const first = document.createRange();
+    first.setStart(node, 0);
+    first.setEnd(node, 1);
+    const last = document.createRange();
+    last.setStart(node, Math.max(0, node.length - 3));
+    last.setEnd(node, node.length);
+    return {
+      text: el.textContent ?? '',
+      firstX: Math.round(first.getBoundingClientRect().left),
+      lastX: Math.round(last.getBoundingClientRect().left),
+    };
+  });
+  expect(report.text, JSON.stringify(report)).toMatch(/\d+ hours ago/);
+  expect(report.firstX, JSON.stringify(report)).toBeLessThan(report.lastX);
 });
 
 test('in the editor the time shows, and the code comes back when the cursor is on it', async ({ page }) => {
@@ -93,4 +127,95 @@ test('a relative timestamp counts down while it is on screen', async ({ page }) 
   const first = await widget.textContent();
   // A tick later the number has moved on (it is not frozen at load time).
   await expect.poll(() => widget.textContent(), { timeout: 5000 }).not.toBe(first);
+});
+
+// ---- Settings → Dates: whose words, which calendar ----
+
+test.describe('the date style', () => {
+  // The browser says Chinese here: the timestamps must not listen to it.
+  test.use({ locale: 'zh-CN' });
+
+  test('by default the words follow the app language, never the device', async ({ page }) => {
+    await page.goto('/');
+    const out = await page.evaluate(async () => {
+      const { formatTimestamp } = await window.__satr.load('/src/timestamps.ts');
+      return formatTimestamp(1700000000, 'd');
+    });
+    // English order (M/D/Y), not Chinese (Y/M/D).
+    expect(out).toBe('11/14/2023');
+  });
+
+  test('a chosen language re-words them, calendar and digits with it', async ({ page }) => {
+    await page.goto('/');
+    const out = await page.evaluate(async () => {
+      const { formatTimestamp, setTimestampStyle } = await window.__satr.load('/src/timestamps.ts');
+      setTimestampStyle('fa', 'auto');
+      return {
+        date: formatTimestamp(1700000000, 'd'),
+        long: formatTimestamp(1700000000, 'D'),
+        relative: formatTimestamp(1700000000 + 3600, 'R', 1700000000 * 1000),
+      };
+    });
+    // Persian defaults to its own Jalali calendar: 14 November 2023 is Aban 1402.
+    expect(out.date).toContain('۱۴۰۲');
+    expect(out.long).toMatch(/[۰-۹]+.*۱۴۰۲|۱۴۰۲/);
+    expect(out.relative).toMatch(/[آ-ی]/); // Persian words, not "in 1 hour"
+  });
+
+  test('the calendar can be pinned regardless of the language', async ({ page }) => {
+    await page.goto('/');
+    const out = await page.evaluate(async () => {
+      const { formatTimestamp, setTimestampStyle } = await window.__satr.load('/src/timestamps.ts');
+      setTimestampStyle('en', 'persian');
+      return formatTimestamp(1700000000, 'd');
+    });
+    expect(out).toContain('1402'); // the Jalali year, in Latin digits
+    expect(out).not.toContain('2023');
+  });
+
+  test('Persian can be pinned to the Gregorian calendar', async ({ page }) => {
+    await page.goto('/');
+    const out = await page.evaluate(async () => {
+      const { formatTimestamp, setTimestampStyle } = await window.__satr.load('/src/timestamps.ts');
+      setTimestampStyle('fa', 'gregory');
+      return formatTimestamp(1700000000, 'F');
+    });
+    expect(out).toContain('۲۰۲۳');
+    expect(out).not.toContain('۱۴۰۲');
+  });
+});
+
+test('Settings → Dates: the rows save and the sample answers at once', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const { openSettings } = await window.__satr.load('/src/settings.ts');
+    openSettings({ apply: () => {}, tools: () => [] });
+  });
+  await expect(page.locator('.settings-screen')).toBeVisible();
+  await expect(page.getByLabel('Language')).toHaveValue('auto');
+  await expect(page.getByLabel('Calendar')).toHaveValue('auto');
+  await page.getByLabel('Language').selectOption('fa');
+  await page.getByLabel('Calendar').selectOption('gregory');
+  // The sample re-words at once: Persian words and digits, Gregorian year.
+  await expect(page.locator('[data-timestamp-sample]')).toHaveText(/[آ-ی]+ [۰-۹]+ [آ-ی]+ ۲۰۲[۰-۹]/);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('satr:settings') ?? '{}') as Record<string, unknown>);
+  expect(saved.timestampLocale).toBe('fa');
+  expect(saved.timestampCalendar).toBe('gregory');
+});
+
+test('chips in the editor and the reading view wear the chosen style', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((note) => {
+    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', note);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 3, timestampLocale: 'fa', timestampCalendar: 'persian' }));
+  }, NOTE);
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+  await expect(page.locator('#app .cm-lp-timestamp').first()).toContainText('۱۴۰۲');
+  await page.locator('#app #preview-toggle').click();
+  await expect(page.locator('#app #preview time.discord-timestamp').first()).toContainText('۱۴۰۲');
 });

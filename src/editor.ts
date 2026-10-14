@@ -19,6 +19,7 @@ import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
+import { typingTop } from './scrollSync';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -750,6 +751,11 @@ export class SatrEditor {
   private isReadOnly = false;
   /** The space after a sign, as the settings have it (src/autoSpace.ts). */
   private autoSpaceOn = false;
+  /** Bring the caret's line back into view after a beat — the keyboard has
+   *  taken the bottom of the screen and the caret must step clear of it. Set
+   *  by the constructor; src/main.ts calls it, because a browser that reports
+   *  the keyboard's own rectangle never resizes the viewport to react to. */
+  revealCaretSoon: (delay: number) => void = () => undefined;
   constructor(parent: HTMLElement, onChange: () => void, options?: {
     title?: string;
     onRename?: (base: string) => string | null;
@@ -799,7 +805,13 @@ export class SatrEditor {
       // hidden. The caret is brought up gently afterwards instead (below).
       // Room under the last line: enough to bring it up past the middle of the
       // screen and keep writing at the bottom.
-      EditorView.scrollMargins.of(() => (touching ? null : { bottom: 24 + (options?.obscuredBottom?.() ?? 0) })),
+      // Top: three body lines, so the line being written cannot sit against
+      // the glass the way the bottom rule keeps it off the keys. Measured
+      // from the editor's own line height, not a fixed pixel gap.
+      EditorView.scrollMargins.of(() => (touching ? null : {
+        top: this.view ? typingTop(this.view) : 0,
+        bottom: 24 + (options?.obscuredBottom?.() ?? 0),
+      })),
       headingFolding,
       wikiLinks,
       EditorView.lineWrapping,
@@ -873,7 +885,7 @@ export class SatrEditor {
       if (!coords) return;
       const box = this.view.scrollDOM.getBoundingClientRect();
       const bottom = box.bottom - (options?.obscuredBottom?.() ?? 0) - 24;
-      const top = box.top + 8;
+      const top = box.top + typingTop(this.view);
       const delta = coords.bottom > bottom ? coords.bottom - bottom : coords.top < top ? coords.top - top : 0;
       if (Math.abs(delta) < 1) return;
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -884,6 +896,7 @@ export class SatrEditor {
       window.clearTimeout(revealTimer);
       revealTimer = window.setTimeout(() => window.requestAnimationFrame(revealCaret), delay);
     };
+    this.revealCaretSoon = revealSoon;
     let touchTimer: number | undefined;
     // The selection is the platform's. There is no word-finding, no tap
     // counting, no drag of our own and nothing prevented here at all: double
@@ -1111,6 +1124,14 @@ export class SatrEditor {
     this.isReadOnly = on;
     this.view.dispatch({ effects: readOnlySlot.reconfigure(on
       ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+      : [EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
+  }
+  /** Drop the caret (and keep it dropped) so a parent transform cannot be
+   *  fought by the browser keeping the insertion point on screen. */
+  setCaretOff(on: boolean): void {
+    this.view.contentDOM.blur();
+    this.view.dispatch({ effects: readOnlySlot.reconfigure(this.isReadOnly || on
+      ? [EditorState.readOnly.of(this.isReadOnly), EditorView.editable.of(false)]
       : [EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
   }
   setTitleEditable(on: boolean): void {

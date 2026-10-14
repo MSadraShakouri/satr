@@ -169,6 +169,27 @@ test('a Persian \\text run inside a formula reads right to left, the formula LTR
   expect(report!.flowDirection).toBe('ltr');
 });
 
+test('prose in a formula is KaTeX, then XB Zar for Persian', async ({ page }) => {
+  const families = await page.evaluate(async () => {
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const host = document.createElement('div');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;inset:0 auto auto 0;';
+    document.body.appendChild(host);
+    const family = (tex: string) => {
+      host.innerHTML = renderMath(tex, false);
+      const run = host.querySelector<HTMLElement>('.katex .text');
+      return run ? getComputedStyle(run).fontFamily : '';
+    };
+    return { latin: family(String.raw`\\text{if}`), persian: family(String.raw`\\text{سلام}`) };
+  });
+  for (const [name, stack] of Object.entries(families)) {
+    expect(stack, name).toMatch(/KaTeX_Main/);
+    expect(stack, name).toMatch(/XB Zar/);
+    expect(stack.toLowerCase(), name).not.toMatch(/times new roman/);
+  }
+});
+
 test('there is room under the last line, and Enter brings the new line into view', async ({ page }) => {
   const host = page.locator('.cm-editor').first();
   await page.evaluate(() => {
@@ -195,6 +216,34 @@ test('there is room under the last line, and Enter brings the new line into view
     return caret.top < box.bottom - 4 && caret.bottom > box.top + 4;
   });
   expect(visible).toBe(true);
+});
+
+test('Enter keeps the caret three body lines below the top', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => {
+    const outer = window.testEditor.view.dom.parentElement as HTMLElement;
+    outer.style.height = '420px';
+  });
+  await setText(page, Array.from({ length: 80 }, (_, i) => `line ${i} of a note long enough to scroll`).join('\n'));
+  await page.evaluate(() => {
+    const view = window.testEditor.view;
+    const pos = view.state.doc.line(40).from;
+    view.dispatch({ selection: { anchor: pos } });
+    const coords = view.coordsAtPos(pos)!;
+    const box = view.scrollDOM.getBoundingClientRect();
+    view.scrollDOM.scrollTop += coords.top - box.top;
+    view.focus();
+  });
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  const gap = await page.evaluate(() => {
+    const view = window.testEditor.view;
+    const caret = view.coordsAtPos(view.state.selection.main.head)!;
+    const box = view.scrollDOM.getBoundingClientRect();
+    return { above: caret.top - box.top, line: view.defaultLineHeight };
+  });
+  expect(gap.above, JSON.stringify(gap)).toBeGreaterThan(gap.line * 2.5);
+  expect(gap.above, JSON.stringify(gap)).toBeLessThan(gap.line * 3.5);
 });
 
 // The room under the note is for scrolling by hand: the view must not spend it
