@@ -89,6 +89,8 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] title collapse and opens has an issue, if at the end of a page and opening the title, it brings you to the end of the page
 
+- [ ] display math (and maybe code, though I haven't tested that) in new lines when empty, the caret sticks to the right instead of left, when there's $$ $$ with one line between, the empty line caret sticks to right
+
 ## deferred for later
 
 - [ ] text direction incredibly unpredictable with ←→ buttons, needs thought, issue that some lines ← is back while in others it's forward, and can lead to loops, I don't know what to do
