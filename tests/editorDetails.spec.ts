@@ -181,7 +181,7 @@ test('prose in a formula is KaTeX, then XB Zar for Persian', async ({ page }) =>
       const run = host.querySelector<HTMLElement>('.katex .text');
       return run ? getComputedStyle(run).fontFamily : '';
     };
-    return { latin: family(String.raw`\\text{if}`), persian: family(String.raw`\\text{سلام}`) };
+    return { latin: family(String.raw`\text{if}`), persian: family(String.raw`\text{سلام}`) };
   });
   for (const [name, stack] of Object.entries(families)) {
     expect(stack, name).toMatch(/KaTeX_Main/);

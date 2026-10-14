@@ -1622,10 +1622,12 @@ body {
    is the bottom menu's (the .menu classes); the calendar answers in whatever
    language and calendar Settings → Dates has chosen. */
 .timestamp-picker .menu-scroll {
-  /* 70% of the screen, at most 560px, and never taller than the room left
-     above the keyboard: the sheet then ends exactly on the keyboard's top edge
-     with nothing of it behind the keys. */
-  max-height: min(70vh, 560px, calc(var(--sheet-room, 100vh) - 16px));
+  /* Two thirds of the screen, and never taller than the room left above
+     the keyboard: the sheet then ends exactly on the keyboard's top edge
+     with nothing of it behind the keys. (In the app that room is the whole
+     resized WebView; the sheet needs no lift there — src/keyboard.ts.) */
+  max-height: min(66vh, calc(var(--sheet-room, 100vh) - 16px));
+  max-height: min(66dvh, calc(var(--sheet-room, 100dvh) - 16px));
 }
 .timestamp-picker-head {
   display: flex;
@@ -2680,8 +2682,10 @@ input.mod-no-match {
   position: fixed;
   z-index: 41;
   right: var(--safe-right);
-  /* The keyboard's height (main.ts) while it is up: the sheet ends exactly on
-     the keyboard's top edge, never behind it. 0 when the keyboard is down. */
+  /* How much the keyboard covers of the layout viewport (main.ts) while it
+     is up: the sheet ends exactly on the keyboard's top edge, never behind
+     it. 0 when the keyboard is down — and 0 in the app at all times, whose
+     WebView is resized for the keyboard instead (src/keyboard.ts). */
   bottom: var(--sheet-lift, 0px);
   left: var(--safe-left);
   max-width: 560px;
@@ -2833,13 +2837,13 @@ input.mod-no-match {
   position: relative;
 }
 .mobile-navbar-tabs-number {
-  /* Sit in the 26px icon square, not the 52px button — the extra line box
-     was what dropped the digit below the rounded rect. */
+  /* Over the whole button, centred the way the button centres its icon:
+     the digit's centre is the button's centre is the icon's centre, by
+     construction. The measured 26px square at 50% with a -50% translate
+     could drift from both (its own size, the button's, the icon's) and
+     left the digit off-centre; covering the button cannot. */
   position: absolute;
-  width: 26px;
-  height: 26px;
-  inset: 50% auto auto 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
