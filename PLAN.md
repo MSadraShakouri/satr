@@ -1,102 +1,126 @@
 # The plan
 
-Remaining work for this PR, in the order to do it. Web first, then APK.
-Lint and GitHub stay deferred. Two items the writer is unsure about sit at
-the end. Date-picker web grow/shrink is web-only and does not matter unless
-asked. Tablet layout is later; no dual pane can be done now.
+Remaining work for this PR, in the order of the list below. Web first, then
+APK. Lint and GitHub stay deferred. Do not invent extra items.
 
-## Next
+## main
 
-1. **Tab number digits, vertical centre.** Still not right after sitting the
-   digit in the 26px square.
-2. **Left sidebar.** Sometimes it does not keep the main page shifted: it
-   moves at first, then the page slides back.
-3. **Folder row in the left sidebar.** `/folder · X files, Y folders` does
-   not even show; the folder name truncates. Either drop that count, or wrap:
-   name on one line, counts on another, separate.
-4. ~~**Notices** (`loaded from file`, `Preparing the PDF…`, …).~~ Done:
-   gap between the files and preview buttons; they slide with the drawers.
-   Settings / export / tab-switcher keep a full-width banner.
-5. **Phantom space.** After `a)` / `a"` and the like, the keyboard holds a
-   space until the next keystroke; the app fights it.
-6. **Opening an image.** It first tries as text, the app gets very slow; a
-   separate bug then sticks the page so you cannot change it. Handle images
-   as images before add/crop work.
-7. **Open from another app.** An already-open note must switch to that tab,
-   not open a second one. APK.
-8. **Title ✓ jumpy on new files.** Existing-file Enter is fine; web is
-   smooth; APK lags. Keep the keyboard; same title node. Research before
-   inventing a fix.
-9. **Launch empty tab, APK check.** Coded. Confirm on the device: it must
-   not stay on the old note after minimize.
-10. **No dual pane in landscape.** Can be done now. Tablet support (the rest
-    of the layout) is later.
-11. **Math text font.** Persian inside a formula follows the **system**
-    font; undesired. Maybe force Vazir, or pick another font for math.
-    English in math has not been checked on other devices. Needs thought.
-12. **Selection between lines.** The highlight leaves a gap in the line
-    spacing. Maybe grow the selection into that space — the writer is not
-    sure that is the right approach.
-13. **Right sidebar.** Word and character count, possibly under the file
-    name at the top.
-14. **←→ on mixed lines.** Some lines back is left, some forward; can loop.
-    Needs a rule from the writer. Caret vs arrows stay separate.
+- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one
 
-## Then images
+- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc
 
-15. **Add and crop** images in the note.
-16. **Compress on add** (browser codecs, Squoosh-like, only if the bundle
-    stays small).
-17. **Print size.** Claimed fixed; check on APK or on the site once add
-    exists.
+- [ ] the ✓ button for file name to first line is a bit jumpy, would be great if it were possible for it to work normally (might possibly be a lag with file creation, enter on existing files has no delay, web is smooth but APK lags) (one time I didn't lag, I don't know the reason of it)
 
-## Later
+- [x] discord Unix style timestamps follow system language, they should follow the app language
 
-18. **Tablet support.** Later. Dual pane is item 10, not this.
+- [x] discord Unix timestamps allow calendar and language selection (Persian Jalali) (either settings or a new system)
 
-## Unsure — ask before doing
+- [x] discord Unix timestamps allow choosing dates and entering and stuff with GUI
 
-19. **Hamburger ≡** as a growing Chromium-style popup instead of the sheet.
-20. **Timestamp picker floating** instead of the sheet. Writer is not sure
-    the gains beat the losses.
+- [x] discord Unix timestamps, the block itself `in 12 hours` should be RTL or LTR forced, right now in a Persian text with a timestamp, the number if at the start of a block gets to the right of it, it shows like this: `hours ago 4` rather than `4 hours ago`
 
-## Deferred
+- [x] a way to set table directions manually (entire table, not the :--- cells)
 
-21. **In-app lint/fixer.** Report plus fix-all-safe. Criteria (measured on
-    term_three):
-    1. A display `$$` that is a lazy list continuation — blank line before
-       `$$`. 11 sites.
-    2. Redundant `<div dir=ltr>` wrappers — report as redundant, not wrong.
-       20 pairs in Mathematics 2 01.
-    3. Trailing `:` in a heading (outline/search).
-    4. Trailing space in heading text (outline reads `معرفی `).
-    5. List indent must be 0/2/4; 1-space indent is a sibling, not a child.
-    6. Empty list item = blank bullet.
-    7. Every formula through `renderMath`; fail on `katex-error`.
-    8. Pin: `\\[6pt]` is a skip, never a `\[…\]` pair.
-    Not criteria: callouts/dataview/graph/tags, table separator styles,
-    headerless tables, Persian `۱.` lists, bare emails, math digit style,
-    `$$ x $$` vs bare `$$`.
-22. **GitHub connection.** Read/write in a scoped way, not sync. Later.
+- [x] tables seem to be LTR only in print, they should follow text and be able to set manually (table issues exist only in print)
 
-## Done (this list)
+- [ ] app launch new tab seems to have issues, sometimes it stays on the old page (claim to be fixed, needs testing on APK)
 
-- [x] Timestamps follow the app language, not the system
-- [x] Timestamps: calendar and language (Jalali), GUI to pick and enter
-- [x] Timestamp chip direction: English relative LTR isolate, Persian
-      relative RTL isolate (`4 hours ago`, not `hours ago 4`)
-- [x] Whole-table direction by hand (`<!-- table: rtl|ltr|auto -->`)
-- [x] Print tables follow that direction
-- [x] Launch empty tab: no flash of the last note; logo a bit longer (480ms)
-- [x] Preview tables scroll horizontally
-- [x] Do not break a table across pages unless it cannot fit on one
-- [x] Date-only line caret is not LTR just because the line has no letters
-- [x] End-of-line caret follows the line, not the last letter
-- [x] Edit⇄preview scroll: same place is three body lines down (the typing
-      band), not y=0
-- [x] Top of typing: three body lines of keep-out, same as the bottom vs
-      the keyboard
-- [x] Hold the tabs button: new / reopen / close all / close other / close
-      current (Close all first, Close current last)
-- [x] Date picker: month/year editing no longer eats the row; calendar
-      switcher highlights the current calendar instead of renaming the button
+- [x] app launch new tab shows the old tab for a moment before showing the empty tab, just a flash but a bad UX
+
+- [x] maybe have the app opening screen a bit longer so it doesn't flash stuff (right now it shows a white screen quickly, while obsidian shows the logo for a bit longer) issues with app switching too when inactive for moments
+
+- [x] scroll tables in preview
+
+- [x] never break tables unless they don't fit in one page
+
+- [ ] no dual pane in horizontal, can be done right now, but in big screens text shouldn't cling to the sides of the screen
+
+- [x] dates caret becomes LTR if nothing in line
+
+- [x] end of line caret should follow text dir, rather than the last letter itself
+
+- [ ] image adding and image editing (mostly crop)
+
+- [ ] image compression when adding, something like squoosh open source project if it isn't huge, it claims to use browser codecs which is exactly what we need
+
+- [ ] image sizes in print, huge right now (claims to be fixed, needs testing either on APK or on site after I can add images)
+
+- [x] the source to preview mode better alignment, perhaps just make the middle line of both centered, or do this with top 1/3 like outline headers and stuff
+
+- [x] same bottom of view text edit that scrolls down, exist for top of view that doesn't show the text too high up
+
+- [x] headers such as "loaded from file" and such not take full horizontal width, they should consider the two side pane and preview button when showing, would be really nice if it could be behind it, I'm not sure, and be a part of the source/preview screen, rather than independently floating around, what I mean is to move around with the sidebar and preview buttons when moving view
+
+- [x] hold on tabs button show the options like new, reopen, close all, close others, close current etc
+
+- [ ] tab number digits aren't vertically centered (still yet not)
+
+- [x] math text follows system font, this is very undesired, needs thought, maybe force vazir, or choose another font for it
+
+- [x] line selection has empty space between lines, the selection thing should maybe consider the height of the space between lines too, not sure if that's the correct approach
+
+- [ ] bad handling of opening images, it first tries to open as text then the app gets very slow
+
+- [ ] opening an image has a very weird bug and never lets you change the page (I think forever stuck), image opening needs proper handling
+
+- [x] sometimes left sidebar doesn't move the main page, it moves at first but doesn't stay and goes back to place, bug
+
+- [ ] the /folder X files, Y folders doesn't even show, maybe remove it or take it somewhere else, even the folder name truncates, maybe remove it or wrap it? If wrapping, the file and folder count should be something separate and on another line
+
+- [ ] at the top of the right sidebar, show word and char count possibly below the file name
+
+- [ ] stuff like `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)` in RTL, the end of it isn't at the end (like numbers which had this issue)
+
+- [ ] caret position becomes unpredictable with `###`  hidden and jumps a bit
+
+- [ ] pdf compression with something like ghostscript, the method not the tool, tested normal file and 108kb became 98kb, but in files with images it compresses images, if we do something like squoosh we probably won't need to do this
+
+- [ ] in preview mode, tapping anywhere of a header make it collapse (idea, might be a bad one, but the current hitbox is still a bit small)
+
+- [ ] possibly open PDFs too, a great idea would be to have something open dual panes manually so one could both read a PDF or any other file and write it down in the text bar, maybe something at the top, would really help me personally, but would not load the entire pdf at once to keep the app light
+
+- [ ] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff)
+
+- [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
+
+- [ ] copying an already to-do item to an empty to-do line should remove one of the to-dos, it pastes literally right now
+
+- [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
+
+- [ ] title collapse and opens has an issue, if at the end of a page and opening the title, it brings you to the end of the page
+
+## deferred for later
+
+- [ ] text direction incredibly unpredictable with ←→ buttons, needs thought, issue that some lines ← is back while in others it's forward, and can lead to loops, I don't know what to do
+
+- [ ] normal toolbar hamburger menu icon open it as a growing pop-up like chromium rather than showing up a menu (I'm not sure about this, should I do it?)
+
+- [ ] tablet support later
+
+- [ ] Unix timestamps picker maybe make it floating, fixes many of the issues, don't know if the benefits outweigh the losts
+
+- [ ] possible lint/fixer in the app (deferred for later)
+
+- [ ] later add GitHub connection like my markdown editor site, I don't mean sync, I mean read write access in a scope method way to do so (my project implemented it nicely but the UI of that is bad compared to Satr, and it's desktop first rather than mobile app) (deferred for later)
+
+## note lint criteria
+
+for the in-app lint/fixer above, measured on term_three with the app's own scanner (0 katex errors today, everything else is real):
+
+1. a display `$$` line that is a lazy continuation of a list item — it renders inside the bullet, indented and centered within the `li`, instead of as a page-centered display block. 11 sites now: Probability Theory 03:83,86,89,92,95,121,124,127,130; Mathematics 2 03:32; Linear Algebra 01:18. fix = one blank line before the `$$`
+
+2. `<div dir=ltr>` wrappers are now redundant (direction is computed, math is already forced ltr) — 20 pairs in Mathematics 2 01, all paired, safe to strip. report as "redundant", not "wrong"
+
+3. trailing `:` in a heading, visible in the outline and in search — Accounting 03:5 `## فصل دوم:` , Accounting 03:66 `##### اهداف:`
+
+4. trailing space in heading text, so the outline reads `معرفی`  — Accounting 01:14, Linear Algebra 02:21
+
+5. list indent must be 0/2/4: a 1-space indent reads as a sibling rather than a child, so a bullet that looks like a parent renders as a peer — Probability Theory 02:246
+
+6. empty list item renders as a blank bullet — Probability Theory 01:159
+
+7. run every formula through `renderMath` and fail on any `katex-error` — katex is `throwOnError: false`, so a typo is a silent red formula in the reading view and in the PDF, and there is no other way to notice
+
+8. assert the latex-style converter never fires on a real line break: `\\[6pt]` in Linear Algebra 03:38 is a `\\[6pt]` skip, not a `\[…\]` pair. today correct by two independent guards (the preceding backslash, and the enclosing `$$` span) — worth pinning so neither guard is ever weakened
+
+not criteria, deliberately: callouts/dataview/graph/tags (not supported, would render literally), table separator styles and headerless tables `ensureTableSeparators` inserts the separator, then the empty header row is removed), persian `۱.` ordered lists (transliterated, then re-rendered as persian), bare emails (gfm autolinks them), math digit style (a settings choice), and unifying `$$ x $$` against bare `$$` (both are `display: true`, they render the same).
