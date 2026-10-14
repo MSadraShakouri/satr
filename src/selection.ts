@@ -127,17 +127,17 @@ function markers(view: EditorView): RectangleMarker[] {
       for (const row of rows) push(row.left, row.top, row.right - row.left, row.bottom - row.top);
     }
   }
-  // Font ascent/descent rectangles can exceed the CSS line pitch (especially
-  // Vazirmatn, headings and the phone's font scale). Padding those independently
-  // painted neighbouring rows would overlap them. Clamp each box at the
-  // midpoint between row centres, so neighbouring rows share that edge
-  // exactly: no gap between them, and no overlap either.
+  // Glyph boxes do not fill the CSS line (note line-height 1.85, list
+  // padding-block). Growing them independently by PAD_Y leaves a stripe
+  // between rows, or overlaps when the font box is taller than the pitch.
+  // Neighbouring rows share the midpoint between their centres: grow into
+  // a gap, shrink out of an overlap. Outer edges keep PAD_Y.
   const centres = [...new Set(boxes.map((b) => (b.top + b.bottom) / 2))].sort((a, b) => a - b);
   return boxes.map((box) => {
     const centre = (box.top + box.bottom) / 2;
     const i = centres.indexOf(centre);
-    const top = Math.max(box.top - PAD_Y, i > 0 ? (centres[i - 1] + centre) / 2 : -Infinity);
-    const bottom = Math.min(box.bottom + PAD_Y, i + 1 < centres.length ? (centre + centres[i + 1]) / 2 : Infinity);
+    const top = i > 0 ? (centres[i - 1] + centre) / 2 : box.top - PAD_Y;
+    const bottom = i + 1 < centres.length ? (centre + centres[i + 1]) / 2 : box.bottom + PAD_Y;
     return new RectangleMarker(MARK, box.left - origin.left, top - origin.top, box.right - box.left, Math.max(0, bottom - top));
   });
 }

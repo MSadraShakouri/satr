@@ -8,7 +8,7 @@ import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown, TABLE_DIRECTIVE } from './markdown';
 import { layoutMath, scheduleMathLayout } from './mathLayout';
-import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll } from './scrollSync';
+import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll, typingTop } from './scrollSync';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
@@ -24,7 +24,8 @@ import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
-import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, type TimestampFormat } from './timestamps';
+import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
+import { maskMathAndCode } from './mathScan';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
@@ -32,7 +33,7 @@ import { createFolderExport } from './folderExport';
 import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
-import { dropSnapshot, keepSnapshots } from './snapshot';
+import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
@@ -45,8 +46,9 @@ const starter = demoNote;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <div class="app-shell">
+    <div class="notice-container" role="status"></div>
     <div class="topbar">
-      <button class="floating-button sidebar-button" id="files" aria-label="Open files"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="2" width="22" height="20" rx="4"/><rect x="4" y="5" width="2" height="14" rx="2" fill="currentColor"/></svg></button>
+      <button class="floating-button sidebar-button" id="files" aria-label="Open files" data-ignore-swipe><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="2" width="22" height="20" rx="4"/><rect x="4" y="5" width="2" height="14" rx="2" fill="currentColor"/></svg></button>
       <div class="topbar-actions">
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
@@ -90,7 +92,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
         </div>
@@ -148,12 +150,100 @@ const previewPane = preview.parentElement!;
 // Keyboard toolbar strip height (Obsidian: --mobile-toolbar-height = 52px,
 // holding a 44px pill).
 const TOOLBAR_STRIP = 52;
-/** How much of the layout viewport the on-screen keyboard covers (0 when the
- *  WebView is resized for it instead, as in the Capacitor app). */
-function keyboardOverlap(): number {
+/** How much of the layout viewport the visual viewport leaves hidden (the
+ *  browser's own chrome and the keyboard both count). */
+function hiddenByViewport(): number {
   const viewport = window.visualViewport;
   if (!viewport) return 0;
   return Math.max(0, window.innerHeight - (viewport.offsetTop + viewport.height));
+}
+// The keyboard itself, exactly where the browser reports it. Chromium has the
+// VirtualKeyboard API — the OS's own keyboard rectangle, in client coordinates
+// — and overlaysContent opts out of the browser resizing anything for it. The
+// visual-viewport derivation is only ever as good as the browser's idea of
+// which part of the screen the keyboard covers, and on Chrome Android the two
+// disagree by the browser chrome's strip: the sheet sat on the wrong edge, with
+// the dimmed page showing under it. Safari and Firefox have no such API; there
+// the visual viewport stays the witness (the tallest height seen at this width
+// is the baseline, so an address bar collapsing is not a keyboard).
+const virtualKeyboard = (navigator as Navigator & {
+  virtualKeyboard?: {
+    overlaysContent: boolean;
+    boundingRect: DOMRect;
+    addEventListener(type: 'geometrychange', listener: () => void): void;
+  };
+}).virtualKeyboard;
+if (virtualKeyboard) virtualKeyboard.overlaysContent = true;
+let fullHeight = 0;
+let fullHeightWidth = 0;
+/** The on-screen keyboard's height, 0 when it is down. */
+function keyboardHeight(): number {
+  const rect = virtualKeyboard?.boundingRect;
+  if (rect && rect.height > 0) {
+    const lift = Math.round(window.innerHeight - rect.top);
+    return Math.max(0, lift > 0 ? Math.min(lift, Math.round(window.innerHeight)) : Math.round(rect.height));
+  }
+  const viewport = window.visualViewport;
+  const height = viewport?.height ?? window.innerHeight;
+  if (window.innerWidth !== fullHeightWidth) { fullHeightWidth = window.innerWidth; fullHeight = 0; }
+  fullHeight = Math.max(fullHeight, height, window.innerHeight);
+  const shrunk = fullHeight - height;
+  return shrunk > 120 ? shrunk : 0;
+}
+/** How much of the layout viewport the keyboard covers (0 when the WebView is
+ *  resized for it instead, as in the Capacitor app): every hidden pixel, which
+ *  is what the caret's scroll margins want — a sheet, which must sit on the
+ *  keyboard's own edge, asks keyboardHeight(). */
+function keyboardOverlap(): number {
+  return Math.max(hiddenByViewport(), keyboardHeight());
+}
+/** Where the visible area ends, in client coordinates: the keyboard's own top
+ *  edge, the visual viewport's bottom, or the window's. */
+function visibleBottomEdge(): number {
+  const rect = virtualKeyboard?.boundingRect;
+  if (rect && rect.height > 0 && rect.top > 0) return Math.round(rect.top);
+  const viewport = window.visualViewport;
+  return viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+}
+// The keyboard's numbers, on the screen, behind ?kbdebug=1: a phone cannot
+// open a console, and a screenshot of this is what a bug report can carry.
+// Nothing is created without the flag.
+const DEBUG_KEYBOARD = new URLSearchParams(window.location.search).has('kbdebug');
+function paintKeyboardDebug(): void {
+  if (!DEBUG_KEYBOARD) return;
+  let readout = document.getElementById('kb-debug');
+  if (!readout) {
+    readout = document.createElement('div');
+    readout.id = 'kb-debug';
+    readout.style.cssText = 'position:fixed;z-index:2147483647;top:0;left:0;right:0;padding:4px 8px;font:11px/1.5 ui-monospace,monospace;background:#000d;color:#fff;white-space:pre-wrap;pointer-events:none';
+    document.body.append(readout);
+  }
+  const viewport = window.visualViewport;
+  const rect = virtualKeyboard?.boundingRect;
+  const sheet = document.querySelector<HTMLElement>('.menu.mod-bottom-sheet.is-open');
+  const box = sheet?.getBoundingClientRect();
+  const nav = document.querySelector<HTMLElement>('.mobile-navbar');
+  const navBox = nav?.getBoundingClientRect();
+  // The bottom bar's clearance is --safe-bottom alone; on the web that is
+  // env(safe-area-inset-bottom), which this probe reads back as a number.
+  let probe = document.getElementById('kb-env-probe');
+  if (!probe) {
+    probe = document.createElement('div');
+    probe.id = 'kb-env-probe';
+    probe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;padding-bottom:env(safe-area-inset-bottom, 0px)';
+    document.body.append(probe);
+  }
+  const envBottom = Math.round(parseFloat(getComputedStyle(probe).paddingBottom) || 0);
+  const safeBottom = Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom')) || 0);
+  readout.textContent = [
+    `screen ${Math.round(window.screen.width)}x${Math.round(window.screen.height)} window ${window.innerWidth}x${window.innerHeight}`,
+    `vv h ${Math.round(viewport?.height ?? -1)} top ${Math.round(viewport?.offsetTop ?? -1)} bottom ${Math.round((viewport?.offsetTop ?? 0) + (viewport?.height ?? 0))}`,
+    `vk ${rect && rect.height > 0 ? `${Math.round(rect.top)}..${Math.round(rect.bottom)}` : 'no'}`,
+    `kb ${keyboardHeight()} hidden ${Math.round(hiddenByViewport())} lift ${document.documentElement.style.getPropertyValue('--sheet-lift') || '0px'} room ${document.documentElement.style.getPropertyValue('--sheet-room') || '-'}`,
+    box ? `sheet ${Math.round(box.top)}..${Math.round(box.bottom)}` : 'sheet no',
+    `safe --safe-bottom ${safeBottom} env ${envBottom} innerBottom ${window.innerHeight}`,
+    navBox ? `navbar ${Math.round(navBox.top)}..${Math.round(navBox.bottom)} (gap ${Math.round(window.innerHeight - navBox.bottom)})` : 'navbar none',
+  ].join('\n');
 }
 /** Height hidden at the bottom of the screen: keyboard overlap + toolbar. */
 const obscuredBottom = (): number => keyboardOverlap() + (document.body.classList.contains('keyboard-open') ? TOOLBAR_STRIP : 0);
@@ -167,12 +257,15 @@ let syncingScroll = false;
 // See holdEditorPosition().
 let holdUntil = 0;
 let holdLine = 0;
+/** Three body lines below the pane top — the typing band, not the glass. */
+const scrollBand = (): number => typingTop(editor.view);
 function follow(from: 'editor' | 'preview'): void {
   if (syncingScroll || restoringView || !splitView.matches) return;
   const generation = viewGeneration;
+  const y = scrollBand();
   syncingScroll = true;
-  if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view));
-  else applyEditorScroll(editor.view, previewScroll(previewPane, preview), () => generation === viewGeneration);
+  if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view, y), () => generation === viewGeneration, false, y);
+  else applyEditorScroll(editor.view, previewScroll(previewPane, preview, y), () => generation === viewGeneration, false, y);
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
 }
 
@@ -319,7 +412,8 @@ function offerSaveConflict(conflict: SaveConflict): void {
 function reloadOpenText(path: string, text: string, mtime: number): void {
   if (path !== filePath) return;
   const selection = editor.view.state.selection.main;
-  const position = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const y = scrollBand();
+  const position = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
   const wasRestoring = restoringView;
   restoringView = true;
   editor.replaceValue(text);
@@ -333,8 +427,8 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  if (mode === 'preview') applyPreviewScroll(previewPane, preview, position);
-  else applyEditorScroll(editor.view, position);
+  if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, false, y);
+  else applyEditorScroll(editor.view, position, () => true, false, y);
   restoringView = wasRestoring;
   ownScroll(250);
   void showNotice('Updated from the version on disk.', 2500);
@@ -498,14 +592,19 @@ function update(): void {
 let mathWarningCount = 0;
 let mathConfirmTimer: number | undefined;
 
-/** Unfolds upward from the pill the gray sits on: height alone, no movement, so
- *  the white part below it never shifts by a pixel. */
+/** Unfolds upward from the pill the gray sits on: height of the clip shell
+ *  only. The inner row keeps its size; overflow clips it. Cancelling a finished
+ *  fold before hiding it would flash the full bar for a frame. */
 const pillAnimation = new WeakMap<HTMLElement, Animation>();
+const PILL_GROW_MS = 280;
 function growFromPill(el: HTMLElement, open: boolean): void {
   // A fold still in flight must not hide what came after it: the editor's own
   // change starts a fold the moment the note converts, and the receipt is shown
   // over the top of it. One animation at a time, or the stale one wins.
   pillAnimation.get(el)?.cancel();
+  pillAnimation.delete(el);
+  el.style.height = '';
+  el.style.overflow = '';
   const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // The keyboard toolbar's gray sits inside a strip that is display:none
   // whenever the keyboard is down, so there is nothing to unfold and nothing to
@@ -517,37 +616,37 @@ function growFromPill(el: HTMLElement, open: boolean): void {
   if (open) {
     el.hidden = false;
     if (still) return;
+    const height = el.getBoundingClientRect().height;
+    if (height <= 0) return;
     el.style.height = '0px';
     el.style.overflow = 'hidden';
-    const height = el.scrollHeight;
-    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: 280, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' });
+    void el.offsetHeight;
+    const unfold = el.animate([{ height: '0px' }, { height: `${height}px` }], { duration: PILL_GROW_MS, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
     pillAnimation.set(el, unfold);
     unfold.onfinish = (): void => {
       if (pillAnimation.get(el) !== unfold) return; // superseded
       pillAnimation.delete(el);
-      el.style.height = ''; el.style.overflow = ''; layoutToolbar();
+      el.style.height = ''; el.style.overflow = '';
+      unfold.cancel();
+      layoutToolbar();
     };
     return;
   }
   if (still) { el.hidden = true; return; }
+  const height = el.getBoundingClientRect().height;
+  if (height <= 0) { el.hidden = true; return; }
   el.style.overflow = 'hidden';
-  const height = el.scrollHeight;
-  // The way down is unhurried and even: the slide curve used everywhere else is
-  // front-loaded, which reads as a snatch rather than a settle.
-  // The gray is anchored to the bottom of the pill, so as it collapses its top
-  // edge travels down — straight through the text, which used to ride down
-  // behind the pill and vanish. The text is gone before the box starts moving,
-  // and the box then closes on nothing.
-  const fold = el.animate([
-    { height: `${height}px`, opacity: 1 },
-    { height: `${height}px`, opacity: 0, offset: 0.5 },
-    { height: '0px', opacity: 0 },
-  ], { duration: 420, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' });
+  // Ease-in: into the pill without stalling on the last pixels, where a
+  // decelerate-then-snap was reading as a jump.
+  const fold = el.animate([{ height: `${height}px` }, { height: '0px' }], { duration: PILL_GROW_MS, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
   pillAnimation.set(el, fold);
   fold.onfinish = (): void => {
     if (pillAnimation.get(el) !== fold) return; // superseded
     pillAnimation.delete(el);
-    el.hidden = true; el.style.height = ''; el.style.overflow = ''; layoutToolbar();
+    el.hidden = true;
+    el.style.height = ''; el.style.overflow = '';
+    fold.cancel();
+    layoutToolbar();
   };
 }
 
@@ -571,7 +670,7 @@ function updateMathWarning(): void {
   if (count === mathWarningCount) return;
   mathWarningCount = count;
   const offer = count > 0
-    ? `${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span>`
+    ? `<span class="pill-gray-inner">${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span></span>`
     : '';
   for (const warning of mathWarnings) {
     if (offer) warning.innerHTML = offer;
@@ -587,14 +686,15 @@ function confirmMathWarning(converted: number): void {
   const said = `${converted} formula${converted === 1 ? '' : 's'} converted`;
   for (const warning of mathWarnings) {
     holdPill(warning);
-    warning.innerHTML = `${MENU_ICONS.normalize}<span dir="auto">${said}</span>`;
+    warning.innerHTML = `<span class="pill-gray-inner">${MENU_ICONS.normalize}<span dir="auto">${said}</span></span>`;
     warning.classList.add('is-done');
     warning.parentElement?.classList.add('has-math-warning');
   }
   // -1 so the timer below always recomputes: the receipt is showing, and the
   // count it replaced is no longer what the bar should be saying.
+  // 2500ms: the same stay as the "Normalized N formulas" notice (src/commands.ts).
   mathWarningCount = -1;
-  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2000);
+  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2500);
 }
 function runNormalize(): void {
   if (mode !== 'edit') setMode('edit');
@@ -609,7 +709,8 @@ function setMode(next: Mode, restoredLine?: number): void {
   const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
   // pane reports scrollTop 0, which is what used to send preview to the top.
-  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view));
+  const y = scrollBand();
+  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y));
   mode = next;
   document.body.dataset.mode = mode;
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
@@ -621,9 +722,9 @@ function setMode(next: Mode, restoredLine?: number): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
-    applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true);
+    applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
   } else {
-    applyEditorScroll(editor.view, position, () => generation === viewGeneration, true);
+    applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);
   }
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
@@ -748,10 +849,11 @@ for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
   previewPane.addEventListener(type, releaseHold, { passive: true, capture: true });
 }
 editor.view.scrollDOM.addEventListener('scroll', () => {
-  if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view) - holdLine) > 0.5) {
+  if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view, scrollBand()) - holdLine) > 0.5) {
     const generation = viewGeneration;
+    const y = scrollBand();
     syncingScroll = true;
-    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration);
+    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration, false, y);
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
     return;
   }
@@ -766,7 +868,8 @@ document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(previ
 function rememberView(): void {
   window.clearTimeout(viewTimer);
   if (restoringView) return;
-  const line = mode === 'preview' ? previewScroll(previewPane, preview) : editorScroll(editor.view);
+  const y = scrollBand();
+  const line = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
   const folds = editor.foldedLines();
   if (!filePath) return;
   const saved: SavedView = { mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) };
@@ -794,9 +897,9 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit')
     syncingScroll = true;
     if (mode === 'preview') {
       layoutMath(preview);
-      applyPreviewScroll(previewPane, preview, line);
+      applyPreviewScroll(previewPane, preview, line, current, false, scrollBand());
     } else {
-      applyEditorScroll(editor.view, line, current);
+      applyEditorScroll(editor.view, line, current, false, scrollBand());
       holdEditorPosition(line);
     }
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
@@ -823,13 +926,10 @@ const flush = (): void => {
   if (saveTimer !== undefined) saveNow();
   rememberView();
 };
-window.addEventListener('pagehide', flush);
+window.addEventListener('pagehide', () => { flush(); markAway(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { flush(); markAway(); }
-  else if (document.visibilityState === 'visible') {
-    if (takeAwayTab()) newTab();
-    void refreshOnResume();
-  }
+  if (document.visibilityState === 'hidden') onBackground();
+  else if (document.visibilityState === 'visible') onForeground();
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
@@ -1273,11 +1373,16 @@ async function switchTab(index: number, after?: () => void): Promise<void> {
 }
 function newTab(): void {
   void (async () => {
-    if (!await leaveCurrent()) return;
-    const empty = tabs.findIndex((t) => !t.path);
-    if (empty >= 0) activeTab = empty;
-    else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
-    showEmptyTab();
+    try {
+      if (!await leaveCurrent()) { dropSnapshot(); return; }
+      const empty = tabs.findIndex((t) => !t.path);
+      if (empty >= 0) activeTab = empty;
+      else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
+      showEmptyTab();
+      dropSnapshot();
+    } finally {
+      launchTabInFlight = false;
+    }
   })();
 }
 /** Close a tab. Closing the last one leaves the default tab (the empty
@@ -1608,6 +1713,20 @@ function openEmptyHit(path: string, from: number, to: number): void {
   });
 }
 
+function showTabActions(): void {
+  const icon = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  const n = tabs.length;
+  const emptyOnly = n < 2 && !tabs[0]?.path;
+  openMenu([
+    { title: 'New tab', icon: icon('<path d="M5 12h14"/><path d="M12 5v14"/>'), action: () => newTab() },
+    { title: 'Reopen closed tab', icon: icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), disabled: closedTabs.length === 0, action: () => reopenClosedTab() },
+    'separator',
+    { title: 'Close all tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: tabs.every((t) => !t.path), action: () => { void closeAllTabs(); } },
+    { title: 'Close other tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: n < 2, action: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); } },
+    { title: 'Close current tab', icon: icon('<path d="M18 6 6 18M6 6l12 12"/>'), warning: true, disabled: emptyOnly, action: () => { void closeTab(activeTab); } },
+  ]);
+}
+
 function showTabs(): void {
   void (async () => {
     if (!await leaveCurrent()) return;
@@ -1643,7 +1762,28 @@ const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
 const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
 const navMenu = document.querySelector<HTMLButtonElement>('#nav-menu')!;
 const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-number')!;
-document.querySelector('#nav-tabs')!.addEventListener('click', showTabs);
+const navTabs = document.querySelector<HTMLButtonElement>('#nav-tabs')!;
+// A tap opens the switcher; holding opens the tab menu (Close current tab
+// lives here — the switcher's own menu has no current-tab close).
+let tabsPress: { timer: number; long: boolean } | null = null;
+navTabs.addEventListener('pointerdown', () => {
+  if (tabsPress) window.clearTimeout(tabsPress.timer);
+  const press = { timer: 0, long: false };
+  press.timer = window.setTimeout(() => { press.long = true; showTabActions(); navigator.vibrate?.(10); }, 450);
+  tabsPress = press;
+});
+const cancelTabsPress = (): void => { if (tabsPress && !tabsPress.long) window.clearTimeout(tabsPress.timer); };
+navTabs.addEventListener('pointerup', cancelTabsPress);
+navTabs.addEventListener('pointercancel', cancelTabsPress);
+navTabs.addEventListener('pointerleave', cancelTabsPress);
+navTabs.addEventListener('contextmenu', (event) => event.preventDefault());
+navTabs.addEventListener('click', () => {
+  const press = tabsPress;
+  tabsPress = null;
+  if (press?.long) return;
+  if (press) window.clearTimeout(press.timer);
+  showTabs();
+});
 const svg = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 const MENU_ICONS = {
   menu: svg('<path d="M4 12h16"/><path d="M4 18h16"/><path d="M4 6h16"/>'),
@@ -1998,12 +2138,13 @@ function applySettings(settings: Settings): void {
     timestampStyleApplied = stampStyle;
     setTimestampStyle(settings.timestampLocale, settings.timestampCalendar);
     // The first application is at boot, before any note shows; afterwards a
-    // change re-words every rendered chip (the editor's widgets keep their
-    // elements) and re-renders the reading view.
+    // change re-words every rendered chip in place (the editor's widgets keep
+    // their elements, so the re-render below cannot reach them) and marks the
+    // reading view for the one render at the end of this function — a hidden
+    // preview catches up when it is next shown (src/main.ts: previewDirty).
     if (!first) {
       restyleTimestamps(document);
       previewDirty = true;
-      if (previewVisible()) renderPreview();
     }
   }
   if (previewVisible()) renderPreview();
@@ -2096,7 +2237,8 @@ function handleBack(): boolean {
 if (Capacitor.isNativePlatform()) {
   void CapacitorApp.addListener('backButton', () => { handleBack(); });
   void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-    if (isActive) void refreshOnResume();
+    if (isActive) onForeground();
+    else onBackground();
   });
 } else {
   // The guard entry: back pops it (popstate), we handle the press and put it
@@ -2145,32 +2287,47 @@ async function boot(): Promise<void> {
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
 const AWAY_KEY = 'satr:awayAt';
 function markAway(): void { localStorage.setItem(AWAY_KEY, String(Date.now())); }
-/** Whether a new empty tab is due: the app was away for the \"New tab after being
- *  away\" time. Clears the mark, so one absence gives one new tab. */
-function takeAwayTab(): boolean {
-  const since = Number(localStorage.getItem(AWAY_KEY));
-  localStorage.removeItem(AWAY_KEY);
-  // Only the empty-tab launch has an away time: a refresh or a return with
-  // "Restore last tabs" brings the tabs back, with no new tab.
+/** A new empty tab is due: always-empty, or away long enough. Restore-last
+ *  never. The away mark stays until we actually open the tab. */
+function dueEmptyTab(): boolean {
   const settings = loadSettings();
+  if (settings.launchTabs === 'empty') return true;
   if (settings.launchTabs !== 'away') return false;
+  const since = Number(localStorage.getItem(AWAY_KEY));
   const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
 }
+function onBackground(): void { flush(); markAway(); }
+/** Home / recents leave the WebView alive: boot does not run again. Android
+ *  often skips visibilitychange; Capacitor appStateChange is the pause/resume
+ *  we can trust. One in-flight switch so the two signals cannot open two tabs. */
+let launchTabInFlight = false;
+function onForeground(): void {
+  void refreshOnResume();
+  if (!dueEmptyTab()) return;
+  if (launchTabInFlight) return;
+  if (!curTab().path) return;
+  launchTabInFlight = true;
+  localStorage.removeItem(AWAY_KEY);
+  showSplash();
+  newTab();
+}
 async function openFirstNote(): Promise<void> {
-  await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   // A new empty tab at launch: the setting asks for one, or the app was away
-  // long enough. The tabs from last time stay where they were.
-  const launchTabs = loadSettings().launchTabs;
-  if (launchTabs === 'empty' || takeAwayTab()) {
+  // long enough. Show it before file access, so the last note never sits
+  // on screen behind a permission sheet.
+  const openEmpty = dueEmptyTab();
+  localStorage.removeItem(AWAY_KEY);
+  if (openEmpty) {
     const empty = tabs.findIndex((t) => !t.path);
     if (empty >= 0) activeTab = empty;
     else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
     showEmptyTab();
     renderNavButtons();
-    void leftSidebar.refresh();
+    void ensureFileAccess().then(() => { void leftSidebar.refresh(); });
     return;
   }
+  await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
   let text = path ? await backend.read(path) : null;
@@ -2218,23 +2375,47 @@ function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, 
   });
 }
 
+/** The `occurrence`-th `<t:…>` code in `from..to` naming this moment and
+ *  format. Math and code are masked out first (src/mathScan.ts — the mask the
+ *  renderer's own policy uses, offsets kept): a code inside a fence, a code
+ *  span or a formula never renders a chip, so counting it would hand the
+ *  writer a different code from the one they tapped. Every hit is the code
+ *  itself, so the range needs no second look. */
+function findTimestampCode(from: number, to: number, seconds: number, format: TimestampFormat, occurrence: number): { from: number; to: number } | null {
+  const doc = editor.view.state.doc;
+  const masked = maskMathAndCode(doc.sliceString(from, to));
+  const hits: Array<{ from: number; to: number }> = [];
+  for (const match of masked.matchAll(/<t:-?\d{1,15}(?::[tTdDfFR])?>/g)) {
+    const parsed = TIMESTAMP_START.exec(match[0]);
+    if (!parsed || Number(parsed[1]) !== seconds || (parsed[2] ?? 'f') !== format) continue;
+    const at = from + (match.index ?? 0);
+    hits.push({ from: at, to: at + match[0].length });
+  }
+  return hits[occurrence] ?? null;
+}
+
 /** A `<t:…>` chip tapped in the reading view: the date sheet opens at its
  *  moment and format, and Insert rewrites the code that made it — the same
- *  occurrence if it can still be found (the second `<t:1700000000>` in the
- *  note stays the second), otherwise the caret gets a fresh one. */
+ *  occurrence if it can still be found, otherwise the caret gets a fresh one.
+ *  The search starts in the chip's own section (data-line / data-lines), so a
+ *  twin elsewhere in the note is never picked, and falls back to the whole
+ *  note when the section holds no such code (a stale tag, or a chip in a part
+ *  of the DOM that no section owns). */
 function editTimestampFromChip(chip: HTMLElement): void {
   const seconds = Number(chip.dataset.ts);
   const format = (chip.dataset.format ?? 'f') as TimestampFormat;
   if (!Number.isFinite(seconds)) return;
   const same = [...preview.querySelectorAll<HTMLElement>(`time.discord-timestamp[data-ts="${seconds}"][data-format="${format}"]`)];
-  const occurrence = Math.max(0, same.indexOf(chip));
-  const text = editor.view.state.doc.toString();
-  const hits: { from: number; to: number; format: TimestampFormat }[] = [];
-  for (const match of text.matchAll(new RegExp(`<t:${seconds}(?::([tTdDfFR]))?>`, 'g'))) {
-    const from = match.index ?? 0;
-    hits.push({ from, to: from + match[0].length, format: (match[1] ?? 'f') as TimestampFormat });
+  const doc = editor.view.state.doc;
+  let found: { from: number; to: number } | null = null;
+  const anchor = chip.closest<HTMLElement>('[data-line]');
+  if (anchor) {
+    const start = Math.min(Math.max(Number(anchor.dataset.line) || 0, 0), doc.lines - 1);
+    const span = Math.max(1, Number(anchor.dataset.lines) || 1);
+    const inSection = same.filter((el) => anchor.contains(el));
+    found = findTimestampCode(doc.line(start + 1).from, doc.line(Math.min(start + span, doc.lines)).to, seconds, format, Math.max(0, inSection.indexOf(chip)));
   }
-  const found = hits.filter((hit) => hit.format === format)[occurrence] ?? null;
+  if (!found) found = findTimestampCode(0, doc.length, seconds, format, Math.max(0, same.indexOf(chip)));
   editTimestampAt({ seconds, format }, found);
 }
 
@@ -2381,18 +2562,12 @@ preview.addEventListener('click', (event) => {
 });
 
 // Keyboard toolbar: shown while the note body has focus and the on-screen
-// keyboard is up, pinned to the top of the keyboard. Keyboard detection
-// compares the visual viewport against the tallest height seen at this width,
-// which works both when the keyboard overlays the page (Chrome's default) and
-// when it resizes the WebView (Capacitor's adjustResize).
-let fullHeight = 0;
-let fullHeightWidth = 0;
+// keyboard is up, pinned to the top of the keyboard (keyboardHeight, above:
+// the browser's own rectangle where there is one, the visual viewport's shrink
+// where there is not — the same test that works when the WebView is resized
+// for the keyboard instead, as in the Capacitor app).
 function layoutToolbar(): void {
-  const viewport = window.visualViewport;
-  const height = viewport?.height ?? window.innerHeight;
-  if (window.innerWidth !== fullHeightWidth) { fullHeightWidth = window.innerWidth; fullHeight = 0; }
-  fullHeight = Math.max(fullHeight, height, window.innerHeight);
-  const keyboardUp = fullHeight - height > 120;
+  const keyboardUp = keyboardHeight() > 0;
   const show = keyboardUp && editor.hasFocus && mode === 'edit';
   document.body.classList.toggle('keyboard-open', show);
   // Any field with the keyboard up (find bar, sidebar search): no bottom bar.
@@ -2408,13 +2583,71 @@ function layoutToolbar(): void {
   // they have always been on. Down by the same amount would move them twice.
   // The warning is out of the flow — it is tucked up behind the pill — so the
   // strip sits exactly where it always did, however tall the warning grows.
-  const top = (viewport?.offsetTop ?? 0) + height - TOOLBAR_STRIP;
+  const top = visibleBottomEdge() - TOOLBAR_STRIP;
   toolbar.style.transform = `translate3d(0, ${Math.round(top)}px, 0)`;
 }
-window.visualViewport?.addEventListener('resize', layoutToolbar);
-window.visualViewport?.addEventListener('scroll', layoutToolbar);
-window.addEventListener('resize', layoutToolbar);
-document.addEventListener('focusin', () => window.requestAnimationFrame(layoutToolbar));
+function layoutKeyboard(): void {
+  layoutToolbar();
+  layoutKeyboardInset();
+  paintKeyboardDebug();
+}
+window.visualViewport?.addEventListener('resize', layoutKeyboard);
+window.visualViewport?.addEventListener('scroll', layoutKeyboard);
+window.addEventListener('resize', layoutKeyboard);
+virtualKeyboard?.addEventListener('geometrychange', layoutKeyboard);
+
+// A bottom sheet's place under the keyboard. --sheet-lift is the keyboard's own
+// height: a sheet ends exactly on its top edge, so nothing of it is behind the
+// keys and no page shows between them. --sheet-room is the height still visible
+// above that edge, and every sheet's scroll area caps itself at it
+// (src/style.css) — whatever the keyboard leaves, the whole sheet fits above it
+// and scrolls inside, the Insert button and the chips included. Both live on
+// the root: a sheet created later reads them as they are, and nothing is
+// corrected on a later beat than the motion it answers. --keyboard-lift reports
+// every hidden pixel, the number the caret's scroll margins are built on.
+let lastKeyboardHeight = 0;
+let sheetRoomTimer: number | undefined;
+function layoutKeyboardInset(): void {
+  const lift = keyboardHeight();
+  const root = document.documentElement.style;
+  root.setProperty('--keyboard-lift', `${Math.round(hiddenByViewport())}px`);
+  root.setProperty('--sheet-lift', `${lift}px`);
+  root.setProperty('--sheet-room', `${Math.max(0, Math.round(window.innerHeight - lift))}px`);
+  // The keyboard has come up: the caret steps clear of it. Nothing else pokes
+  // the editor — with overlaysContent the viewport does not shrink, so its own
+  // visual-viewport listener would never hear about this keyboard.
+  if (lift > lastKeyboardHeight + 120) editor?.revealCaretSoon(160);
+  lastKeyboardHeight = lift;
+  window.clearTimeout(sheetRoomTimer);
+  sheetRoomTimer = window.setTimeout(keepFocusedFieldVisible, 120);
+}
+// The field the finger is in, above the keys: the platform's own reveal does
+// not know about a keyboard floating over the page, so the field is brought
+// into the visible area — by the smallest distance, in whatever scrolls around
+// it, once the keyboard has settled (never mid-motion, never under a hand
+// still on the glass). The editor is left alone: its caret has its own story
+// (editor.revealCaretSoon, layoutToolbar).
+function keepFocusedFieldVisible(): void {
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || active.closest('.cm-editor')) return;
+  const over = active.getBoundingClientRect().bottom - (visibleBottomEdge() - 8);
+  if (over <= 0) return;
+  for (let node = active.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) {
+      node.scrollTop += over;
+      return;
+    }
+  }
+}
+layoutKeyboardInset(); // a sheet opened before any event still knows the room
+paintKeyboardDebug();
+document.addEventListener('focusin', () => {
+  window.requestAnimationFrame(layoutToolbar);
+  // A field tapped while the keyboard is already up can sit under it: give the
+  // platform's own reveal a beat, then bring it above the keys if it did not.
+  window.setTimeout(keepFocusedFieldVisible, 200);
+});
 document.addEventListener('focusout', () => window.setTimeout(layoutToolbar, 50));
 // Never take focus from the editor (that would close the keyboard).
 toolbar.addEventListener('pointerdown', (event) => event.preventDefault());
@@ -2490,15 +2723,22 @@ previewPane.addEventListener('dblclick', (event) => {
 // Both drawers (src/drawers.ts): the same physics on both sides.
 const drawers = initDrawers({
   panels: { left: document.querySelector<HTMLElement>('#file-panel')!, right: rightPanel },
-  movers: [document.querySelector<HTMLElement>('.workspace')!, document.querySelector<HTMLElement>('.topbar')!, document.querySelector<HTMLElement>('#navbar-wrap')!],
+  movers: [document.querySelector<HTMLElement>('.workspace')!, document.querySelector<HTMLElement>('.topbar')!, document.querySelector<HTMLElement>('.notice-container')!, document.querySelector<HTMLElement>('#navbar-wrap')!],
   backdrop: document.querySelector<HTMLElement>('#backdrop')!,
   classes: { left: 'files-open', right: 'outline-open' },
   onOpening: (side) => {
     closePopover();
     restoreNavigation();
     (document.activeElement as HTMLElement | null)?.blur?.(); // keyboard down
+    // A visible caret in the note makes the browser keep that point on
+    // screen: as the page translates, it slides the note back under the
+    // finger. Preview has no caret, so it never did this.
+    editor.setCaretOff(true);
     if (side === 'right') sidebar.refresh();
     else window.requestAnimationFrame(() => leftSidebar.scrollToActive());
+  },
+  onSettled: (side, open) => {
+    if (!open) editor.setCaretOff(false);
   },
 });
 applySettings(loadSettings());

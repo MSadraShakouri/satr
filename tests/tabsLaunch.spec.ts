@@ -71,6 +71,29 @@ test('coming back to the visible app after being away adds the empty tab too', a
   expect(await tabCount(page)).toBe(3);
 });
 
+test('Always open a new empty tab: coming back without a full start opens one too', async ({ page }) => {
+  await boot(page, { launchTabs: 'last' });
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await page.evaluate(() => {
+    localStorage.setItem('satr:settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('satr:settings')!), launchTabs: 'empty' }));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(3);
+});
+
+test('Restore last tabs: coming back never adds a tab', async ({ page }) => {
+  await boot(page, { launchTabs: 'last' });
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await page.evaluate((key) => {
+    localStorage.setItem(key, String(Date.now() - 10 * 24 * 60 * 60_000));
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, AWAY_KEY);
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await expect(page.locator('body')).not.toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(2);
+});
+
 test('the Tabs settings save their choices', async ({ page }) => {
   await boot(page, {});
   await page.evaluate(async () => {
@@ -105,4 +128,41 @@ test('Always open a new empty tab: every launch adds one, whatever the time sett
   await boot(page, { launchTabs: 'empty', newTabAfterMinutes: 1440 }, Date.now() - 1000);
   await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
   expect(await tabCount(page)).toBe(3);
+});
+
+const lastScreen = {
+  v: 1, w: 390, h: 844, root: 'theme-light', style: '', body: '',
+  html: '<div id="old-note-flash">OLDNOTEFLASH</div>', css: '', scroll: [] as [number, number][],
+};
+
+test('empty-tab launch shows the logo, not the last note', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((snap) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 3, launchTabs: 'empty' }));
+    localStorage.setItem('satr:snapshot', JSON.stringify(snap));
+  }, lastScreen);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  const cover = page.locator('#boot-snapshot');
+  await expect(cover).toBeVisible();
+  await expect(cover).toHaveClass(/is-splash/);
+  await expect(cover).not.toContainText('OLDNOTEFLASH');
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+});
+
+test('restore last tabs still paints the last screen first', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((snap) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 3, launchTabs: 'last' }));
+    localStorage.setItem('satr:snapshot', JSON.stringify(snap));
+  }, lastScreen);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#boot-snapshot')).toContainText('OLDNOTEFLASH');
 });

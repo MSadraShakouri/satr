@@ -386,7 +386,7 @@ async function embeddedFonts(withMath: boolean): Promise<string> {
     for (const rule of [...list]) {
       if (!(rule instanceof CSSFontFaceRule)) continue;
       const family = rule.style.getPropertyValue('font-family').replace(/["']/g, '').trim();
-      if (family === 'Vazirmatn' || family === 'VazirCode' || (withMath && family.startsWith('KaTeX'))) {
+      if (family === 'Vazirmatn' || family === 'VazirCode' || (withMath && (family === 'XB Zar' || family.startsWith('KaTeX')))) {
         rules.push(rule);
         bases.set(rule, sheet.href ?? document.baseURI);
       }

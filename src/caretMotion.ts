@@ -27,8 +27,9 @@
 // composition goes nowhere, and no keymap is even reached. Owning the two keys
 // here means the note answers them the same way whether or not a word is still
 // with the keyboard.
-import { EditorSelection, EditorState, Transaction } from '@codemirror/state';
-import { Direction, EditorView, ViewPlugin } from '@codemirror/view';
+import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction } from '@codemirror/state';
+import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { inMath } from './mathSource';
 
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
   const sel = view.state.selection.main;
@@ -117,4 +118,73 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: side, sequential: true }];
 });
 
-export const caretMotion = [lineSide, arrowKeys];
+// CM6 bidi (Unicode): after Persian letters, digits become a number run.
+// CS (, . :) between two numbers joins them; at the end of a number it
+// becomes a neutral and the *next* digit opens a new run — the caret jump
+// on YYYY/MM/DD and 12:30. ET (# $ % and currency) glues to EN the same
+// way. `/` and `-` are NI in CM6 but split dates the same. Isolating each
+// digit+separator sequence as one LTR run stops the extra run so you can
+// still walk through 2026. Inline `$…$` is already its own run; leave it.
+// Read off LowTypes in @codemirror/view (charType).
+const CS_ET_SEP = ',.:/#$%\\-¢£¤¥°±\u00a0';
+const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩][0-9۰-۹٠-٩${CS_ET_SEP}]*`, 'g');
+const numberIsolate = Decoration.mark({
+  attributes: { style: 'unicode-bidi: isolate; direction: ltr' },
+  bidiIsolate: Direction.LTR,
+});
+
+function numberIsolates(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const { from, to } of view.visibleRanges) {
+    const text = view.state.doc.sliceString(from, to);
+    NUMBER_RUN.lastIndex = 0;
+    for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
+      const start = from + match.index;
+      if (inMath(view.state, start)) continue;
+      builder.add(start, start + match[0].length, numberIsolate);
+    }
+  }
+  return builder.finish();
+}
+
+const numberRuns = ViewPlugin.fromClass(class {
+  isolates: DecorationSet;
+  constructor(view: EditorView) { this.isolates = numberIsolates(view); }
+  update(update: ViewUpdate) {
+    if (update.docChanged || update.viewportChanged) this.isolates = numberIsolates(update.view);
+  }
+}, {
+  provide: (plugin) => {
+    const access = (view: EditorView) => view.plugin(plugin)?.isolates ?? Decoration.none;
+    return Prec.lowest([EditorView.decorations.of(access), EditorView.bidiIsolatedRanges.of(access)]);
+  },
+});
+
+/** −1 at the start of a number run, +1 at the end, else 0. */
+function numberRunEdge(text: string, offset: number): -1 | 0 | 1 {
+  NUMBER_RUN.lastIndex = 0;
+  for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
+    if (offset === match.index) return -1;
+    if (offset === match.index + match[0].length) return 1;
+  }
+  return 0;
+}
+
+// Both edges of that isolate have two homes. Outward assoc points at the
+// line, not the number: −1 before the first digit, +1 after the last.
+// Interior digits stay as they are so arrows still walk 2026. Typing is
+// left to lineSide; this only pins select/move (assoc 0, or arrows’ +1
+// at the start).
+const numberEdgeSide = EditorState.transactionFilter.of((tr) => {
+  if (tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
+  const main = tr.newSelection.main;
+  if (!main.empty) return tr;
+  if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
+  const line = tr.newDoc.lineAt(main.head);
+  if (inMath(tr.startState, main.head)) return tr;
+  const edge = numberRunEdge(line.text, main.head - line.from);
+  if (!edge || main.assoc === edge) return tr;
+  return [tr, { selection: EditorSelection.create([EditorSelection.cursor(main.head, edge)]), sequential: true }];
+});
+
+export const caretMotion = [lineSide, arrowKeys, numberRuns, numberEdgeSide];

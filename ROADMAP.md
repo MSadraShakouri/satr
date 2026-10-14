@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). **0.9.0.** Notes are files in folders behind one storage
+open-file plugins). **0.10.0.** Notes are files in folders behind one storage
 interface: a virtual file system in localStorage on the web, and the device's
 own files in the app. GitHub Actions builds a signed debug APK for each `v*`
 tag, signed with one fixed key so every build installs over the last.
@@ -183,7 +183,7 @@ A list of reports and asks, worked in no particular order. Two of them were misr
 - [x] `package.json`, the lockfile's two root fields and the APK's own `versionName` (which falls back to it) carry **0.9.0** — the dev banner's number matches the app's, as it must.
 - [x] **The suite runs against the production build** (`vite build` + preview instead of the dev server): the run is a quarter of the time it was, and what is tested is what ships. tests/vite.test.config.ts. 270 tests.
 
-### The 1.0.0 round: dates — whose words, which calendar, written by hand (October 2026)
+### The 0.10.0 round: dates — whose words, which calendar, written by hand (October 2026)
 
 The second and third asks about Discord-style timestamps, plus the GUI that writes them.
 
@@ -196,15 +196,29 @@ The second and third asks about Discord-style timestamps, plus the GUI that writ
   - The month title opens a **month and year box** in the calendar the grid is wearing — 1 / 1400 is Farvardin 1400 when the sheet is Jalali — applied on Enter or on focus leaving the title, never mid-edit (tabbing from the month to the year must not jump the grid away). The keyboard chain is decided by **Enter** (the catchable action key), not trusted to `enterkeyhint`: month → year, year applies (the keyboard lands on the title and closes), hour → minute, minute closes — Tab and arrows stay the caret's, and a keyboard that "Next"-hops with no key event at all is met by a focus guard (bounced to the title, jump still applied). **Two digits advance by themselves** and the time row is a **shift-register of digit slots**: each field always shows two zero-padded digits live (typing 9 shows 09 at once), backspace can never go below 00, a slot is red only when *provably* impossible (a lone 3+ in the hours, 6+ in minutes/seconds, or a complete two over the ceiling) — waiting is never wrong, Insert never blocks for emptiness, and →/Enter/auto-advance hold on red. Seconds joined the row (an edited chip's seconds are visible and editable), and **Today**/**Now** split: Today moves the date keeping the typed time, Now moves the time keeping the picked date. The calendar track is a **native horizontal snap scroller with a runway that grows mid-scroll** — every month a fixed six-week grid (no page grows or shrinks under the finger), the browser owns the fling and the letting-go, appending months costs nothing and prepending is compensated in the same frame, so a ten-page fling finds real months all the way; the month title rides the finger, the grid commits at rest. The title is a plain element hosting the fields: interactive content inside a `<button>` was exactly what made focus misbehave. A second open sweeps the fading sheet out of the DOM at once.
 - [x] **A chip tapped in the reading view edits its own code**: the sheet opens wearing that moment (month, day, hour, minute) and format, and Insert rewrites the very token that made it — the second `<t:1700000000>` in a note stays the second. The seconds a code carries survive the edit (the sheet has no seconds field; touching the time yourself rounds them away). tests/datePicker.spec.ts: insertion, the bare-`f` code, chip editing, the Jalali grid, **Now**, and Escape/backdrop writing nothing.
 
-### The 1.0.0 round: tables, on screen and on paper (October 2026)
+### The 0.10.0 round: tables, on screen and on paper (October 2026)
 
-The first batch of the run up to 1.0.0: five table asks, which turned out to be one root cause and four features around it. The table minimum later rose to three rows a side (the stranding rules below keep it company).
+The first batch of this 0.10.0 run: five table asks, which turned out to be one root cause and four features around it. The table minimum later rose to three rows a side (the stranding rules below keep it company).
 
 - [x] **Tables print with the note's direction.** The reading view never gave the `<table>` element a `dir` of its own: the column order came from the `.md-section` wrapper it sat in — and the print path *unwraps* those sections (`printableBody`), inside a frame pinned `dir="ltr"`, so every PDF table laid its columns left to right however Persian the note was. The table now carries its own `dir` (its first cell's, the same policy as every block, src/direction.ts), and an attribute survives the unwrap. tests/tables.spec.ts ("print: a table keeps the note's direction…") holds the painted column order on paper, not just the attribute.
 - [x] **A table's direction can be set by hand** — the whole table, column order included, not the per-cell `:---` alignment: `<!-- table: rtl -->` (or `ltr`, or `auto`) on the line just above it. The comment renders as nothing (on GitHub too), and without one the table follows the note like any other block; the last comment before the table wins, over blank lines, and one no table follows stays invisible. The reading view offers the same three choices when a table is tapped: the menu writes, replaces or removes the comment above that table as an ordinary (undoable) editor edit, and reads back what the table is wearing now — the nearest directive above it, the way the renderer reads it. src/markdown.ts (TABLE_DIRECTIVE), src/main.ts (openTableDirectionMenu); a nested table never takes the next table's comment.
 - [x] **Wide tables pan in the reading view.** Every table now renders inside a `.table-wrapper` (src/markdown.ts): the wrapper scrolls sideways while the table keeps its natural width — the old `max-width: 100%` squeezed the cells until nothing was readable. Narrow tables stay centred, and the wrapper carries the paragraph spacing so nothing moves. src/style.css; tests/tables.spec.ts pans a 16-column table and centres a small one.
 - [x] **A table splits so that pages stay full and no row is stranded.** First cut was a blanket `break-inside: avoid` — the whole table moved to the next page, which emptied the foot of a page because a single row didn't fit. Now tables split freely at row boundaries (Paged.js, `tr { break-inside: avoid }` for single rows) and the keepTableRows hook (src/printTables.ts, chained after keepHeadingWithContent on the chunker's onOverflow) moves the break when it would strand fewer than three body rows on either side — a foot with under three rows pulls the whole table over (bounded waste: under three rows of paper), a carry of under three pulls the break back just far enough instead. The quantity that matters on the carry side is what the break is about to render past the cut (the fragment less the placed rows), which is local to the page — the first cut of this hook looked the rows up in the content template and corrected by coincidence. The header is shell, not a counted row, and does not repeat on the continuation. A table taller than a page still prints all its rows. tests/tables.spec.ts holds all of it: unsplit when it fits, 5/3 at a genuine boundary, the stranded foot, both carry cases and the give-back-too-far whole move, 41 rows of an over-tall table.
 - [x] **Pictures print at reading size.** The only print cap was `max-width: 100%` and `max-height: 22cm` — an unsized portrait photo printed most of a page tall. An unsized picture is capped at 9 cm tall (about the width of a phone's reading column); a `|300`-style size from the note still wins up to the caps, and Settings → PDF custom CSS still has the last word. tests/tables.spec.ts prints both.
+
+### The 0.10.0 round: caret, launch, typing band, chrome (October 2026)
+
+The follow-up on the same `dev` line. Remaining asks stay in PLAN.md.
+
+- [x] **On a Persian line the caret follows the line**, not the last letter, except an inline `$…$` which is its own LTR run. Number runs stay walkable: CM6 separators (`, . :`, `# $ %` and currency, `/` `-`) are LTR-isolated; at a number's start the assoc is −1, at its end +1.
+- [x] **Timestamp chips isolate in their own direction** — English relative LTR, Persian relative RTL — so a chip at the start of a Persian block reads `4 hours ago`, not `hours ago 4`.
+- [x] **Empty-tab launch is the logo**, 480ms, not a flash of the last note. Resume is supposed to stay on the empty tab too (`cd41b54`); that still wants an APK check.
+- [x] **Typing keep-out is three body lines** (`defaultLineHeight × 3`) above the caret, and edit ⇄ preview use that same band, not the glass. Outline still uses two thirds.
+- [x] **Hold the tabs button** for New, Reopen, Close all, Close other, Close current (Close all first, Close current last).
+- [x] **Notices sit in the files / preview gap**, a rectangle whose ends are those two circles, same gray as the LaTeX bar, fade in place. Overlay pages keep the old banner. The convert bar unfolds and folds by height, 2500ms receipt, arrows and label on one row.
+- [x] **Persian inside a formula is XB Zar**; Latin stays KaTeX_Main first. The note body stays Vazirmatn.
+- [x] **Selection rows meet at the midpoint** of the line spacing — no stripe of unselected gap, no overlap.
+- [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.10.0**.
 
 ### The selection is the platform's, exactly as Obsidian's is (the closing block of the 0.8.0 round, before the tag)
 

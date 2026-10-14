@@ -168,3 +168,28 @@ test('display math reads and moves left to right, whatever the note says', async
   await page.keyboard.press('ArrowRight');
   expect((await caret(page)).head, '→ on the Persian line moves back').toBe(p.head - 1);
 });
+
+test('a line that is nothing but a date takes the line above its direction and walks one a press', async ({ page }) => {
+  // A date has no letter of its own, so it continues the line above it
+  // (src/direction.ts) instead of being pinned LTR — the caret then rests and
+  // walks on that line's own side, exactly like a line of Persian prose.
+  const persian = 'سلام این یک خط فارسی است';
+  const date = '2026-10-11';
+  await page.addInitScript(() => localStorage.clear());
+  await boot(page, `${persian}\n${date}\n`);
+  const dirs = await page.evaluate(() => [...document.querySelectorAll('#app .cm-line')].map((el) => el.getAttribute('dir')));
+  expect(dirs[0]).toBe('rtl');
+  expect(dirs[1]).toBe('rtl'); // the date line wears the line above's direction...
+  expect(dirs[1]).not.toBe('ltr'); // ...never a forced ltr
+  const dateFrom = persian.length + 1;
+  for (const [key, dir] of [['ArrowRight', 1], ['ArrowLeft', -1]] as const) {
+    await place(page, dateFrom + 5);
+    const before = await caret(page);
+    await page.keyboard.press(key);
+    const after = await caret(page);
+    const step = -dir; // the line is RTL: the visual right is the previous position
+    expect(after.head, `${key} steps one position on the date line`).toBe(before.head + step);
+    expect(after.assoc, `${key} keeps the line's own side`).toBe(1);
+    expect(after.x, `${key} paints the position it moved to, on the line's side`).toBe(after.ownSide);
+  }
+});

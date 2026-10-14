@@ -55,9 +55,43 @@ test('the reading view shows the time for a timestamp, and leaves code alone', a
     return renderMarkdown(note);
   }, NOTE);
   expect(html).toContain('class="discord-timestamp"');
+  expect(html).toContain('dir="ltr"');
   expect(html.match(/class="discord-timestamp"/g)?.length).toBe(2); // the code span is not one
   expect(html).toContain('data-format="F"');
   expect(html).toMatch(/<code[^>]*>&lt;t:1700000000:R&gt;<\/code>/);
+});
+
+test('in a Persian line an English relative chip stays 4 hours ago, not hours ago 4', async ({ page }) => {
+  const ago = Math.floor(Date.now() / 1000) - 4 * 3600;
+  const note = `سلام <t:${ago}:R> دنیا\n`;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((body) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', body);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+  }, note);
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+  const chip = page.locator('#app .cm-lp-timestamp');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toHaveAttribute('dir', 'ltr');
+  const report = await chip.evaluate((el) => {
+    const node = el.firstChild as Text;
+    const first = document.createRange();
+    first.setStart(node, 0);
+    first.setEnd(node, 1);
+    const last = document.createRange();
+    last.setStart(node, Math.max(0, node.length - 3));
+    last.setEnd(node, node.length);
+    return {
+      text: el.textContent ?? '',
+      firstX: Math.round(first.getBoundingClientRect().left),
+      lastX: Math.round(last.getBoundingClientRect().left),
+    };
+  });
+  expect(report.text, JSON.stringify(report)).toMatch(/\d+ hours ago/);
+  expect(report.firstX, JSON.stringify(report)).toBeLessThan(report.lastX);
 });
 
 test('in the editor the time shows, and the code comes back when the cursor is on it', async ({ page }) => {

@@ -74,10 +74,20 @@ export function initDrawers(options: DrawerOptions) {
   }
   /** Back to the steady state given by the body class (no visible jump). */
   function clear(side: Side): void {
-    for (const el of all(side)) { el.style.transition = ''; el.style.transform = ''; }
+    // Keep transition suppressed: restoring it in the same turn as dropping
+    // a fill:forwards animation lets Chrome ease .workspace back to identity
+    // (the note slides home while the drawer stays open).
+    for (const el of all(side)) {
+      el.style.transition = 'none';
+      el.style.transform = '';
+    }
     panels[side].style.visibility = '';
     backdrop.style.display = '';
     backdrop.style.opacity = '';
+    requestAnimationFrame(() => {
+      if (settleSide === side) return;
+      for (const el of all(side)) el.style.transition = '';
+    });
   }
   function cancelSettle(): void {
     if (settleSide === null) return;
@@ -112,13 +122,15 @@ export function initDrawers(options: DrawerOptions) {
         [{ transform: `translate3d(${s * from}px,0,0)` }, { transform: `translate3d(${s * end}px,0,0)` }], timing)),
       backdrop.animate([{ opacity: w ? from / w : 0 }, { opacity: open ? 1 : 0 }], timing),
     ];
-    settleAnims[0].onfinish = () => {
+    const lead = settleAnims[0];
+    lead.onfinish = () => {
+      if (settleAnims[0] !== lead) return;
       document.body.classList.toggle(classes[side], open);
-      clear(side);
       for (const anim of settleAnims) anim.cancel();
       settleAnims = [];
       settleSide = null;
       settleTarget = null;
+      clear(side);
       options.onSettled?.(side, open);
     };
   }
@@ -225,10 +237,14 @@ export function initDrawers(options: DrawerOptions) {
       // table (data-pan-x, src/markdown.ts) owns horizontal drags in BOTH
       // directions: it used to hand the gesture to the drawer at its scroll
       // edge — exactly when a reader pulling the table back to its first
-      // column had the whole page slide out from under the finger.
+      // column had the whole page slide out from under the finger. Only a
+      // table with something to pan owns it, though: the wrapper carries
+      // data-pan-x whether or not its table is wider than the pane, and a
+      // table that fits is not a reason to refuse the drawer (the check
+      // used to sit above the width test, so every table did).
       for (let el = event.target as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
-        if (el.dataset.panX !== undefined) { abort(); return; }
         if (el.scrollWidth <= el.clientWidth) continue;
+        if (el.dataset.panX !== undefined) { abort(); return; }
         if (!['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) continue;
         if ((dx > 0 && el.scrollLeft > 0) || (dx < 0 && el.scrollLeft < el.scrollWidth - el.clientWidth - 1)) {
           abort(); return;
@@ -266,7 +282,13 @@ export function initDrawers(options: DrawerOptions) {
     engaged = false;
     id = -1;
   };
-  document.addEventListener('touchend', (event) => finish(event), { passive: true, capture: true });
+  document.addEventListener('touchend', (event) => {
+    const took = engaged;
+    finish(event);
+    // A swipe that started on the note would otherwise synthesise a click
+    // there: caret at the pointer, then the browser pulls the page back.
+    if (took) event.preventDefault();
+  }, { passive: false, capture: true });
   document.addEventListener('touchcancel', (event) => finish(event, true), { passive: true, capture: true });
 
   backdrop.addEventListener('click', () => {

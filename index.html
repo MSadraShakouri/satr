@@ -2,7 +2,7 @@
 <html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual" />
     <meta name="theme-color" content="#101418" />
     <title>Satr</title>
     <link rel="icon" type="image/png" href="/icon-192.png" />
@@ -10,15 +10,51 @@
   <body>
     <div id="app"></div>
     <script>
-      // Cold start: paint the last screen now, before the app's code loads
-      // (src/snapshot.ts keeps it; the app lifts it off once it's ready).
+      // Cold start: a cover before the app's code loads (src/snapshot.ts
+      // lifts it). Restore-last paints the last screen. An empty-tab launch
+      // (or no copy) paints the logo instead, so the last note never flashes.
       (function () {
+        window.__satrCoverAt = Date.now();
+        function splash(bg) {
+          var cover = document.createElement('div');
+          cover.id = 'boot-snapshot';
+          cover.className = 'is-splash';
+          cover.setAttribute('aria-hidden', 'true');
+          cover.setAttribute('inert', '');
+          cover.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:' + bg + ';pointer-events:none';
+          var img = document.createElement('img');
+          img.src = '/icon-192.png';
+          img.width = 96;
+          img.height = 96;
+          img.alt = '';
+          cover.appendChild(img);
+          document.body.appendChild(cover);
+          setTimeout(function () { cover.remove(); }, 6000);
+        }
+        function emptyLaunch() {
+          try {
+            var settings = JSON.parse(localStorage.getItem('satr:settings') || '{}');
+            var launch = settings.launchTabs || 'last';
+            if (launch === 'empty') return true;
+            if (launch !== 'away') return false;
+            var since = Number(localStorage.getItem('satr:awayAt') || 0);
+            var minutes = Number(settings.newTabAfterMinutes);
+            if (!(minutes > 0)) minutes = 30;
+            return since > 0 && Date.now() - since >= minutes * 60 * 1000;
+          } catch (e) { return false; }
+        }
         try {
           var s = JSON.parse(localStorage.getItem('satr:snapshot') || 'null');
-          if (!s || s.v !== 1 || s.w !== window.innerWidth || Math.abs(s.h - window.innerHeight) > 160) return;
-          var root = document.documentElement;
-          if (s.root) root.className = s.root;
-          if (s.style) root.setAttribute('style', s.style);
+          if (s && s.v === 1) {
+            if (s.root) document.documentElement.className = s.root;
+            if (s.style) document.documentElement.setAttribute('style', s.style);
+          }
+          var dark = document.documentElement.className.indexOf('theme-dark') >= 0;
+          var bg = dark ? '#101418' : '#ffffff';
+          if (emptyLaunch() || !s || s.v !== 1 || s.w !== window.innerWidth || Math.abs(s.h - window.innerHeight) > 160) {
+            splash(bg);
+            return;
+          }
           if (s.body) document.body.className = s.body;
           var css = null;
           if (s.css) {
@@ -41,6 +77,7 @@
           setTimeout(function () { cover.remove(); if (css) css.remove(); }, 6000);
         } catch (e) {
           localStorage.removeItem('satr:snapshot');
+          splash('#ffffff');
         }
       })();
     </script>

@@ -1,3 +1,5 @@
+import { strongDirection } from './direction';
+
 // Discord-style timestamps: <t:UNIX> or <t:UNIX:FORMAT>, UNIX in seconds.
 // The formats are Discord's: t short time, T long time, d short date, D long
 // date, f (the default) date and short time, F the same with the weekday, and
@@ -5,7 +7,9 @@
 // it is on screen. The text follows the date style set in Settings → Dates
 // (main.ts applies it through setTimestampStyle): the app's own language by
 // default — never the device's — with Gregorian or Persian (Jalali) months.
-// The note keeps the code as written.
+// The note keeps the code as written. The chip is an isolate in that
+// language’s direction, so “4 hours ago” does not become “hours ago 4”
+// inside a Persian line.
 
 export const TIMESTAMP_FORMATS = ['t', 'T', 'd', 'D', 'f', 'F', 'R'] as const;
 export type TimestampFormat = (typeof TIMESTAMP_FORMATS)[number];
@@ -60,6 +64,17 @@ const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['second', 1],
 ];
 
+/** The chip’s own direction: English “4 hours ago” is LTR, Persian
+ *  relative is RTL — never the surrounding line’s. Digits-only falls
+ *  back to LTR so the formatted order is kept. */
+export function timestampDir(text: string): 'ltr' | 'rtl' {
+  return strongDirection(text) ?? 'ltr';
+}
+
+function wearDir(el: HTMLElement, text: string): void {
+  el.dir = timestampDir(text);
+}
+
 /** The text a timestamp shows. `now` is in milliseconds. */
 export function formatTimestamp(seconds: number, format: TimestampFormat, now = Date.now()): string {
   const date = new Date(seconds * 1000);
@@ -94,7 +109,7 @@ export function fullTimestamp(seconds: number): string {
 export function timestampTag(seconds: number, format: TimestampFormat): string {
   const text = formatTimestamp(seconds, format);
   const escape = (value: string): string => value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
-  return `<time class="discord-timestamp" data-ts="${seconds}" data-format="${format}" title="${escape(fullTimestamp(seconds))}">${escape(text)}</time>`;
+  return `<time class="discord-timestamp" dir="${timestampDir(text)}" data-ts="${seconds}" data-format="${format}" title="${escape(fullTimestamp(seconds))}">${escape(text)}</time>`;
 }
 
 /** Brings every relative timestamp on the page up to date. */
@@ -102,6 +117,7 @@ export function refreshTimestamps(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>('.discord-timestamp[data-format="R"]').forEach((el) => {
     const next = formatTimestamp(Number(el.dataset.ts), 'R');
     if (next && el.textContent !== next) el.textContent = next;
+    if (next) wearDir(el, next);
   });
 }
 
@@ -114,6 +130,7 @@ export function restyleTimestamps(root: ParentNode = document): void {
     if (!Number.isFinite(seconds) || !format) return;
     const text = formatTimestamp(seconds, format);
     if (text && el.textContent !== text) el.textContent = text;
+    if (text) wearDir(el, text);
     el.title = fullTimestamp(seconds);
   });
 }
