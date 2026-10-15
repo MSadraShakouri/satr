@@ -5,7 +5,7 @@ import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/lang
 import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
-import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
+import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, Transaction, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
@@ -390,6 +390,14 @@ function enterAtCaret(view: EditorView): boolean {
   return enterDisplayMath(view) || enterCodeFence(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
+/** The spaces a keyboard or another app may send for the ones we type: a
+ *  no-break space (what an Android keyboard puts in for a space in some
+ *  layouts) reads as a space for every check below. Only the checks — the
+ *  text the writer pasted and typed stays exactly as it came. */
+function spaced(text: string): string {
+  return text.replace(/[\u00A0\u2007\u202F\u2009]/g, ' ');
+}
+
 /** An item line holding nothing but its box: the line a pasted to-do item is
  *  about to land on. */
 const EMPTY_TASK_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*$/;
@@ -414,32 +422,55 @@ const TASK_ITEM_LINE = /^[ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\]([ \t]
  * exactly as the platform pastes it.
  */
 export function pastedOverEmptyTask(lineText: string, clip: string): string | null {
-  if (!EMPTY_TASK_LINE.test(lineText)) return null;
+  if (!EMPTY_TASK_LINE.test(spaced(lineText))) return null;
   const lines = clip.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
-  if (!TASK_ITEM_LINE.test(lines[0])) return null;
-  const indent = /^[ \t]*/.exec(lineText)![0];
+  if (!TASK_ITEM_LINE.test(spaced(lines[0]))) return null;
+  const indent = /^[ \t\u00A0\u202F]*/.exec(lineText)![0];
   // The first line takes the empty item's place (its indent is the line's
-  // own), the lines after it follow under it, blank ones left blank.
-  return indent + lines[0].trimStart()
-    + lines.slice(1).map((rest) => (rest.trim() ? `\n${indent}${rest}` : '\n')).join('');
+  // own), the lines after it follow under it, blank ones left blank. A
+  // no-break space a keyboard or another app sent in place of a space is
+  // written as a space, wherever it falls: the text is the writer's, but a
+  // `- [ ]` box with anything else inside its brackets is not a to-do at all.
+  return indent + spaced(lines[0]).trimStart()
+    + lines.slice(1).map((rest) => (spaced(rest).trim() ? `\n${indent}${spaced(rest)}` : '\n')).join('');
 }
 
-/** The paste handler as the editor uses it: a paste onto an empty to-do line
- *  is the one the app takes over (see `pastedOverEmptyTask`). */
-function pasteOverEmptyTask(event: ClipboardEvent, view: EditorView): boolean {
-  const selection = view.state.selection.main;
-  if (!selection.empty) return false;
-  const line = view.state.doc.lineAt(selection.head);
-  const replaced = pastedOverEmptyTask(line.text, event.clipboardData?.getData('text/plain') ?? '');
-  if (replaced === null) return false;
-  view.dispatch({
+/**
+ * The same rule, run on the transaction rather than on the paste event, and
+ * there is a reason it has to be that way round: a paste reaches the editor by
+ * more than one road. On a desktop the platform's own `paste` event arrives
+ * with the clipboard on it, but on a phone the keyboard's own clipboard
+ * (Gboard's, for one) hands the text to the WebView as an ordinary input
+ * change, with no `paste` event at all — which is why a fix written into a
+ * paste listener helped only the desktop-shaped case. Every road ends as the
+ * same change to the same line, so the rule is written against the change.
+ *
+ * Only `input.*` events are looked at: a note being loaded, a session coming
+ * back, an external reload and the app's own rewrites carry no user event and
+ * are left exactly as they are. One change, inside one line, at a time — a
+ * paste over a selection that spans lines is the writer's own business.
+ */
+const taskPastedOnEmptyLine = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.annotation(listRenumber)) return tr;
+  const event = tr.annotation(Transaction.userEvent);
+  if (!event || !event.startsWith('input.')) return tr;
+  const inserts: { fromA: number; toA: number; text: string }[] = [];
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    inserts.push({ fromA, toA, text: inserted.toString() });
+  });
+  if (inserts.length !== 1) return tr;
+  const change = inserts[0];
+  const line = tr.startState.doc.lineAt(change.fromA);
+  if (change.fromA < line.from || change.toA > line.to) return tr;
+  const replaced = pastedOverEmptyTask(line.text, change.text);
+  if (replaced === null) return tr;
+  return {
     changes: { from: line.from, to: line.to, insert: replaced },
     selection: { anchor: line.from + replaced.length },
-    userEvent: 'input.paste',
-  });
-  event.preventDefault();
-  return true;
-}
+    userEvent: event,
+    scrollIntoView: tr.scrollIntoView,
+  };
+});
 
 /** The toolbar's "new line below": Enter at the end of the line. The caret
  *  moves there first, so a list continues — the writer's own number, or a
@@ -829,7 +860,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -865,9 +896,6 @@ export class SatrEditor {
       })),
       headingFolding,
       wikiLinks,
-      EditorView.domEventHandlers({
-        paste: (event, view) => pasteOverEmptyTask(event, view),
-      }),
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ dir: 'auto' }),
