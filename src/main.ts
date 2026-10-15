@@ -290,6 +290,10 @@ let fileBase = stem(filePath);
 interface FileVersion { text: string; mtime: number }
 let diskBase: { path: string; text: string; mtime: number } | null = null;
 let activeSave: Promise<boolean> | null = null;
+/** The open note's file is being moved (the title's ✓) right now. A save that
+ *  arrives while it is set waits for it and writes to the name the file landed
+ *  on, so the name it came from can never be written back to life. */
+let pathMove: Promise<void> | null = null;
 /** Names in the open note's folder (lower case), for checking a new title as you type. */
 let siblingNames = new Set<string>();
 async function loadSiblings(): Promise<void> {
@@ -543,6 +547,8 @@ async function overwriteConflict(conflict: SaveConflict): Promise<void> {
 }
 
 async function saveNow(): Promise<boolean> {
+  // The note's file is moving: wait for it, then save to where it landed.
+  if (pathMove) await pathMove;
   window.clearTimeout(saveTimer);
   saveTimer = undefined;
   const path = filePath;
@@ -555,6 +561,7 @@ async function saveNow(): Promise<boolean> {
     const pending = activeSave;
     let previousSave = false;
     try { previousSave = await pending; } catch { /* the owner already reported its error */ }
+    if (pathMove) await pathMove; // it may have moved while the other save ran
     if (!previousSave || filePath !== path) return false;
     const current = editor.getValue();
     if (diskBase?.path !== path || current !== diskBase.text) return saveNow();
@@ -755,32 +762,9 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
   onRename: (base) => {
     if (isExternalPath(filePath)) return 'Files opened from another app cannot be renamed in Satr';
     if (nameTaken(base)) return 'There is already a file with that name';
-    const from = filePath;
-    const oldBase = fileBase;
-    const to = joinPath(dirname(from), `${base}.md`);
-    editor.setReadOnly(true); // avoid edits racing the path move
-    void (async () => {
-      try {
-        if (!await saveNow()) { fileBase = oldBase; editor.setTitle(oldBase); setPreviewTitle(); return; }
-        const exists = await backend.stat(from);
-        if (exists) await backend.rename(from, to);
-        else {
-          if (await backend.stat(to)) throw new Error('Something with that name already exists');
-          await backend.write(to, editor.getValue());
-        }
-        pathMoved(from, to);
-        const [text, entry] = await Promise.all([backend.read(to), backend.stat(to)]);
-        diskBase = { path: to, text: text ?? editor.getValue(), mtime: entry?.mtime ?? 0 };
-        void loadSiblings();
-      } catch (error) {
-        fileBase = oldBase;
-        editor.setTitle(oldBase);
-        setPreviewTitle();
-        leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
-      } finally {
-        editor.setReadOnly(false);
-      }
-    })();
+    void moveNote(filePath, joinPath(dirname(filePath), `${base}.md`), fileBase);
+    // The new name is shown at once — a ✓ is a name, not a promise — and a
+    // move that cannot be made puts the old one back (moveNote).
     fileBase = base;
     setPreviewTitle();
     return null;
@@ -1177,6 +1161,73 @@ async function openFile(path: string, after?: () => void): Promise<void> {
 async function stepTab(step: number): Promise<void> {
   await switchTab(activeTab + step);
 }
+/** The title's ✓: the open note's file moves to a new name.
+ *
+ *  The note is not held read-only for it. That took the whole editor away and
+ *  gave it back — two re-renders of the note — for a move of the same bytes,
+ *  and on the device it stayed dead for every bridge round trip in between,
+ *  which is what the reader saw as the ✓ being slow. What the read-only hold
+ *  really guarded is a save racing the move; that is guarded directly, by
+ *  `pathMove` (see saveNow): a save made while the file is moving waits for the
+ *  move and goes to the new name, so the old name cannot come back to life. */
+async function moveNote(from: string, to: string, oldBase: string): Promise<void> {
+  if (pathMove) await pathMove; // one move at a time: a second name waits for the first
+  const name = stem(to); // the name the reader asked for
+  if (filePath !== from) { // the note moved under us meanwhile: the name still applies
+    from = filePath;
+    to = joinPath(dirname(from), `${name}.md`);
+    oldBase = stem(from);
+  }
+  // A note whose text is already on disk is not written again: saving reads the
+  // file and stats it first — two round trips the device pays for and the web
+  // version does not, which is why this was never slow in the browser.
+  const clean = !activeSave && diskBase?.path === from && diskBase.text === editor.getValue();
+  if (!clean && !await saveNow()) {
+    fileBase = oldBase;
+    editor.setTitle(oldBase);
+    setPreviewTitle();
+    return;
+  }
+  // What the disk holds now: what the save just wrote, or the version that was
+  // read for a clean note — the same text the editor holds either way.
+  const onDisk = diskBase?.path === from ? diskBase.text : editor.getValue();
+  const move = moveFile(from, to, onDisk);
+  pathMove = move;
+  try { await move; } finally { if (pathMove === move) pathMove = null; }
+}
+
+async function moveFile(from: string, to: string, onDisk: string): Promise<void> {
+  try {
+    try {
+      await backend.rename(from, to);
+    } catch (error) {
+      // A name the disk already has is the rename refusing, and that refusal is
+      // what the reader is told. A file that is not there to move (deleted
+      // outside Satr while the note was open) is not a refusal: the text is
+      // written under the new name instead. Asking the disk which of the two it
+      // was costs a round trip only when the rename has already failed.
+      if (await backend.stat(to)) throw error;
+      await backend.write(to, onDisk);
+    }
+    pathMoved(from, to); // the open note, the tabs, the history and the tree
+    // The file holds exactly the text that was just written, so nothing is read
+    // back to learn what we already know. The real modification time follows
+    // without being waited for — it is only ever shown in a conflict dialog,
+    // and any save corrects it long before then.
+    diskBase = { path: to, text: onDisk, mtime: Date.now() };
+    void backend.stat(to).then((entry) => {
+      if (entry && diskBase?.path === to && diskBase.text === onDisk) diskBase.mtime = entry.mtime;
+    }, () => {});
+  } catch (error) {
+    if (filePath === from) { // the move never happened: the note keeps its old name
+      fileBase = stem(from);
+      editor.setTitle(stem(from));
+      setPreviewTitle();
+    }
+    leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
 /** A file or folder moved (renamed): the open note, history and view memory follow. */
 function pathMoved(from: string, to: string): void {
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
