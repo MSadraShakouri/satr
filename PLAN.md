@@ -71,9 +71,9 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [x] sometimes left sidebar doesn't move the main page, it moves at first but doesn't stay and goes back to place, bug
 
-- [ ] the /folder X files, Y folders doesn't even show, maybe remove it or take it somewhere else, even the folder name truncates, maybe remove it or wrap it? If wrapping, the file and folder count should be something separate and on another line
+- [x] the /folder X files, Y folders doesn't even show, maybe remove it or take it somewhere else, even the folder name truncates, maybe remove it or wrap it? If wrapping, the file and folder count should be something separate and on another line (done in this patch, as asked: the counts are on a line of their own under the path, and a long name or path wraps to two lines instead of pushing them out; a folder browsed in the walker counts what is in it, the space counts everything under it; needs testing)
 
-- [ ] at the top of the right sidebar, show word and char count possibly below the file name
+- [x] at the top of the right sidebar, show word and char count possibly below the file name (done in this patch: "12 words, 340 characters" under the note's name, kept in step with the note; the all-notes search, which names the space and not a note, says nothing; needs testing)
 
 - [ ] stuff like `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)` in RTL, the end of it isn't at the end (like numbers which had this issue)
 
