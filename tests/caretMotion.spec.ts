@@ -182,3 +182,91 @@ test('selecting the end of a date pins the caret to the line’s side', async ({
   expect(Math.abs(report.caretX! - report.digitLeft), JSON.stringify(report))
     .toBeLessThan(Math.abs(report.caretX! - report.digitRight));
 });
+
+// A markdown link or image inside an RTL line is one run of its own: `!`, `[`,
+// `]`, `(` and `)` are neutrals — the language they are written in gives them
+// no direction — and a neutral beside the paragraph's edge takes the
+// paragraph's own direction, so `![Screenshot…](_res/shot.png)` on a Persian
+// line drew as `) …png(] … ![`: the picture's `!` at the line's right edge, the
+// closing `)` at its left, the brackets between them. An isolate of its own
+// settles them where the markdown wrote them — the same one the digit runs get.
+// The characters are read off the painted boxes of the line, in document
+// order, so the test measures what the reader sees (the test editor draws in
+// its own host; the app's editor is behind it).
+async function paintedLine(page: Page, lineOf: string) {
+  return page.evaluate((needle) => {
+    const view = window.testEditor.view as unknown as { contentDOM: HTMLElement };
+    const line = [...view.contentDOM.querySelectorAll('.cm-line')]
+      .find((el) => (el.textContent ?? '').includes(needle)) as HTMLElement | undefined;
+    if (!line) return { missing: needle, text: [...view.contentDOM.querySelectorAll('.cm-line')].map((el) => el.textContent) };
+    const chars: { c: string; x: number }[] = [];
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+      const text = node.textContent ?? '';
+      for (let i = 0; i < text.length; i += 1) {
+        const range = document.createRange();
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        chars.push({ c: text[i], x: Math.round(range.getBoundingClientRect().left) });
+      }
+    }
+    return { dir: line.getAttribute('dir'), chars };
+  }, lineOf);
+}
+
+const rising = (run: { c: string; x: number }[]): boolean => run.every((p, i) => i === 0 || p.x >= run[i - 1].x);
+
+test('a markdown image on an RTL line reads left to right', async ({ page }) => {
+  const image = '![Screenshot_20261014-082559](_res/Screenshot_20261014-082559.png)';
+  await draft(page, `خط فارسی\n${image}\n`);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const painted = await paintedLine(page, image.slice(0, 12));
+  expect(painted.dir, JSON.stringify(painted)).toBe('rtl'); // the line really is RTL
+  const chars = painted.chars!;
+  expect(chars.map((p) => p.c).join('')).toBe(image);
+  // The construct's own order: every character further right than the one
+  // before it, from the `!` to the closing `)` — the "end of it" the reader
+  // asked for, at the end.
+  expect(rising(chars), JSON.stringify(chars.map((p) => `${p.c}@${p.x}`))).toBe(true);
+  expect(chars.at(-1)!.x - chars[0].x).toBeGreaterThan(100);
+});
+
+test('a Persian label keeps its direction and its address in one piece', async ({ page }) => {
+  const image = '![تصویر ۱۴۰۵](_res/Screenshot_20261014.png)';
+  await draft(page, `خط دیگر\n${image}\n`);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const painted = await paintedLine(page, 'تصویر');
+  const chars = painted.chars!;
+  expect(chars.map((p) => p.c).join('')).toBe(image);
+  const label = chars.slice(2, 2 + 'تصویر ۱۴۰۵'.length);
+  const address = chars.slice(chars.length - '(_res/Screenshot_20261014.png)'.length);
+  // The label is Persian: it reads right to left, as it should.
+  expect(label[0].x, JSON.stringify(label)).toBeGreaterThan(label.at(-1)!.x);
+  // The address and its parentheses are one LTR run, in order.
+  expect(address.map((p) => p.c).join('')).toBe('(_res/Screenshot_20261014.png)');
+  expect(rising(address), JSON.stringify(address.map((p) => `${p.c}@${p.x}`))).toBe(true);
+});
+
+test('the caret on the empty line between two math blocks sits at the left', async ({ page }) => {
+  // The reader's report: `$$ … $$`, one empty line, `$$ … $$` — the caret on
+  // that empty line stuck to the right, because the line carried the direction
+  // of the Persian prose above it. It is between two LTR blocks: it belongs to
+  // them, and the caret starts where they start.
+  await draft(page, ['متن فارسی', '', '$$x = 1$$', '', '$$y = 2$$', ''].join('\n'));
+  const report = await page.evaluate(() => {
+    const view = window.testEditor.view as unknown as {
+      state: { doc: { line(n: number): { from: number } } };
+      dispatch(spec: unknown): void;
+      coordsAtPos(pos: number, side?: number): { left: number } | null;
+      contentDOM: HTMLElement;
+    };
+    const line = view.state.doc.line(4); // 1-based: the empty line between them
+    view.dispatch({ selection: { anchor: line.from } });
+    const el = view.contentDOM.querySelectorAll('.cm-line')[3] as HTMLElement;
+    const box = el.getBoundingClientRect();
+    const caret = view.coordsAtPos(line.from, 1);
+    return { dir: el.getAttribute('dir'), caret: caret ? Math.round(caret.left) : -1, left: Math.round(box.left), right: Math.round(box.right) };
+  });
+  expect(report.dir, JSON.stringify(report)).toBe('ltr');
+  expect(Math.abs(report.caret - report.left), JSON.stringify(report)).toBeLessThan(4);
+});
