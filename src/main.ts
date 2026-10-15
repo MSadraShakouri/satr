@@ -803,18 +803,66 @@ window.addEventListener('satr:font-scale-change', () => {
 // Nothing hides while the keyboard is up.
 const LINE_PX = 16 * 1.5;
 const NAV_THRESHOLD = 0.125 * LINE_PX;
+// One move per beat. A bar's own hide/show animation runs for about this
+// long, and a second request inside that beat restarts it mid-flight: the bar
+// slides in, is told to go again, and what the reader sees is a flash. The two
+// ways that happened — a finger's jitter over the 3px threshold, and the
+// bounce that comes straight back to the top of the note — are both a
+// reversal, so a beat of quiet after the bars move covers them.
+//
+// The move that was held is not lost, and nothing has to be scrolled twice
+// for it: the anchor is left where the bars last moved (so the distance keeps
+// accumulating), and a timer asks again the moment the beat is over. A flick
+// that stops inside the beat still brings the bars back.
+const NAV_SETTLE_MS = 200;
+// A move the beat held back has to be a real one. The 3px threshold is right
+// for a gesture that is happening now, but a thumb resting on the glass
+// wobbles more than that, and a wobble inside the beat must not count: the
+// bars would come back and go away again, which is the flash. Four times the
+// threshold (12px) is a move the reader made.
+const NAV_HELD = NAV_THRESHOLD * 4;
 let navHidden = false;
+let navMovedAt = -Infinity;
+let navPending: { el: HTMLElement; hide: boolean; at: number } | null = null;
+let navTimer = 0;
+const navSettling = (): boolean => performance.now() - navMovedAt < NAV_SETTLE_MS;
 function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
+  navMovedAt = performance.now();
   document.body.classList.add('is-hidden-nav');
   void systemBars()?.hide().catch(() => undefined);
 }
 function restoreNavigation(): void {
   if (!navHidden) return;
   navHidden = false;
+  navMovedAt = performance.now();
   document.body.classList.remove('is-hidden-nav');
   void systemBars()?.show().catch(() => undefined);
+}
+/** The move a beat held back, remembered; applied when the beat is over if
+ *  the note is still on the side it asked for. */
+function holdNavigation(el: HTMLElement, hide: boolean): void {
+  // Where the note was when the move was first asked for. Later events in the
+  // same direction must not move that mark — the distance that counts is the
+  // one the reader has made since deciding, not since the last frame.
+  if (!navPending || navPending.el !== el || navPending.hide !== hide) navPending = { el, hide, at: el.scrollTop };
+  window.clearTimeout(navTimer);
+  navTimer = window.setTimeout(flushNavigation, Math.max(0, NAV_SETTLE_MS - (performance.now() - navMovedAt)) + 16);
+}
+function flushNavigation(): void {
+  const pending = navPending;
+  navPending = null;
+  if (!pending) return;
+  // Where the note was when the move was asked for, not where the anchor is:
+  // scrolls the app made itself drag the anchor to wherever they landed, so it
+  // says nothing about which way the finger was going.
+  const top = pending.el.scrollTop;
+  const moved = pending.at - top; // the way the move asked for: up
+  if (pending.hide ? -moved < NAV_HELD : moved < NAV_HELD) return;
+  scrollAnchors.set(pending.el, top);
+  if (pending.hide) hideNavigation();
+  else restoreNavigation();
 }
 const scrollAnchors = new WeakMap<Element, number>();
 let programmaticUntil = 0;
@@ -830,15 +878,31 @@ function onNavScroll(el: HTMLElement): void {
     return;
   }
   if (document.body.classList.contains('keyboard-open') || keyboardOverlap() > 120) { scrollAnchors.set(el, top); return; }
-  if (top <= 0) { scrollAnchors.set(el, 0); restoreNavigation(); return; }
+  if (top <= 0) {
+    // The top of the note always has the bars — but not while they are still
+    // moving: a bounce that comes straight back is the same gesture as the
+    // scroll that took them away, not a second one.
+    scrollAnchors.set(el, 0);
+    if (navSettling()) holdNavigation(el, false);
+    else restoreNavigation();
+    return;
+  }
   const delta = top - anchor;
   if (Math.abs(delta) < NAV_THRESHOLD) return;
+  const hide = delta > 0;
+  // The bars are already in the state this direction wants: nothing to
+  // change, and the anchor keeps up so a long scroll is not one change
+  // waiting to happen at its end.
+  if (hide === navHidden) { scrollAnchors.set(el, top); return; }
+  if (navSettling()) { holdNavigation(el, hide); return; } // the anchor stays where the bars moved
   scrollAnchors.set(el, top);
-  if (delta > 0) hideNavigation();
+  if (hide) hideNavigation();
   else restoreNavigation();
 }
 // mousedown, not pointerdown: on touch screens it only fires for taps, not
-// for the start of a scroll (same event Obsidian listens to).
+// for the start of a scroll (same event Obsidian listens to). A tap is a
+// deliberate gesture, so it restores the bars at once — the beat is for the
+// scroll that is still in progress, not for a finger that has stopped.
 window.addEventListener('mousedown', restoreNavigation);
 // For a moment after a note or the editing view is shown, its place is held:
 // a scroll nobody asked for (the caret being pulled into view while the

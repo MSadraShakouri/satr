@@ -153,12 +153,26 @@ public class SystemBarsPlugin extends Plugin {
         });
     }
 
-    /** Hide the status bar (scrolling down); a swipe shows it for a moment. */
+    /** Hide the status bar (scrolling down); a swipe shows it for a moment.
+     *
+     *  A bar that is already out of the way is not asked again, and one that
+     *  is already showing is not asked to show: every hide()/show() restarts
+     *  the bar's own animation, and a restart mid-flight is the flash the
+     *  reader sees (the bar arrives, leaves, arrives). The page's own state
+     *  can be a beat behind the window's — a swipe brings the bar back
+     *  without the page knowing — so the question is put to the window. */
+    private boolean statusBarShowing() {
+        WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getActivity().getWindow().getDecorView());
+        return insets == null || insets.isVisible(WindowInsetsCompat.Type.statusBars());
+    }
+
     @PluginMethod
     public void hide(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             Window window = getActivity().getWindow();
-            WindowCompat.getInsetsController(window, window.getDecorView()).hide(WindowInsetsCompat.Type.statusBars());
+            if (statusBarShowing()) {
+                WindowCompat.getInsetsController(window, window.getDecorView()).hide(WindowInsetsCompat.Type.statusBars());
+            }
             call.resolve();
         });
     }
@@ -167,7 +181,9 @@ public class SystemBarsPlugin extends Plugin {
     public void show(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             Window window = getActivity().getWindow();
-            WindowCompat.getInsetsController(window, window.getDecorView()).show(WindowInsetsCompat.Type.statusBars());
+            if (!statusBarShowing()) {
+                WindowCompat.getInsetsController(window, window.getDecorView()).show(WindowInsetsCompat.Type.statusBars());
+            }
             call.resolve();
         });
     }
