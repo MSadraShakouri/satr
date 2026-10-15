@@ -390,6 +390,57 @@ function enterAtCaret(view: EditorView): boolean {
   return enterDisplayMath(view) || enterCodeFence(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
+/** An item line holding nothing but its box: the line a pasted to-do item is
+ *  about to land on. */
+const EMPTY_TASK_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*$/;
+/** A line that is a to-do item: a marker, a box, and whatever the writer wrote
+ *  — `[ ]` or `[x]`, the space after the box optional (they type what they
+ *  type; the clip is theirs either way). */
+const TASK_ITEM_LINE = /^[ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\]([ \t]|$)/;
+
+/**
+ * Copying a to-do item onto an empty to-do line: the item goes where the
+ * writer is looking, so the empty box standing on that line steps aside
+ * instead of being left beside the pasted one — the paste used to leave two
+ * to-dos on the line (`- [ ] - [ ] milk`, or the copied item pushed in at the
+ * line's start), two of them where the writer meant one.
+ *
+ * The line that replaces the empty one, or `null` for a paste the app leaves
+ * alone. The pasted item keeps its own text and its own box (`[x]` comes over
+ * done), the line keeps its own indent, and the lines after the first follow
+ * under it at that indent, blank ones left blank. Everything else — an empty
+ * plain item, a line with text on it, a clip that is not a to-do item, a clip
+ * that does not begin with one — is the platform's own paste, and pastes
+ * exactly as the platform pastes it.
+ */
+export function pastedOverEmptyTask(lineText: string, clip: string): string | null {
+  if (!EMPTY_TASK_LINE.test(lineText)) return null;
+  const lines = clip.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
+  if (!TASK_ITEM_LINE.test(lines[0])) return null;
+  const indent = /^[ \t]*/.exec(lineText)![0];
+  // The first line takes the empty item's place (its indent is the line's
+  // own), the lines after it follow under it, blank ones left blank.
+  return indent + lines[0].trimStart()
+    + lines.slice(1).map((rest) => (rest.trim() ? `\n${indent}${rest}` : '\n')).join('');
+}
+
+/** The paste handler as the editor uses it: a paste onto an empty to-do line
+ *  is the one the app takes over (see `pastedOverEmptyTask`). */
+function pasteOverEmptyTask(event: ClipboardEvent, view: EditorView): boolean {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+  const line = view.state.doc.lineAt(selection.head);
+  const replaced = pastedOverEmptyTask(line.text, event.clipboardData?.getData('text/plain') ?? '');
+  if (replaced === null) return false;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: replaced },
+    selection: { anchor: line.from + replaced.length },
+    userEvent: 'input.paste',
+  });
+  event.preventDefault();
+  return true;
+}
+
 /** The toolbar's "new line below": Enter at the end of the line. The caret
  *  moves there first, so a list continues — the writer's own number, or a
  *  to-do line's checkbox — and no empty line appears under the text. */
@@ -814,6 +865,9 @@ export class SatrEditor {
       })),
       headingFolding,
       wikiLinks,
+      EditorView.domEventHandlers({
+        paste: (event, view) => pasteOverEmptyTask(event, view),
+      }),
       EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true),
       EditorView.contentAttributes.of({ dir: 'auto' }),

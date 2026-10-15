@@ -85,7 +85,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
 
-- [ ] copying an already to-do item to an empty to-do line should remove one of the to-dos, it pastes literally right now
+- [x] copying an already to-do item to an empty to-do line should remove one of the to-dos, it pastes literally right now
 
 - [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
 
