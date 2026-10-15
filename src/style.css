@@ -412,7 +412,7 @@ body {
 .preview-pane article {
   max-width: calc(var(--file-line-width) + 48px);
   margin: auto;
-  padding: var(--view-top-spacing-markdown) 24px 50vh;
+  padding: var(--view-top-spacing-markdown) 24px calc(50vh + var(--fold-slack, 0px));
   font-size: var(--note-font-size);
   line-height: var(--note-line-height);
   direction: ltr;
@@ -2462,10 +2462,12 @@ input.mod-no-match {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.workspace-drawer-header-info:empty {
+.workspace-drawer-header-info:empty,
+.workspace-drawer-count:empty {
   display: none;
 }
-.workspace-drawer-header-info {
+.workspace-drawer-header-info,
+.workspace-drawer-count {
   margin-top: 4px;
   overflow: hidden;
   color: var(--text-muted);
@@ -2473,6 +2475,19 @@ input.mod-no-match {
   text-overflow: ellipsis;
   white-space: nowrap;
   unicode-bidi: plaintext;
+}
+/* The foot of the left drawer: the folder it names — the space, or the folder
+   the walker is showing — and how much is in it. A name or path too long for
+   the drawer wraps to a second line instead of being cut off, and the counts
+   ("12 files, 3 folders") have a line of their own, so a long path can never
+   push them out of the header the way a shared line did. */
+.workspace-drawer.mod-left .workspace-drawer-vault-name:not(:empty),
+.workspace-drawer.mod-left .workspace-drawer-header-info:not(:empty) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .workspace-drawer-header-icons {
   display: flex;
@@ -2837,13 +2852,16 @@ input.mod-no-match {
   position: relative;
 }
 .mobile-navbar-tabs-number {
-  /* Over the whole button, centred the way the button centres its icon:
-     the digit's centre is the button's centre is the icon's centre, by
-     construction. The measured 26px square at 50% with a -50% translate
-     could drift from both (its own size, the button's, the icon's) and
-     left the digit off-centre; covering the button cannot. */
+  /* The icon's own square, on the icon: 26px is the size the icons are drawn
+     at (see .mobile-navbar-action svg), so the counted tab sits inside the
+     square rather than over the whole 52px button. */
   position: absolute;
-  inset: 0;
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2852,6 +2870,18 @@ input.mod-no-match {
   font-variant-numeric: tabular-nums;
   line-height: 1;
   pointer-events: none;
+}
+.mobile-navbar-tabs-digit {
+  /* Centring the digit means centring the digit, not the line box it is drawn
+     in: a line box is as tall as the font's ascent and descent, the digits sit
+     on the baseline with nothing under them, and where that leaves them inside
+     the box depends on the font — 3px high, for the font the app uses, which
+     is what the writer saw. Trimming the line box to the cap height and the
+     baseline is exactly the box the digits are drawn in, so centring that box
+     centres them, in any font at any size. (A browser without text-box support
+     ignores both lines and centres the line box, as before.) */
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 .mobile-tab-switcher {
   position: fixed;

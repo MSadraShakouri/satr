@@ -267,6 +267,23 @@ public class OpenFilePlugin extends Plugin {
         result.put("size", Math.max(0, size));
         result.put("modified", modifiedTime(id));
 
+        // A picture is never text. Decoding its bytes gave the page one
+        // replacement character per byte — a megabyte of them per megabyte of
+        // photo — and the page put that in the editor before it showed
+        // anything, which is what made opening an image slow and then stuck.
+        // A picture is handed over as the picture itself, when it is small
+        // enough to carry; a bigger one is still not read as text.
+        if (mime.startsWith("image/")) {
+            result.put("kind", "binary");
+            result.put("readOnly", true);
+            result.put("lossy", false);
+            if (size >= 0 && size <= MAX_PREVIEW_BYTES) {
+                byte[] preview = readLimited(uri, MAX_PREVIEW_BYTES);
+                if (preview != null) result.put("dataUrl", dataUrl(mime, preview));
+            }
+            return result;
+        }
+
         // Open it: clean UTF-8 as editable text, anything else as read-only
         // rubbish. Only a file too large to load is turned away.
         byte[] bytes = readLimited(uri, MAX_TEXT_BYTES);

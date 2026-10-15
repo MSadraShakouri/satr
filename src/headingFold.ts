@@ -8,6 +8,7 @@
 // the preview mirrors them (src/main.ts) and they are remembered per note.
 import { codeFolding, ensureSyntaxTree, foldable, foldEffect, foldedRanges, syntaxTree, unfoldEffect } from '@codemirror/language';
 import { RangeSetBuilder, type EditorState, type StateEffect } from '@codemirror/state';
+import { keepingPlace, releaseFoldSlack } from './foldSlack';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 
 const HEADING = /^(?:ATX|Setext)Heading([1-6])$/;
@@ -64,6 +65,17 @@ function chevronLine(view: EditorView, event: MouseEvent): HTMLElement | null {
   return (rtl ? event.clientX <= box.left + zone : event.clientX >= box.right - zone) ? line : null;
 }
 
+// CodeMirror pins the view to the bottom of the document whenever the height
+// changes while the reader is standing there (its measure loop anchors on
+// `isScrolledToBottom`) — the right instinct under a caret that is being typed
+// at, the wrong one under a finger that has just opened a section: the note
+// grows downwards and the view runs to the new foot of the page, which is the
+// "opening the title brings you to the end of the page" the reader reported. A
+// scroll snapshot taken before the change and dispatched with it is applied
+// ahead of that anchor in the same measure, so the position is the reader's
+// own, not the document's foot.
+const placeHolder = (view: EditorView): StateEffect<unknown> => view.scrollSnapshot();
+
 /** Fold or unfold the section under the heading on this (0-based) line. */
 export function toggleHeadingFold(view: EditorView, lineIndex: number): boolean {
   const { state } = view;
@@ -78,7 +90,8 @@ export function toggleHeadingFold(view: EditorView, lineIndex: number): boolean 
     if (!range) return false;
     effects.push(foldEffect.of(range));
   }
-  view.dispatch({ effects });
+  const place = placeHolder(view);
+  view.dispatch({ effects: [...effects, place] });
   return true;
 }
 
@@ -103,13 +116,15 @@ export function foldAllHeadings(view: EditorView): void {
       return false;
     },
   });
-  if (effects.length) view.dispatch({ effects });
+  const place = placeHolder(view);
+  if (effects.length) view.dispatch({ effects: [...effects, place] });
 }
 
 export function unfoldAllHeadings(view: EditorView): void {
   const effects: StateEffect<unknown>[] = [];
   foldedRanges(view.state).between(0, view.state.doc.length, (from, to) => { effects.push(unfoldEffect.of({ from, to })); });
-  if (effects.length) view.dispatch({ effects });
+  const place = placeHolder(view);
+  if (effects.length) view.dispatch({ effects: [...effects, place] });
 }
 
 /** Re-apply remembered folds, given as 0-based heading lines. */
@@ -128,6 +143,12 @@ export function restoreHeadingFolds(view: EditorView, lines: number[]): void {
 }
 
 export const headingFolding = [
+  // The lent room a fold may have taken (src/foldSlack.ts) is offered back on
+  // the first edit: the note has grown under the reader by then, and the room
+  // has served its purpose.
+  EditorView.updateListener.of((update) => {
+    if (update.docChanged) releaseFoldSlack(update.view.scrollDOM, update.view.contentDOM);
+  }),
   codeFolding({
     placeholderDOM(view, onclick) {
       // Obsidian's folded-section badge: a faint "…" after the heading.
@@ -145,7 +166,12 @@ export const headingFolding = [
       const line = chevronLine(view, event);
       if (!line) return false;
       event.preventDefault(); // no caret, no keyboard
-      toggleHeadingFold(view, view.state.doc.lineAt(view.posAtDOM(line)).number - 1);
+      const index = view.state.doc.lineAt(view.posAtDOM(line)).number - 1;
+      // The reader's place is kept across the fold, wherever the note happens
+      // to be (src/foldSlack.ts): a section folded at the foot of a page used
+      // to take its height out of the reader's place, and folding or opening
+      // the last title of a note walked them to the page's foot.
+      keepingPlace(view.scrollDOM, view.contentDOM, () => toggleHeadingFold(view, index));
       return true;
     },
   }),

@@ -109,3 +109,41 @@ test('print retains inferred dates, list items and footnotes without changing ma
   await expect(page.locator('.pagedjs_footnote_area .footnote').first()).toHaveAttribute('dir', 'rtl');
   await expect(page.locator('.math-display .katex').first()).toHaveCSS('direction', 'ltr');
 });
+// A blank line between two math (or code) blocks belongs to them: both
+// neighbours are LTR blocks, the empty line is part of the same flow, and the
+// caret on it belongs at the left, where they start — instead of at the right
+// because the note around them is Persian. Against prose on either side it
+// keeps the prose's direction, as before.
+test('a blank line between two math or code blocks is LTR', async ({ page }) => {
+  await page.goto('/');
+  const lines = await page.evaluate(async () => {
+    const { sourceDirections } = await window.__satr.load('/src/direction.ts');
+    return sourceDirections([
+      'متن فارسی',
+      '',
+      '$$x = 1$$',
+      '',
+      '$$y = 2$$',
+      '',
+      'متن فارسی دوم',
+      '',
+      '```',
+      'const a = 1;',
+      '```',
+      '',
+      '```',
+      'const b = 2;',
+      '```',
+      '',
+      'ادامه فارسی',
+    ].join('\n'));
+  });
+  expect(lines).toEqual([
+    'rtl', 'rtl',            // the prose and the blank line after it
+    'ltr', 'ltr', 'ltr',     // math, the blank line between, math
+    'rtl', 'rtl', 'rtl',     // the line against the prose below it
+    'ltr', 'ltr', 'ltr',     // code fence, body, fence
+    'ltr', 'ltr', 'ltr', 'ltr', // fence, body, fence, the blank line between the two blocks
+    'rtl', 'rtl',
+  ]);
+});

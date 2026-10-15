@@ -5,7 +5,7 @@ import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/lang
 import { tags } from '@lezer/highlight';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
 import { collectHeadings, type Heading } from './outline';
-import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
+import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, Transaction, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
@@ -24,7 +24,7 @@ import { typingTop } from './scrollSync';
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: 'var(--note-line-height)' },
-  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) calc(50vh + 96px)', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) calc(50vh + 96px + var(--fold-slack, 0px))', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });
@@ -389,6 +389,105 @@ function continueOnEnter(view: EditorView): boolean {
 function enterAtCaret(view: EditorView): boolean {
   return enterDisplayMath(view) || enterCodeFence(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
+
+/** A space a keyboard or another app may send in place of the one we type: a
+ *  no-break space in the line the item lands on, or inside the item itself,
+ *  is not the writer's point — it is the keyboard's, and a `- [ ]` box with
+ *  anything else between its brackets is not a to-do at all. So these read as
+ *  spaces both when a line is checked and when the pasted text is written
+ *  out. Every other character of what was pasted is kept as it came. */
+function spaced(text: string): string {
+  return text.replace(/[\u00A0\u2007\u202F\u2009]/g, ' ');
+}
+
+/** An item line holding nothing but its box: the line a pasted to-do item is
+ *  about to land on. */
+const EMPTY_TASK_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*$/;
+/** A line that is a to-do item: a marker, a box, and whatever the writer wrote
+ *  — `[ ]` or `[x]`, the space after the box optional (they type what they
+ *  type; the clip is theirs either way). */
+const TASK_ITEM_LINE = /^[ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\]([ \t]|$)/;
+
+/**
+ * Copying a to-do item onto an empty to-do line: the item goes where the
+ * writer is looking, so the empty box standing on that line steps aside
+ * instead of being left beside the pasted one — the paste used to leave two
+ * to-dos on the line (`- [ ] - [ ] milk`, or the copied item pushed in at the
+ * line's start), two of them where the writer meant one.
+ *
+ * The line that replaces the empty one, or `null` for a paste the app leaves
+ * alone. The pasted item keeps its own text and its own box (`[x]` comes over
+ * done), the line keeps its own indent, and the lines after the first follow
+ * under it at that indent, blank ones left blank. Everything else — an empty
+ * plain item, a line with text on it, a clip that is not a to-do item, a clip
+ * that does not begin with one — is the platform's own paste, and pastes
+ * exactly as the platform pastes it.
+ */
+export function pastedOverEmptyTask(lineText: string, clip: string): string | null {
+  if (!EMPTY_TASK_LINE.test(spaced(lineText))) return null;
+  const lines = clip.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
+  if (!TASK_ITEM_LINE.test(spaced(lines[0]))) return null;
+  const indent = /^[ \t\u00A0\u202F]*/.exec(lineText)![0];
+  // The first line takes the empty item's place (its indent is the line's
+  // own), the lines after it follow under it, blank ones left blank. A
+  // no-break space a keyboard or another app sent in place of a space is
+  // written as a space, wherever it falls: the text is the writer's, but a
+  // `- [ ]` box with anything else inside its brackets is not a to-do at all.
+  return indent + spaced(lines[0]).trimStart()
+    + lines.slice(1).map((rest) => (spaced(rest).trim() ? `\n${indent}${spaced(rest)}` : '\n')).join('');
+}
+
+/** Two to-dos on one line: the box that was standing there, and the item the
+ *  paste brought in beside it. What the writer sees when a paste lands and
+ *  nothing steps aside — the shape to put right, whatever the change looked
+ *  like on the way in. The item's own box and text are kept as they came. */
+const TWO_TASKS_ON_A_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+(\[[ xX]\])([ \t]*)(.*)$/;
+
+/**
+ * The same rule, run on the transaction rather than on the paste event, and
+ * there is a reason it has to be that way round: a paste reaches the editor by
+ * more than one road. On a desktop the platform's own `paste` event arrives
+ * with the clipboard on it, but on a phone the keyboard's own clipboard
+ * (Gboard's, for one) hands the text to the WebView as an ordinary input
+ * change, with no `paste` event at all — which is why a fix written into a
+ * paste listener helped only the desktop-shaped case. Every road ends as the
+ * same change to the same line, so the rule is written against the change.
+ *
+ * Only `input.*` events are looked at: a note being loaded, a session coming
+ * back, an external reload and the app's own rewrites carry no user event and
+ * are left exactly as they are. One change, inside one line, at a time — a
+ * paste over a selection that spans lines is the writer's own business.
+ */
+const taskPastedOnEmptyLine = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.annotation(listRenumber)) return tr;
+  const event = tr.annotation(Transaction.userEvent);
+  if (!event || !event.startsWith('input.')) return tr;
+  const inserts: { fromA: number; toA: number; text: string }[] = [];
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    inserts.push({ fromA, toA, text: inserted.toString() });
+  });
+  // The paste is the change that brought a to-do item: whichever road it came
+  // by, its first line is one, box and all.
+  const pasted = inserts.find((one) => TASK_ITEM_LINE.test(spaced(one.text.split('\n')[0])));
+  if (!pasted) return tr;
+  // Every change it made has to sit inside the one line it landed on: a paste
+  // that carries on across lines is the writer's own business.
+  const line = tr.startState.doc.lineAt(pasted.fromA);
+  if (inserts.some((one) => one.fromA < line.from || one.toA > line.to)) return tr;
+  const replace = (insert: string) => ({
+    changes: { from: line.from, to: line.to, insert },
+    selection: { anchor: line.from + insert.length },
+    userEvent: event,
+    scrollIntoView: tr.scrollIntoView,
+  });
+  const replaced = pastedOverEmptyTask(line.text, pasted.text);
+  if (replaced !== null) return replace(replaced);
+  // The line the empty one became, when the item went in beside the box: a
+  // change the DOM reader described in more than one piece can leave exactly
+  // that, and it is still one to-do the writer meant, not two.
+  const made = TWO_TASKS_ON_A_LINE.exec(tr.newDoc.lineAt(tr.changes.mapPos(line.from, 1)).text);
+  return made ? replace(`${made[1]}${made[3]} ${made[4]}${made[5]}${made[6]}`) : tr;
+});
 
 /** The toolbar's "new line below": Enter at the end of the line. The caret
  *  moves there first, so a list continues — the writer's own number, or a
@@ -778,7 +877,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw

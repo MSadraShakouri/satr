@@ -122,6 +122,9 @@ export function sourceDirections(markdown: string): TextDirection[] {
   const maskedText = masked.join('');
   const plainLines = plain.split('\n');
   const lines = maskedText.split('\n');
+  // Lines that are nothing but math or code: they never vote, never carry, and
+  // a blank line between two of them is part of their flow (see below).
+  const notProse: boolean[] = [];
   const units: DirectionUnit[] = lines.map((raw, index) => {
     const text = withoutSyntax(raw);
     const explicit = /<[a-z][^>]*\bdir\s*=\s*["'](rtl|ltr)["']/i.exec(raw)?.[1].toLowerCase() as TextDirection | undefined;
@@ -129,8 +132,23 @@ export function sourceDirections(markdown: string): TextDirection[] {
     const indentedCode = /^( {4}|\t)/.test(originalLines[index]) && (index === 0 || !originalLines[index - 1].trim() || /^( {4}|\t)/.test(originalLines[index - 1]));
     // A line that was nothing but math or code is not prose: it never votes.
     const wasMath = !text.trim() && withoutSyntax(plainLines[index]).trim() !== '';
+    notProse[index] = wasMath || indentedCode;
     return { own: explicit ?? strongDirection(text), heading, excluded: wasMath || indentedCode };
   });
+
+  // A blank line between two math (or code) blocks belongs to them, not to the
+  // prose around them: `$$ … $$`, an empty line, `$$ … $$` — the empty line is
+  // between two LTR blocks, so a caret on it sits at the left, where both
+  // blocks start, instead of at the right because the note is Persian. A blank
+  // line against prose on either side keeps the prose's direction, as before.
+  for (let i = 0; i < units.length; i += 1) {
+    if (originalLines[i].trim() !== '' || notProse[i]) continue;
+    let above = i - 1;
+    while (above >= 0 && originalLines[above].trim() === '') above -= 1;
+    let below = i + 1;
+    while (below < units.length && originalLines[below].trim() === '') below += 1;
+    if (above >= 0 && below < units.length && notProse[above] && notProse[below]) units[i] = { ...units[i], excluded: true };
+  }
 
   for (let i = 1; i < lines.length; i++) {
     if (!units[i].excluded && /^\s{0,3}(=+|-+)\s*$/.test(lines[i]) && lines[i - 1].trim() && !units[i - 1].excluded && !units[i - 1].heading) {

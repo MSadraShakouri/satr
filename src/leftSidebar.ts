@@ -42,6 +42,10 @@ export interface LeftSidebarDeps {
 
 type Sort = 'name' | 'name-desc' | 'mtime' | 'mtime-old';
 const SORT_KEY = 'satr:sort';
+const FOLLOW_KEY = 'satr:follow-active';
+/** A path the app made up for a file another app handed over
+ *  ("satr-open://…", src/main.ts) is not a folder on the phone. */
+const isIncomingPath = (path: string): boolean => path.includes('://');
 const SORT_LABEL: Record<Sort, string> = {
   name: 'File name (A to Z)', 'name-desc': 'File name (Z to A)', mtime: 'Modified time (new to old)', 'mtime-old': 'Modified time (old to new)',
 };
@@ -54,6 +58,8 @@ const ICONS = {
   newNote: icon('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>'),
   newFolder: icon('<path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
   sort: icon('<path d="m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4"/>'),
+  // "Always show the current file": a crosshair on the file being read.
+  locate: icon('<circle cx="12" cy="12" r="7"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>'),
   collapseAll: icon('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
   expandAll: icon('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'),
   up: icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
@@ -84,6 +90,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
           <button type="button" class="clickable-icon nav-action-button" data-act="new-folder" aria-label="New folder">${ICONS.newFolder}</button>
           <button type="button" class="clickable-icon nav-action-button" data-act="sort" aria-label="Change sort order">${ICONS.sort}</button>
           <button type="button" class="clickable-icon nav-action-button" data-act="collapse" aria-label="Collapse all">${ICONS.collapseAll}</button>
+          <button type="button" class="clickable-icon nav-action-button" data-act="follow" aria-label="Always show the current file" aria-pressed="false">${ICONS.locate}</button>
         </div>
       </div>
       <div class="workspace-drawer-header mod-vault-profile">
@@ -93,6 +100,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
             <span class="workspace-drawer-vault-switcher-icon">${ICONS.chevronDown}</span>
           </button>
           <div class="workspace-drawer-header-info" dir="auto"></div>
+          <div class="workspace-drawer-count" dir="auto"></div>
         </div>
         <div class="workspace-drawer-header-icons"></div>
       </div>
@@ -101,7 +109,9 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   const list = root.querySelector<HTMLElement>('.nav-files-container')!;
   const nameEl = root.querySelector<HTMLElement>('.workspace-drawer-vault-name')!;
   const infoEl = root.querySelector<HTMLElement>('.workspace-drawer-header-info')!;
+  const countEl = root.querySelector<HTMLElement>('.workspace-drawer-count')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
+  const followButton = root.querySelector<HTMLButtonElement>('[data-act="follow"]')!;
   const filterInput = root.querySelector<HTMLInputElement>('.nav-filter-input')!;
   const filterQuery = (): string => filterInput.value.trim().toLocaleLowerCase();
 
@@ -117,6 +127,18 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   loadExpanded();
   let renderToken = 0;
   let renaming: string | null = null;
+  // "Always show the current file", after Obsidian's setting of that name: the
+  // tree comes back to the file being read every time the file changes, however
+  // deep the reader had gone into a folder (in "All files", the walker follows
+  // the file's own folder). Off, the tree stays where it was put, as before.
+  // On by default, as Obsidian's setting is: a reader who has never touched it
+  // is shown the note they are in. Only the reader's own "0" turns it off.
+  let follow = localStorage.getItem(FOLLOW_KEY) !== '0';
+  followButton.classList.toggle('is-active', follow);
+  followButton.setAttribute('aria-pressed', String(follow));
+  /** The file the tree has already been brought to, so opening a folder by
+   *  hand is not undone before the reader moves to another file. */
+  let followedPath = '';
   /** The note the drawn tree belongs to; compared with the open one when the
    *  drawer comes back, so a highlight can never outlive the note it marks. */
   let renderedPath = deps.currentPath();
@@ -178,12 +200,16 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       html = await filterHtml(walking ? walkDir() : (scope as Extract<Scope, { kind: 'space' }>).space.path, token);
       if (token !== renderToken) return;
       if (!walking) infoEl.textContent = (scope as Extract<Scope, { kind: 'space' }>).space.path === scopeName(scope) ? '' : (scope as Extract<Scope, { kind: 'space' }>).space.path;
+      // The counts are the space's, not the filter's: they stay as they are
+      // while a filter narrows the list under them.
     } else if (walking) {
       const dir = walkDir();
       collapseButton.disabled = !dir;
       infoEl.textContent = dir ? `/${dir}` : backend.kind === 'web' ? 'Browser storage' : 'Internal storage';
       const entries = await list$(dir);
       if (token !== renderToken) return;
+      const files = entries.filter((entry) => entry.kind === 'file').length;
+      countEl.textContent = countOf(files, entries.length - files);
       html = (dir ? `<div class="tree-item nav-folder mod-parent"><div class="tree-item-self is-clickable nav-folder-title" data-path="${escapeHtml(dirname(dir))}" data-kind="parent" role="treeitem">`
         + `<div class="tree-item-icon nav-entry-icon">${ICONS.folder}</div><div class="tree-item-inner nav-folder-title-content">..</div></div></div>` : '')
         + entries.map((e) => `<div class="tree-item ${e.kind === 'folder' ? 'nav-folder' : 'nav-file'}">${rowHtml(e, { walker: true })}</div>`).join('');
@@ -192,7 +218,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       collapseButton.disabled = false;
       const space = (scope as Extract<Scope, { kind: 'space' }>).space;
       infoEl.textContent = space.path === space.name ? '' : space.path;
-      void showCount(space.path, space.path === space.name ? '' : space.path, token);
+      countEl.textContent = '';
+      void showCount(space.path, token);
       html = await treeHtml(space.path, token);
       if (token !== renderToken) return;
       if (!html) html = '<div class="pane-empty">No notes yet</div>';
@@ -200,12 +227,40 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     list.innerHTML = html;
     renderedPath = deps.currentPath();
     if (renaming) startRename(renaming);
+    if (follow) void showCurrent();
+  }
+
+  /** Bring the open note back into view: the folders above it open, the note is
+   *  marked, and the tree scrolls to it. Once per file — a folder folded by
+   *  hand stays folded until the reader moves to another note.
+   *
+   *  "All files" is a walker, not a tree: its folder is where the reader put it
+   *  (walking the storage is what that scope is for, and the folder is kept
+   *  across launches for it), so following never moves it. The note is brought
+   *  into view there only when the walker is already showing the folder it is
+   *  in — and never for a file this space does not hold. */
+  async function showCurrent(): Promise<void> {
+    const path = deps.currentPath();
+    if (!path || path === followedPath || isIncomingPath(path)) return;
+    followedPath = path;
+    if (scope.kind === 'space' && within(path, scope.space.path)) {
+      let changed = false;
+      for (let dir = dirname(path); dir && dir !== scope.space.path && within(dir, scope.space.path); dir = dirname(dir)) {
+        if (!expanded.has(dir)) { expanded.add(dir); changed = true; }
+      }
+      if (changed) { saveExpanded(); await render(); }
+    }
+    scrollActive();
   }
   // Filter by name: files and folders anywhere under the space (or the
   // walker's folder) whose name has every word typed, as a flat list with
   // the folder they're in; the matched text highlighted.
-  // Under the space's name, as Obsidian under the vault's: "12 files, 3 folders".
-  async function showCount(dir: string, prefix: string, token: number): Promise<void> {
+  // Under the space's name, as Obsidian under the vault's: "12 files, 3 folders"
+  // — on a line of its own, so a long path can never push the counts out of the
+  // header the way a shared line let it.
+  const countOf = (files: number, folders: number): string =>
+    `${files} ${files === 1 ? 'file' : 'files'}, ${folders} ${folders === 1 ? 'folder' : 'folders'}`;
+  async function showCount(dir: string, token: number): Promise<void> {
     let files = 0;
     let folders = 0;
     const queue = [dir];
@@ -216,8 +271,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
         if (entry.kind === 'folder') { folders += 1; queue.push(entry.path); } else files += 1;
       }
     }
-    const count = `${files} ${files === 1 ? 'file' : 'files'}, ${folders} ${folders === 1 ? 'folder' : 'folders'}`;
-    infoEl.textContent = prefix ? `${prefix} · ${count}` : count;
+    if (token !== renderToken) return;
+    countEl.textContent = countOf(files, folders);
   }
   async function filterHtml(dir: string, token: number): Promise<string> {
     const words = filterQuery().split(/\s+/).filter(Boolean);
@@ -460,6 +515,14 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       case 'new-note': deps.createNote(baseDir()); break;
       case 'new-folder': void newFolder(baseDir()); break;
       case 'sort': sortMenu(); break;
+      case 'follow':
+        follow = !follow;
+        localStorage.setItem(FOLLOW_KEY, follow ? '1' : '0');
+        followButton.classList.toggle('is-active', follow);
+        followButton.setAttribute('aria-pressed', String(follow));
+        followedPath = ''; // turning it on shows the file now, not next time
+        void render(); // and render's tail follows, when it is on
+        break;
       case 'collapse':
         if (scope.kind === 'all') { setWalkDir(dirname(walkDir())); void render(); break; }
         if (expanded.size) expanded.clear();
@@ -566,18 +629,19 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     refresh: render,
     /** Ask, then delete a note (the ≡ menu's Delete note). */
     deleteFile: (path: string) => remove(path, false),
-    /** Mark the open note, and open the folders above it (tree only). */
+    /** The note being read changed: mark it, and while "Always show the current
+     *  file" is on, bring it back into view — showCurrent opens the folders
+     *  above it and scrolls the tree to it, and in "All files" steps the walker
+     *  to its folder. Off, the tree is left exactly where the reader put it and
+     *  only the mark moves. */
     reveal(path: string): void {
-      if (scope.kind === 'space' && within(path, scope.space.path)) {
-        let changed = false;
-        for (let dir = dirname(path); dir && dir !== scope.space.path && within(dir, scope.space.path); dir = dirname(dir)) {
-          if (!expanded.has(dir)) { expanded.add(dir); changed = true; }
-        }
-        if (changed) { saveExpanded(); void render(); return; }
-      }
-      list.querySelectorAll('.tree-item-self.is-active').forEach((el) => el.classList.remove('is-active'));
-      rowOf(path)?.classList.add('is-active');
-      renderedPath = deps.currentPath(); // drawn, marks and all
+      const mark = (): void => {
+        list.querySelectorAll('.tree-item-self.is-active').forEach((el) => el.classList.remove('is-active'));
+        rowOf(path)?.classList.add('is-active');
+        renderedPath = deps.currentPath(); // drawn, marks and all
+      };
+      if (!follow) { mark(); return; }
+      void showCurrent().then(mark);
     },
     /** Open a folder in the tree and bring it into view — the search's folder
      *  rows (src/rightSidebar.ts, the new tab's search) and nothing else. The

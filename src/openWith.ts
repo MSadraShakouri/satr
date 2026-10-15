@@ -31,6 +31,64 @@ interface OpenFilePlugin {
 
 const SatrOpenFile = registerPlugin<OpenFilePlugin>('SatrOpenFile');
 
+/** A stable digest of a piece of text, for the identity of shared text. FNV-1a
+ *  32-bit: short, deterministic and enough to tell two shared notes apart — the
+ *  only thing riding on it is which open tab a hand-over belongs to. */
+function textDigest(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16);
+}
+
+/** What makes two hand-overs the same thing — the app's answer to "is this
+ *  file already open?". `viewId` is the plugin's own identity (a hash of the
+ *  source URI) and is the first answer. A file manager is free to vary the URI
+ *  between hand-overs (a session parameter, another provider, a different
+ *  route to the same file), so the file's own words are a second one: its
+ *  name, its size and its modification time. Shared text has no URI at all —
+ *  the text itself is its identity, so sharing the same words twice comes back
+ *  to the tab that is already showing them. */
+export function incomingIdentities(file: IncomingOpenFile): string[] {
+  const identities: string[] = [];
+  if (file.viewId) identities.push(`source:${file.viewId}`);
+  if (file.kind === 'shared-text' && file.text) identities.push(`text:${textDigest(file.text)}`);
+  else if (file.modified && file.size >= 0) identities.push(`file:${file.name.toLowerCase()}\u0000${file.size}\u0000${file.modified}`);
+  return identities;
+}
+
+/** The open path a hand-over is already showing, if any. `known` is what the
+ *  app has handed over before (identity → the path it was opened at). */
+export function openPathForIdentities(
+  identities: readonly string[],
+  openPaths: readonly string[],
+  known: ReadonlyMap<string, string>,
+): string | null {
+  for (const identity of identities) {
+    const path = known.get(identity);
+    if (path && openPaths.includes(path)) return path;
+  }
+  return null;
+}
+
+/** The open tab that is reading the very file just handed over: same name, and
+ *  the same modification time to the second. Opening a note from the folders
+ *  and being handed the same file by another app are two views of one
+ *  document — the tab the app already has is where it should go. A copy
+ *  elsewhere has its own time; the same file on the same disk has this one. */
+export function openTabForSameFile(
+  file: IncomingOpenFile,
+  candidates: readonly { path: string; mtime: number }[],
+): string | null {
+  if (!file.modified || file.kind === 'shared-text') return null;
+  const name = file.name.toLowerCase();
+  const match = candidates.find((candidate) => candidate.mtime && Math.abs(candidate.mtime - file.modified!) < 1000
+    && candidate.path.slice(candidate.path.lastIndexOf('/') + 1).toLowerCase() === name);
+  return match ? match.path : null;
+}
+
 export const supportsIncomingFiles = (): boolean => Capacitor.isNativePlatform();
 
 export function onIncomingFile(listener: (id: string) => void): Promise<{ remove(): Promise<void> }> {

@@ -128,22 +128,69 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
 // Read off LowTypes in @codemirror/view (charType).
 const CS_ET_SEP = ',.:/#$%\\-¢£¤¥°±\u00a0';
 const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩][0-9۰-۹٠-٩${CS_ET_SEP}]*`, 'g');
-const numberIsolate = Decoration.mark({
+const ltrIsolate = Decoration.mark({
   attributes: { style: 'unicode-bidi: isolate; direction: ltr' },
   bidiIsolate: Direction.LTR,
 });
+const numberIsolate = ltrIsolate;
+
+// `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)`
+// on a Persian line drew as `) …png(] … ![`: the picture's `!` at the line's
+// right edge, the closing `)` at its left, the brackets scattered between. No
+// direction is given to `!`, `[`, `]`, `(` and `)` by the language they are
+// written in — they are neutrals — and a neutral beside the paragraph's edge
+// takes the paragraph's own direction, so on an RTL line the whole construct
+// mirrors. An isolate with a direction of its own settles every one of them
+// where the markdown wrote it, the same way the number runs above keep a date
+// in its natural order.
+//
+// Which construct: one whose label carries no Persian (Hebrew, Syriac…) letter
+// is read as a single LTR unit, brackets, link, URL and all — `![picture](…)`,
+// `[Wikipedia](https://…)`, `![[chart.png]]`. A construct whose label *is*
+// Persian keeps the line's direction (`[متن](url)`) and only its URL is
+// isolated, so a link reads with its text and the address still lies in one
+// piece. Same test the direction policy uses for a line's own direction
+// (src/direction.ts).
+const LINK_RUN = /!?\[[^\]\n]*\]\([^)\n]*\)|!?\[\[[^\]\n]+\]\]/g;
+const RTL_LETTER = /[\u200f\u061c\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u;
+
+/** The isolate for one markdown construct, or null when it needs none. */
+function linkIsolate(match: string): { from: number; to: number } | null {
+  const url = /\]\([^)]*\)$/.exec(match);
+  if (url) {
+    const label = match.slice(0, url.index);
+    if (!RTL_LETTER.test(label)) return { from: 0, to: match.length };
+    // A Persian label: the brackets around the address alone.
+    return { from: url.index, to: match.length };
+  }
+  return RTL_LETTER.test(match) ? null : { from: 0, to: match.length };
+}
 
 function numberIsolates(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  const ranges: { from: number; to: number; deco: Decoration }[] = [];
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
+    const links: [number, number][] = [];
+    LINK_RUN.lastIndex = 0;
+    for (let match = LINK_RUN.exec(text); match; match = LINK_RUN.exec(text)) {
+      const isolate = linkIsolate(match[0]);
+      if (!isolate) continue;
+      const start = from + match.index + isolate.from;
+      const end = from + match.index + isolate.to;
+      links.push([start, end]);
+      ranges.push({ from: start, to: end, deco: ltrIsolate });
+    }
     NUMBER_RUN.lastIndex = 0;
     for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
       const start = from + match.index;
       if (inMath(view.state, start)) continue;
-      builder.add(start, start + match[0].length, numberIsolate);
+      if (links.some(([a, b]) => start >= a && start < b)) continue; // inside a link's run
+      ranges.push({ from: start, to: start + match[0].length, deco: numberIsolate });
     }
   }
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  for (const range of ranges) builder.add(range.from, range.to, range.deco);
   return builder.finish();
 }
 

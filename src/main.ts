@@ -14,6 +14,7 @@ import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
 import { majorityDirection } from './direction';
+import { keepingPlace, releaseFoldSlack } from './foldSlack';
 import { setMathDigits } from './math';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
@@ -23,7 +24,7 @@ import { showNotice, type NoticeHandle } from './notice';
 import { closeTimestampPicker, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
@@ -35,10 +36,10 @@ import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
-import { ensureFileAccess, hideKeyboard, setupFontScalePreview, setupSystemBars, systemBars } from './native';
-import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
+import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
+import { incomingIdentities, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
-import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
+import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 
 type Mode = 'edit' | 'preview';
 // The first note in a fresh browser: the demo (demo.md, at the top of the repo).
@@ -93,7 +94,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number"><span class="mobile-navbar-tabs-digit">1</span></span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
         </div>
@@ -109,6 +110,9 @@ const editorPane = document.querySelector<HTMLElement>('#editor-pane')!;
 const externalFileScreen = document.querySelector<HTMLElement>('#external-file-screen')!;
 const EXTERNAL_PATH_PREFIX = 'satr-open://';
 const externalFilesByPath = new Map<string, IncomingOpenFile>();
+/** Which path a handed-over file was opened at, by identity (src/openWith.ts:
+ *  the plugin's viewId, the file's name/size/time, or the text's digest). */
+const incomingPaths = new Map<string, string>();
 const handledIncomingIds = new Set<string>();
 const isExternalPath = (path: string): boolean => path.startsWith(EXTERNAL_PATH_PREFIX);
 const externalPath = (id: string, name: string): string => `${EXTERNAL_PATH_PREFIX}${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
@@ -290,6 +294,10 @@ let fileBase = stem(filePath);
 interface FileVersion { text: string; mtime: number }
 let diskBase: { path: string; text: string; mtime: number } | null = null;
 let activeSave: Promise<boolean> | null = null;
+/** The open note's file is being moved (the title's ✓) right now. A save that
+ *  arrives while it is set waits for it and writes to the name the file landed
+ *  on, so the name it came from can never be written back to life. */
+let pathMove: Promise<void> | null = null;
 /** Names in the open note's folder (lower case), for checking a new title as you type. */
 let siblingNames = new Set<string>();
 async function loadSiblings(): Promise<void> {
@@ -323,6 +331,7 @@ function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
   lastRender = Date.now();
+  releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
   const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
   // A picture Satr can't edit (a photo opened from the file manager, say):
   // the reading view shows it as it is; the editor keeps the raw bytes.
@@ -543,10 +552,15 @@ async function overwriteConflict(conflict: SaveConflict): Promise<void> {
 }
 
 async function saveNow(): Promise<boolean> {
+  // The note's file is moving: wait for it, then save to where it landed.
+  if (pathMove) await pathMove;
   window.clearTimeout(saveTimer);
   saveTimer = undefined;
   const path = filePath;
   if (!path) return false;
+  // A picture tab has no text of its own: there is nothing to save, and the
+  // file must never be written over with what the editor shows (nothing).
+  if (isPicture(path)) return true;
   if (isExternalPath(path)) {
     const incoming = externalFilesByPath.get(path);
     if (!incoming || (incoming.kind !== 'text' && incoming.kind !== 'shared-text') || incoming.readOnly || incoming.kind === 'shared-text') return true;
@@ -555,6 +569,7 @@ async function saveNow(): Promise<boolean> {
     const pending = activeSave;
     let previousSave = false;
     try { previousSave = await pending; } catch { /* the owner already reported its error */ }
+    if (pathMove) await pathMove; // it may have moved while the other save ran
     if (!previousSave || filePath !== path) return false;
     const current = editor.getValue();
     if (diskBase?.path !== path || current !== diskBase.text) return saveNow();
@@ -755,32 +770,9 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
   onRename: (base) => {
     if (isExternalPath(filePath)) return 'Files opened from another app cannot be renamed in Satr';
     if (nameTaken(base)) return 'There is already a file with that name';
-    const from = filePath;
-    const oldBase = fileBase;
-    const to = joinPath(dirname(from), `${base}.md`);
-    editor.setReadOnly(true); // avoid edits racing the path move
-    void (async () => {
-      try {
-        if (!await saveNow()) { fileBase = oldBase; editor.setTitle(oldBase); setPreviewTitle(); return; }
-        const exists = await backend.stat(from);
-        if (exists) await backend.rename(from, to);
-        else {
-          if (await backend.stat(to)) throw new Error('Something with that name already exists');
-          await backend.write(to, editor.getValue());
-        }
-        pathMoved(from, to);
-        const [text, entry] = await Promise.all([backend.read(to), backend.stat(to)]);
-        diskBase = { path: to, text: text ?? editor.getValue(), mtime: entry?.mtime ?? 0 };
-        void loadSiblings();
-      } catch (error) {
-        fileBase = oldBase;
-        editor.setTitle(oldBase);
-        setPreviewTitle();
-        leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
-      } finally {
-        editor.setReadOnly(false);
-      }
-    })();
+    void moveNote(filePath, joinPath(dirname(filePath), `${base}.md`), fileBase);
+    // The new name is shown at once — a ✓ is a name, not a promise — and a
+    // move that cannot be made puts the old one back (moveNote).
     fileBase = base;
     setPreviewTitle();
     return null;
@@ -803,18 +795,66 @@ window.addEventListener('satr:font-scale-change', () => {
 // Nothing hides while the keyboard is up.
 const LINE_PX = 16 * 1.5;
 const NAV_THRESHOLD = 0.125 * LINE_PX;
+// One move per beat. A bar's own hide/show animation runs for about this
+// long, and a second request inside that beat restarts it mid-flight: the bar
+// slides in, is told to go again, and what the reader sees is a flash. The two
+// ways that happened — a finger's jitter over the 3px threshold, and the
+// bounce that comes straight back to the top of the note — are both a
+// reversal, so a beat of quiet after the bars move covers them.
+//
+// The move that was held is not lost, and nothing has to be scrolled twice
+// for it: the anchor is left where the bars last moved (so the distance keeps
+// accumulating), and a timer asks again the moment the beat is over. A flick
+// that stops inside the beat still brings the bars back.
+const NAV_SETTLE_MS = 200;
+// A move the beat held back has to be a real one. The 3px threshold is right
+// for a gesture that is happening now, but a thumb resting on the glass
+// wobbles more than that, and a wobble inside the beat must not count: the
+// bars would come back and go away again, which is the flash. Four times the
+// threshold (12px) is a move the reader made.
+const NAV_HELD = NAV_THRESHOLD * 4;
 let navHidden = false;
+let navMovedAt = -Infinity;
+let navPending: { el: HTMLElement; hide: boolean; at: number } | null = null;
+let navTimer = 0;
+const navSettling = (): boolean => performance.now() - navMovedAt < NAV_SETTLE_MS;
 function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
+  navMovedAt = performance.now();
   document.body.classList.add('is-hidden-nav');
   void systemBars()?.hide().catch(() => undefined);
 }
 function restoreNavigation(): void {
   if (!navHidden) return;
   navHidden = false;
+  navMovedAt = performance.now();
   document.body.classList.remove('is-hidden-nav');
   void systemBars()?.show().catch(() => undefined);
+}
+/** The move a beat held back, remembered; applied when the beat is over if
+ *  the note is still on the side it asked for. */
+function holdNavigation(el: HTMLElement, hide: boolean): void {
+  // Where the note was when the move was first asked for. Later events in the
+  // same direction must not move that mark — the distance that counts is the
+  // one the reader has made since deciding, not since the last frame.
+  if (!navPending || navPending.el !== el || navPending.hide !== hide) navPending = { el, hide, at: el.scrollTop };
+  window.clearTimeout(navTimer);
+  navTimer = window.setTimeout(flushNavigation, Math.max(0, NAV_SETTLE_MS - (performance.now() - navMovedAt)) + 16);
+}
+function flushNavigation(): void {
+  const pending = navPending;
+  navPending = null;
+  if (!pending) return;
+  // Where the note was when the move was asked for, not where the anchor is:
+  // scrolls the app made itself drag the anchor to wherever they landed, so it
+  // says nothing about which way the finger was going.
+  const top = pending.el.scrollTop;
+  const moved = pending.at - top; // the way the move asked for: up
+  if (pending.hide ? -moved < NAV_HELD : moved < NAV_HELD) return;
+  scrollAnchors.set(pending.el, top);
+  if (pending.hide) hideNavigation();
+  else restoreNavigation();
 }
 const scrollAnchors = new WeakMap<Element, number>();
 let programmaticUntil = 0;
@@ -830,15 +870,31 @@ function onNavScroll(el: HTMLElement): void {
     return;
   }
   if (document.body.classList.contains('keyboard-open') || keyboardOverlap() > 120) { scrollAnchors.set(el, top); return; }
-  if (top <= 0) { scrollAnchors.set(el, 0); restoreNavigation(); return; }
+  if (top <= 0) {
+    // The top of the note always has the bars — but not while they are still
+    // moving: a bounce that comes straight back is the same gesture as the
+    // scroll that took them away, not a second one.
+    scrollAnchors.set(el, 0);
+    if (navSettling()) holdNavigation(el, false);
+    else restoreNavigation();
+    return;
+  }
   const delta = top - anchor;
   if (Math.abs(delta) < NAV_THRESHOLD) return;
+  const hide = delta > 0;
+  // The bars are already in the state this direction wants: nothing to
+  // change, and the anchor keeps up so a long scroll is not one change
+  // waiting to happen at its end.
+  if (hide === navHidden) { scrollAnchors.set(el, top); return; }
+  if (navSettling()) { holdNavigation(el, hide); return; } // the anchor stays where the bars moved
   scrollAnchors.set(el, top);
-  if (delta > 0) hideNavigation();
+  if (hide) hideNavigation();
   else restoreNavigation();
 }
 // mousedown, not pointerdown: on touch screens it only fires for taps, not
-// for the start of a scroll (same event Obsidian listens to).
+// for the start of a scroll (same event Obsidian listens to). A tap is a
+// deliberate gesture, so it restores the bars at once — the beat is for the
+// scroll that is still in progress, not for a finger that has stopped.
 window.addEventListener('mousedown', restoreNavigation);
 // For a moment after a note or the editing view is shown, its place is held:
 // a scroll nobody asked for (the caret being pulled into view while the
@@ -870,8 +926,9 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   onNavScroll(editor.view.scrollDOM);
   follow('editor');
   rememberViewSoon();
+  releaseFoldSlack(editor.view.scrollDOM, editor.view.contentDOM);
 }, { passive: true });
-previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); }, { passive: true });
+previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
 
@@ -890,7 +947,7 @@ function rememberViewSoon(): void {
   if (restoringView) return;
   viewTimer = window.setTimeout(rememberView, 400);
 }
-function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit'): void {
+function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit', force = false): void {
   window.clearTimeout(viewTimer);
   const generation = ++viewGeneration;
   const current = () => generation === viewGeneration && path === filePath;
@@ -900,7 +957,7 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit')
   if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
   if (view?.folds?.length) editor.restoreFolds(view.folds);
   // Never sample the previous file's pane while installing the new file.
-  setMode(view?.mode ?? unvisited, line);
+  setMode(force ? unvisited : view?.mode ?? unvisited, line);
   const apply = (): void => {
     if (!current()) return;
     ownScroll();
@@ -1006,6 +1063,15 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   window.clearTimeout(renderTimer);
   holdUntil = 0;
   const incoming = externalFilesByPath.get(path);
+  // A picture is never text. Whatever the caller read for it — a data: URL, or
+  // its bytes decoded as rubbish — is not this tab's note: the editor holds
+  // nothing and the reading view holds the picture. On the phone that decoder
+  // string was the whole cost of opening an image: one replacement character
+  // per byte, a megabyte of them per megabyte of photo, all of it in the
+  // editor before anything could be seen.
+  const imageTab = isPicture(path);
+  const fileText = content; // what the file itself holds; for a picture, not its note
+  if (imageTab) content = '';
   // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
   // never saved back over the original.
   const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
@@ -1025,24 +1091,24 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   picture.path = '';
   picture.url = '';
   let opening: Mode = 'edit';
-  if (isPicture(path)) {
-    if (incoming) { if (rememberPicture(path, incoming.dataUrl)) opening = 'preview'; }
-    else if (lossy) {
-      opening = 'preview'; // the picture is read below, a moment from now
-      void backend.readDataUrl(path).then((url) => {
-        if (filePath === path && rememberPicture(path, url) && mode === 'preview') renderPreview();
-      });
-    }
+  if (imageTab) {
+    // A picture has no text mode to be in: the reading view shows it, whatever
+    // mode this file was last left in.
+    opening = 'preview';
+    if (incoming) rememberPicture(path, incoming.dataUrl);
+    else void backend.readDataUrl(path).then((url) => {
+      if (filePath === path && rememberPicture(path, url) && mode === 'preview') renderPreview();
+    });
   }
   if (incoming) {
-    diskBase = { path, text: content, mtime: incoming.modified ?? 0 };
+    diskBase = { path, text: fileText, mtime: incoming.modified ?? 0 };
     localStorage.removeItem(CURRENT_KEY); // incoming URI ids only last for this app session
   } else {
-    diskBase = { path, text: content, mtime: 0 };
+    diskBase = { path, text: fileText, mtime: 0 };
     localStorage.setItem(CURRENT_KEY, path);
     setRecent([path, ...recentNotes().filter((p) => p !== path)]);
     void backend.stat(path).then((entry) => {
-      if (filePath !== path || diskBase?.path !== path || diskBase.text !== content) return;
+      if (filePath !== path || diskBase?.path !== path || diskBase.text !== fileText) return;
       if (entry) diskBase.mtime = entry.mtime;
       else diskBase = null; // firstNote() can return an as-yet-unsaved new note
     });
@@ -1053,7 +1119,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   else editor.setValue(content);
   // Inactive states may predate a global settings change.
   editor.setLineNumbers(loadSettings().lineNumbers);
-  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  editor.setReadOnly(Boolean(imageTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
   // Say it once per file: the editor takes no writing because the bytes are
   // not text, and nobody should wonder why nothing happens.
   if (lossy && !incoming && !isPicture(path) && lossyNoticed !== path) {
@@ -1067,9 +1133,9 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  // A picture opens in the reading view, unless this file has a remembered
-  // mode; anything else comes back where it was left.
-  restoreView(path, after, opening);
+  // A picture opens in the reading view (a mode of its own to be remembered
+  // in is not one it has); anything else comes back where it was left.
+  restoreView(path, after, opening, imageTab);
   renderNavButtons();
   sidebar.refresh();
   // Mark the open note, and clear the mark when this file isn't in the tree
@@ -1097,7 +1163,11 @@ async function openFile(path: string, after?: () => void): Promise<void> {
     await switchTab(existing, after);
     return;
   }
-  const opened = await backend.readText(path);
+  // A picture's bytes are not read: as text they are the whole file, base64
+  // and all. The reading view shows the picture (showFile reads its data URL).
+  const opened: TextOpen = isPicture(path)
+    ? { status: 'text', text: '', clean: true }
+    : await backend.readText(path);
   if (opened.status !== 'text') {
     leftSidebar.hint(opened.status === 'too-large'
       ? `“${fileName(path)}” is too large to open here (${formatBytes(opened.size)}).`
@@ -1113,6 +1183,73 @@ async function openFile(path: string, after?: () => void): Promise<void> {
 async function stepTab(step: number): Promise<void> {
   await switchTab(activeTab + step);
 }
+/** The title's ✓: the open note's file moves to a new name.
+ *
+ *  The note is not held read-only for it. That took the whole editor away and
+ *  gave it back — two re-renders of the note — for a move of the same bytes,
+ *  and on the device it stayed dead for every bridge round trip in between,
+ *  which is what the reader saw as the ✓ being slow. What the read-only hold
+ *  really guarded is a save racing the move; that is guarded directly, by
+ *  `pathMove` (see saveNow): a save made while the file is moving waits for the
+ *  move and goes to the new name, so the old name cannot come back to life. */
+async function moveNote(from: string, to: string, oldBase: string): Promise<void> {
+  if (pathMove) await pathMove; // one move at a time: a second name waits for the first
+  const name = stem(to); // the name the reader asked for
+  if (filePath !== from) { // the note moved under us meanwhile: the name still applies
+    from = filePath;
+    to = joinPath(dirname(from), `${name}.md`);
+    oldBase = stem(from);
+  }
+  // A note whose text is already on disk is not written again: saving reads the
+  // file and stats it first — two round trips the device pays for and the web
+  // version does not, which is why this was never slow in the browser.
+  const clean = !activeSave && diskBase?.path === from && diskBase.text === editor.getValue();
+  if (!clean && !await saveNow()) {
+    fileBase = oldBase;
+    editor.setTitle(oldBase);
+    setPreviewTitle();
+    return;
+  }
+  // What the disk holds now: what the save just wrote, or the version that was
+  // read for a clean note — the same text the editor holds either way.
+  const onDisk = diskBase?.path === from ? diskBase.text : editor.getValue();
+  const move = moveFile(from, to, onDisk);
+  pathMove = move;
+  try { await move; } finally { if (pathMove === move) pathMove = null; }
+}
+
+async function moveFile(from: string, to: string, onDisk: string): Promise<void> {
+  try {
+    try {
+      await backend.rename(from, to);
+    } catch (error) {
+      // A name the disk already has is the rename refusing, and that refusal is
+      // what the reader is told. A file that is not there to move (deleted
+      // outside Satr while the note was open) is not a refusal: the text is
+      // written under the new name instead. Asking the disk which of the two it
+      // was costs a round trip only when the rename has already failed.
+      if (await backend.stat(to)) throw error;
+      await backend.write(to, onDisk);
+    }
+    pathMoved(from, to); // the open note, the tabs, the history and the tree
+    // The file holds exactly the text that was just written, so nothing is read
+    // back to learn what we already know. The real modification time follows
+    // without being waited for — it is only ever shown in a conflict dialog,
+    // and any save corrects it long before then.
+    diskBase = { path: to, text: onDisk, mtime: Date.now() };
+    void backend.stat(to).then((entry) => {
+      if (entry && diskBase?.path === to && diskBase.text === onDisk) diskBase.mtime = entry.mtime;
+    }, () => {});
+  } catch (error) {
+    if (filePath === from) { // the move never happened: the note keeps its old name
+      fileBase = stem(from);
+      editor.setTitle(stem(from));
+      setPreviewTitle();
+    }
+    leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
 /** A file or folder moved (renamed): the open note, history and view memory follow. */
 function pathMoved(from: string, to: string): void {
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
@@ -1246,7 +1383,9 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
   document.body.classList.add('external-file-active');
   const description = file.dataUrl?.startsWith('data:image/')
     ? 'Shown as a picture, read-only. Open it in another app to edit it.'
-    : file.kind === 'too-large'
+    : isPicture(path)
+      ? `Too large to show here (${formatBytes(file.size)}). Open it in another app to view it.`
+      : file.kind === 'too-large'
       ? `Too large for Satr to open as text (${formatBytes(file.size)}). Open it in another app to view or edit it.`
       : 'Satr couldn’t read this file. Open it in another app to view or edit it.';
   externalFileScreen.innerHTML = `
@@ -1303,6 +1442,20 @@ function returnFromIncomingFile(): void {
 async function openIncomingPath(path: string, after?: () => void): Promise<void> {
   const existing = externalFilesByPath.get(path);
   if (!existing) { showNotice('This incoming file is no longer available. Open it from the file manager again.', 5000); return; }
+  // A picture is never text, whatever the plugin had to call it: an image the
+  // plugin decoded (an older build, or a type it did not know) is shown as the
+  // picture it is, read-only, and its bytes never reach the editor.
+  if (isPicture(path)) {
+    const pictureFile: IncomingOpenFile = { ...existing, kind: 'binary', readOnly: true, lossy: false, text: undefined };
+    externalFilesByPath.set(path, pictureFile);
+    if (curTab().path === path) {
+      // Small enough to carry: the reading view shows it. Otherwise the file
+      // screen does, with the way out to another app.
+      if (pictureFile.dataUrl?.startsWith('data:image/')) showFile(path, '', after);
+      else showIncomingScreen(path, pictureFile);
+    }
+    return;
+  }
   if (existing.kind === 'text' || existing.kind === 'shared-text') {
     try {
       const current = await readIncomingText(existing.id);
@@ -1318,6 +1471,22 @@ async function openIncomingPath(path: string, after?: () => void): Promise<void>
   } else if (curTab().path === path) showIncomingScreen(path, existing);
 }
 
+/** The open tab that is reading the very file just handed over: the same name
+ *  and the same modification time. The tabs are checked only when their file's
+ *  name matches, so this is one `stat` per candidate at most. */
+async function vaultTabForSameFile(file: IncomingOpenFile): Promise<number> {
+  if (!file.modified || file.kind === 'shared-text') return -1;
+  const name = file.name.toLowerCase();
+  const candidates: { path: string; mtime: number }[] = [];
+  for (const tab of tabs) {
+    if (!tab.path || isExternalPath(tab.path) || basename(tab.path).toLowerCase() !== name) continue;
+    const version = await backend.stat(tab.path);
+    if (version) candidates.push({ path: tab.path, mtime: version.mtime });
+  }
+  const path = openTabForSameFile(file, candidates);
+  return path ? tabs.findIndex((tab) => tab.path === path) : -1;
+}
+
 async function handleIncomingId(id: string): Promise<void> {
   if (!id || handledIncomingIds.has(id)) return;
   handledIncomingIds.add(id);
@@ -1328,13 +1497,25 @@ async function handleIncomingId(id: string): Promise<void> {
     closeSettings();
     closeTimestampPicker();
     // The same source again (shared, or opened from the file manager, while its
-    // tab is still open) is that tab, not a second one. The source identity is
-    // `viewId`; the temporary id changes every time, so the tab keeps its path
-    // and takes the newest id to read from.
-    const sameSource = file.viewId
-      ? [...externalFilesByPath].find(([p, f]) => f.viewId === file.viewId && tabs.some((tab) => tab.path === p))
-      : undefined;
-    const path = sameSource ? sameSource[0] : externalPath(file.id, file.name);
+    // tab is still open) is that tab, not a second one. The identity is the
+    // plugin's source (viewId) first, then what the file says about itself —
+    // name, size, modification time — because a file manager may hand the same
+    // file over through a different URI, and shared text is its own identity
+    // (src/openWith.ts). The temporary id changes every hand-over, so a tab
+    // that is reused keeps its path and takes the newest id to read from.
+    const identities = incomingIdentities(file);
+    const knownPath = openPathForIdentities(identities, tabs.map((tab) => tab.path), incomingPaths);
+    // Not handed over before — but perhaps already open from the folders. The
+    // same document on the same disk is one tab, however it was opened.
+    const vaultTab = knownPath ? -1 : await vaultTabForSameFile(file);
+    if (vaultTab >= 0) {
+      await switchTab(vaultTab);
+      toggleFiles(false);
+      renderNavButtons();
+      return;
+    }
+    const path = knownPath ?? externalPath(file.id, file.name);
+    for (const identity of identities) incomingPaths.set(identity, path);
     externalFilesByPath.set(path, file);
     const existingTab = tabs.findIndex((tab) => tab.path === path);
     if (existingTab >= 0) {
@@ -1363,6 +1544,11 @@ async function handleIncomingId(id: string): Promise<void> {
 async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
   if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
+  if (isPicture(tab.path)) { // nothing is read for it: it is shown, not solved
+    if (curTab() !== tab) return;
+    showFile(tab.path, '', after);
+    return;
+  }
   const opened = await backend.readText(tab.path);
   if (curTab() !== tab) return; // a newer tab activation won the read race
   if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
@@ -1771,7 +1957,7 @@ function showTabs(): void {
 const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
 const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
 const navMenu = document.querySelector<HTMLButtonElement>('#nav-menu')!;
-const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-number')!;
+const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-digit')!;
 const navTabs = document.querySelector<HTMLButtonElement>('#nav-tabs')!;
 // A tap opens the switcher; holding opens the tab menu (Close current tab
 // lives here — the switcher's own menu has no current-tab close).
@@ -1815,7 +2001,13 @@ function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
   switch (key) {
     case 'fold': return {
       title: anyFolded ? 'Expand all headings' : 'Collapse all headings', icon: anyFolded ? MENU_ICONS.expand : MENU_ICONS.collapse, needsNote: true,
-      run: () => { ownScroll(); if (editor.foldedLines().length) editor.unfoldAll(); else editor.foldAll(); renderMenuButton(); },
+      run: () => {
+        ownScroll();
+        const pane = previewVisible() ? previewPane : editor.view.scrollDOM;
+        const holder = previewVisible() ? preview : editor.view.contentDOM;
+        keepingPlace(pane, holder, () => { if (editor.foldedLines().length) editor.unfoldAll(); else editor.foldAll(); });
+        renderMenuButton();
+      },
     };
     case 'view': return {
       title: mode === 'edit' ? 'Reading view' : 'Editing view', icon: mode === 'edit' ? bookIcon : penIcon, needsNote: true,
@@ -2269,6 +2461,7 @@ if (Capacitor.isNativePlatform()) {
 document.addEventListener('satr:back', () => { handleBack(); });
 
 keepTimestampsCurrent(); // the relative timestamps ("in 3 hours") in the note and the reading view
+const SatrSplash = registerPlugin<{ dismiss(): Promise<void> }>('SatrSplash');
 let bootReady = false;
 let queuedIncomingId = '';
 async function boot(): Promise<void> {
@@ -2292,6 +2485,9 @@ async function boot(): Promise<void> {
   } finally {
     bootReady = true;
     dropSnapshot(); // the real note is on screen: lift the start-up copy
+    // On Android, keep the system splash through the cover's removal so only
+    // the circle animation is seen (Obsidian-style), then let it go.
+    if (isNative()) window.setTimeout(() => { void SatrSplash.dismiss().catch(() => undefined); }, 700);
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
@@ -2340,7 +2536,10 @@ async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
-  let text = path ? await backend.read(path) : null;
+  // A picture tab is shown, not read: its bytes as text are the whole file.
+  let text: string | null = null;
+  if (path && isPicture(path)) text = '';
+  else if (path) text = await backend.read(path);
   if (text === null) {
     ({ path, text } = await firstNote());
     // Very first start in a browser: the demo note.
@@ -2530,7 +2729,9 @@ preview.addEventListener('click', (event) => {
     if (onChevron) {
       event.preventDefault();
       ownScroll();
-      editor.toggleFold(Number(heading.parentElement!.dataset.line));
+      // The reader's place is kept across the fold — the same rule as the
+      // editor's own chevron (src/foldSlack.ts).
+      keepingPlace(previewPane, preview, () => editor.toggleFold(Number(heading.parentElement!.dataset.line)));
       return;
     }
   }

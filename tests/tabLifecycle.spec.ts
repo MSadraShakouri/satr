@@ -76,6 +76,29 @@ test('the tab count sits in the icon square, not the whole button', async ({ pag
   expect(gap.size, JSON.stringify(gap)).toBeLessThan(1);
 });
 
+test('the digit is centred as a digit, not as the line box it is drawn in', async ({ page }) => {
+  await boot(page, [{ path: 'Notes/A.md' }]);
+  const geo = await page.evaluate(() => {
+    const box = (el: Element) => { const r = el.getBoundingClientRect(); return { h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
+    const button = document.querySelector('#nav-tabs')!;
+    const digit = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-digit');
+    // A line box is as tall as the font's ascent and descent; the digits sit on
+    // its baseline with nothing under them, so the box they are drawn in is the
+    // cap height. Where the font puts them in the line box is the font's own
+    // business — 3px high for the one the app uses, which is what this pins.
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:absolute;visibility:hidden;height:1cap;font-size:${digit ? getComputedStyle(digit).fontSize : '14.3px'}`;
+    document.body.appendChild(probe);
+    const cap = probe.getBoundingClientRect().height;
+    probe.remove();
+    return { icon: box(button.querySelector('svg')!), digit: digit ? box(digit) : null, cap };
+  });
+  expect(geo.digit, 'the digit has no box of its own: it is centred as a line box').not.toBeNull();
+  expect(geo.digit!.h, 'the digit is not drawn in a cap-height box').toBeCloseTo(geo.cap, 0);
+  expect(Math.abs(geo.digit!.cy - geo.icon.cy), 'the digit is off-centre up or down').toBeLessThan(1);
+  expect(Math.abs(geo.digit!.cx - geo.icon.cx), 'the digit is off-centre sideways').toBeLessThan(1);
+});
+
 test('holding the tabs button opens the menu, including Close current tab', async ({ page }) => {
   await boot(page, [{ path: 'Notes/A.md' }, { path: 'Notes/B.md' }]);
   await holdTabs(page);
