@@ -273,13 +273,15 @@ test('the tab number sits in the middle of its icon', async ({ page }) => {
     const icon = button.querySelector('svg')!;
     const number = button.querySelector<HTMLElement>('.mobile-navbar-tabs-number')!;
     const centre = (rect: DOMRect) => ({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-    const range = document.createRange();
-    range.selectNodeContents(number);
+    // The digit's own box — the cap-height box the stylesheet trims the line
+    // box to. A range over the number's contents measures the flex container's
+    // line, which is the font's ascent plus descent, not the digit.
+    const digit = button.querySelector<HTMLElement>('.mobile-navbar-tabs-digit')!;
     return {
       button: centre(button.getBoundingClientRect()),
       icon: centre(icon.getBoundingClientRect()),
       number: centre(number.getBoundingClientRect()),
-      digit: centre(range.getBoundingClientRect()),
+      digit: centre(digit.getBoundingClientRect()),
     };
   });
   for (const [name, point] of Object.entries(centres)) {

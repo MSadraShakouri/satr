@@ -93,7 +93,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number">1</span></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number"><span class="mobile-navbar-tabs-digit">1</span></span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
         </div>
@@ -1923,7 +1923,7 @@ function showTabs(): void {
 const navBack = document.querySelector<HTMLButtonElement>('#nav-back')!;
 const navForward = document.querySelector<HTMLButtonElement>('#nav-forward')!;
 const navMenu = document.querySelector<HTMLButtonElement>('#nav-menu')!;
-const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-number')!;
+const navTabsCount = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-digit')!;
 const navTabs = document.querySelector<HTMLButtonElement>('#nav-tabs')!;
 // A tap opens the switcher; holding opens the tab menu (Close current tab
 // lives here — the switcher's own menu has no current-tab close).

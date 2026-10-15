@@ -2837,13 +2837,16 @@ input.mod-no-match {
   position: relative;
 }
 .mobile-navbar-tabs-number {
-  /* Over the whole button, centred the way the button centres its icon:
-     the digit's centre is the button's centre is the icon's centre, by
-     construction. The measured 26px square at 50% with a -50% translate
-     could drift from both (its own size, the button's, the icon's) and
-     left the digit off-centre; covering the button cannot. */
+  /* The icon's own square, on the icon: 26px is the size the icons are drawn
+     at (see .mobile-navbar-action svg), so the counted tab sits inside the
+     square rather than over the whole 52px button. */
   position: absolute;
-  inset: 0;
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2852,6 +2855,18 @@ input.mod-no-match {
   font-variant-numeric: tabular-nums;
   line-height: 1;
   pointer-events: none;
+}
+.mobile-navbar-tabs-digit {
+  /* Centring the digit means centring the digit, not the line box it is drawn
+     in: a line box is as tall as the font's ascent and descent, the digits sit
+     on the baseline with nothing under them, and where that leaves them inside
+     the box depends on the font — 3px high, for the font the app uses, which
+     is what the writer saw. Trimming the line box to the cap height and the
+     baseline is exactly the box the digits are drawn in, so centring that box
+     centres them, in any font at any size. (A browser without text-box support
+     ignores both lines and centres the line box, as before.) */
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 .mobile-tab-switcher {
   position: fixed;
