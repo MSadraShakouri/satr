@@ -2462,10 +2462,12 @@ input.mod-no-match {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.workspace-drawer-header-info:empty {
+.workspace-drawer-header-info:empty,
+.workspace-drawer-count:empty {
   display: none;
 }
-.workspace-drawer-header-info {
+.workspace-drawer-header-info,
+.workspace-drawer-count {
   margin-top: 4px;
   overflow: hidden;
   color: var(--text-muted);
@@ -2473,6 +2475,19 @@ input.mod-no-match {
   text-overflow: ellipsis;
   white-space: nowrap;
   unicode-bidi: plaintext;
+}
+/* The foot of the left drawer: the folder it names — the space, or the folder
+   the walker is showing — and how much is in it. A name or path too long for
+   the drawer wraps to a second line instead of being cut off, and the counts
+   ("12 files, 3 folders") have a line of their own, so a long path can never
+   push them out of the header the way a shared line did. */
+.workspace-drawer.mod-left .workspace-drawer-vault-name:not(:empty),
+.workspace-drawer.mod-left .workspace-drawer-header-info:not(:empty) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .workspace-drawer-header-icons {
   display: flex;

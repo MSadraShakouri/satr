@@ -93,6 +93,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
             <span class="workspace-drawer-vault-switcher-icon">${ICONS.chevronDown}</span>
           </button>
           <div class="workspace-drawer-header-info" dir="auto"></div>
+          <div class="workspace-drawer-count" dir="auto"></div>
         </div>
         <div class="workspace-drawer-header-icons"></div>
       </div>
@@ -101,6 +102,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   const list = root.querySelector<HTMLElement>('.nav-files-container')!;
   const nameEl = root.querySelector<HTMLElement>('.workspace-drawer-vault-name')!;
   const infoEl = root.querySelector<HTMLElement>('.workspace-drawer-header-info')!;
+  const countEl = root.querySelector<HTMLElement>('.workspace-drawer-count')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
   const filterInput = root.querySelector<HTMLInputElement>('.nav-filter-input')!;
   const filterQuery = (): string => filterInput.value.trim().toLocaleLowerCase();
@@ -178,12 +180,16 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       html = await filterHtml(walking ? walkDir() : (scope as Extract<Scope, { kind: 'space' }>).space.path, token);
       if (token !== renderToken) return;
       if (!walking) infoEl.textContent = (scope as Extract<Scope, { kind: 'space' }>).space.path === scopeName(scope) ? '' : (scope as Extract<Scope, { kind: 'space' }>).space.path;
+      // The counts are the space's, not the filter's: they stay as they are
+      // while a filter narrows the list under them.
     } else if (walking) {
       const dir = walkDir();
       collapseButton.disabled = !dir;
       infoEl.textContent = dir ? `/${dir}` : backend.kind === 'web' ? 'Browser storage' : 'Internal storage';
       const entries = await list$(dir);
       if (token !== renderToken) return;
+      const files = entries.filter((entry) => entry.kind === 'file').length;
+      countEl.textContent = countOf(files, entries.length - files);
       html = (dir ? `<div class="tree-item nav-folder mod-parent"><div class="tree-item-self is-clickable nav-folder-title" data-path="${escapeHtml(dirname(dir))}" data-kind="parent" role="treeitem">`
         + `<div class="tree-item-icon nav-entry-icon">${ICONS.folder}</div><div class="tree-item-inner nav-folder-title-content">..</div></div></div>` : '')
         + entries.map((e) => `<div class="tree-item ${e.kind === 'folder' ? 'nav-folder' : 'nav-file'}">${rowHtml(e, { walker: true })}</div>`).join('');
@@ -192,7 +198,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       collapseButton.disabled = false;
       const space = (scope as Extract<Scope, { kind: 'space' }>).space;
       infoEl.textContent = space.path === space.name ? '' : space.path;
-      void showCount(space.path, space.path === space.name ? '' : space.path, token);
+      countEl.textContent = '';
+      void showCount(space.path, token);
       html = await treeHtml(space.path, token);
       if (token !== renderToken) return;
       if (!html) html = '<div class="pane-empty">No notes yet</div>';
@@ -204,8 +211,12 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   // Filter by name: files and folders anywhere under the space (or the
   // walker's folder) whose name has every word typed, as a flat list with
   // the folder they're in; the matched text highlighted.
-  // Under the space's name, as Obsidian under the vault's: "12 files, 3 folders".
-  async function showCount(dir: string, prefix: string, token: number): Promise<void> {
+  // Under the space's name, as Obsidian under the vault's: "12 files, 3 folders"
+  // — on a line of its own, so a long path can never push the counts out of the
+  // header the way a shared line let it.
+  const countOf = (files: number, folders: number): string =>
+    `${files} ${files === 1 ? 'file' : 'files'}, ${folders} ${folders === 1 ? 'folder' : 'folders'}`;
+  async function showCount(dir: string, token: number): Promise<void> {
     let files = 0;
     let folders = 0;
     const queue = [dir];
@@ -216,8 +227,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
         if (entry.kind === 'folder') { folders += 1; queue.push(entry.path); } else files += 1;
       }
     }
-    const count = `${files} ${files === 1 ? 'file' : 'files'}, ${folders} ${folders === 1 ? 'folder' : 'folders'}`;
-    infoEl.textContent = prefix ? `${prefix} · ${count}` : count;
+    if (token !== renderToken) return;
+    countEl.textContent = countOf(files, folders);
   }
   async function filterHtml(dir: string, token: number): Promise<string> {
     const words = filterQuery().split(/\s+/).filter(Boolean);

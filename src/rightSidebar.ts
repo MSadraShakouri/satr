@@ -82,6 +82,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         <div class="workspace-drawer-header-left">
           <div class="workspace-drawer-vault-switcher"><span class="workspace-drawer-vault-name drawer-view-name"></span></div>
           <div class="workspace-drawer-header-info drawer-note-name" dir="auto"></div>
+          <div class="workspace-drawer-header-info drawer-note-count" dir="auto"></div>
         </div>
       </div>
       <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
@@ -101,6 +102,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   const list = root.querySelector<HTMLElement>('.search-results')!;
   const viewName = root.querySelector<HTMLElement>('.drawer-view-name')!;
   const noteName = root.querySelector<HTMLElement>('.drawer-note-name')!;
+  const noteCount = root.querySelector<HTMLElement>('.drawer-note-count')!;
   const segmented = root.querySelector<HTMLElement>('.search-scope')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
   let scope: SearchScope = localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'note';
@@ -113,6 +115,16 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   function renderChrome(): void {
     viewName.textContent = scope === 'note' ? 'Outline' : 'Search';
     noteName.textContent = scope === 'note' ? stem(deps.currentPath()) : deps.scopeName();
+    // The note's own size, under its name: its words and its characters, read
+    // from the live text so the line keeps step with the writer (the panel
+    // refreshes on the same beat as the outline). The all-notes scope names
+    // the space, not a note, and says nothing.
+    const path = deps.currentPath();
+    if (scope === 'note' && path) {
+      const text = deps.currentText();
+      const words = text.match(/\S+/g)?.length ?? 0;
+      noteCount.textContent = `${words} ${words === 1 ? 'word' : 'words'}, ${text.length} ${text.length === 1 ? 'character' : 'characters'}`;
+    } else noteCount.textContent = '';
     segmented.dataset.value = scope;
     segmented.style.setProperty('--index', scope === 'all' ? '1' : '0');
     segmented.querySelectorAll<HTMLElement>('[data-scope]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.scope === scope)));
