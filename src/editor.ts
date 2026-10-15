@@ -390,10 +390,12 @@ function enterAtCaret(view: EditorView): boolean {
   return enterDisplayMath(view) || enterCodeFence(view) || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
-/** The spaces a keyboard or another app may send for the ones we type: a
- *  no-break space (what an Android keyboard puts in for a space in some
- *  layouts) reads as a space for every check below. Only the checks — the
- *  text the writer pasted and typed stays exactly as it came. */
+/** A space a keyboard or another app may send in place of the one we type: a
+ *  no-break space in the line the item lands on, or inside the item itself,
+ *  is not the writer's point — it is the keyboard's, and a `- [ ]` box with
+ *  anything else between its brackets is not a to-do at all. So these read as
+ *  spaces both when a line is checked and when the pasted text is written
+ *  out. Every other character of what was pasted is kept as it came. */
 function spaced(text: string): string {
   return text.replace(/[\u00A0\u2007\u202F\u2009]/g, ' ');
 }
@@ -435,6 +437,12 @@ export function pastedOverEmptyTask(lineText: string, clip: string): string | nu
     + lines.slice(1).map((rest) => (spaced(rest).trim() ? `\n${indent}${spaced(rest)}` : '\n')).join('');
 }
 
+/** Two to-dos on one line: the box that was standing there, and the item the
+ *  paste brought in beside it. What the writer sees when a paste lands and
+ *  nothing steps aside — the shape to put right, whatever the change looked
+ *  like on the way in. The item's own box and text are kept as they came. */
+const TWO_TASKS_ON_A_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+(\[[ xX]\])([ \t]*)(.*)$/;
+
 /**
  * The same rule, run on the transaction rather than on the paste event, and
  * there is a reason it has to be that way round: a paste reaches the editor by
@@ -458,18 +466,27 @@ const taskPastedOnEmptyLine = EditorState.transactionFilter.of((tr) => {
   tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
     inserts.push({ fromA, toA, text: inserted.toString() });
   });
-  if (inserts.length !== 1) return tr;
-  const change = inserts[0];
-  const line = tr.startState.doc.lineAt(change.fromA);
-  if (change.fromA < line.from || change.toA > line.to) return tr;
-  const replaced = pastedOverEmptyTask(line.text, change.text);
-  if (replaced === null) return tr;
-  return {
-    changes: { from: line.from, to: line.to, insert: replaced },
-    selection: { anchor: line.from + replaced.length },
+  // The paste is the change that brought a to-do item: whichever road it came
+  // by, its first line is one, box and all.
+  const pasted = inserts.find((one) => TASK_ITEM_LINE.test(spaced(one.text.split('\n')[0])));
+  if (!pasted) return tr;
+  // Every change it made has to sit inside the one line it landed on: a paste
+  // that carries on across lines is the writer's own business.
+  const line = tr.startState.doc.lineAt(pasted.fromA);
+  if (inserts.some((one) => one.fromA < line.from || one.toA > line.to)) return tr;
+  const replace = (insert: string) => ({
+    changes: { from: line.from, to: line.to, insert },
+    selection: { anchor: line.from + insert.length },
     userEvent: event,
     scrollIntoView: tr.scrollIntoView,
-  };
+  });
+  const replaced = pastedOverEmptyTask(line.text, pasted.text);
+  if (replaced !== null) return replace(replaced);
+  // The line the empty one became, when the item went in beside the box: a
+  // change the DOM reader described in more than one piece can leave exactly
+  // that, and it is still one to-do the writer meant, not two.
+  const made = TWO_TASKS_ON_A_LINE.exec(tr.newDoc.lineAt(tr.changes.mapPos(line.from, 1)).text);
+  return made ? replace(`${made[1]}${made[3]} ${made[4]}${made[5]}${made[6]}`) : tr;
 });
 
 /** The toolbar's "new line below": Enter at the end of the line. The caret

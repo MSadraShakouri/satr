@@ -11,8 +11,16 @@
 // done), and the line's own indent. The rule itself is a pure function
 // (`pastedOverEmptyTask`: the line text and the clip in, the line that
 // replaces it or null for "the platform's own paste"), so the boundary is
-// pinned case by case here; the tests after it fire a real paste event at a
-// mounted editor and check what lands in the note and where the caret goes.
+// pinned case by case here.
+//
+// The first fix was written into a `paste` DOM listener and only helped where
+// the platform fires one — the desktop-shaped paste. On a phone the keyboard's
+// own clipboard goes into the WebView as an ordinary input change, with no
+// `paste` event at all, so the rule had nothing to run on. It runs on the
+// *transaction* now (`taskPastedOnEmptyLine`), so every road a paste can take
+// ends at the same place; the tests below drive each of them — the `paste`
+// event with the clipboard on it, the input change the keyboard makes, a drop,
+// and the app's own paste entry point.
 import { expect, test, type Page } from '@playwright/test';
 import type { SatrEditor } from '../src/editor';
 
@@ -102,6 +110,14 @@ const RULE: [string, string, string | null][] = [
   ['    - [ ] ', '- [ ] milk\n', '    - [ ] milk'], // the clip's own indent is dropped
   ['\t- [ ] ', '\t- [ ] milk\n', '\t- [ ] milk'],
   ['- [ ] ', '- [x] milk\r\n', '- [x] milk'], // CRLF from a desktop copy
+  ['- [ ] ', '- [x] milk\r', '- [x] milk'], // and a lone CR
+  // A space the keyboard sent as a no-break space reads as a space — in the
+  // line the item lands on, and in the item itself, which is written out as a
+  // to-do the note can read back.
+  ['- [\u00A0]\u00A0', '- [ ] milk\n', '- [ ] milk'],
+  ['- [ ] ', '- [\u00A0] milk\n', '- [ ] milk'],
+  ['- [ ] ', '- [ ] milk\u00A0eggs\n', '- [ ] milk eggs'],
+  ['- [ ] ', '- [ ] a\n- [\u202F] b\n', '- [ ] a\n- [ ] b'],
   // The rest of a copied list follows under the item it landed on.
   ['- [ ] ', '- [ ] milk\n- [x] bread\n- [ ] eggs\n', '- [ ] milk\n- [x] bread\n- [ ] eggs'],
   ['1. [ ] ', '1. [ ] a\n1. [ ] b', '1. [ ] a\n1. [ ] b'],
@@ -184,6 +200,81 @@ test('the writer\'s own two steps — copy the item, paste it onto an empty to-d
   expect(linewise).toBe('- [ ] milk\n- [ ] bread\n- [ ] bread\n- [ ] \n');
   const selected = await copyThenPaste(page, note, at(note, 2), at(note, 3, 'end'), at(note, 2, 'end'));
   expect(selected).toBe('- [ ] milk\n- [ ] bread\n- [ ] bread\n- [ ] \n');
+});
+
+test('a paste the keyboard makes — an input change with no paste event — is fixed too', async ({ page }) => {
+  // What Android hands the WebView when the writer pastes from the keyboard's
+  // own clipboard: the text arrives as an input change, `input.type`, with the
+  // caret where it was. Nothing about it looks like a paste except what it
+  // does to the line.
+  const asInput = (note: string, caret: number, insert: string, at?: number) => page.evaluate(async ({ note, caret, insert, at }) => {
+    const ed = window.testEditor;
+    ed.setValue(note);
+    ed.setSelection(caret, caret);
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    ed.view.dispatch({ changes: { from: at ?? caret, insert }, userEvent: 'input.type' });
+    await new Promise((r) => setTimeout(r, 30));
+    return ed.getValue();
+  }, { note, caret, insert, at: at ?? null });
+
+  // The item at the caret, the way a single-line clip arrives — the report
+  // itself: `- [ ] ` with `- [ ] milk` pasted at the end of it.
+  const note = 'Shopping:\n\n- [ ] \n';
+  expect(await asInput(note, at(note, 3, 'end'), '- [ ] milk')).toBe('Shopping:\n\n- [ ] milk\n');
+  // And where the writer's own text was written into it: the box goes, the
+  // pasted item — text, done state and all — takes its place.
+  const written = '- [ ] \n';
+  expect(await asInput(written, at(written, 1, 'end'), '- [ ] milk')).toBe('- [ ] milk\n');
+  // The whole line pushed in at the line's start with its break, the way the
+  // keyboard's line copy arrives.
+  const flat = '- [ ] \n- [ ] later\n';
+  expect(await asInput(flat, at(flat, 1), '- [ ] milk\n', at(flat, 1))).toBe('- [ ] milk\n- [ ] later\n');
+});
+
+test('the two-todos-on-one-line shape is put right whatever the change looked like', async ({ page }) => {
+  // The same paste, described by the reader as a change that put the item
+  // where the box already was: the empty box goes, the item and its own box
+  // stay, and the rest of the line keeps its place.
+  const repair = (note: string, caret: number, insert: string) => page.evaluate(async ({ note, caret, insert }) => {
+    const ed = window.testEditor;
+    ed.setValue(note);
+    ed.setSelection(caret, caret);
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    ed.view.dispatch({ changes: { from: caret, insert }, userEvent: 'input.type' });
+    await new Promise((r) => setTimeout(r, 30));
+    return ed.getValue();
+  }, { note, caret, insert });
+
+  const note = '- [ ] \n';
+  expect(await repair(note, at(note, 1, 'end'), '- [ ] milk')).toBe('- [ ] milk\n');
+  // A line that already said something, with the paste landing right after
+  // its box: one to-do, the writer's own word still on it.
+  const spoken = '- [ ] x\n';
+  expect(await repair(spoken, at(spoken, 1, 5), '- [ ] milk')).toBe('- [ ] milk x\n');
+  expect(await repair(spoken, at(spoken, 1, 6), '- [ ] milk')).toBe('- [ ] milkx\n');
+  // An indented line keeps its indent, and a done box comes over done.
+  const nested = '    - [ ] \n';
+  expect(await repair(nested, at(nested, 1, 'end'), '- [x] milk')).toBe('    - [x] milk\n');
+});
+
+test('a note being loaded, and the app\'s own rewrites, are left exactly as they are', async ({ page }) => {
+  // No user event means no paste: whatever text lands on an empty to-do line
+  // this way is not the writer's clipboard and the rule stays out of it.
+  const untouched = await page.evaluate(async () => {
+    const ed = window.testEditor;
+    ed.setValue('- [ ] \n');
+    // End of the to-do line — the spot the rule watches — but with no user
+    // event, which is how a note is loaded and how an external reload lands.
+    ed.view.dispatch({ changes: { from: ed.view.state.doc.line(1).to, insert: '- [ ] milk' } });
+    await new Promise((r) => setTimeout(r, 20));
+    const literal = ed.getValue();
+    ed.setValue('- [ ] milk\n- [x] bread\n');
+    return { literal, loaded: ed.getValue() };
+  });
+  expect(untouched.literal).toBe('- [ ] - [ ] milk\n');
+  expect(untouched.loaded).toBe('- [ ] milk\n- [x] bread\n');
 });
 
 test('the paste is one edit: undo puts the empty item back in one step', async ({ page }) => {
