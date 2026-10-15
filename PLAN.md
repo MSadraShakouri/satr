@@ -27,6 +27,8 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [x] app launch new tab shows the old tab for a moment before showing the empty tab, just a flash but a bad UX
 
+- [x] app launch is still weird, shows the main screen twice, once loading the app itself and once the app loading, one screen twice
+
 - [x] maybe have the app opening screen a bit longer so it doesn't flash stuff (right now it shows a white screen quickly, while obsidian shows the logo for a bit longer) issues with app switching too when inactive for moments
 
 - [x] scroll tables in preview
