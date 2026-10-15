@@ -38,7 +38,7 @@ import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
-import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
+import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 
 type Mode = 'edit' | 'preview';
 // The first note in a fresh browser: the demo (demo.md, at the top of the repo).
@@ -553,6 +553,9 @@ async function saveNow(): Promise<boolean> {
   saveTimer = undefined;
   const path = filePath;
   if (!path) return false;
+  // A picture tab has no text of its own: there is nothing to save, and the
+  // file must never be written over with what the editor shows (nothing).
+  if (isPicture(path)) return true;
   if (isExternalPath(path)) {
     const incoming = externalFilesByPath.get(path);
     if (!incoming || (incoming.kind !== 'text' && incoming.kind !== 'shared-text') || incoming.readOnly || incoming.kind === 'shared-text') return true;
@@ -938,7 +941,7 @@ function rememberViewSoon(): void {
   if (restoringView) return;
   viewTimer = window.setTimeout(rememberView, 400);
 }
-function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit'): void {
+function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit', force = false): void {
   window.clearTimeout(viewTimer);
   const generation = ++viewGeneration;
   const current = () => generation === viewGeneration && path === filePath;
@@ -948,7 +951,7 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit')
   if (view?.cursor) editor.setSelection(view.cursor[0], view.cursor[1]);
   if (view?.folds?.length) editor.restoreFolds(view.folds);
   // Never sample the previous file's pane while installing the new file.
-  setMode(view?.mode ?? unvisited, line);
+  setMode(force ? unvisited : view?.mode ?? unvisited, line);
   const apply = (): void => {
     if (!current()) return;
     ownScroll();
@@ -1054,6 +1057,15 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   window.clearTimeout(renderTimer);
   holdUntil = 0;
   const incoming = externalFilesByPath.get(path);
+  // A picture is never text. Whatever the caller read for it — a data: URL, or
+  // its bytes decoded as rubbish — is not this tab's note: the editor holds
+  // nothing and the reading view holds the picture. On the phone that decoder
+  // string was the whole cost of opening an image: one replacement character
+  // per byte, a megabyte of them per megabyte of photo, all of it in the
+  // editor before anything could be seen.
+  const imageTab = isPicture(path);
+  const fileText = content; // what the file itself holds; for a picture, not its note
+  if (imageTab) content = '';
   // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
   // never saved back over the original.
   const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
@@ -1073,24 +1085,24 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   picture.path = '';
   picture.url = '';
   let opening: Mode = 'edit';
-  if (isPicture(path)) {
-    if (incoming) { if (rememberPicture(path, incoming.dataUrl)) opening = 'preview'; }
-    else if (lossy) {
-      opening = 'preview'; // the picture is read below, a moment from now
-      void backend.readDataUrl(path).then((url) => {
-        if (filePath === path && rememberPicture(path, url) && mode === 'preview') renderPreview();
-      });
-    }
+  if (imageTab) {
+    // A picture has no text mode to be in: the reading view shows it, whatever
+    // mode this file was last left in.
+    opening = 'preview';
+    if (incoming) rememberPicture(path, incoming.dataUrl);
+    else void backend.readDataUrl(path).then((url) => {
+      if (filePath === path && rememberPicture(path, url) && mode === 'preview') renderPreview();
+    });
   }
   if (incoming) {
-    diskBase = { path, text: content, mtime: incoming.modified ?? 0 };
+    diskBase = { path, text: fileText, mtime: incoming.modified ?? 0 };
     localStorage.removeItem(CURRENT_KEY); // incoming URI ids only last for this app session
   } else {
-    diskBase = { path, text: content, mtime: 0 };
+    diskBase = { path, text: fileText, mtime: 0 };
     localStorage.setItem(CURRENT_KEY, path);
     setRecent([path, ...recentNotes().filter((p) => p !== path)]);
     void backend.stat(path).then((entry) => {
-      if (filePath !== path || diskBase?.path !== path || diskBase.text !== content) return;
+      if (filePath !== path || diskBase?.path !== path || diskBase.text !== fileText) return;
       if (entry) diskBase.mtime = entry.mtime;
       else diskBase = null; // firstNote() can return an as-yet-unsaved new note
     });
@@ -1101,7 +1113,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   else editor.setValue(content);
   // Inactive states may predate a global settings change.
   editor.setLineNumbers(loadSettings().lineNumbers);
-  editor.setReadOnly(Boolean(incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  editor.setReadOnly(Boolean(imageTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
   // Say it once per file: the editor takes no writing because the bytes are
   // not text, and nobody should wonder why nothing happens.
   if (lossy && !incoming && !isPicture(path) && lossyNoticed !== path) {
@@ -1115,9 +1127,9 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  // A picture opens in the reading view, unless this file has a remembered
-  // mode; anything else comes back where it was left.
-  restoreView(path, after, opening);
+  // A picture opens in the reading view (a mode of its own to be remembered
+  // in is not one it has); anything else comes back where it was left.
+  restoreView(path, after, opening, imageTab);
   renderNavButtons();
   sidebar.refresh();
   // Mark the open note, and clear the mark when this file isn't in the tree
@@ -1145,7 +1157,11 @@ async function openFile(path: string, after?: () => void): Promise<void> {
     await switchTab(existing, after);
     return;
   }
-  const opened = await backend.readText(path);
+  // A picture's bytes are not read: as text they are the whole file, base64
+  // and all. The reading view shows the picture (showFile reads its data URL).
+  const opened: TextOpen = isPicture(path)
+    ? { status: 'text', text: '', clean: true }
+    : await backend.readText(path);
   if (opened.status !== 'text') {
     leftSidebar.hint(opened.status === 'too-large'
       ? `“${fileName(path)}” is too large to open here (${formatBytes(opened.size)}).`
@@ -1361,7 +1377,9 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
   document.body.classList.add('external-file-active');
   const description = file.dataUrl?.startsWith('data:image/')
     ? 'Shown as a picture, read-only. Open it in another app to edit it.'
-    : file.kind === 'too-large'
+    : isPicture(path)
+      ? `Too large to show here (${formatBytes(file.size)}). Open it in another app to view it.`
+      : file.kind === 'too-large'
       ? `Too large for Satr to open as text (${formatBytes(file.size)}). Open it in another app to view or edit it.`
       : 'Satr couldn’t read this file. Open it in another app to view or edit it.';
   externalFileScreen.innerHTML = `
@@ -1418,6 +1436,20 @@ function returnFromIncomingFile(): void {
 async function openIncomingPath(path: string, after?: () => void): Promise<void> {
   const existing = externalFilesByPath.get(path);
   if (!existing) { showNotice('This incoming file is no longer available. Open it from the file manager again.', 5000); return; }
+  // A picture is never text, whatever the plugin had to call it: an image the
+  // plugin decoded (an older build, or a type it did not know) is shown as the
+  // picture it is, read-only, and its bytes never reach the editor.
+  if (isPicture(path)) {
+    const pictureFile: IncomingOpenFile = { ...existing, kind: 'binary', readOnly: true, lossy: false, text: undefined };
+    externalFilesByPath.set(path, pictureFile);
+    if (curTab().path === path) {
+      // Small enough to carry: the reading view shows it. Otherwise the file
+      // screen does, with the way out to another app.
+      if (pictureFile.dataUrl?.startsWith('data:image/')) showFile(path, '', after);
+      else showIncomingScreen(path, pictureFile);
+    }
+    return;
+  }
   if (existing.kind === 'text' || existing.kind === 'shared-text') {
     try {
       const current = await readIncomingText(existing.id);
@@ -1478,6 +1510,11 @@ async function handleIncomingId(id: string): Promise<void> {
 async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
   if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
+  if (isPicture(tab.path)) { // nothing is read for it: it is shown, not solved
+    if (curTab() !== tab) return;
+    showFile(tab.path, '', after);
+    return;
+  }
   const opened = await backend.readText(tab.path);
   if (curTab() !== tab) return; // a newer tab activation won the read race
   if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
@@ -2459,7 +2496,10 @@ async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
-  let text = path ? await backend.read(path) : null;
+  // A picture tab is shown, not read: its bytes as text are the whole file.
+  let text: string | null = null;
+  if (path && isPicture(path)) text = '';
+  else if (path) text = await backend.read(path);
   if (text === null) {
     ({ path, text } = await firstNote());
     // Very first start in a browser: the demo note.
