@@ -127,18 +127,18 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   loadExpanded();
   let renderToken = 0;
   let renaming: string | null = null;
-  // "Always show the current file", after Obsidian's setting of that name: the
-  // tree comes back to the file being read every time the file changes, however
-  // deep the reader had gone into a folder (in "All files", the walker follows
-  // the file's own folder). Off, the tree stays where it was put, as before.
-  // On by default, as Obsidian's setting is: a reader who has never touched it
-  // is shown the note they are in. Only the reader's own "0" turns it off.
+  // "Always show the current file", after Obsidian's setting of that name:
+  // whenever the note changes, open its ancestors in a space, or move the
+  // "All files" walker to the note's parent folder. Off, the reader's chosen
+  // folder arrangement is left alone. It starts on for a new reader; only the
+  // reader's own "0" turns it off.
   let follow = localStorage.getItem(FOLLOW_KEY) !== '0';
   followButton.classList.toggle('is-active', follow);
   followButton.setAttribute('aria-pressed', String(follow));
-  /** The file the tree has already been brought to, so opening a folder by
-   *  hand is not undone before the reader moves to another file. */
+  /** The note and scope last followed. A scope switch should refocus the same
+   *  note, while manually browsing folders within that scope should not. */
   let followedPath = '';
+  let followedScope = '';
   /** The note the drawn tree belongs to; compared with the open one when the
    *  drawer comes back, so a highlight can never outlive the note it marks. */
   let renderedPath = deps.currentPath();
@@ -230,26 +230,30 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     if (follow) void showCurrent();
   }
 
-  /** Bring the open note back into view: the folders above it open, the note is
-   *  marked, and the tree scrolls to it. Once per file — a folder folded by
-   *  hand stays folded until the reader moves to another note.
-   *
-   *  "All files" is a walker, not a tree: its folder is where the reader put it
-   *  (walking the storage is what that scope is for, and the folder is kept
-   *  across launches for it), so following never moves it. The note is brought
-   *  into view there only when the walker is already showing the folder it is
-   *  in — and never for a file this space does not hold. */
+  /** Bring the open note back into view: open its ancestors in a space, or
+   *  switch the All files walker to its parent folder. The saved scope and note
+   *  form the follow key: opening a folder by hand is respected until either
+   *  the note or the scope changes. */
   async function showCurrent(): Promise<void> {
     const path = deps.currentPath();
-    if (!path || path === followedPath || isIncomingPath(path)) return;
+    const scopeKey = scope.kind === 'space' ? `space:${scope.space.id}:${scope.space.path}` : 'all';
+    if (!path || isIncomingPath(path) || (path === followedPath && scopeKey === followedScope)) return;
     followedPath = path;
+    followedScope = scopeKey;
+    let changed = false;
     if (scope.kind === 'space' && within(path, scope.space.path)) {
-      let changed = false;
       for (let dir = dirname(path); dir && dir !== scope.space.path && within(dir, scope.space.path); dir = dirname(dir)) {
         if (!expanded.has(dir)) { expanded.add(dir); changed = true; }
       }
-      if (changed) { saveExpanded(); await render(); }
+      if (changed) saveExpanded();
+    } else if (scope.kind === 'all') {
+      const dir = dirname(path);
+      if (walkDir() !== dir) {
+        setWalkDir(dir);
+        changed = true;
+      }
     }
+    if (changed) await render();
     scrollActive();
   }
   // Filter by name: files and folders anywhere under the space (or the
@@ -521,6 +525,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
         followButton.classList.toggle('is-active', follow);
         followButton.setAttribute('aria-pressed', String(follow));
         followedPath = ''; // turning it on shows the file now, not next time
+        followedScope = '';
         void render(); // and render's tail follows, when it is on
         break;
       case 'collapse':

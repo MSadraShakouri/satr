@@ -65,7 +65,7 @@ The fix is in the tree and the phone is what confirms it. Nothing leaves this se
 
 - [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one (claims fix, needs testing on APK) (the fix is in this round: a hand-over is matched by the plugin's source id first, then by the file's name, size and modification time, and a share by the text itself — the road is native-only, so the APK is the confirmation)
 
-- [ ] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff) (claims to be done, needs testing on APK) (the fix is in this round: a switch at the drawer's foot, on by default, opens the folders down to the note and scrolls the tree to it; "All files" is a walker and keeps the folder the reader walked to)
+- [ ] obsidian has a setting where in the left sidebar it always shows the file you're in (regardless of folder depth; the option is at the bottom near new file) (diagnosed: a fresh APK has no saved spaces, so its default scope is "All files"; the old implementation deliberately left that walker's folder unchanged, and the existing follow test only covered a space) (fixed: with the switch on, the All files walker now moves to the current note's parent folder; with it off, the chosen folder is preserved. Browser tests cover a fresh no-space scope, deep paths, tab changes and on/off. APK verification is still pending)
 
 ## deferred for later
 

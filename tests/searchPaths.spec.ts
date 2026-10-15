@@ -18,9 +18,15 @@ const FILES: Record<string, string> = {
   'Notes/Uni/Scientific/Physics/deepneedle.md': 'the physics deepneedle\n',
 };
 
-async function boot(page: Page, files: Record<string, string>, active: string, scope?: string) {
+async function boot(
+  page: Page,
+  files: Record<string, string>,
+  active: string,
+  scope?: string,
+  follow = true,
+) {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(({ files, active, scope }) => {
+  await page.addInitScript(({ files, active, scope, follow }) => {
     // Folders are whatever the files need, so a fixture can be as deep as the
     // test wants without a second list to keep in step.
     const folders = [...new Set(Object.keys(files).flatMap((path) => {
@@ -37,7 +43,8 @@ async function boot(page: Page, files: Record<string, string>, active: string, s
     // scope, which is what the folder is shown relative to.
     localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
     if (scope) localStorage.setItem('satr:scope', scope);
-  }, { files, active, scope });
+    localStorage.setItem('satr:follow-active', follow ? '1' : '0');
+  }, { files, active, scope, follow });
   await page.goto('/');
   await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
 }
@@ -78,7 +85,8 @@ test('a search result says which folder it is in, and the folders tell the twins
 });
 
 test('in All files the folder is the whole path from the storage root', async ({ page }) => {
-  await boot(page, FILES, 'Notes/Physics/lecture 1.md', 'all');
+  // This spec checks whole-storage search, so leave the walker at its root.
+  await boot(page, FILES, 'Notes/Physics/lecture 1.md', 'all', false);
   await searchAll(page, 'needlep');
   await expect(page.locator('#right-panel .search-result-file-title')).toHaveCount(4);
   const folderOf = await foldersOf(page);
@@ -113,7 +121,7 @@ test('a deep folder path is cut back to its shortest unique prefixes', async ({ 
 });
 
 test('in All files the whole path is shortened, storage root and all', async ({ page }) => {
-  await boot(page, FILES, 'Notes/Uni/Semester 3/Accounting/deepneedle.md', 'all');
+  await boot(page, FILES, 'Notes/Uni/Semester 3/Accounting/deepneedle.md', 'all', false);
   await searchAll(page, 'deepneedle');
   const folderOf = await foldersOf(page);
   expect(folderOf['Notes/Uni/Semester 3/Accounting/deepneedle.md']).toBe('Notes/U/Se/Accounting');

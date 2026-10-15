@@ -37,7 +37,7 @@ async function seed(
   files: Record<string, string>,
   spaces: Space[],
   active: string,
-  extra: { folders?: string[]; scope?: string; walk?: string } = {},
+  extra: { folders?: string[]; scope?: string; walk?: string; follow?: boolean } = {},
 ): Promise<void> {
   await page.addInitScript(({ files, spaces, active, extra }) => {
     const folders = new Set<string>(extra.folders ?? []);
@@ -54,6 +54,7 @@ async function seed(
     localStorage.setItem('satr:spaces', JSON.stringify(spaces));
     if (extra.scope) localStorage.setItem('satr:scope', extra.scope); else localStorage.removeItem('satr:scope');
     if (extra.walk) localStorage.setItem('satr:walk-dir', extra.walk); else localStorage.removeItem('satr:walk-dir');
+    localStorage.setItem('satr:follow-active', extra.follow === false ? '0' : '1');
   }, { files, spaces, active, extra });
   await page.reload();
   await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
@@ -183,6 +184,7 @@ test('browsing a folder counts what is in it', async ({ page }) => {
   }, [{ id: 'notes', name: 'Physics', path: PHYSICS }], `${PHYSICS}/lecture 1.md`, {
     scope: 'all',
     walk: uni,
+    follow: false,
   });
   await openFiles(page);
   const head = await header(page, '#file-panel');
