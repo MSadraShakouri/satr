@@ -24,7 +24,7 @@ import { typingTop } from './scrollSync';
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
   '.cm-scroller': { overflowY: 'auto', overscrollBehaviorY: 'contain', fontFamily: "'Vazirmatn', 'Segoe UI', Tahoma, system-ui, sans-serif", lineHeight: 'var(--note-line-height)' },
-  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) calc(50vh + 96px)', minHeight: '100%', tabSize: '2' },
+  '.cm-content': { padding: 'var(--view-top-spacing-markdown) var(--file-margin-x) calc(50vh + 96px + var(--fold-slack, 0px))', minHeight: '100%', tabSize: '2' },
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
 });

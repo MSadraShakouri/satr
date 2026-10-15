@@ -412,7 +412,7 @@ body {
 .preview-pane article {
   max-width: calc(var(--file-line-width) + 48px);
   margin: auto;
-  padding: var(--view-top-spacing-markdown) 24px 50vh;
+  padding: var(--view-top-spacing-markdown) 24px calc(50vh + var(--fold-slack, 0px));
   font-size: var(--note-font-size);
   line-height: var(--note-line-height);
   direction: ltr;

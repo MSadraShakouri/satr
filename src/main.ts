@@ -14,6 +14,7 @@ import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
 import { createRightSidebar } from './rightSidebar';
 import { majorityDirection } from './direction';
+import { keepingPlace, releaseFoldSlack } from './foldSlack';
 import { setMathDigits } from './math';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
@@ -327,6 +328,7 @@ function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
   lastRender = Date.now();
+  releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
   const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
   // A picture Satr can't edit (a photo opened from the file manager, say):
   // the reading view shows it as it is; the editor keeps the raw bytes.
@@ -921,8 +923,9 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   onNavScroll(editor.view.scrollDOM);
   follow('editor');
   rememberViewSoon();
+  releaseFoldSlack(editor.view.scrollDOM, editor.view.contentDOM);
 }, { passive: true });
-previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); }, { passive: true });
+previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
 
@@ -1967,7 +1970,13 @@ function noteAction(key: Exclude<QuickAction, ''>): NoteAction {
   switch (key) {
     case 'fold': return {
       title: anyFolded ? 'Expand all headings' : 'Collapse all headings', icon: anyFolded ? MENU_ICONS.expand : MENU_ICONS.collapse, needsNote: true,
-      run: () => { ownScroll(); if (editor.foldedLines().length) editor.unfoldAll(); else editor.foldAll(); renderMenuButton(); },
+      run: () => {
+        ownScroll();
+        const pane = previewVisible() ? previewPane : editor.view.scrollDOM;
+        const holder = previewVisible() ? preview : editor.view.contentDOM;
+        keepingPlace(pane, holder, () => { if (editor.foldedLines().length) editor.unfoldAll(); else editor.foldAll(); });
+        renderMenuButton();
+      },
     };
     case 'view': return {
       title: mode === 'edit' ? 'Reading view' : 'Editing view', icon: mode === 'edit' ? bookIcon : penIcon, needsNote: true,
@@ -2689,7 +2698,9 @@ preview.addEventListener('click', (event) => {
     if (onChevron) {
       event.preventDefault();
       ownScroll();
-      editor.toggleFold(Number(heading.parentElement!.dataset.line));
+      // The reader's place is kept across the fold — the same rule as the
+      // editor's own chevron (src/foldSlack.ts).
+      keepingPlace(previewPane, preview, () => editor.toggleFold(Number(heading.parentElement!.dataset.line)));
       return;
     }
   }
