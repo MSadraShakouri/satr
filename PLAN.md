@@ -5,7 +5,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 ## main
 
-- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one
+- [x] opening an already open tab from an external app opens the tab again, ideal to open the already open one (done in this patch: a hand-over is matched by the plugin's source id first, then by the file's own name, size and modification time — a file manager is free to vary the URI — and shared text by the text itself, so a second hand-over comes back to the tab that has it; the road from another app is native-only, so the APK is what confirms it)
 
 - [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc
 
@@ -75,7 +75,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [x] at the top of the right sidebar, show word and char count possibly below the file name (done in this patch: "12 words, 340 characters" under the note's name, kept in step with the note; the all-notes search, which names the space and not a note, says nothing; needs testing)
 
-- [ ] stuff like `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)` in RTL, the end of it isn't at the end (like numbers which had this issue)
+- [x] stuff like `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)` in RTL, the end of it isn't at the end (like numbers which had this issue) (done in this patch: a link or picture whose label is not Persian is isolated as one LTR run — brackets, address and all — the same way the number runs are, so its end is at the end; a Persian label keeps the line's direction and only its address is isolated)
 
 - [ ] caret position becomes unpredictable with `###`  hidden and jumps a bit
 
@@ -85,7 +85,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] possibly open PDFs too, a great idea would be to have something open dual panes manually so one could both read a PDF or any other file and write it down in the text bar, maybe something at the top, would really help me personally, but would not load the entire pdf at once to keep the app light
 
-- [ ] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff)
+- [x] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff) (done in this patch: a switch at the drawer's foot, on by default, opens the folders down to the note being read and scrolls the tree to it, and it is remembered; off, the tree stays exactly where the reader put it. "All files" is a walker rather than a tree — it keeps the folder the reader walked to either way, and only marks the note when it is already in that folder; needs testing)
 
 - [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
 
@@ -93,9 +93,9 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
 
-- [ ] title collapse and opens has an issue, if at the end of a page and opening the title, it brings you to the end of the page
+- [x] title collapse and opens has an issue, if at the end of a page and opening the title, it brings you to the end of the page (done in this patch: a fold or an unfold keeps the reader's place — at the foot of a note the height a fold takes is lent back to the page for as long as the reader stands there, and a scroll snapshot stops CodeMirror pinning the view to the document's foot when a section opens; needs testing on the APK)
 
-- [ ] display math (and maybe code, though I haven't tested that) in new lines when empty, the caret sticks to the right instead of left, when there's $$ $$ with one line between, the empty line caret sticks to right
+- [x] display math (and maybe code, though I haven't tested that) in new lines when empty, the caret sticks to the right instead of left, when there's $$ $$ with one line between, the empty line caret sticks to right (done in this patch: an empty line whose nearest lines above and below are both not-prose — math, code, indented code — takes their direction and not the line above it, so its caret sits at the left; an empty line against prose still follows the prose)
 
 - [x] status-bar flash on scroll up (claim to be fixed, needs testing on APK)
 
