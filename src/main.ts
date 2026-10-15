@@ -23,7 +23,7 @@ import { showNotice, type NoticeHandle } from './notice';
 import { closeTimestampPicker, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
@@ -35,7 +35,7 @@ import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
-import { ensureFileAccess, hideKeyboard, setupFontScalePreview, setupSystemBars, systemBars } from './native';
+import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within } from './vault';
@@ -2269,6 +2269,7 @@ if (Capacitor.isNativePlatform()) {
 document.addEventListener('satr:back', () => { handleBack(); });
 
 keepTimestampsCurrent(); // the relative timestamps ("in 3 hours") in the note and the reading view
+const SatrSplash = registerPlugin<{ dismiss(): Promise<void> }>('SatrSplash');
 let bootReady = false;
 let queuedIncomingId = '';
 async function boot(): Promise<void> {
@@ -2292,6 +2293,9 @@ async function boot(): Promise<void> {
   } finally {
     bootReady = true;
     dropSnapshot(); // the real note is on screen: lift the start-up copy
+    // On Android, keep the system splash through the cover's removal so only
+    // the circle animation is seen (Obsidian-style), then let it go.
+    if (isNative()) window.setTimeout(() => { void SatrSplash.dismiss().catch(() => undefined); }, 700);
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
