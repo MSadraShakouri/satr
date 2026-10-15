@@ -9,7 +9,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc
 
-- [ ] the ✓ button for file name to first line is a bit jumpy, would be great if it were possible for it to work normally (might possibly be a lag with file creation, enter on existing files has no delay, web is smooth but APK lags) (one time I didn't lag, I don't know the reason of it)
+- [x] the ✓ button for file name to first line is a bit jumpy, would be great if it were possible for it to work normally (might possibly be a lag with file creation, enter on existing files has no delay, web is smooth but APK lags) (one time I didn't lag, I don't know the reason of it) (claim to be fixed, needs testing on APK)
 
 - [x] discord Unix style timestamps follow system language, they should follow the app language
 
@@ -27,7 +27,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [x] app launch new tab shows the old tab for a moment before showing the empty tab, just a flash but a bad UX
 
-- [x] app launch is still weird, shows the main screen twice, once loading the app itself and once the app loading, one screen twice
+- [x] app launch is still weird, shows the main screen twice, once loading the app itself and once the app loading, one screen twice (claim to be fixed, needs testing on APK)
 
 - [x] maybe have the app opening screen a bit longer so it doesn't flash stuff (right now it shows a white screen quickly, while obsidian shows the logo for a bit longer) issues with app switching too when inactive for moments
 
@@ -47,6 +47,10 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] image sizes in print, huge right now (claims to be fixed, needs testing either on APK or on site after I can add images)
 
+- [ ] image filters, something like CamScanner (optional, interactive, with smart guessing and monochrome)
+
+- [ ] image size as a comment setting like the table direction one, not sure what it should be relative to, maybe the height
+
 - [x] the source to preview mode better alignment, perhaps just make the middle line of both centered, or do this with top 1/3 like outline headers and stuff
 
 - [x] same bottom of view text edit that scrolls down, exist for top of view that doesn't show the text too high up
@@ -55,15 +59,15 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [x] hold on tabs button show the options like new, reopen, close all, close others, close current etc
 
-- [ ] tab number digits aren't vertically centered (still yet not)
+- [x] tab number digits aren't vertically centered (still yet not)
 
 - [x] math text follows system font, this is very undesired, needs thought, maybe force vazir, or choose another font for it
 
 - [x] line selection has empty space between lines, the selection thing should maybe consider the height of the space between lines too, not sure if that's the correct approach
 
-- [ ] bad handling of opening images, it first tries to open as text then the app gets very slow
+- [x] bad handling of opening images, it first tries to open as text then the app gets very slow (claim to be fixed, needs testing on APK)
 
-- [ ] opening an image has a very weird bug and never lets you change the page (I think forever stuck), image opening needs proper handling
+- [x] opening an image has a very weird bug and never lets you change the page (I think forever stuck), image opening needs proper handling (claim to be fixed, needs testing on APK)
 
 - [x] sometimes left sidebar doesn't move the main page, it moves at first but doesn't stay and goes back to place, bug
 
@@ -92,6 +96,8 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 - [ ] title collapse and opens has an issue, if at the end of a page and opening the title, it brings you to the end of the page
 
 - [ ] display math (and maybe code, though I haven't tested that) in new lines when empty, the caret sticks to the right instead of left, when there's $$ $$ with one line between, the empty line caret sticks to right
+
+- [x] status-bar flash on scroll up (claim to be fixed, needs testing on APK)
 
 ## deferred for later
 
