@@ -37,7 +37,7 @@ import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
-import { onIncomingFile, openIncomingFile, openIncomingInOtherApp, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
+import { incomingIdentities, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 
@@ -110,6 +110,9 @@ const editorPane = document.querySelector<HTMLElement>('#editor-pane')!;
 const externalFileScreen = document.querySelector<HTMLElement>('#external-file-screen')!;
 const EXTERNAL_PATH_PREFIX = 'satr-open://';
 const externalFilesByPath = new Map<string, IncomingOpenFile>();
+/** Which path a handed-over file was opened at, by identity (src/openWith.ts:
+ *  the plugin's viewId, the file's name/size/time, or the text's digest). */
+const incomingPaths = new Map<string, string>();
 const handledIncomingIds = new Set<string>();
 const isExternalPath = (path: string): boolean => path.startsWith(EXTERNAL_PATH_PREFIX);
 const externalPath = (id: string, name: string): string => `${EXTERNAL_PATH_PREFIX}${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
@@ -1468,6 +1471,22 @@ async function openIncomingPath(path: string, after?: () => void): Promise<void>
   } else if (curTab().path === path) showIncomingScreen(path, existing);
 }
 
+/** The open tab that is reading the very file just handed over: the same name
+ *  and the same modification time. The tabs are checked only when their file's
+ *  name matches, so this is one `stat` per candidate at most. */
+async function vaultTabForSameFile(file: IncomingOpenFile): Promise<number> {
+  if (!file.modified || file.kind === 'shared-text') return -1;
+  const name = file.name.toLowerCase();
+  const candidates: { path: string; mtime: number }[] = [];
+  for (const tab of tabs) {
+    if (!tab.path || isExternalPath(tab.path) || basename(tab.path).toLowerCase() !== name) continue;
+    const version = await backend.stat(tab.path);
+    if (version) candidates.push({ path: tab.path, mtime: version.mtime });
+  }
+  const path = openTabForSameFile(file, candidates);
+  return path ? tabs.findIndex((tab) => tab.path === path) : -1;
+}
+
 async function handleIncomingId(id: string): Promise<void> {
   if (!id || handledIncomingIds.has(id)) return;
   handledIncomingIds.add(id);
@@ -1478,13 +1497,25 @@ async function handleIncomingId(id: string): Promise<void> {
     closeSettings();
     closeTimestampPicker();
     // The same source again (shared, or opened from the file manager, while its
-    // tab is still open) is that tab, not a second one. The source identity is
-    // `viewId`; the temporary id changes every time, so the tab keeps its path
-    // and takes the newest id to read from.
-    const sameSource = file.viewId
-      ? [...externalFilesByPath].find(([p, f]) => f.viewId === file.viewId && tabs.some((tab) => tab.path === p))
-      : undefined;
-    const path = sameSource ? sameSource[0] : externalPath(file.id, file.name);
+    // tab is still open) is that tab, not a second one. The identity is the
+    // plugin's source (viewId) first, then what the file says about itself —
+    // name, size, modification time — because a file manager may hand the same
+    // file over through a different URI, and shared text is its own identity
+    // (src/openWith.ts). The temporary id changes every hand-over, so a tab
+    // that is reused keeps its path and takes the newest id to read from.
+    const identities = incomingIdentities(file);
+    const knownPath = openPathForIdentities(identities, tabs.map((tab) => tab.path), incomingPaths);
+    // Not handed over before — but perhaps already open from the folders. The
+    // same document on the same disk is one tab, however it was opened.
+    const vaultTab = knownPath ? -1 : await vaultTabForSameFile(file);
+    if (vaultTab >= 0) {
+      await switchTab(vaultTab);
+      toggleFiles(false);
+      renderNavButtons();
+      return;
+    }
+    const path = knownPath ?? externalPath(file.id, file.name);
+    for (const identity of identities) incomingPaths.set(identity, path);
     externalFilesByPath.set(path, file);
     const existingTab = tabs.findIndex((tab) => tab.path === path);
     if (existingTab >= 0) {
