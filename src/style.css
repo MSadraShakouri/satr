@@ -2428,6 +2428,24 @@ input.mod-no-match {
   flex: 1;
   min-width: 0;
 }
+.drawer-recursive-toggle {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  margin-top: 2px;
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+.drawer-recursive-toggle.is-active {
+  color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+.drawer-recursive-toggle:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
 .workspace-drawer-vault-switcher {
   display: inline-flex;
   align-items: center;

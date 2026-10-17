@@ -35,6 +35,8 @@ export interface Settings {
   launchTabs: 'last' | 'empty' | 'away';
   /** How long away, in minutes, before 'away' adds a new empty tab. */
   newTabAfterMinutes: number;
+  /** Whether the All-notes and new-tab searches walk subfolders; false = only direct children of the space root / walked folder. */
+  recursiveSearch: boolean;
   /** Settings format; 3 = roomier default line spacing. */
   version?: number;
 }
@@ -48,8 +50,8 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
   settings: 'Settings',
 };
 const KEY = 'satr:settings';
-const SETTINGS_VERSION = 3;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30 };
+const SETTINGS_VERSION = 4;
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true };
 /** The choices for "after being away", in minutes. */
 export const NEW_TAB_AFTER_CHOICES: [number, string][] = [[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [360, '6 hours'], [1440, '1 day']];
 
@@ -73,10 +75,12 @@ export function loadSettings(): Settings {
     if (!['last', 'empty', 'away'].includes(s.launchTabs)) s.launchTabs = 'last';
     s.newTabAfterMinutes = NEW_TAB_AFTER_CHOICES.some(([m]) => m === Number(s.newTabAfterMinutes)) ? Number(s.newTabAfterMinutes) : 30;
     s.hiddenTools = Array.isArray(s.hiddenTools) ? s.hiddenTools.filter((t) => typeof t === 'string') : [];
+    if (typeof s.recursiveSearch !== 'boolean') s.recursiveSearch = true;
     return s;
   } catch { return { ...DEFAULTS }; }
 }
 function save(settings: Settings): void { localStorage.setItem(KEY, JSON.stringify(settings)); }
+export function saveSettings(settings: Settings): void { save(settings); }
 
 export interface SettingsDeps {
   /** PDF layout preferences belong to the file open when Settings is opened. */
@@ -249,6 +253,13 @@ export function openSettings(deps: SettingsDeps): void {
           <textarea class="setting-textarea" data-text="pdfCss" dir="ltr" spellcheck="false" autocomplete="off" autocapitalize="off" rows="6" placeholder="p { text-align: justify; }">${escapeHtml(settings.pdfCss)}</textarea>
         </div>
       </div>
+      <div class="setting-group-title">Search</div>
+      <div class="setting-group">
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Include subfolders</div><div class="setting-item-description">Search notes in subfolders. When off, only notes in the current folder are searched.</div></div>
+          ${toggle('recursiveSearch', settings.recursiveSearch)}
+        </div>
+      </div>
       <div class="setting-group-title">Keyboard toolbar</div>
       <div class="setting-group">
         ${deps.tools().map((t) => `
@@ -349,6 +360,7 @@ export function openSettings(deps: SettingsDeps): void {
     if (name === 'lineNumbers') settings.lineNumbers = on;
     else if (name === 'highlightAll') settings.highlightAll = on;
     else if (name === 'spaceAfterPunctuation') settings.spaceAfterPunctuation = on;
+    else if (name === 'recursiveSearch') settings.recursiveSearch = on;
     else if (name.startsWith('tool:')) {
       const command = name.slice(5);
       settings.hiddenTools = on ? settings.hiddenTools.filter((c) => c !== command) : [...settings.hiddenTools, command];

@@ -1900,6 +1900,10 @@ async function runEmptySearch(): Promise<void> {
 
 /** Open a new-tab search hit: the note, at the hit, the way a sidebar result
  *  does — the caret after it and the ring on it for a few seconds. */
+window.addEventListener('satr:settings-changed', () => {
+  if (emptyQuery.trim() && document.body.classList.contains('is-empty-tab')) void runEmptySearch();
+});
+
 function openEmptyHit(path: string, from: number, to: number): void {
   void openFile(path, () => {
     if (mode !== 'edit') setMode('edit');
@@ -2180,9 +2184,10 @@ const noteTopSpacing = (): number => parseFloat(getComputedStyle(editor.view.con
 async function allNotes(): Promise<{ path: string; text: string }[]> {
   const scope = currentScope();
   const root = scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
+  const recursive = loadSettings().recursiveSearch ?? true;
   const notes: { path: string; text: string }[] = [];
   if (filePath) notes.push({ path: filePath, text: editor.getValue() });
-  for (const path of await walkNotes(root)) {
+  for (const path of await walkNotes(root, 2000, recursive)) {
     if (path === filePath) continue;
     const text = await backend.read(path);
     if (text !== null) notes.push({ path, text });
@@ -2353,6 +2358,8 @@ function applySettings(settings: Settings): void {
   toolbar.querySelectorAll<HTMLElement>('button[data-command]').forEach((b) => { b.hidden = settings.hiddenTools.includes(b.dataset.command!); });
   updateToolbarFades();
   renderMenuButton();
+  sidebar.refresh();
+  void renderEmptyTab();
 }
 const settingsButton = document.createElement('button');
 settingsButton.type = 'button';
