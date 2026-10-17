@@ -18,6 +18,7 @@
 // Queries are regular expressions, ignoring case (src/searchRegex.ts).
 import { headingsOfText, type Heading } from './outline';
 import { isInvalidSearch, searchRegExp } from './searchRegex';
+import { loadSettings, saveSettings } from './settings';
 import { basename, dirname, stem } from './vault';
 import { shortenPath } from './pathShort';
 
@@ -55,6 +56,7 @@ const ICONS = {
   collapseAll: icon('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
   folder: icon('<path d="M3.5 7.5a2 2 0 0 1 2-2h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
   expandAll: icon('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'),
+  recursive: icon('<path d="M10.7 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v4.1"/><path d="m21 21-1.9-1.9"/><circle cx="17" cy="17" r="3"/>'),
 };
 const SCOPE_KEY = 'satr:search-scope';
 const MAX_PER_NOTE = 100;
@@ -84,6 +86,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
           <div class="workspace-drawer-header-info drawer-note-name" dir="auto"></div>
           <div class="workspace-drawer-header-info drawer-note-count" dir="auto"></div>
         </div>
+        <button type="button" class="clickable-icon drawer-recursive-toggle" data-recursive-toggle aria-label="Include subfolders" title="Include subfolders">${ICONS.recursive}</button>
       </div>
       <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
       <div class="segmented-control search-scope" role="radiogroup" aria-label="Search in">
@@ -105,6 +108,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   const noteCount = root.querySelector<HTMLElement>('.drawer-note-count')!;
   const segmented = root.querySelector<HTMLElement>('.search-scope')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
+  const recursiveButton = root.querySelector<HTMLButtonElement>('[data-recursive-toggle]')!;
   let scope: SearchScope = localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'note';
   const collapsed = new Set<string>(); // closed branches: "h:<line>" or "n:<path>"
   // Notes the reader opened or closed by hand in the all-notes list; the
@@ -133,6 +137,12 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     collapseButton.innerHTML = any ? ICONS.expandAll : ICONS.collapseAll;
     collapseButton.setAttribute('aria-label', any ? 'Expand all' : 'Collapse all');
     collapseButton.hidden = !list.querySelector('.tree-item-children, .search-result-file-matches');
+    if (recursiveButton) {
+      const recursive = loadSettings().recursiveSearch ?? true;
+      recursiveButton.classList.toggle('is-active', recursive);
+      recursiveButton.setAttribute('aria-pressed', String(recursive));
+      recursiveButton.disabled = scope === 'note';
+    }
   }
 
   function snippet(text: string, from: number, to: number): string {
@@ -471,6 +481,17 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     }
     renderChrome();
   });
+  recursiveButton?.addEventListener('click', () => {
+    if (recursiveButton.disabled) return;
+    const settings = loadSettings();
+    settings.recursiveSearch = !settings.recursiveSearch;
+    saveSettings(settings);
+    render();
+    // Dispatch a lightweight event so the empty-tab search (which lives in main.ts) can refresh if open.
+    window.dispatchEvent(new CustomEvent('satr:settings-changed'));
+  });
+  // Keep the button in sync when Settings changes the same flag.
+  window.addEventListener('satr:settings-changed', () => renderChrome());
   render();
 
   return {

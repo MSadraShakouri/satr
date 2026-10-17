@@ -360,7 +360,21 @@ export function migrateOldNotes(): string | null {
 }
 
 /** Every note (md/txt) under `dir`, depth-first, at most `limit`. */
-export async function walkNotes(dir: string, limit = 2000): Promise<string[]> {
+export async function walkNotes(dir: string, limit = 2000, recursive = true): Promise<string[]> {
+  if (!recursive) {
+    let entries: Entry[];
+    try { entries = await backend.list(dir); } catch { return []; }
+    const out: string[] = [];
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      if (entry.path === 'Android') continue;
+      if (entry.kind === 'file' && isNote(entry.name)) {
+        out.push(entry.path);
+        if (out.length >= limit) break;
+      }
+    }
+    return out.slice(0, limit);
+  }
   const out: string[] = [];
   const queue = [dir];
   while (queue.length && out.length < limit) {
