@@ -38,7 +38,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - Undo **and redo** belong to each open tab, in memory. Switching tabs or losing focus keeps both stacks; closing the tab or app ends them. No persistent revision history is added.
 - **Discord-style timestamps.** `<t:1700000000>` or `<t:1700000000:R>` in a note reads as a date or a relative time — all seven formats, in your own language and locale — and the relative form keeps counting while you read. The PDF prints them with the same grey chip.
 - **Any file opens**, not just Markdown: a `.patch`, a `.json`, a script, a photo. Plain UTF-8 text is editable whatever its extension; anything else is shown as the bytes decode, read-only, so Satr can never write rubbish back over it. Photos open in the reading view as pictures. Only a file too large to load is turned away.
-- **Search and outline** in one drawer, for this note or all notes, with regular expressions. Find and replace in the note has one bar. The outline tree flips to the note's majority direction; every heading keeps its own.
+- **Search and outline** in one drawer, for this note or all notes, with regular expressions. Find and replace in the note has one bar. The outline tree flips to the note's majority direction; every heading keeps its own. The All-notes search has an **Include subfolders** toggle (header + Settings) — off, it shows only the space's top-level notes.
 - **Typing like Obsidian:**
   - Brackets, quotes, `$`, `*`, `_`, `=` and backticks pair up and wrap a selection.
   - `$$` then `$$` opens a math block. A lone `$$` or `$$$$` with nothing between is just text. Only a `$$ … $$` pair whose dollars sit on different lines is a display block; the empty writing line counts as math.
