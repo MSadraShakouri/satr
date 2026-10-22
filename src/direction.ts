@@ -1,4 +1,5 @@
-import { maskMathAndCode } from './mathScan';
+import type { Text } from '@codemirror/state';
+import { isMathBlockBoundary, maskMathAndCode } from './mathScan';
 
 // One direction policy for source lines and rendered blocks. This sets the
 // paragraph base direction, NEVER a bidi override: dates/digits remain in
@@ -95,9 +96,37 @@ const withoutSyntax = (line: string): string => line
   .replace(/^\s*(?:[-*+]|[0-9۰-۹٠-٩]+[.)])\s+(?:\[[ xX]\]\s*)?/, '')
   .replace(/^\s*[a-zA-Z][.)]\s*$/, '');
 
+/** `plain` with the masked characters of `hidden` carried over, one line at
+ * a time: a line the masker did not touch is reused whole, and only a line it
+ * did touch is walked character by character. `touched` records which lines
+ * the masker changed, for the editor's fast path. */
+function maskedLines(plain: readonly string[], original: readonly string[], hidden: string, touched: boolean[]): string[] {
+  const hiddenLines = hidden.split('\n');
+  return plain.map((line, index) => {
+    const masked = hiddenLines[index] ?? '';
+    if (masked === original[index]) return line;
+    touched[index] = true;
+    const chars = line.split('');
+    for (let i = 0; i < chars.length; i += 1) if (chars[i] !== ' ' && masked[i] === ' ') chars[i] = ' ';
+    return chars.join('');
+  });
+}
+
+/** Everything the editor keeps between keystrokes: the answer, the per-line
+ * decision it came from, and which lines the blanker and the masker touched.
+ * The last two let a keystroke that cannot change a decision skip the note. */
+export interface DirectionSnapshot {
+  dirs: TextDirection[];
+  units: DirectionUnit[];
+  /** The line sits inside frontmatter, a comment or a link definition. */
+  blanked: boolean[];
+  /** The masker changed characters on this line. */
+  masked: boolean[];
+}
+
 /** Full-document context, cached by the editor's StateField. No viewport
  * cutoff: scrolling 200 lines away must not change a number's direction. */
-export function sourceDirections(markdown: string): TextDirection[] {
+export function directionSnapshot(markdown: string): DirectionSnapshot {
   const source = markdown.replace(/\r\n?/g, '\n');
   const originalLines = source.split('\n');
   const blank = (text: string) => text.replace(/[^\n]/g, ' ');
@@ -106,14 +135,15 @@ export function sourceDirections(markdown: string): TextDirection[] {
     .replace(/^ {0,3}\[(?!\^)[^\]]+\]:[^\n]*$/gm, blank);
   // Math and code never vote; the shared scanner says where they are, so the
   // editor, the preview and this agree on the same lines (src/mathScan.ts).
-  const hidden = maskMathAndCode(source);
-  const masked = [...plain];
-  for (let i = 0; i < source.length; i += 1) {
-    if (source[i] !== '\n' && plain[i] !== ' ' && hidden[i] === ' ') masked[i] = ' ';
-  }
-  const maskedText = masked.join('');
   const plainLines = plain.split('\n');
-  const lines = maskedText.split('\n');
+  const blanked = plainLines.map((line, index) => line !== originalLines[index]);
+  // The masked copy of the whole note, line by line. When nothing was masked
+  // the function hands back the very same string (an identity comparison, not
+  // a scan), and a line the masker left alone is reused as it stands — so a
+  // note without formulas or code never builds the copy at all.
+  const hidden = maskMathAndCode(source);
+  const masked: boolean[] = new Array(originalLines.length).fill(false);
+  const lines = hidden === source ? plainLines : maskedLines(plainLines, originalLines, hidden, masked);
   // Lines that are nothing but math or code: they never vote, never carry, and
   // a blank line between two of them is part of their flow (see below).
   const notProse: boolean[] = [];
@@ -147,7 +177,80 @@ export function sourceDirections(markdown: string): TextDirection[] {
       units[i - 1].heading = lines[i].trim()[0] === '=' ? 1 : 2;
     }
   }
-  return resolveDirections(withCarried(units));
+  return { dirs: resolveDirections(withCarried(units)), units, blanked, masked };
+}
+
+export function sourceDirections(markdown: string): TextDirection[] {
+  return directionSnapshot(markdown).dirs;
+}
+
+// Characters the blanker and the masker read: a keystroke that carries one of
+// them can move a comment, a formula, a fence or a link definition, and with
+// them every line below. Letters, spaces and ordinary punctuation carry none.
+const STRUCTURAL = /[\n`~$<>!\[\]:]/;
+const STRUCTURAL_LINE = /[`~$]/;
+const SETEXT_UNDERLINE = /^\s{0,3}(=+|-+)\s*$/;
+
+/** One line's decision, taken exactly the way the whole-note pass takes it.
+ * Only valid for a line the masker and the blanker left alone: then the raw
+ * text *is* the text they decide on. */
+function lineUnit(text: string, above: string, index: number): DirectionUnit {
+  const stripped = withoutSyntax(text);
+  const explicit = /<[a-z][^>]*\bdir\s*=\s*["'](rtl|ltr)["']/i.exec(text)?.[1].toLowerCase() as TextDirection | undefined;
+  const heading = /^\s{0,3}(#{1,6})(?:\s|$)/.exec(stripped)?.[1].length;
+  const indentedCode = /^( {4}|\t)/.test(text) && (index === 0 || !above.trim() || /^( {4}|\t)/.test(above));
+  return { own: explicit ?? strongDirection(stripped), heading, excluded: indentedCode };
+}
+
+/** The direction rules on a keystroke: the previous answer when the edit
+ * cannot have changed it, or null when the caller has to recompute the note.
+ *
+ * A line's direction comes from its own text, the line above it (indentation),
+ * its neighbours when it is blank, and through carry and look-below from the
+ * rest of its section. So an edit that leaves every touched line's own
+ * decision identical — and that cannot move math, code, a comment, a blank
+ * line or a setext underline — leaves every direction in the note identical. */
+export function directionsAfter(
+  prev: DirectionSnapshot,
+  oldDoc: Text,
+  newDoc: Text,
+  changes: { iterChanges(f: (fromA: number, toA: number, fromB: number, toB: number, inserted: Text) => void): void },
+): TextDirection[] | null {
+  if (newDoc.lines !== oldDoc.lines) return null;
+  const touched = new Set<number>();
+  let ok = true;
+  changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+    if (!ok) return;
+    // A structural character would move math, code, a comment or a link
+    // definition; a newline would move every line.
+    if (STRUCTURAL.test(inserted.toString()) || STRUCTURAL.test(oldDoc.sliceString(fromA, toA))) { ok = false; return; }
+    const line = newDoc.lineAt(fromB);
+    if (oldDoc.lineAt(fromA).number !== line.number) { ok = false; return; }
+    // `-` on the first line could open or close frontmatter.
+    if (line.number === 1 && inserted.toString().includes('-')) { ok = false; return; }
+    touched.add(line.number - 1);
+  });
+  if (!ok || !touched.size) return null;
+  for (const index of touched) {
+    if (prev.blanked[index] || prev.masked[index]) return null;
+    const before = oldDoc.line(index + 1).text;
+    const after = newDoc.line(index + 1).text;
+    // A line holding a delimiter takes part in the masker's state machine —
+    // run lengths, escapes, a price after a closing dollar — even when the
+    // keystroke itself carried none.
+    if (STRUCTURAL_LINE.test(before) || STRUCTURAL_LINE.test(after)) return null;
+    // Going blank or leaving blank moves the blank-line-between-math pass.
+    if ((before.trim() === '') !== (after.trim() === '')) return null;
+    // A setext underline decides the heading above it.
+    if (SETEXT_UNDERLINE.test(before) || SETEXT_UNDERLINE.test(after)) return null;
+    // A line that ends a `$$` pair changes what is math below it.
+    if (isMathBlockBoundary(before) !== isMathBlockBoundary(after)) return null;
+    const unit = lineUnit(after, index > 0 ? newDoc.line(index).text : '', index);
+    const was = prev.units[index];
+    if (!was) return null;
+    if (unit.own !== was.own || unit.heading !== was.heading || Boolean(unit.excluded) !== Boolean(was.excluded)) return null;
+  }
+  return prev.dirs;
 }
 
 const BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dt,dd,summary,caption,.md-prose-fragment';

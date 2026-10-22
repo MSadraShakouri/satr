@@ -1,4 +1,4 @@
-import { sourceDirections, majorityDirection } from './direction';
+import { directionSnapshot, directionsAfter, majorityDirection, type DirectionSnapshot } from './direction';
 import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
@@ -118,9 +118,14 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
 }, { decorations: (value) => value.decorations });
 
 // Cache whole-document context; viewport changes only rebuild decorations.
-const directionsField = StateField.define({
-  create: (state) => sourceDirections(state.doc.toString()),
-  update: (value, tr) => tr.docChanged ? sourceDirections(tr.newDoc.toString()) : value,
+// A keystroke that cannot move a line's decision reuses the last answer
+// (src/direction.ts, directionsAfter) instead of walking the whole note.
+const directionsField = StateField.define<DirectionSnapshot>({
+  create: (state) => directionSnapshot(state.doc.toString()),
+  update: (value, tr) => {
+    if (!tr.docChanged) return value;
+    return directionsAfter(value, tr.startState.doc, tr.newDoc, tr.changes) ? value : directionSnapshot(tr.newDoc.toString());
+  },
 });
 const dirDecorations = {
   rtl: Decoration.line({ attributes: { dir: 'rtl' } }),
@@ -128,7 +133,7 @@ const dirDecorations = {
 };
 function buildDirections(view: EditorView) {
   const builder = new RangeSetBuilder<Decoration>();
-  const directions = view.state.field(directionsField);
+  const directions = view.state.field(directionsField).dirs;
   for (const block of view.viewportLineBlocks) {
     const line = view.state.doc.lineAt(block.from);
     builder.add(line.from, line.from, dirDecorations[directions[line.number - 1]]);
