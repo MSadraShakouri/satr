@@ -405,11 +405,20 @@ export function renderMarkdown(source: string): string {
     if (!list || !tagList(section.token as ListToken, list, section.start, section.end)) {
       tag(element, section.start, section.end);
     }
-    // A first height for the reading view before it has been laid out: one
-    // source line is one line of --note-line-height. style.css takes over
-    // from there (content-visibility: auto) and remembers the real height.
-    const lines = Number(element.dataset.lines);
-    if (lines > 0) element.style.setProperty('contain-intrinsic-block-size', `auto ${(lines * 1.85).toFixed(1)}em`);
+    // A first height for the reading view before it has been laid out, in
+    // source lines of its own — not in what was tagged onto it. A list tags
+    // its items, never the section, so reading data-lines back off the
+    // element left every list in the note with no estimate at all and the
+    // blanket one in style.css instead: 40em of reserved room for three
+    // items that come to 96px. A note of headings, a line of text and a
+    // short list each time measured three times its real length that way,
+    // and a reading position landed in a note that then collapsed under it.
+    // style.css takes over from here (content-visibility: auto) and
+    // remembers the real height the first time the section is seen; --md-line
+    // is what the app has learned a source line costs (src/main.ts).
+    const span = Math.max(1, sourceLine(section.end) - sourceLine(section.start));
+    element.dataset.span = String(span);
+    element.style.setProperty('contain-intrinsic-block-size', `auto calc(var(--md-line, 1.85em) * ${span})`);
   });
   // A list is drawn from its own markers, read back from the lines they were
   // written on: every item shows the marker the writer typed — `الف` stays

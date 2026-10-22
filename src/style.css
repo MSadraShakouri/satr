@@ -432,7 +432,10 @@ body {
 @supports (contain-intrinsic-size: auto 1em) {
   #preview > .md-section {
     content-visibility: auto;
-    contain-intrinsic-size: auto 40em;
+    /* Only for a section markdown.ts gave no span of its own. It used to be
+       40em — two thirds of a screen held for anything unmeasured, which is
+       a lie the moment the note is mostly short blocks. */
+    contain-intrinsic-size: auto calc(var(--md-line, 1.85em) * 4);
   }
 }
 .preview-pane
