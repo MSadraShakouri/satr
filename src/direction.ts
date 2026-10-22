@@ -71,20 +71,12 @@ export function resolveDirections(units: readonly DirectionUnit[]): TextDirectio
       next[i - start] = below;
       if (!units[i].excluded && units[i].own) below = units[i].own;
     }
-    let above: TextDirection | null = null;
-    let votes = 0;
-    for (let i = start; i < end; i++) {
+    for (let i = start; i < end; i += 1) {
       const unit = units[i];
-      if (unit.excluded) { result[i] = 'ltr'; continue; }
-      if (unit.own) {
-        result[i] = above = unit.own;
-        votes |= unit.own === 'rtl' ? 1 : 2;
-      } else {
-        // A unanimous section prefix has priority over the following block.
-        // Otherwise agreeing neighbours win; mixed neighbours prefer above.
-        result[i] = votes === 1 ? 'rtl' : votes === 2 ? 'ltr'
-          : above ?? next[i - start] ?? headings.at(-1)?.dir ?? 'ltr';
-      }
+      // `own` is already carried (withCarried), so a line without one can only
+      // be in the note's leading run before any prose: look below it, then at
+      // the heading above, then left to right.
+      result[i] = unit.excluded ? 'ltr' : unit.own ?? next[i - start] ?? headings.at(-1)?.dir ?? 'ltr';
     }
     start = end;
   }
