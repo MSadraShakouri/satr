@@ -458,9 +458,13 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   if (previewVisible()) renderPreview();
   // position is null when the reading view had nothing to read: keep the
   // pane where it is rather than place it from a number nobody measured.
+  // Settle, not a single shot: this runs right after the whole note has
+  // been replaced and the reading view rebuilt from nothing, which is the
+  // least settled the page ever is — and it happens on resume, where the
+  // reader is watching.
   if (position !== null) {
-    if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, false, y);
-    else applyEditorScroll(editor.view, position, () => true, false, y);
+    if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, true, y);
+    else applyEditorScroll(editor.view, position, () => true, true, y);
   }
   restoringView = wasRestoring;
   ownScroll(250);
@@ -488,9 +492,21 @@ async function refreshOnResume(): Promise<void> {
   lastResumeRefresh = now;
   try {
     await Promise.allSettled([leftSidebar.refresh(), sidebar.refresh()]);
+    // Everything about the page's height is about to be thrown away and
+    // worked out again — the editor's line measurements, every formula —
+    // so take the reading place first and put the reader back on it after.
+    // Without this, coming back to the app left the note wherever the new
+    // measurements happened to push it.
+    const y = scrollBand();
+    const keep = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
+    const generation = viewGeneration;
     editor.remeasure(); // font scale or WebView size may have changed while paused
     clearMathLayout(); // and every formula has to be measured again
     if (previewVisible()) scheduleMathLayout(preview);
+    if (keep !== null) {
+      if (previewVisible()) applyPreviewScroll(previewPane, preview, keep, () => generation === viewGeneration, true, y);
+      else applyEditorScroll(editor.view, keep, () => generation === viewGeneration, true, y);
+    }
     void refreshLinkIndex();
     const path = filePath;
     const baseline = diskBase?.path === path ? diskBase : null;
