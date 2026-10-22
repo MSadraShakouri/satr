@@ -166,3 +166,48 @@ test('restore last tabs still paints the last screen first', async ({ page }) =>
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('#boot-snapshot')).toContainText('OLDNOTEFLASH');
 });
+
+test('the cover hands over: the beat on the web, at once on the device', async ({ page }) => {
+  // On the device the system splash (android/.../MainActivity.java) is held
+  // until the note is on screen, so the HTML cover under it has nothing left
+  // to cover: `instant` lifts it as soon as the app has painted, and `done`
+  // says when it really is gone. The splash is dismissed on that, not on a
+  // timer — on a timer the splash left first and uncovered this cover's own
+  // icon, a second icon at a second size, for a few hundred milliseconds.
+  // In a browser there is no splash above it, so the cover keeps its beat.
+  await page.goto('/');
+  const out = await page.evaluate(async () => {
+    const { dropSnapshot } = await window.__satr.load('/src/snapshot.ts');
+    const cover = (): HTMLElement => {
+      document.getElementById('boot-snapshot')?.remove();
+      const el = document.createElement('div');
+      el.id = 'boot-snapshot';
+      document.body.appendChild(el);
+      return el;
+    };
+    const run = (options: Record<string, unknown>): Promise<{ at: number; gone: boolean }> => {
+      const el = cover();
+      const started = performance.now();
+      return new Promise((resolve) => {
+        window.setTimeout(() => resolve({ at: -1, gone: !el.isConnected }), 3000);
+        dropSnapshot({ ...options, done: () => resolve({ at: performance.now() - started, gone: !el.isConnected }) });
+      });
+    };
+    const device = await run({ instant: true });
+    // The web path: the cover is held a beat (480 ms) and fades out.
+    (window as { __satrCoverAt?: number }).__satrCoverAt = Date.now();
+    const web = await run({});
+    // No cover at all (a hand-over after boot): the caller is not left waiting.
+    document.getElementById('boot-snapshot')?.remove();
+    const none = await new Promise<number>((resolve) => {
+      const started = performance.now();
+      dropSnapshot({ done: () => resolve(performance.now() - started) });
+    });
+    return { device, web, none };
+  });
+  expect(out.device.gone, 'the copy is gone before the splash is dismissed').toBe(true);
+  expect(out.device.at, 'no beat on the device').toBeLessThan(300);
+  expect(out.web.gone).toBe(true);
+  expect(out.web.at, 'the beat, then the fade').toBeGreaterThan(500);
+  expect(out.none, 'nothing to lift: at once').toBeLessThan(100);
+});

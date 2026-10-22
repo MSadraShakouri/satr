@@ -104,17 +104,36 @@ export function showSplash(): void {
 }
 
 /** Lift the start-up copy off once the real app has painted. Held a beat
- *  so a fast boot is still a screen, not a white flash. */
-export function dropSnapshot(): void {
+ *  so a fast boot is still a screen, not a white flash.
+ *
+ *  - `instant`: no beat and no fade — for the device, where the system
+ *    splash is already covering the screen and this copy has nothing to
+ *    cover. Two frames are still allowed, so the app is painted underneath
+ *    before anything is lifted.
+ *  - `done`: called when the screen really is the app's — the cover gone,
+ *    not a guess at how long it would take. On the device that is the cue
+ *    to dismiss the system splash, so the hand-over is one step: splash,
+ *    note. (Also called when there was no cover at all.) */
+export function dropSnapshot(options: { instant?: boolean; done?: () => void } = {}): void {
+  const { instant = false, done } = options;
   const cover = document.getElementById('boot-snapshot');
-  if (!cover) return;
+  if (!cover) { done?.(); return; }
+  const lift = (): void => {
+    cover.remove();
+    document.getElementById('boot-snapshot-css')?.remove();
+    done?.();
+  };
+  const twoFrames = (then: () => void): void => {
+    requestAnimationFrame(() => requestAnimationFrame(then));
+  };
+  if (instant) { twoFrames(lift); return; }
   const wait = Math.max(0, MIN_COVER_MS - (Date.now() - (window.__satrCoverAt ?? 0)));
   window.setTimeout(() => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!cover.isConnected) return;
+    twoFrames(() => {
+      if (!cover.isConnected) { done?.(); return; }
       cover.style.transition = 'opacity 120ms ease-out';
       cover.style.opacity = '0';
-      window.setTimeout(() => { cover.remove(); document.getElementById('boot-snapshot-css')?.remove(); }, 140);
-    }));
+      window.setTimeout(lift, 140);
+    });
   }, wait);
 }
