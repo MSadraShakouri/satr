@@ -795,11 +795,12 @@ const NAV_THRESHOLD = 0.125 * LINE_PX;
 // accumulating), and a timer asks again the moment the beat is over. A flick
 // that stops inside the beat still brings the bars back.
 const NAV_SETTLE_MS = 200;
-// A move the beat held back has to be a real one. The 3px threshold is right
-// for a gesture that is happening now, but a thumb resting on the glass
-// wobbles more than that, and a wobble inside the beat must not count: the
-// bars would come back and go away again, which is the flash. Four times the
-// threshold (12px) is a move the reader made.
+// A move that turns the bars around has to be a real one: a thumb resting on
+// the glass wobbles more than the 3px anchor threshold, and a wobble must not
+// count — the bars would come back and go away again, which IS the flash.
+// Four times the threshold (about a line of text) is a move the reader made.
+// This bar is applied to every reversal now, not only to one the beat held
+// back: a wobble that lands after the beat used to skip it (onNavScroll).
 const NAV_HELD = NAV_THRESHOLD * 4;
 let navHidden = false;
 let navMovedAt = -Infinity;
@@ -839,7 +840,13 @@ function flushNavigation(): void {
   // says nothing about which way the finger was going.
   const top = pending.el.scrollTop;
   const moved = pending.at - top; // the way the move asked for: up
-  if (pending.hide ? -moved < NAV_HELD : moved < NAV_HELD) return;
+  // A bounce that reaches the very top counts whatever the distance says: the
+  // reader cannot be at the top by accident, the top always has its bars, and
+  // a fast bounce can land on scrollTop 0 inside ONE frame — the pending mark
+  // is then taken at 0, the distance reads as zero, and the bars would stay
+  // away for good.
+  const backToTop = !pending.hide && top <= 0;
+  if (pending.hide ? -moved < NAV_HELD : (moved < NAV_HELD && !backToTop)) return;
   scrollAnchors.set(pending.el, top);
   if (pending.hide) hideNavigation();
   else restoreNavigation();
@@ -874,6 +881,16 @@ function onNavScroll(el: HTMLElement): void {
   // change, and the anchor keeps up so a long scroll is not one change
   // waiting to happen at its end.
   if (hide === navHidden) { scrollAnchors.set(el, top); return; }
+  // Only a REVERSAL moves the bars — and a reversal is the only thing that
+  // can flash: hide then show (or show then hide) inside one bar animation.
+  // So a reversal has to be a move the reader made, whatever the beat is
+  // doing. The small threshold above is right for setting the anchor, but it
+  // is the wrong bar for turning the bars around: a 4-6px wobble of a thumb
+  // resting on the glass clears it, and the old rule only caught that wobble
+  // when it happened to land INSIDE the beat (holdNavigation → flushNavigation
+  // re-checks NAV_HELD). One that landed after the beat walked straight into
+  // restoreNavigation() — a flash with no gesture behind it.
+  if (Math.abs(delta) < NAV_HELD) return;
   if (navSettling()) { holdNavigation(el, hide); return; } // the anchor stays where the bars moved
   scrollAnchors.set(el, top);
   if (hide) hideNavigation();
