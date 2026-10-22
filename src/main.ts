@@ -2183,11 +2183,24 @@ navbar.addEventListener('pointerdown', (event) => {
 // ---- Right sidebar: outline + search (src/rightSidebar.ts) ----
 const rightPanel = document.querySelector<HTMLElement>('#right-panel')!;
 const noteTopSpacing = (): number => parseFloat(getComputedStyle(editor.view.contentDOM).paddingTop) || 60;
-/** Notes to search: every note in the space (in All files, under the folder
- *  being browsed), and the open one's live text when a note is open. */
-async function allNotes(): Promise<{ path: string; text: string }[]> {
+/** Where a search starts. A space is searched whole while subfolders are
+ *  included; with them off it is the open note's own folder — not the space's
+ *  top folder, a level up, which on a space whose top holds folders rather
+ *  than notes found nothing but the open note itself — and not a folder below
+ *  it either. All files already stands where the reader is: its tree's folder. */
+function searchRoot(): string {
   const scope = currentScope();
-  const root = scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
+  if (scope.kind !== 'space') return leftSidebar.walkRoot();
+  if (loadSettings().recursiveSearch ?? true) return scope.space.path;
+  const dir = filePath ? dirname(filePath) : '';
+  return dir && within(dir, scope.space.path) ? dir : scope.space.path;
+}
+
+/** Notes to search: every note in the space (in All files, under the folder
+ *  being browsed) — or, with subfolders off, in the open note's folder — and
+ *  the open one's live text when a note is open. */
+async function allNotes(): Promise<{ path: string; text: string }[]> {
+  const root = searchRoot();
   const recursive = loadSettings().recursiveSearch ?? true;
   const notes: { path: string; text: string }[] = [];
   if (filePath) notes.push({ path: filePath, text: editor.getValue() });
@@ -2258,10 +2271,7 @@ const sidebar = createRightSidebar(rightPanel, {
   scopeName: () => scopeName(currentScope()),
   // The folder the note list was taken from, so a result can say where it
   // sits relative to what is being searched (src/rightSidebar.ts).
-  rootPath: () => {
-    const scope = currentScope();
-    return scope.kind === 'space' ? scope.space.path : leftSidebar.walkRoot();
-  },
+  rootPath: searchRoot,
   // Names a folder holds, for shortening the paths the rows show
   // (src/pathShort.ts). Null where the app cannot list the folder.
   folderNames: async (dir) => {

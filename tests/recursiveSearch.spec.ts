@@ -197,3 +197,18 @@ test('new-tab search is shallow when toggle is off', async ({ page }) => {
   // The satr:settings-changed event should have re-run the query
   await expect(page.locator('#empty-tab .empty-state-hit')).toHaveCount(3);
 });
+
+test('subfolders off searches the open note\'s folder — not the space root, not below it', async ({ page }) => {
+  const files: Record<string, string> = {
+    'Notes/top.md': 'needle at the space root\n',
+    'Notes/sub/deep.md': "needle in the open note's own folder\n",
+    'Notes/sub/other.md': 'another needle in the same folder\n',
+    'Notes/sub/under/below.md': 'needle a level below\n',
+  };
+  await boot(page, files, 'Notes/sub/deep.md', { recursiveSearch: false, version: 4 });
+  await openAllSearch(page, 'needle');
+  const panel = page.locator('#app #right-panel');
+  const paths = await panel.locator('.search-result-file-title').evaluateAll((els) =>
+    els.map((el) => el.getAttribute('data-note')));
+  expect(paths.sort()).toEqual(['Notes/sub/deep.md', 'Notes/sub/other.md']);
+});
