@@ -20,7 +20,7 @@ import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 import { typingTop } from './scrollSync';
-import { ABJAD, ABPATS, formatDigits, formatMarker, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
+import { ABJAD, ABPATS, formatDigits, formatMarker, latinItem, lineIsLettered, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -105,11 +105,25 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   }
   build(view: EditorView) {
     const ranges = [];
+    // An English letter (`a.`, `A)`) is dimmed only where the reading view
+    // reads it as a list marker — a run of neighbouring letters — so `A.
+    // Smith` on its own stays at full strength, as it does in the preview.
+    // The rule is shared with src/markdown.ts, the neighbours read from the
+    // document, not the viewport.
+    const lineAt = (index: number): string | undefined => (index >= 1 && index <= view.state.doc.lines
+      ? view.state.doc.line(index).text
+      : undefined);
     for (const visible of view.visibleRanges) {
       let line = view.state.doc.lineAt(visible.from);
       while (true) {
         const match = new RegExp(`^(\\s*(?:[۰-۹٠-٩]+|الف|[${ABJAD}${ABPATS}])[.)])(?=\\s)`).exec(line.text);
-        if (match) ranges.push(Decoration.mark({ class: 'cm-live-marker' }).range(line.from, line.from + match[1].length));
+        const latin = latinItem(line.text);
+        const mark = match
+          ? match[1]
+          : latin && lineIsLettered(lineAt, line.number)
+            ? line.text.slice(0, latin.indent + 2)
+            : null;
+        if (mark) ranges.push(Decoration.mark({ class: 'cm-live-marker' }).range(line.from, line.from + mark.length));
         if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
         line = view.state.doc.line(line.number + 1);
       }

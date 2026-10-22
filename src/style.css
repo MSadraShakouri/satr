@@ -520,11 +520,16 @@ body {
   padding-inline-start: 0;
 }
 .preview-pane :where(ul, ol) > li {
-  margin-inline-start: 3ch;
+  /* The strip a marker hangs in, before the text: the platform's own lists
+     put `1.` and `-` there, 3ch in from the list's edge, and a marker the
+     reading view paints (src/markdown.ts) goes to the same place. */
+  --list-marker-gutter: 3ch;
+  margin-inline-start: var(--list-marker-gutter);
   padding-block: var(--list-spacing);
 }
 .preview-pane :where(ul, ol) :where(ul, ol) > li {
-  margin-inline-start: var(--list-indent);
+  --list-marker-gutter: var(--list-indent);
+  margin-inline-start: var(--list-marker-gutter);
 }
 .preview-pane :where(ul, ol) :where(ul, ol) {
   margin-block: 0;
@@ -786,12 +791,37 @@ body {
 .preview-pane .persian-ordered > li {
   counter-increment: persian-list;
   position: relative;
-  padding-inline-start: 1.8em;
 }
+/* The marker hangs in the gutter, its own end against the text with a hair
+   of space between: the text starts where a platform list's text starts, and
+   a wide marker (`۱۰۰.`) grows outward, into the margin, as a word processor
+   hangs its numbers. Letting the item pad the marker in instead indented the
+   text twice — 3ch of margin and 1.8em of padding. */
 .preview-pane .persian-ordered > li::before {
-  content: attr(data-persian-number) ".";
+  content: attr(data-persian-number) attr(data-persian-delimiter);
   position: absolute;
-  inset-inline-start: 0;
+  /* The marker's own end sits 0.4em before the text, and its width is its
+     content's: a wide marker (`۱۰۰.`) grows outward instead of shoving the
+     text in, as a word processor hangs its numbers. */
+  inset-inline-end: 100%;
+  margin-inline-end: 0.4em;
+  white-space: nowrap;
+}
+/* A formula that opens an item stands on the marker's line: its own 1em of
+   top margin would open a blank line above it while the marker stayed at the
+   item's top (src/markdown.ts, data-math-head). */
+.preview-pane li[data-math-head] > .math-display {
+  margin-block-start: 0;
+}
+/* In a list the browser draws itself, the punctuation is the writer's too:
+   `1)` is a paren, not a dot. The counter keeps the browser's numbering — the
+   list's own start, its own order — and changes only the mark after it. */
+@counter-style satr-paren {
+  system: extends decimal;
+  suffix: ") ";
+}
+.preview-pane ol[data-delimiter=")"] {
+  list-style-type: satr-paren;
 }
 .preview-pane mark {
   background-color: var(--text-highlight-bg);

@@ -6,7 +6,7 @@ import { renderMath } from './math';
 import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamps';
 import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
-import { formatDigits, formatMarker, LOWER, MARKER, orderOf, parseMarker, UPPER, type Alphabet } from './listMarkers';
+import { formatDigits, formatMarker, latinItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
@@ -258,21 +258,8 @@ export function renderMarkdown(source: string): string {
   // `b.` on neighbouring lines are a list, while `A. Smith` on its own, or two
   // lines opening `A.`, are sentences. (Persian letters and the three digit
   // sets never look like prose, and are always read as markers.)
-  const latinItem = (line: string): { indent: number; letter: string } | null => {
-    const match = new RegExp(`^([ \\t]*)([${LOWER}${UPPER}])[.)][ \\t]+`).exec(line);
-    return match ? { indent: match[1].length, letter: match[2] } : null;
-  };
-  const nextLetter = (one: string, other: string): boolean => Math.abs(one.charCodeAt(0) - other.charCodeAt(0)) === 1
-    && (one === one.toLowerCase()) === (other === other.toLowerCase());
   const listLines = markPageBreaks(withMathPlaceholders).split('\n');
-  const lettered = listLines.map((line, index) => {
-    const item = latinItem(line);
-    if (!item) return false;
-    return [index - 1, index + 1].some((neighbour) => {
-      const other = listLines[neighbour] === undefined ? null : latinItem(listLines[neighbour]);
-      return Boolean(other && other.indent === item.indent && nextLetter(item.letter, other.letter));
-    });
-  });
+  const lettered = listLines.map((_line, index) => lineIsLettered((at) => listLines[at], index));
   const grow = new RegExp(`^([ \\t]*)(${MARKER})([.)])[ \\t]+`);
   const normalizedLists = listLines.map((line, index) => line.replace(grow, (whole, indent: string, marker: string, punctuation: string) => {
     if (latinItem(line) && !lettered[index]) return whole;
@@ -388,17 +375,25 @@ export function renderMarkdown(source: string): string {
   // separated: the styles landed on the wrong <ol> and the list came out in
   // English numbers.
   const sourceLines = withoutFrontMatter.split('\n');
-  const markerOn = (line: number): string | null => {
-    const match = new RegExp(`^[ \\t]*(${MARKER})[.)][ \\t]+`).exec(sourceLines[line] ?? '');
-    return match ? match[1] : null;
+  // The marker a line was written with, and the punctuation after it: `۱.`
+  // and `۱)` are two different markers to the reader, so both halves travel.
+  const markerOn = (line: number): { token: string; delimiter: string } | null => {
+    const match = new RegExp(`^[ \\t]*(${MARKER})([.)])[ \\t]+`).exec(sourceLines[line] ?? '');
+    return match ? { token: match[1], delimiter: match[2] } : null;
   };
   document.querySelectorAll('ol').forEach((list) => {
     const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
-    const tokens = items.map((item) => markerOn(Number(item.dataset.line)));
+    const marks = items.map((item) => markerOn(Number(item.dataset.line)));
+    const tokens = marks.map((one) => one?.token ?? null);
     // The first marker that is not English decides what the list is drawn
-    // with; a list of English numbers is the platform's own and is left alone.
+    // with; a list of English numbers is the platform's own and is left alone
+    // — but for its punctuation: a list whose every marker was written `1)`
+    // is drawn `1)`, by the browser's own counter (src/style.css).
     const parsed = tokens.map((token) => (token ? parseMarker(token) : null)).find((one) => one && one.alphabet !== 'latin') ?? null;
-    if (!parsed) return;
+    if (!parsed) {
+      if (marks.length && marks.every((one) => one?.delimiter === ')')) list.setAttribute('data-delimiter', ')');
+      return;
+    }
     // Which of the two Persian orders: whatever the letters typed in the list
     // say, exactly as the editor reads them.
     const order = parsed.alphabet === 'abjad' || parsed.alphabet === 'abpats'
@@ -409,8 +404,11 @@ export function renderMarkdown(source: string): string {
     if (alphabet !== 'persian' && alphabet !== 'arabic') list.classList.add('lettered-ordered');
     // Only an item whose own line has no marker falls back to counting.
     const start = Number(list.getAttribute('start') ?? '1') || 1;
+    // An item that wrote no marker of its own takes the list's punctuation.
+    const fallback = marks.find((one) => one)?.delimiter ?? '.';
     items.forEach((item, index) => {
       item.setAttribute('data-persian-number', tokens[index] ?? formatMarker(start + index, alphabet));
+      item.setAttribute('data-persian-delimiter', marks[index]?.delimiter ?? fallback);
     });
   });
   document.querySelectorAll('table').forEach((table, tableIndex) => {
@@ -444,6 +442,17 @@ export function renderMarkdown(source: string): string {
       const span = document.createElement('span');
       span.className = 'md-prose-fragment';
       child.replaceWith(span); span.append(child);
+    }
+  });
+  // A formula that opens an item — `الف. $$x$$` — belongs on the marker's own
+  // line. Left to its own margin it would open a blank line above itself while
+  // the marker stayed at the top of the item; the item says where its formula
+  // begins, and style.css drops that one margin.
+  document.querySelectorAll('li').forEach((item) => {
+    for (const child of item.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE && !child.textContent?.trim()) continue;
+      if (child instanceof HTMLElement && child.classList.contains('math-display')) item.setAttribute('data-math-head', '');
+      break;
     }
   });
   applyReadingDirections(document.body);

@@ -123,6 +123,45 @@ test('the printed list keeps the writer’s number', async ({ page }) => {
   ]);
 });
 
+// The paper keeps the punctuation the writer typed, and a formula that opens
+// an item stands on the marker's line here too: `۱)` prints `۱)`, and
+// `الف. $$x$$` prints the formula beside its marker rather than a line below.
+test('the printed list keeps the writer’s punctuation', async ({ page }) => {
+  const markdown = '۱) یک\n۲) دو\n\nprose\n\n1) one\n2) two\n\nprose\n\nالف. $$x$$';
+  await print(page, markdown, { columns: 1, direction: 'rtl', mathAlign: 'center' });
+  const drawn = await page.evaluate(() => {
+    const lists = [...document.querySelectorAll<HTMLElement>('.pagedjs_page_content ol')].map((list) => ({
+      delimiter: list.getAttribute('data-delimiter'),
+      marks: [...list.querySelectorAll(':scope > li')].map((item) => getComputedStyle(item, '::before').content),
+    }));
+    const item = [...document.querySelectorAll<HTMLElement>('.pagedjs_page_content li')]
+      .find((one) => one.hasAttribute('data-math-head'))!;
+    const math = item.querySelector(':scope > .math-display') as HTMLElement;
+    // The marker's strip: its own end against the text, with a hair between.
+    const persian = document.querySelector<HTMLElement>('.pagedjs_page_content ol.persian-ordered > li')!;
+    const text = document.createRange();
+    text.selectNodeContents(persian);
+    const itemBox = persian.getBoundingClientRect();
+    const textBox = text.getBoundingClientRect();
+    return {
+      lists,
+      headGap: +(math.getBoundingClientRect().top - item.getBoundingClientRect().top).toFixed(1),
+      headMargin: getComputedStyle(math).marginBlockStart,
+      // Right to left: the text's start is its right edge, the strip is the
+      // 1.8em before it.
+      strip: +(itemBox.right - textBox.right).toFixed(1),
+      font: parseFloat(getComputedStyle(persian).fontSize),
+    };
+  });
+  expect(drawn.lists[0]).toEqual({ delimiter: null, marks: ['"۱)"', '"۲)"'] });
+  // The platform's own counter keeps the paren on paper too.
+  expect(drawn.lists[1]).toEqual({ delimiter: ')', marks: ['none', 'none'] });
+  expect(drawn.headMargin).toBe('0px');
+  expect(drawn.headGap).toBeLessThan(3);
+  // The text keeps the indent it always had, and the marker hangs inside it.
+  expect(drawn.strip).toBeCloseTo(drawn.font * 1.8, 0);
+});
+
 // A Persian phrase in a formula is a phrase on paper too: its words read right
 // to left across the printed page, inside a formula that stays left to right.
 test('a Persian phrase in a printed formula reads right to left', async ({ page }) => {

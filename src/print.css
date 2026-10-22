@@ -82,14 +82,36 @@ li > p {
   list-style: none;
   padding-inline-start: 0;
 }
+/* The text stays 1.8em in, as it always was and as a native list's is; the
+   marker hangs in that strip, its own end 0.4em from the text, as on screen
+   (src/style.css): a wide marker grows outward, into the margin. */
 .persian-ordered > li {
   position: relative;
   padding-inline-start: 1.8em;
 }
 .persian-ordered > li::before {
-  content: attr(data-persian-number) ".";
+  content: attr(data-persian-number) attr(data-persian-delimiter);
   position: absolute;
+  /* The 1.8em strip before the text is the marker's: it ends 0.4em short of
+     the text, and a marker too wide for the strip grows out into the page
+     margin rather than shoving the text sideways. */
   inset-inline-start: 0;
+  width: 1.4em;
+  text-align: end;
+  white-space: nowrap;
+}
+/* As on screen: a formula that opens an item stands on the marker's line. */
+li[data-math-head] > .math-display {
+  margin-block-start: 0;
+}
+/* As on screen: a list the browser draws keeps the punctuation it was
+   written with — `1)` stays `1)`. */
+@counter-style satr-paren {
+  system: extends decimal;
+  suffix: ") ";
+}
+ol[data-delimiter=")"] {
+  list-style-type: satr-paren;
 }
 
 /* Task lists: boxes as in the reading view */

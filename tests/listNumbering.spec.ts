@@ -483,3 +483,168 @@ test('the reading view draws each item’s own marker', async ({ page }) => {
   expect(read.underMathLetters[0].labels).toEqual(['ا', 'ب']);
   expect(read.above[1].labels).toEqual(['ا', 'ب']);
 });
+
+// The punctuation is the writer's, as the number is: `۱)` is drawn `۱)` and
+// never `۱.`, in the item and in the list the browser draws itself — and a
+// list of `1)` keeps the paren where the platform would have put a dot.
+test('a marker keeps the punctuation it was typed with', async ({ page }) => {
+  const read = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    document.body.appendChild(host);
+    const one = (text: string) => {
+      host.innerHTML = renderMarkdown(text);
+      return {
+        lists: [...host.querySelectorAll('ol')].map((list) => list.getAttribute('data-delimiter')),
+        items: [...host.querySelectorAll<HTMLElement>('ol > li')].map((item) => ({
+          label: item.getAttribute('data-persian-number'),
+          delimiter: item.getAttribute('data-persian-delimiter'),
+          drawn: getComputedStyle(item, '::before').content,
+        })),
+        prose: host.querySelector('ol') === null,
+      };
+    };
+    return {
+      paren: one('۱) یک\n۲) دو'),
+      dot: one('۱. یک\n۲. دو'),
+      latinParen: one('1) one\n2) two'),
+      latinDot: one('1. one\n2. two'),
+      lettered: one('a. one\nb) two'),
+      mixed: one('a. one\nb. two\n\nprose\n\nA. Smith'),
+    };
+  });
+  expect(read.paren.lists).toEqual([null]);
+  expect(read.paren.items.map((item) => item.drawn)).toEqual(['"۱)"', '"۲)"']);
+  expect(read.dot.items.map((item) => item.drawn)).toEqual(['"۱."', '"۲."']);
+  // A list the platform draws keeps the paren through its own counter.
+  expect(read.latinParen.lists).toEqual([')']);
+  expect(read.latinDot.lists).toEqual([null]);
+  // An English letter keeps its own punctuation too.
+  expect(read.lettered.items.map((item) => item.drawn)).toEqual(['"a."', '"b)"']);
+  // `A. Smith` is prose: no list, and nothing drawn beside it.
+  expect(read.mixed.prose).toBe(false);
+});
+
+// An English letter is dimmed where the reading view reads it as a marker —
+// in a run of neighbouring letters — and not on a line that is prose: `A.
+// Smith` stays at full strength, exactly as the reading view keeps it.
+test('English letters are dimmed only where they are list markers', async ({ page }) => {
+  const marks = await page.evaluate(async () => {
+    const ed = window.testEditor;
+    ed.setValue('a. one\nb. two\n\nA. Smith\n\n۱. یک\n\n- dash\n\n1. one');
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 40));
+    return [...ed.view.contentDOM.querySelectorAll('.cm-line')].map((line) => ({
+      text: line.textContent,
+      marks: [...line.querySelectorAll<HTMLElement>('.cm-live-marker')].map((mark) => ({
+        text: mark.textContent,
+        opacity: getComputedStyle(mark).opacity,
+      })),
+    }));
+  });
+  const on = (text: string) => marks.find((line) => line.text === text)?.marks ?? [];
+  expect(on('a. one')).toEqual([{ text: 'a.', opacity: '0.42' }]);
+  expect(on('b. two')).toEqual([{ text: 'b.', opacity: '0.42' }]);
+  // A sentence, not a list.
+  expect(on('A. Smith')).toEqual([]);
+  // What the platform draws, and what the parser knows, is left to them.
+  expect(on('1. one')).toEqual([]);
+  expect(on('- dash')).toEqual([]);
+  expect(on('۱. یک')).toEqual([{ text: '۱.', opacity: '0.42' }]);
+});
+
+// A formula that opens an item stands on the marker's line: `الف. $$x$$` is
+// one line, not the marker with a blank line under it. A formula after prose
+// keeps the room a display formula takes.
+test('a formula that opens an item stands on the marker’s line', async ({ page }) => {
+  const geometry = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;left:0;top:0;width:600px;font-size:18px';
+    document.body.appendChild(host);
+    const measure = (text: string) => {
+      host.innerHTML = renderMarkdown(text);
+      const item = host.querySelector('li') as HTMLElement;
+      const math = item.querySelector(':scope > .math-display') as HTMLElement;
+      const itemBox = item.getBoundingClientRect();
+      const mathBox = math.getBoundingClientRect();
+      return {
+        head: item.hasAttribute('data-math-head'),
+        gap: +(mathBox.top - itemBox.top).toFixed(1),
+        margin: getComputedStyle(math).marginBlockStart,
+      };
+    };
+    return {
+      opens: measure('الف. $$x$$'),
+      afterProse: measure('الف. یک $$x$$ دو'),
+    };
+  });
+  // The formula's own top margin is the blank line: gone, and the formula
+  // starts where the item does.
+  expect(geometry.opens.head).toBe(true);
+  expect(geometry.opens.margin).toBe('0px');
+  expect(geometry.opens.gap).toBeLessThan(3);
+  expect(geometry.afterProse.head).toBe(false);
+  expect(geometry.afterProse.margin).toBe('18px');
+});
+
+// A marker hangs beside its text: the text of a `۱.` item starts where the
+// text of a platform `1.` item starts, and the marker sits in the strip
+// before it — the marker was indented by 3ch and the text by 3ch and 1.8em
+// more, which was the extra indent the writer saw.
+test('a drawn marker hangs beside its text, not on top of another indent', async ({ page }) => {
+  const box = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;left:0;top:0;width:600px;font-size:18px';
+    document.body.appendChild(host);
+    // How far the item sits from its list's inline start, and its text from
+    // the item's own (left to right and right to left alike).
+    const measure = (item: HTMLElement) => {
+      const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+      let node: Node | null = null;
+      while ((node = walker.nextNode())) {
+        if (!node.textContent?.trim()) continue;
+        if (node.parentElement?.closest('li') !== item) continue;
+        break;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(node as Node);
+      const text = range.getBoundingClientRect();
+      const own = item.getBoundingClientRect();
+      const list = item.parentElement!.getBoundingClientRect();
+      const rtl = getComputedStyle(item).direction === 'rtl';
+      return {
+        fromList: +Math.abs(rtl ? own.right - list.right : own.left - list.left).toFixed(1),
+        textFromItem: +Math.abs(rtl ? own.right - text.right : text.left - own.left).toFixed(1),
+        padding: getComputedStyle(item).paddingInlineStart,
+        width: +own.width.toFixed(1),
+        right: +own.right.toFixed(1),
+      };
+    };
+    const list = (markdown: string) => {
+      host.innerHTML = renderMarkdown(markdown);
+      const items = [...host.querySelectorAll('li')] as HTMLElement[];
+      return items.map(measure);
+    };
+    const nested = list('۱. بیرونی\n    ۱. درونی\n۲. بیرونی');
+    return {
+      painted: list('۱. یک')[0],
+      platform: list('1. one')[0],
+      nestedOuter: nested[0],
+      nestedInner: nested[1],
+      nestedWidth: nested[1].width,
+    };
+  });
+  // Same margin and no padding: the text of a drawn list starts where the
+  // platform's own list text starts.
+  expect(box.painted.textFromItem).toBe(box.platform.textFromItem);
+  expect(box.painted.fromList).toBe(box.platform.fromList);
+  expect(box.painted.padding).toBe('0px');
+  // A nested item still steps in from its parent, by a whole indent.
+  expect(box.nestedOuter.right - box.nestedInner.right).toBeGreaterThan(30);
+  expect(box.nestedWidth).toBeLessThan(box.painted.width);
+});

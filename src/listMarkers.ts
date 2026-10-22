@@ -30,6 +30,35 @@ export const MARKER = `(?:[0-9۰-۹٠-٩]+|الف|[${ABJAD}${ABPATS}]|[${LOWER}$
 /** True for anything a marker may be written with. */
 export const isMarkerToken = (token: string): boolean => parseMarker(token) !== null;
 
+/** An English letter written as a marker at the head of a line: `a.` or `a)`.
+ *  A letter is only a list marker where it reads as one — see lineIsLettered. */
+export function latinItem(line: string): { indent: number; letter: string } | null {
+  const match = new RegExp(`^([ \\t]*)([${LOWER}${UPPER}])[.)][ \\t]+`).exec(line);
+  return match ? { indent: match[1].length, letter: match[2] } : null;
+}
+
+/** Two letters that follow one another, in the same case: `a` then `b`. */
+export function nextLetter(one: string, other: string): boolean {
+  return Math.abs(one.charCodeAt(0) - other.charCodeAt(0)) === 1
+    && (one === one.toLowerCase()) === (other === other.toLowerCase());
+}
+
+/** Does this line's English letter read as a list marker? `a.` and `b.` on
+ *  neighbouring lines are a list, while `A. Smith` on its own, or two lines
+ *  opening `A.`, are sentences: the letter counts only when a line above or
+ *  below carries the next or previous letter, at the same indent and in the
+ *  same case. Both the reading view (src/markdown.ts) and the editor's dimming
+ *  (src/editor.ts) ask this one question, so a letter is drawn the same way in
+ *  both. */
+export function lineIsLettered(lineAt: (index: number) => string | undefined, index: number): boolean {
+  const item = latinItem(lineAt(index) ?? '');
+  if (!item) return false;
+  return [index - 1, index + 1].some((neighbour) => {
+    const other = latinItem(lineAt(neighbour) ?? '');
+    return Boolean(other && other.indent === item.indent && nextLetter(item.letter, other.letter));
+  });
+}
+
 /** The number a marker says, and the alphabet it is written in. `الف` is the
  *  first letter of either order; `ا` is the first letter too. */
 export function parseMarker(token: string): { number: number; alphabet: Alphabet } | null {
