@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "start": "npm run build && vite preview --host",
     "build": "tsc --noEmit && vite build",
     "test": "playwright test",
     "test:pdf": "playwright test tests/exportPdf.spec.ts tests/printBreaks.spec.ts tests/printApp.spec.ts tests/printLayout.spec.ts tests/printOptions.spec.ts",
