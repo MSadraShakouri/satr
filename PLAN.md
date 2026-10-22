@@ -5,9 +5,9 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 ## main
 
-- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc
+- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing)
 
-- [x] no dual pane in horizontal, can be done right now, but in big screens text shouldn't cling to the sides of the screen (done in this round: there is no dual pane at any width. One pane, reading and editing are modes of it, as in Obsidian — whose mobile app is one leaf and whose `readableLineLength` keeps the text in a 700px centred column. `.workspace` is `display: block`, the old `grid-template-columns: 1fr 1fr` above 760px is gone, and the measured column at 2400px is 700px with 848px of margin each side)
+- [x] no dual pane in horizontal, can be done right now, but in big screens text shouldn't cling to the sides of the screen
 
 - [ ] image adding and image editing (mostly crop)
 
@@ -17,15 +17,13 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] maybe add something for image sizes like the table RTL LTR settings which it would add a comment to choose the size. Should size be relative to height? What should the basis even be?
 
-- [ ] tab number digits aren't vertically centered (still yet not) (now a bit down) (the cap-height trim is in this build — the digit has an element of its own inside the square, trimmed to its cap height and the alphabetic baseline, so the box that is centred is the box the digits are drawn in; 0.11.0 is the first APK that carries it, and the measured centre is the icon's own)
+- [ ] tab number digits aren't vertically centered (still yet not) (now a bit down)
 
-- [x] the /folder X files, Y folders doesn't even show, maybe remove it or take it somewhere else, even the folder name truncates, maybe remove it or wrap it? If wrapping, the file and folder count should be something separate and on another line (done in this patch, as asked: the counts are on a line of their own under the path, and a long name or path wraps to two lines instead of pushing them out; a folder browsed in the walker counts what is in it, the space counts everything under it; the fix is in this build)
+- [x] the /folder X files, Y folders doesn't even show, maybe remove it or take it somewhere else, even the folder name truncates, maybe remove it or wrap it? If wrapping, the file and folder count should be something separate and on another line
 
-- [x] at the top of the right sidebar, show word and char count possibly below the file name (done in this patch: "12 words, 340 characters" under the note's name, kept in step with the note; the all-notes search, which names the space and not a note, says nothing; the fix is in this build)
+- [x] at the top of the right sidebar, show word and char count possibly below the file name
 
 - [ ] outline and file name in one line if fits
-
-- [x] stuff like `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)` in RTL, the end of it isn't at the end (like numbers which had this issue) (done in this patch: a link or picture whose label is not Persian is isolated as one LTR run — brackets, address and all — the same way the number runs are, so its end is at the end; a Persian label keeps the line's direction and only its address is isolated)
 
 - [ ] caret position becomes unpredictable with `### ` hidden and jumps a bit
 
@@ -41,37 +39,27 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
 
-- [x] title collapse and opens has an issue, if at the end of a page and opening the title, it brings you to the end of the page (done in this patch: a fold or an unfold keeps the reader's place — at the foot of a note the height a fold takes is lent back to the page for as long as the reader stands there, and a scroll snapshot stops CodeMirror pinning the view to the document's foot when a section opens; the fix is in this build)
+- [x] search doesn't show the current result (like 5/8) highlighted or anything, would be good if that happened
 
-- [x] display math (and maybe code, though I haven't tested that) in new lines when empty, the caret sticks to the right instead of left, when there's $$ $$ with one line between, the empty line caret sticks to right (done in this patch: an empty line whose nearest lines above and below are both not-prose — math, code, indented code — takes their direction and not the line above it, so its caret sits at the left; an empty line against prose still follows the prose)
-
-- [ ] search doesn't show the current result (like 5/8) highlighted or anything, would be good if that happened (the count and the ring are in the code — `src/findBar.ts` writes "3 / 12" into the field and rings the current match — so what is left is a visibility/layout bug on the phone, not a missing feature)
+- [ ] in-file search highlight is weird, it's too down on the page, it works but the position of it is bad, needs thought
 
 - [ ] search in normal might need thought, the sidebar search is usually better and normal has very little use cases
 
-- [x] select lines, currently there's no space between selections (finally) but each selection is rounded a tiny bit, and places where it starts together it looks bad, very tiny, but unappealing (done in this round: the radius was 2px on every painted row rect, so ten selected rows scalloped both edges at every line boundary. Now 0 — Obsidian's selection is a plain background colour with no radius in any of its rules, which is what makes a run of rows read as one shape. Measured: Ctrl+A on a note paints 45 rects, all 0px)
-
-- [x] default line numbers disabled (done in this round: `DEFAULTS.lineNumbers` is false, matching Obsidian's `showLineNumber: false`. Only the default moved — a stored choice is never rewritten, so an existing reader keeps whatever they have)
-
-- [x] calendar first day of week Saturday, or options for it (done in this round: a setting, all seven days, default Saturday, labelled in the Dates language. The picker used to read `Intl.Locale.weekInfo.firstDay`, which is the device's week — an English phone started the week on Monday while the writer's calendar starts it on Saturday, and no setting could fix it. Nothing reads the device now; a test forces `weekInfo` to 1 and asserts Saturday still wins)
-
 - [ ] some times after being gone, it doesn't open a new tab, I don't know why
 
-- [ ] the app splash screen launch, I'm not sure it works properly, might need further testing
+- [ ] the app splash screen launch, I'm not sure it works properly, might need further testing, I think it stays for too long
 
-- [ ] nested lists
+- [ ] nested lists don't work?
 
-- [ ] in Persian RTL, the numbered lists, the number is on the right of the number
+- [ ] in Persian RTL, the numbered lists, the number is on the right of the number, numbers are still LTR for a reason, directly related to the weird long list of RTL rules we have
 
-- [ ] numbers should be RTL, should they not?
+- [ ] numbers should be RTL, should they not? (No, other things need changes)
 
-- [ ] scroll up issue happened again once, happens less but happened once (scroll up issue happens, much less often but at least once a day)
+- [ ] scroll up issue happened again once, happens less but happened once (scroll up issue happens, much less often but at least once a day) (needs testing on APK)
 
-- [ ] search results are weird
+- [ ] I think I'm making the RTL LTR rules too complex, they should be much simpler, needs thought, I need to check was Obsidian does for it, or any other oss app, or literally any text field
 
-- [ ] I think I'm making the RTL LTR rules too complex, they should be much simpler, needs thought, I need to check was Obsidian does for it, or any other oss app, or literally any text field (answered by reading Obsidian's bundle: its whole editor policy is `dir(line) = firstStrong(prefixStripped(line)) ?? dir(line above) ?? "auto"` written onto each line, and the reading view is `unicode-bidi: plaintext` in CSS. No voting, no heading-boundary stack, no section consensus — only the "carry from the line above" survives, which is what this app already has. The simplification is a deletion, not a redesign)
-
-- [x] the right and left of tables in RTL mode should mirror the left one, sources use ---: to mark right but in RTL that becomes the opposite and is unintuitive, that one aspect should follow LTR while keeping everything else (settled without a change: the code already does the physical thing — `extractTableAlignments` maps `---:` to "right" and the CSS is physical, so the marker never mirrors while the column order does. Checked against an A/B render and confirmed: physical is what was wanted, so this needs no work)
+- [ ] the right and left of tables in RTL mode should mirror the left one, sources use ---: to mark right but in RTL that becomes the opposite and is unintuitive, that one aspect should follow LTR while keeping everything else (claimed fix, I don't recall when it happened)
 
 - [ ] opening URLs should have a warning I believe, and ask to open app or site and have a copy option, be nice
 
@@ -89,25 +77,19 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] maybe remove the spaces thing of math, I usually use \text{} and I believe that handles it, needs feedback
 
+- [ ] the folder subsearch icon is a bit too right on the right sidebar, relative to other stuff I mean, maybe it should be a bit left, like the opposite end of the search bar against to the "Search" title, needs good execution
+
+
+
 ## claimed fixes, needs testing
 
-The fix is in the tree and the phone is what confirms it. Nothing leaves this section until the writer has seen it on the device.
+- [ ] image sizes in print, huge right now (claims to be fixed, needs testing either on APK or on site after I can add images) (needs thought, and I can't even test it well because I can't add images, I need stuff for image sizes, possibly like table comments)
 
-- [x] when scrolling up, sometimes (less than half, usually on app open and changing files) the android status bar flashes but if you go down a bit, it gets fixed when going up again. Very strange (claim to be fixed, needs testing on APK) (the fix is in this round: the bars move once per beat and only for a real move, and the Android side asks the window before asking for a bar again — tests/navAutoHide.spec.ts)
+- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one (claims fix, needs testing on APK) (not fixed, no need to add it) (possibly impossible to fix, because we're calling satr-open)
 
-- [x] the ✓ button for file name to first line is a bit jumpy, would be great if it were possible for it to work normally (might possibly be a lag with file creation, enter on existing files has no delay, web is smooth but APK lags) (one time I didn't lag, I don't know the reason of it) (claim to be fixed, needs APK testing) (the fix is in this round: the rename is one awaited call, the note is never held read-only, and the save is chained to the move)
+- [ ] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff)  (claims to be done, needs testing on APK) (doesn't work) (unintuitive, can't know if it's on or not, should mimic Obsidian, doesn't open closed folders to show) (claimed fix, needs testing on APK)
 
-- [x] app launch is still weird, shows the main screen twice, once loading the app itself and once the app loading, one screen twice (claim to be fixed, needs testing) (the fix is in this round: the system splash is held until the web app has booted, so the cover's removal is not a second animation)
 
-- [ ] image sizes in print, huge right now (claims to be fixed, needs testing either on APK or on site after I can add images) (the fix is in the tree: an unsized picture is capped at 9 cm tall in print, a size written in the note still wins, and Settings → PDF custom CSS has the last word)
-
-- [x] bad handling of opening images, it first tries to open as text then the app gets very slow (claims to be fixed, needs testing on APK) (the fix is in this round: a picture is never decoded as text — the plugin returns it as binary with its data URL, and the page never reads its bytes)
-
-- [x] opening an image has a very weird bug and never lets you change the page (I think forever stuck), image opening needs proper handling (claims to be fixed, needs testing on APK) (the fix is in this round: a picture tab holds no text, opens read-only in the reading view, and is never written over)
-
-- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one (claims fix, needs testing on APK) (not fixed, no need to add it) (the fix is in this round: a hand-over is matched by the plugin's source id first, then by the file's name, size and modification time, and a share by the text itself — the road is native-only, so the APK is the confirmation)
-
-- [ ] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff) (claims to be done, needs testing on APK) (doesn't work) (unintuitive, can't know if it's on or not, should mimic Obsidian, doesn't open closed folders to show) (diagnosed: a fresh APK has no saved spaces, so its default scope is "All files"; the old implementation deliberately left that walker's folder unchanged, and the existing follow test only covered a space) (fixed: with the switch on, the All files walker now moves to the current note's parent folder; with it off, the chosen folder is preserved. Browser tests cover a fresh no-space scope, deep paths, tab changes and on/off. APK verification is still pending) (Obsidian's own shape, for when this is revisited: `revealActiveFile()` expands EVERY closed folder above the item first, scrolls after that, and queues itself if the drawer is closed — and the toggle is a header button with an active state, not a menu row)
 
 ## deferred for later
 
@@ -127,7 +109,9 @@ The fix is in the tree and the phone is what confirms it. Nothing leaves this se
 
 - [ ] have option to sort toolbar stuff
 
-- [ ] maybe be able to have a quick note or something, needs thought, I think Obsidian has a daily thing perhaps (Obsidian's answer: the `daily-notes` core plugin — one command, a folder, a date format and a template, `getDailyNote()`. No UI beyond a toolbar button)
+- [ ] maybe be able to have a quick note or something, needs thought, I think Obsidian has a daily thing perhaps
+
+
 
 ## note lint criteria
 
@@ -137,9 +121,9 @@ for the in-app lint/fixer above, measured on term_three with the app's own scann
 
 2. `<div dir=ltr>` wrappers are now redundant (direction is computed, math is already forced ltr) — 20 pairs in Mathematics 2 01, all paired, safe to strip. report as "redundant", not "wrong"
 
-3. trailing `:` in a heading, visible in the outline and in search — Accounting 03:5 `## فصل دوم:` , Accounting 03:66 `##### اهداف:`
+3. trailing `:` in a heading, visible in the outline and in search — Accounting 03:5 `## فصل دوم: `, Accounting 03:66 `##### اهداف:`
 
-4. trailing space in heading text, so the outline reads `معرفی`  — Accounting 01:14, Linear Algebra 02:21
+4. trailing space in heading text, so the outline reads `معرفی ` — Accounting 01:14, Linear Algebra 02:21
 
 5. list indent must be 0/2/4: a 1-space indent reads as a sibling rather than a child, so a bullet that looks like a parent renders as a peer — Probability Theory 02:246
 
@@ -148,5 +132,7 @@ for the in-app lint/fixer above, measured on term_three with the app's own scann
 7. run every formula through `renderMath` and fail on any `katex-error` — katex is `throwOnError: false`, so a typo is a silent red formula in the reading view and in the PDF, and there is no other way to notice
 
 8. assert the latex-style converter never fires on a real line break: `\\[6pt]` in Linear Algebra 03:38 is a `\\[6pt]` skip, not a `\[…\]` pair. today correct by two independent guards (the preceding backslash, and the enclosing `$$` span) — worth pinning so neither guard is ever weakened
+
+
 
 not criteria, deliberately: callouts/dataview/graph/tags (not supported, would render literally), table separator styles and headerless tables (`ensureTableSeparators` inserts the separator, then the empty header row is removed), persian `۱.` ordered lists (transliterated, then re-rendered as persian), bare emails (gfm autolinks them), math digit style (a settings choice), and unifying `$$ x $$` against bare `$$` (both are `display: true`, they render the same).
