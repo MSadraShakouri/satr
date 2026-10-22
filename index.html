@@ -15,6 +15,18 @@
       // (or no copy) paints the logo instead, so the last note never flashes.
       (function () {
         window.__satrCoverAt = Date.now();
+        // The app lifts this cover itself (src/snapshot.ts dropSnapshot) and
+        // sets __satrBooted as it goes. The cover is only time-limited as a
+        // last resort: taking it away at a fixed 6 s uncovered a blank page
+        // for as long as a big note still took to open.
+        function release(cover, css) {
+          var tries = 0;
+          var timer = setInterval(function () {
+            if (window.__satrBooted) { clearInterval(timer); return; }
+            tries += 1;
+            if (tries > 60) { clearInterval(timer); cover.remove(); if (css) css.remove(); }
+          }, 500);
+        }
         function splash(bg) {
           var cover = document.createElement('div');
           cover.id = 'boot-snapshot';
@@ -29,7 +41,7 @@
           img.alt = '';
           cover.appendChild(img);
           document.body.appendChild(cover);
-          setTimeout(function () { cover.remove(); }, 6000);
+          release(cover, null);
         }
         function emptyLaunch() {
           try {
@@ -74,7 +86,7 @@
             var el = all[s.scroll[i][0]];
             if (el) el.scrollTop = s.scroll[i][1];
           }
-          setTimeout(function () { cover.remove(); if (css) css.remove(); }, 6000);
+          release(cover, css);
         } catch (e) {
           localStorage.removeItem('satr:snapshot');
           splash('#ffffff');

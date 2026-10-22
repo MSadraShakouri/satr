@@ -18,7 +18,9 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Keep the system splash (the launcher icon in a circle) on screen
         // until the web app has booted, so Satr's own cover never shows as a
-        // second animation. A safety timeout guarantees it cannot hang.
+        // second animation. A safety timeout guarantees it cannot hang, and it
+        // is long enough that a big note opening is not uncovered in the
+        // middle of its boot (8 s, Obsidian's launchShowDuration).
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         // Satr's own native plugins, registered before the bridge starts.
         registerPlugin(PrintPlugin.class);
@@ -29,7 +31,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         splashScreen.setKeepOnScreenCondition(() -> !splashDismissed);
         new android.os.Handler(android.os.Looper.getMainLooper())
-            .postDelayed(() -> splashDismissed = true, 5000);
+            .postDelayed(() -> splashDismissed = true, 8000);
     }
 
     @Override

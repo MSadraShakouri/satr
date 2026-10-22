@@ -12,7 +12,13 @@ const KEY = 'satr:snapshot';
 const MAX = 600_000; // characters; a bigger page just isn't kept
 const MIN_COVER_MS = 480;
 
-declare global { interface Window { __satrCoverAt?: number } }
+declare global {
+  interface Window {
+    __satrCoverAt?: number;
+    /** Set by src/main.ts once the first note is on screen (index.html waits for it). */
+    __satrBooted?: boolean;
+  }
+}
 
 // Body classes worth repainting: the ones the app sets again itself at
 // start. Drawers, the keyboard and the hidden navbar belong to the moment.

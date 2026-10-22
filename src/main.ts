@@ -2519,10 +2519,13 @@ async function boot(): Promise<void> {
     }
   } finally {
     bootReady = true;
+    window.__satrBooted = true; // the cover in index.html stops waiting for this
     dropSnapshot(); // the real note is on screen: lift the start-up copy
-    // On Android, keep the system splash through the cover's removal so only
-    // the circle animation is seen (Obsidian-style), then let it go.
-    if (isNative()) window.setTimeout(() => { void SatrSplash.dismiss().catch(() => undefined); }, 700);
+    // On Android the system splash is held until the app says the note is on
+    // screen (android/.../MainActivity.java), so it leaves with the cover
+    // rather than on a timer of its own: no 700 ms tail, and no need for the
+    // 5 s safety to fire before a slow boot has finished.
+    if (isNative()) window.setTimeout(() => { void SatrSplash.dismiss().catch(() => undefined); }, 150);
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
