@@ -328,8 +328,13 @@ button:focus-visible {
   height: 100dvh;
   min-height: 0;
   padding-top: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* One pane, always — Obsidian's wide screen. Its editor and its reading
+     view are two MODES of the same leaf; a second leaf appears only when the
+     reader makes one. The old `grid-template-columns: 1fr 1fr` split every
+     screen wider than 760px into editor + preview, so a wide screen was the
+     one thing the app never showed: a single column of text with margins on
+     both sides (--file-line-width, centred). */
+  display: block;
   /* No CSS transform transition: the drawer (src/drawers.ts) owns the slide.
      A 0.45s ease here was the note sliding back after the open animation. */
   will-change: transform;
@@ -1347,24 +1352,23 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-@media (max-width: 760px) {
-  .workspace {
-    display: block;
-  }
-  .preview-pane {
-    display: none;
-    border: 0;
-  }
-  .editor-pane {
-    height: 100%;
-  }
-  body[data-mode="preview"] .editor-pane {
-    display: none;
-  }
-  body[data-mode="preview"] .preview-pane {
-    display: block;
-    height: 100%;
-  }
+/* Reading and editing are modes of one pane: the same leaf, the same width,
+   the same centred column. Two panes exist only in the reader's head.
+   Scoped to the app's own panes (.workspace > …) so a bare `.preview-pane`
+   host — a spec's, or a future embed's — is still a plain block. */
+.workspace > .preview-pane {
+  display: none;
+  border: 0;
+}
+.workspace > .editor-pane {
+  height: 100%;
+}
+body[data-mode="preview"] .workspace > .editor-pane {
+  display: none;
+}
+body[data-mode="preview"] .workspace > .preview-pane {
+  display: block;
+  height: 100%;
 }
 @media (prefers-reduced-motion: reduce) {
   * {

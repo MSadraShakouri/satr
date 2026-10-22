@@ -168,16 +168,19 @@ test('choosing automatic removes the comment again', async ({ page }) => {
 });
 
 test('the menu shows what the table is wearing now, and undo takes the comment back', async ({ page }) => {
-  await bootApp(page, '<!-- table: rtl -->\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n', 1200);
-  // Split view on a wide screen: the preview is beside the editor.
-  await expect(page.locator('#app #preview .table-wrapper > table[dir="rtl"]')).toHaveCount(1);
-  await page.locator('#app #preview .table-wrapper > table').click();
+  await bootApp(page, '<!-- table: rtl -->\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n');
+  // One pane at every width (src/style.css, .workspace): the reading view is a
+  // MODE of it, exactly as in Obsidian, so the menu is reached the way a reader
+  // reaches it — never by a second pane appearing beside the editor.
+  await openTableMenu(page);
   await expect(page.locator('.menu-item.mod-selected', { hasText: 'Right to left' })).toHaveCount(1);
   await page.locator('.menu-item', { hasText: 'Left to right' }).click();
   await expect(page.locator('#app #preview .table-wrapper > table[dir="ltr"]')).toHaveCount(1);
-  // One undo step apiece: click into the editor and undo.
+  // One undo step apiece: back to the editor to undo, then look again.
+  await page.locator('#app #preview-toggle').click();
   await page.locator('#app .cm-content').click();
   await page.keyboard.press('Control+z');
+  await page.locator('#app #preview-toggle').click();
   await expect(page.locator('#app #preview .table-wrapper > table[dir="rtl"]')).toHaveCount(1);
 });
 

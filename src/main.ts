@@ -262,27 +262,15 @@ function paintKeyboardDebug(): void {
 /** Height hidden at the bottom of the screen: keyboard overlap + toolbar. */
 const obscuredBottom = (): number => keyboardOverlap() + (document.body.classList.contains('keyboard-open') ? TOOLBAR_STRIP : 0);
 footnoteLayout.obscuredBottom = obscuredBottom;
-// Split view (wide screens, same breakpoint as style.css): keep the other
-// pane in step, by source line. The flag stops the follower's own scroll
-// event from echoing back. A media query instead of measuring both panes on
-// every scroll event, which forced a layout per event.
-const splitView = window.matchMedia('(min-width: 761px)');
+// There is no split view: one pane, and reading and editing are modes of it,
+// as in Obsidian (whose wide screen is a single centred column too). The flag
+// below stays for the app's own programmatic scrolls.
 let syncingScroll = false;
 // See holdEditorPosition().
 let holdUntil = 0;
 let holdLine = 0;
 /** Three body lines below the pane top — the typing band, not the glass. */
 const scrollBand = (): number => typingTop(editor.view);
-function follow(from: 'editor' | 'preview'): void {
-  if (syncingScroll || restoringView || !splitView.matches) return;
-  const generation = viewGeneration;
-  const y = scrollBand();
-  syncingScroll = true;
-  if (from === 'editor') applyPreviewScroll(previewPane, preview, editorScroll(editor.view, y), () => generation === viewGeneration, false, y);
-  else applyEditorScroll(editor.view, previewScroll(previewPane, preview, y), () => generation === viewGeneration, false, y);
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
-}
-
 // Notes are files in folders (src/vault.ts: localStorage in the browser,
 // the phone's storage in the app), addressed by path. The open note's path
 // is remembered under satr:current; notes from earlier versions are moved
@@ -318,12 +306,12 @@ const readView = (path: string): SavedView | null => readViewMemory(viewIdentity
 
 // The preview is rendered only when it can be seen. Rendering the whole note
 // (markdown, highlight.js, KaTeX) on every keystroke into a hidden pane was
-// most of the typing cost on long notes. In split view it follows typing
-// after a short pause; switching to preview renders it at once if stale.
+// most of the typing cost on long notes. It is rendered on switching to the
+// reading view, at once if stale.
 let previewReady: Promise<unknown> = Promise.resolve();
 let previewDirty = true;
 let renderTimer: number | undefined;
-const previewVisible = (): boolean => mode === 'preview' || splitView.matches;
+const previewVisible = (): boolean => mode === 'preview';
 // Reading view shows the note's name on top, like Obsidian's inline title.
 const escapeText = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 let lastRender = 0;
@@ -924,11 +912,10 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
     return;
   }
   onNavScroll(editor.view.scrollDOM);
-  follow('editor');
   rememberViewSoon();
   releaseFoldSlack(editor.view.scrollDOM, editor.view.contentDOM);
 }, { passive: true });
-previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); follow('preview'); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
+previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
 

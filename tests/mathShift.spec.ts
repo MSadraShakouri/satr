@@ -59,7 +59,14 @@ test('the source and the preview keep the same place, math and tables and all', 
       document.querySelector('#editor .cm-editor')!.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
       document.querySelector('#preview-pane')!.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
     };
-    for (const target of [500, 1200, 2100, 3000]) {
+    // Targets are FRACTIONS of what this note can actually scroll, not fixed
+    // pixels: the note's own height depends on settings (a line-number gutter
+    // narrows every line and wraps it more), so absolute steps silently became
+    // "the very bottom" once the gutter went away. The bottom is deliberately
+    // not one of them — see the note on the last step below.
+    const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+    for (const fraction of [0.18, 0.42, 0.68, 0.82]) {
+      const target = Math.round(maxScroll * fraction);
       nudge();
       scroller.scrollTop = target;
       await wait(300);
@@ -89,6 +96,13 @@ test('the source and the preview keep the same place, math and tables and all', 
   for (const step of list) {
     expect(Math.abs(step.back - step.target), JSON.stringify(steps)).toBeLessThan(46);
   }
+  // The foot of the document is NOT covered, and that is a known gap rather
+  // than an oversight: at maximum scroll the round trip lands ~250-300px high,
+  // on the base commit as well as here (measured: 3313 -> 3017). The preview
+  // carries a 50vh tail and the editor does not, so the two bottoms are not the
+  // same place. Fixing that is its own round; this walk holds the mapping to
+  // account everywhere the reader normally stops.
+  //
   // And the preview really was somewhere else — a mapping that always answers
   // "the top" would trivially pass the assertion above.
   expect(list[list.length - 1].previewHeight, JSON.stringify(steps)).toBeGreaterThan(list[0].previewHeight + 20);
