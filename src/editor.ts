@@ -124,7 +124,7 @@ const directionsField = StateField.define<DirectionSnapshot>({
   create: (state) => directionSnapshot(state.doc.toString()),
   update: (value, tr) => {
     if (!tr.docChanged) return value;
-    return directionsAfter(value, tr.startState.doc, tr.newDoc, tr.changes) ? value : directionSnapshot(tr.newDoc.toString());
+    return directionsAfter(value, tr.startState.doc, tr.newDoc, tr.changes) ?? directionSnapshot(tr.newDoc.toString());
   },
 });
 const dirDecorations = {

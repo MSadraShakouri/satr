@@ -118,6 +118,18 @@ function maskedLines(plain: readonly string[], original: readonly string[], hidd
 export interface DirectionSnapshot {
   dirs: TextDirection[];
   units: DirectionUnit[];
+  /** The direction carried into the line from the prose above it. */
+  carried: (TextDirection | null)[];
+  /** The first line that has a strong letter of its own, or -1. */
+  firstOwn: number;
+  /** The last heading with no letters of its own, or -1. */
+  lastNullHeading: number;
+  /** The last line the masker touched, or -1. */
+  lastMasked: number;
+  /** Some `[` in the note does not close on the line it opened on. */
+  openBracket: boolean;
+  /** The note holds a character the masker reads, so a `$$ … $$` pair can form. */
+  math: boolean;
   /** The line sits inside frontmatter, a comment or a link definition. */
   blanked: boolean[];
   /** The masker changed characters on this line. */
@@ -177,19 +189,63 @@ export function directionSnapshot(markdown: string): DirectionSnapshot {
       units[i - 1].heading = lines[i].trim()[0] === '=' ? 1 : 2;
     }
   }
-  return { dirs: resolveDirections(withCarried(units)), units, blanked, masked };
+  const carriedUnits = withCarried(units);
+  const carried: (TextDirection | null)[] = [];
+  let above: TextDirection | null = null;
+  for (const unit of units) {
+    carried.push(above);
+    if (!unit.excluded && unit.own) above = unit.own;
+  }
+  return {
+    dirs: resolveDirections(carriedUnits),
+    units,
+    carried,
+    firstOwn: units.findIndex((unit) => !unit.excluded && unit.own),
+    // A heading with no letters of its own reads the first line below it, and
+    // a later one takes its direction from the heading stack — so it is the
+    // last such heading in the note that a new heading above it can change.
+    lastNullHeading: carriedUnits.reduce((last, unit, i) => (unit.heading && !unit.excluded && !unit.own ? i : last), -1),
+    lastMasked: masked.lastIndexOf(true),
+    math: /[`~$]/.test(source),
+    openBracket: originalLines.some(opensBracket),
+    blanked,
+    masked,
+  };
 }
 
 export function sourceDirections(markdown: string): TextDirection[] {
   return directionSnapshot(markdown).dirs;
 }
 
-// Characters the blanker and the masker read: a keystroke that carries one of
-// them can move a comment, a formula, a fence or a link definition, and with
-// them every line below. Letters, spaces and ordinary punctuation carry none.
-const STRUCTURAL = /[\n`~$<>!\[\]:]/;
-const STRUCTURAL_LINE = /[`~$]/;
+// Characters the masker, the blanker and the code blanker read. A keystroke
+// that carries one of them can move a formula, a fence, a comment or a link
+// definition — and with them every line below. A newline is not one of them:
+// it only moves its own two lines. Brackets count because the blanker's
+// link-definition pattern reaches across newlines on its way to `]:`.
+const STRUCTURAL = /[`~$<>[\]]/;
+/** The two ends of an html comment: a line holding one can open or close it. */
+const COMMENT = /<!--|-->/;
+/** Characters whose presence on a line the masker reads. */
+const DELIMITER = /[`~$]/;
+/** A link definition: the one whole line the blanker reads outside comments. */
+const LINK_DEFINITION = /^ {0,3}\[(?!\^)[^\]]+\]:/;
+/** A line the blanker, the masker and the setext pass leave alone. */
+const INDENTED = /^( {4}|\t)/;
+/** A `[` that no `]` on the same line closes: the blanker's link-definition
+ * pattern reaches across newlines to find one, so it blanks lines below. */
+function opensBracket(text: string): boolean {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === '[') depth += 1;
+    else if (ch === ']') depth = Math.max(0, depth - 1);
+  }
+  return depth > 0;
+}
 const SETEXT_UNDERLINE = /^\s{0,3}(=+|-+)\s*$/;
+/** A line the masker, the blanker and the setext pass leave alone. */
+const proseLine = (text: string): boolean => text.trim() !== ''
+  && !DELIMITER.test(text) && !COMMENT.test(text)
+  && !opensBracket(text) && !LINK_DEFINITION.test(text) && !SETEXT_UNDERLINE.test(text);
 
 /** One line's decision, taken exactly the way the whole-note pass takes it.
  * Only valid for a line the masker and the blanker left alone: then the raw
@@ -215,43 +271,173 @@ export function directionsAfter(
   oldDoc: Text,
   newDoc: Text,
   changes: { iterChanges(f: (fromA: number, toA: number, fromB: number, toB: number, inserted: Text) => void): void },
-): TextDirection[] | null {
-  if (newDoc.lines !== oldDoc.lines) return null;
-  const touched = new Set<number>();
+): DirectionSnapshot | null {
+  // Below the first line that has a strong letter of its own, a line's answer
+  // is `excluded ? ltr : own ?? carried from above`, and every heading there
+  // has something carried into it. Nothing depends on what comes after the
+  // line, so a keystroke only has to settle the lines it touched, then walk
+  // down until the carried direction is what it was. Above that first line,
+  // and anywhere a `[` is left open (the blanker's link pattern reaches across
+  // newlines to find its `]:`), the whole note decides and the caller rebuilds.
+  if (prev.firstOwn < 0 || prev.openBracket) return null;
   let ok = true;
-  changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
-    if (!ok) return;
-    // A structural character would move math, code, a comment or a link
-    // definition; a newline would move every line.
-    if (STRUCTURAL.test(inserted.toString()) || STRUCTURAL.test(oldDoc.sliceString(fromA, toA))) { ok = false; return; }
-    const line = newDoc.lineAt(fromB);
-    if (oldDoc.lineAt(fromA).number !== line.number) { ok = false; return; }
-    // `-` on the first line could open or close frontmatter.
-    if (line.number === 1 && inserted.toString().includes('-')) { ok = false; return; }
-    touched.add(line.number - 1);
+  let count = 0;
+  let fromA = 0;
+  let toA = 0;
+  let fromB = 0;
+  let toB = 0;
+  changes.iterChanges((fa, ta, fb, tb, inserted) => {
+    count += 1;
+    if (count > 1) { ok = false; return; }
+    // A delimiter moves math, code or a comment. A newline is fine: it only
+    // moves its own two lines.
+    if (STRUCTURAL.test(inserted.toString()) || STRUCTURAL.test(oldDoc.sliceString(fa, ta))) ok = false;
+    fromA = fa; toA = ta; fromB = fb; toB = tb;
   });
-  if (!ok || !touched.size) return null;
-  for (const index of touched) {
-    if (prev.blanked[index] || prev.masked[index]) return null;
-    const before = oldDoc.line(index + 1).text;
-    const after = newDoc.line(index + 1).text;
-    // A line holding a delimiter takes part in the masker's state machine —
-    // run lengths, escapes, a price after a closing dollar — even when the
-    // keystroke itself carried none.
-    if (STRUCTURAL_LINE.test(before) || STRUCTURAL_LINE.test(after)) return null;
-    // Going blank or leaving blank moves the blank-line-between-math pass.
-    if ((before.trim() === '') !== (after.trim() === '')) return null;
-    // A setext underline decides the heading above it.
-    if (SETEXT_UNDERLINE.test(before) || SETEXT_UNDERLINE.test(after)) return null;
-    // A line that ends a `$$` pair changes what is math below it.
-    if (isMathBlockBoundary(before) !== isMathBlockBoundary(after)) return null;
-    const unit = lineUnit(after, index > 0 ? newDoc.line(index).text : '', index);
-    const was = prev.units[index];
-    if (!was) return null;
-    if (unit.own !== was.own || unit.heading !== was.heading || Boolean(unit.excluded) !== Boolean(was.excluded)) return null;
+  if (!ok || !count) return null;
+
+  const a = oldDoc.lineAt(fromA).number;
+  let b = oldDoc.lineAt(toA).number;
+  let bNew = newDoc.lineAt(toB).number;
+  if (newDoc.lineAt(fromB).number !== a) return null;
+  // Strictly after the first prose line: the carried value above holds.
+  if (a - 1 <= prev.firstOwn) return null;
+  // The masker reads the note in one pass and a line of formulas only opens
+  // where the blank lines let it, so adding or removing a line above one can
+  // move the mask. Joining and splitting lines is only free below the last
+  // formula in the note.
+  if (newDoc.lines !== oldDoc.lines && prev.lastMasked >= a - 1) return null;
+
+  // A line that is nothing but math or code is `ltr`, carries nothing and
+  // decides nothing. A keystroke that stays inside one leaves every line of
+  // the note exactly where it was — which is what typing in a formula is.
+  if (a === b && a === bNew) {
+    const index = a - 1;
+    if (prev.units[index]?.excluded && prev.masked[index] && !prev.blanked[index]) {
+      // The line has to keep something after its syntax: a line that is left
+      // with nothing but a list marker stops being a line of math.
+      const text = newDoc.line(a).text;
+      if (!STRUCTURAL.test(text) && withoutSyntax(text).trim() !== '') return prev;
+    }
   }
-  return prev.dirs;
+
+  // An indented line of code is decided by the line above it, so a keystroke
+  // that changes an indentation changes the run of code under it too. Take
+  // those lines in with the edit; they are code before and after.
+  const last = b;
+  const lastNew = bNew;
+  while (b < oldDoc.lines && bNew < newDoc.lines
+    && INDENTED.test(oldDoc.line(b + 1).text) && INDENTED.test(newDoc.line(bNew + 1).text)) { b += 1; bNew += 1; }
+
+  // Every line the edit covers, old and new, must be ordinary prose: no
+  // formula, no code, no blank, no underline, nothing the masker, the blanker
+  // or the two whole-note passes read — except the run of code taken in above,
+  // which must be code on both sides. A neighbour that is masked, blanked or
+  // an underline decides something about the lines about to be written.
+  for (let n = a; n <= last; n += 1) {
+    const index = n - 1;
+    if (prev.blanked[index] || prev.masked[index] || prev.units[index].excluded) return null;
+    // A blank line carries the direction above it and nothing else, so the
+    // first letter of a new paragraph costs no more than any other — unless
+    // the blank sits in a run of formulas or code, where it is not prose.
+    if (oldDoc.line(n).text.trim() === '') {
+      if (prev.masked[index - 1] || prev.masked[index + 1]) return null;
+    } else if (!proseLine(oldDoc.line(n).text)) return null;
+    // A heading, list, rule or quote ends a `$$ … $$` pair, so a keystroke
+    // that makes or breaks one moves the mask below it (src/mathScan.ts).
+    // Only a note with a delimiter in it can have such a pair at all.
+    const after = newDoc.line(Math.min(n, bNew)).text;
+    if (prev.math && isMathBlockBoundary(oldDoc.line(n).text) !== isMathBlockBoundary(after)) return null;
+  }
+  for (let n = a; n <= lastNew; n += 1) {
+    if (!proseLine(newDoc.line(n).text)) return null;
+  }
+  for (let n = last + 1; n <= b; n += 1) {
+    if (!prev.units[n - 1].excluded || !INDENTED.test(newDoc.line(n + (bNew - b)).text)) return null;
+  }
+  for (const n of [a - 1, b + 1]) {
+    if (n < 1 || n > oldDoc.lines) continue;
+    if (prev.blanked[n - 1]) return null;
+    if (SETEXT_UNDERLINE.test(oldDoc.line(n).text)) return null;
+    if (n <= bNew && SETEXT_UNDERLINE.test(newDoc.line(n).text)) return null;
+  }
+
+  const fresh: DirectionUnit[] = [];
+  for (let n = a; n <= bNew; n += 1) {
+    fresh.push(lineUnit(newDoc.line(n).text, n > 1 ? newDoc.line(n - 1).text : '', n - 1));
+  }
+  for (let i = 0; i <= lastNew - a; i += 1) {
+    if (fresh[i].excluded) return null;
+    // A heading that lost its letters would start reading the note below it.
+    if (fresh[i].heading && !fresh[i].own) return null;
+  }
+  const removed = b - a + 1;
+  if (fresh.length === removed) {
+    // A heading that appeared, vanished or changed level re-stacks the
+    // headings below it — but only a heading with no letters of its own ever
+    // reads that stack, so the change stays on its own line when there is
+    // none of those below.
+    for (let i = 0; i < fresh.length; i += 1) {
+      if (fresh[i].heading !== prev.units[a - 1 + i].heading && a - 1 + i < prev.lastNullHeading) return null;
+    }
+  }
+
+  // The common keystroke — a letter, a space, a full stop, anywhere after the
+  // line's first strong one — leaves every line's own answer exactly as it
+  // was. Hand back the snapshot untouched rather than copy the note.
+  if (fresh.length === removed) {
+    let same = true;
+    for (let i = 0; i < fresh.length && same; i += 1) {
+      const was = prev.units[a - 1 + i];
+      same = was.own === fresh[i].own && was.heading === fresh[i].heading
+        && Boolean(was.excluded) === Boolean(fresh[i].excluded);
+    }
+    if (same) return prev;
+  }
+
+  const units = prev.units.slice();
+  const blanked = prev.blanked.slice();
+  const masked = prev.masked.slice();
+  const carried = prev.carried.slice();
+  const dirs = prev.dirs.slice();
+  const freshCarried: (TextDirection | null)[] = [];
+  const freshDirs: TextDirection[] = [];
+  let carry = prev.carried[a - 1] ?? null;
+  for (const unit of fresh) {
+    freshCarried.push(carry);
+    freshDirs.push(unit.excluded ? 'ltr' : unit.own ?? carry ?? 'ltr');
+    if (!unit.excluded && unit.own) carry = unit.own;
+  }
+  const none = fresh.map(() => false);
+  units.splice(a - 1, removed, ...fresh);
+  blanked.splice(a - 1, removed, ...none);
+  masked.splice(a - 1, removed, ...none);
+  carried.splice(a - 1, removed, ...freshCarried);
+  dirs.splice(a - 1, removed, ...freshDirs);
+
+  // Everything below reads one value — the direction carried into the line —
+  // and its own letters. So the walk stops the moment the carried value is
+  // what it was before the keystroke: from there down the note is unchanged.
+  // A line of nothing but math or code is `ltr` either way and passes the
+  // carried value along untouched.
+  let below = carry;
+  let was = b;
+  for (let i = a - 1 + fresh.length; i < units.length; i += 1, was += 1) {
+    if (prev.carried[was] === below) break;
+    carried[i] = below;
+    const unit = units[i];
+    if (unit.excluded) continue;
+    if (unit.own) below = unit.own;
+    dirs[i] = unit.own ?? below ?? 'ltr';
+  }
+
+  return {
+    dirs, units, carried, firstOwn: prev.firstOwn,
+    lastMasked: prev.lastMasked, openBracket: prev.openBracket, math: prev.math,
+    lastNullHeading: prev.lastNullHeading, blanked, masked,
+  };
 }
+
 
 const BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dt,dd,summary,caption,.md-prose-fragment';
 const EXCLUDED = '.math-display,.math-flow,.katex,pre,code,.footnote-ref,.footnote-backref,.copy-code-button';
