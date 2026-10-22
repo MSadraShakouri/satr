@@ -42,56 +42,84 @@ export function isMathBlockBoundary(line: string): boolean {
 }
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-const blank = (text: string): string => text.replace(/[^\n]/g, ' ');
 
-/** Fenced blocks and backtick spans, blanked; newlines and offsets hold. */
-export function maskCode(source: string): string {
-  if (!source.includes('`') && !source.includes('~')) return source;
-  const chars = source.split('');
-  const erase = (from: number, to: number): void => {
-    for (let i = from; i < to; i += 1) if (chars[i] !== '\n') chars[i] = ' ';
-  };
+/** The characters of [from, to) made spaces, newlines kept. */
+const blankChunk = (chunk: string): string => chunk.replace(/[^\n]/g, ' ');
+
+/** `source` with every range in `ranges` (flat from/to pairs) blanked. Ranges
+ * may come in any order and may overlap; the result is built in one pass, so
+ * masking costs a slice and a join instead of a character array of the whole
+ * document. */
+function blankRanges(source: string, ranges: readonly number[]): string {
+  if (!ranges.length) return source;
+  const pairs: [number, number][] = [];
+  for (let i = 0; i + 1 < ranges.length; i += 2) pairs.push([ranges[i], ranges[i + 1]]);
+  pairs.sort((a, b) => a[0] - b[0]);
+  const parts: string[] = [];
+  let at = 0;
+  for (const [from, to] of pairs) {
+    if (to <= at) continue;
+    const start = Math.max(from, at);
+    parts.push(source.slice(at, start), blankChunk(source.slice(start, to)));
+    at = to;
+  }
+  parts.push(source.slice(at));
+  return parts.join('');
+}
+
+function isBlankBefore(text: string, at: number): boolean {
+  let i = at - 1;
+  while (i >= 0 && (text[i] === ' ' || text[i] === '\t')) i -= 1;
+  return text[i] === '\n' || i < 0;
+}
+
+/** Where fenced blocks and backtick spans are, as blanking ranges. The scan is
+ * the one this file has always used; only the erasing changed shape — a span
+ * is two numbers instead of a walk over a character array. */
+function codeBlankRanges(source: string): number[] {
+  if (!source.includes('`') && !source.includes('~')) return [];
+  const ranges: number[] = [];
   const lines = source.split('\n');
   let offset = 0;
   let fence: { char: string; len: number } | null = null;
   for (const line of lines) {
     const match = FENCE.exec(line);
     if (fence) {
-      erase(offset, offset + line.length);
+      ranges.push(offset, offset + line.length);
       if (match && match[1][0] === fence.char && match[1].length >= fence.len && !match[2].trim()) fence = null;
     } else if (match) {
       fence = { char: match[1][0], len: match[1].length };
-      erase(offset, offset + line.length);
+      ranges.push(offset, offset + line.length);
     }
     offset += line.length + 1;
   }
-  if (fence) return chars.join(''); // an unclosed fence runs to the end
+  if (fence) return ranges; // an unclosed fence runs to the end
   // Backtick spans, which may wrap lines but never a blank one (CommonMark).
-  const text = chars.join('');
-  const isBlankBefore = (at: number): boolean => {
-    let i = at - 1;
-    while (i >= 0 && (text[i] === ' ' || text[i] === '\t')) i -= 1;
-    return text[i] === '\n' || i < 0;
-  };
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] !== '`') continue;
+  const fenced = blankRanges(source, ranges);
+  for (let i = 0; i < fenced.length; i += 1) {
+    if (fenced[i] !== '`') continue;
     let end = i;
-    while (text[end] === '`') end += 1;
+    while (fenced[end] === '`') end += 1;
     const len = end - i;
     let close = -1;
-    for (let j = end; j < text.length; j += 1) {
-      if (text[j] === '\n' && isBlankBefore(j)) break;
-      if (text[j] !== '`') continue;
+    for (let j = end; j < fenced.length; j += 1) {
+      if (fenced[j] === '\n' && isBlankBefore(fenced, j)) break;
+      if (fenced[j] !== '`') continue;
       let run = j;
-      while (text[run] === '`') run += 1;
+      while (fenced[run] === '`') run += 1;
       if (run - j === len) { close = run; break; }
       j = run - 1;
     }
     if (close < 0) { i = end - 1; continue; }
-    erase(i, close);
+    ranges.push(i, close);
     i = close - 1;
   }
-  return chars.join('');
+  return ranges;
+}
+
+/** Fenced blocks and backtick spans, blanked; newlines and offsets hold. */
+export function maskCode(source: string): string {
+  return blankRanges(source, codeBlankRanges(source));
 }
 
 function escaped(text: string, at: number): boolean {
@@ -117,9 +145,9 @@ function inlineClose(masked: string, from: number, source: string): number {
 }
 
 /** Every math span of the source, in order; empty when there is no math. */
-export function scanMath(source: string): MathSpan[] {
+export function scanMath(source: string, alreadyMasked?: string): MathSpan[] {
   if (!source.includes('$')) return [];
-  const masked = maskCode(source);
+  const masked = alreadyMasked ?? maskCode(source);
   if (!masked.includes('$')) return [];
   const spans: MathSpan[] = [];
   const lines = source.split('\n');
@@ -164,15 +192,14 @@ export function scanMath(source: string): MathSpan[] {
 
 /** The source with math and code blanked out (newlines and offsets kept). */
 export function maskMathAndCode(source: string): string {
-  const masked = maskCode(source);
+  const code = codeBlankRanges(source);
+  const masked = blankRanges(source, code);
   if (!masked.includes('$')) return masked;
-  const spans = scanMath(source);
+  const spans = scanMath(source, masked);
   if (!spans.length) return masked;
-  const chars = masked.split('');
-  for (const span of spans) {
-    for (let i = span.from; i < span.to; i += 1) if (chars[i] !== '\n') chars[i] = ' ';
-  }
-  return chars.join('');
+  const ranges = code.slice();
+  for (const span of spans) ranges.push(span.from, span.to);
+  return blankRanges(source, ranges);
 }
 
 /** Does this position sit inside a formula (delimiters excluded)? */
