@@ -16,6 +16,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - task lists
   - ordered lists in Persian digits or Abjad letters (`۱.`, `الف.`), drawn in the reading view exactly as typed
   - footnotes, written in a popover
+  - tables, each with a direction of its own (its first cell, or `<!-- table: rtl -->` above it). A right-to-left table is the mirror image of the English one: `---:` sets the column against the end of the row — the left — and `:---` against its start, on screen and in the PDF alike
   - folding headings
 - **Images** in the reading view and the PDF, centred:
   - `![alt](path)` is relative to the note.

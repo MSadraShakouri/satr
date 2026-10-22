@@ -118,6 +118,58 @@ test('table: auto explicitly hands the decision back to the note', async ({ page
   expect(await page.evaluate(() => document.querySelector('#spec-host table')!.getAttribute('dir'))).toBe('rtl');
 });
 
+// ---- Mirrored markers (a right-to-left table is the mirror image) ----
+
+// `---:` is the end of the row and `:---` its start, so the side each one
+// paints on depends on which way the table reads. The attribute itself stays
+// physical — `right` is the right-hand side on screen and on paper alike —
+// and it is the renderer that mirrors it for a table that reads RTL.
+const MIXED = (head: string) => `${head}\n| ---: | --- | :--- |\n| ۱ | ۲ | ۳ |\n`;
+
+async function alignments(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...document.querySelectorAll('#spec-host tbody th,#spec-host tbody td')]
+    .map((cell) => cell.getAttribute('data-table-align') ?? ''));
+}
+
+test('an English table paints its markers as typed: right, centre, left', async ({ page }) => {
+  await rendered(page, MIXED('| Alpha | Beta | Gamma |'));
+  expect(await page.evaluate(() => document.querySelector('#spec-host table')!.getAttribute('dir'))).toBe('ltr');
+  expect(await alignments(page)).toEqual(['right', 'center', 'left']);
+});
+
+test('a Persian table is the mirror image: `---:` ends the row on the left', async ({ page }) => {
+  await rendered(page, MIXED('| الف | ب | پ |'));
+  expect(await page.evaluate(() => document.querySelector('#spec-host table')!.getAttribute('dir'))).toBe('rtl');
+  expect(await alignments(page)).toEqual(['left', 'center', 'right']);
+});
+
+test('the mirroring follows the direction the table was given, not its alphabet', async ({ page }) => {
+  // An English table held at right to left mirrors too.
+  await rendered(page, `<!-- table: rtl -->\n${MIXED('| Alpha | Beta | Gamma |')}`);
+  expect(await page.evaluate(() => document.querySelector('#spec-host table')!.getAttribute('dir'))).toBe('rtl');
+  expect(await alignments(page)).toEqual(['left', 'center', 'right']);
+  // And a Persian table held at left to right keeps the markers as typed.
+  await rendered(page, `<!-- table: ltr -->\n${MIXED('| الف | ب | پ |')}`);
+  expect(await alignments(page)).toEqual(['right', 'center', 'left']);
+});
+
+test('the mirrored marker is where the ink actually lands', async ({ page }) => {
+  await rendered(page, MIXED('| الف | ب | پ |'));
+  const ink = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('#spec-host tbody td')].map((cell) => {
+    const box = cell.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    const text = range.getBoundingClientRect();
+    // Empty room left of the text, and right of it.
+    return { align: getComputedStyle(cell).textAlign, before: text.left - box.left, after: box.right - text.right };
+  }));
+  expect(ink[0]!.align).toBe('left');
+  expect(ink[0]!.before).toBeLessThan(ink[0]!.after); // `---:` hugs the left
+  expect(ink[2]!.align).toBe('right');
+  expect(ink[2]!.after).toBeLessThan(ink[2]!.before); // `:---` hugs the right
+  expect(Math.abs(ink[1]!.before - ink[1]!.after)).toBeLessThan(2); // centre
+});
+
 // ---- The direction menu (tap a table in the reading view) ----
 
 const NOTE = 'Before the table.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter the table.\n';

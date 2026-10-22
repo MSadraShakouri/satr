@@ -504,6 +504,22 @@ export function renderMarkdown(source: string): string {
     }
   });
   applyReadingDirections(document.body);
+  // A table that reads right to left mirrors its markers along with its
+  // columns. `---:` means the *end* of the row, which in Persian is the
+  // physical left, and `:---` its start, the physical right — so the same
+  // separator line draws a Persian table as the mirror image of the English
+  // one, which is what a right-to-left reader is writing down. Only tables
+  // are mirrored: a paragraph has no column to belong to.
+  //
+  // The attribute itself stays physical (`right` is always the right-hand
+  // side), so the screen stylesheet and the print one read it the same way
+  // and the PDF needs no rule of its own — exportPdf renders through here.
+  const MIRROR: Record<string, string> = { right: 'left', left: 'right' };
+  document.querySelectorAll<HTMLElement>('table[dir="rtl"] [data-table-align]')
+    .forEach((cell) => {
+      const mirrored = MIRROR[cell.getAttribute('data-table-align') ?? ''];
+      if (mirrored) cell.setAttribute('data-table-align', mirrored);
+    });
   return document.body.innerHTML;
 }
 
