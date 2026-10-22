@@ -14,6 +14,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - `![[image embeds]]` with `|300` sizes
   - `==highlights==`
   - task lists
+  - ordered lists in Persian digits or Abjad letters (`۱.`, `الف.`), drawn in the reading view exactly as typed
   - footnotes, written in a popover
   - folding headings
 - **Images** in the reading view and the PDF, centred:
@@ -26,6 +27,7 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - centred display equations by default, or aligned to the reading edge; equations themselves always stay LTR
   - export starts directly with the saved options—no configuration popup
   - headings kept with following content, including at column boundaries
+  - ordered-list markers hang beside their text, lined up at their ends, each list given room for its own widest marker so a `۱۰۰.` or an `الف.` never runs into the margin
   - footnotes at the foot of each page (each column in two-column mode), numbered across the whole sheet
   - page numbers in Persian digits
   - page breaks (`\pagebreak`)
@@ -45,7 +47,8 @@ A Markdown editor for Android that writes Persian and English side by side. It l
   - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font in the accent colour (they mark a formula's edges at a glance). A line holding only `$$` never turns monospace, and a pair a heading, a list, a quote or a fence broke is plain text on both sides — editor and reading view read the same rule.
   - A Markdown character inside a formula belongs to the formula, so it never pairs with one in another formula: in `$*$ foo foo foo $*$` the foos are prose between two formulas and stay in the note's own font.
   - A new to-do box is always empty, whatever the line above it says. And when the line under an item is already an empty item, Enter moves into that one instead of making a second empty item and pushing the numbers below.
-  - Ordered lists number themselves while you write. Enter on an item numbers the new one after the item above it, and the numbers below move only as far as they must (`6.` then Enter gives `7.`, and an `8.` under it stays `8.`; `1. 2. 3.` becomes `1. 2. 3. 4.`). A line that leaves the list — deleted, joined to the line above, or emptied — brings the numbers below it down, checked on every edit, so Backspace and a selection work like the toolbar's delete-line. Editing an item's text moves nothing. A blank line, prose or another list ends the run, nested items number themselves and are stepped over, and a note you open or a list you paste keeps the numbers it came with.
+  - Ordered lists number themselves while you write, from the head of the list down. Enter on an item numbers the new one after the item above it, and any edit at all renumbers the run — not just Enter — counting from the head's own number and never from 1 (`6.` then Enter gives `7.`; `6.` over `3.` becomes `6. 7. 8.`). A line that leaves the list — deleted, joined to the line above, or emptied — brings the numbers below it down, so Backspace and a selection work like the toolbar's delete-line. Editing an item's text moves nothing. A blank line, prose or another list ends the run, a nested item numbers itself and renumbers the list it hangs under, and a note you open or a list you paste keeps the numbers it came with.
+  - **One list, one language**, and the marker is the one you typed. The head decides the digits — `1.`, `۱.` or `١.` — so a marker typed on another keyboard is written over at once. Letters work the same way, typed rather than chosen: `الف.` `ب.` `ج.` counts in ابجد, a `پ.` turns the list to ابپتث, and `a.` `b.` `c.` counts in English letters (`A.` `B.` in capitals), while a lone `A. Smith` over `B. Jones` stays two sentences. The punctuation is yours too: a list written `۱)` keeps its paren instead of being given a dot.
   - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text. Spaces are never second-guessed: what you type (or what the keyboard's auto-correct sends) goes in as it is, before a `)` as anywhere else.
 - **A caret the keyboard can see.** The editor is a plain editable region, not Chrome's EditContext API, so the keyboard, the selection handles and the selection bar all act on the same text the note has: the suggestion strip and auto-correct come back after a backspace, tapping a word brings up what the keyboard suggests for it, and "Select all" takes the whole note. Double tap a word to select it, and drag before lifting the finger to take in more. The arrow keys step one position a press, in the paragraph's own order — so the right arrow mirrors in Persian exactly as it does in any text field — and they answer even while the keyboard is still holding a word.
 - **Fast start.** The last screen appears at once, before the app's code has loaded.

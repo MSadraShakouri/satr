@@ -33,6 +33,13 @@ Type `*`, `_`, `=`, `~`, a backtick, a bracket or `$` with words selected, and t
 ۲. **پررنگ** در اول مورد
 ۳. با Enter ادامه پیدا می‌کند
 
+الف. فهرست با حروف ابجد
+ب. حرف‌ها هم با Enter ادامه پیدا می‌کنند
+ج. نشانه همان است که نوشته‌اید
+
+a) A list written with parens keeps them
+b) and the marker hangs beside the text, not far from it
+
 ## Links
 
 A link to [a web page](https://github.com/MSadraShakouri/Satr), and wiki links to other notes: [[Satr demo]], [[Satr demo#Math|a heading in it]]. Type `[[` to pick a note from a list. Links to notes that don't exist are dimmed in the reading view.

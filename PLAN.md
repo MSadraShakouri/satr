@@ -51,7 +51,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] nested lists don't work?
 
-- [ ] in Persian RTL, the numbered lists, the number is on the right of the number, numbers are still LTR for a reason, directly related to the weird long list of RTL rules we have
+- [x] in Persian RTL, the numbered lists, the number is on the right of the number, numbers are still LTR for a reason, directly related to the weird long list of RTL rules we have
 
 - [ ] numbers should be RTL, should they not? (No, other things need changes)
 
