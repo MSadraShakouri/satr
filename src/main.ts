@@ -456,8 +456,12 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   saveTimer = undefined;
   previewDirty = true;
   if (previewVisible()) renderPreview();
-  if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, false, y);
-  else applyEditorScroll(editor.view, position, () => true, false, y);
+  // position is null when the reading view had nothing to read: keep the
+  // pane where it is rather than place it from a number nobody measured.
+  if (position !== null) {
+    if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, false, y);
+    else applyEditorScroll(editor.view, position, () => true, false, y);
+  }
   restoringView = wasRestoring;
   ownScroll(250);
   void showNotice('Updated from the version on disk.', 2500);
@@ -758,8 +762,8 @@ function setMode(next: Mode, restoredLine?: number): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
-    applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
-  } else {
+    if (position !== null) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
+  } else if (position !== null) {
     applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);
   }
@@ -967,6 +971,10 @@ function rememberView(): void {
   if (restoringView) return;
   const y = scrollBand();
   const line = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
+  // Nothing to read in the reading view (not rendered yet, every section
+  // folded away): the place this note was last left at is better than a
+  // number made up now, and a made-up one here outlives the app.
+  if (line === null) return;
   const folds = editor.foldedLines();
   if (!filePath) return;
   const saved: SavedView = { mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) };
@@ -2297,7 +2305,7 @@ const sidebar = createRightSidebar(rightPanel, {
   currentLine: () => {
     const pane = mode === 'preview' ? previewPane : editor.view.scrollDOM;
     const anchor = pane.clientHeight * (2 / 3);
-    return mode === 'preview' ? previewScroll(previewPane, preview, anchor) : editorScroll(editor.view, anchor);
+    return (mode === 'preview' ? previewScroll(previewPane, preview, anchor) : editorScroll(editor.view, anchor)) ?? 0;
   },
   onHeading: (line, path) => {
     toggleOutline(false);
