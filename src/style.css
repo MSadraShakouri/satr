@@ -1080,6 +1080,12 @@ body {
 .cm-line[dir="rtl"] .cm-lp-bullet::after {
   left: calc(50% - 0.375em);
 }
+/* A list marker the markdown parser does not know — a Persian number, a
+   letter — is dimmed like the one it doesn't: `1.` is drawn at 0.42 by the
+   parser's own style, so `۲.` and `الف.` are drawn the same here. */
+.cm-live-marker {
+  opacity: 0.42;
+}
 .cm-lp-list-hidden {
   /* "- " in front of a checkbox: kept in the text, takes no space */
   font-size: 0;

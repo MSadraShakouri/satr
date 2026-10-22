@@ -6,6 +6,7 @@ import { renderMath } from './math';
 import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamps';
 import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
+import { formatDigits, formatMarker, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
@@ -239,12 +240,21 @@ export function renderMarkdown(source: string): string {
   const normalized = source.replace(/\r\n?/g, '\n');
   // Front matter becomes blank lines, so line numbers don't shift.
   const withoutFrontMatter = normalized.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, (block) => block.replace(/[^\n]/g, ''));
-  const orderedStyles: Array<'persian' | 'latin'> = [];
-  let previousWasOrdered = false;
+  // One entry per ordered list, in the order the lists appear: the head's
+  // marker decides what the list is drawn with — Persian numbers, or one of
+  // the two letter orders (where the letters typed below settle which).
+  const orderedStyles: Array<{ alphabet: Alphabet; letters: string[] }> = [];
+  let run: { alphabet: Alphabet; letters: string[] } | null = null;
   withoutFrontMatter.split('\n').forEach((line) => {
-    const marker = /^\s*([0-9۰-۹٠-٩]+)[.)]\s+/.exec(line);
-    if (marker && !previousWasOrdered) orderedStyles.push(/[۰-۹٠-٩]/.test(marker[1]) ? 'persian' : 'latin');
-    previousWasOrdered = Boolean(marker);
+    const marker = new RegExp(`^\\s*(${MARKER})[.)]\\s+`).exec(line);
+    if (!marker) { run = null; return; }
+    const parsed = parseMarker(marker[1]);
+    if (run === null) {
+      run = { alphabet: parsed?.alphabet ?? 'latin', letters: [marker[1]] };
+      orderedStyles.push(run);
+    } else {
+      run.letters.push(marker[1]);
+    }
   });
   // Math first: the placeholders hold no markdown, and the transforms below
   // (page breaks, list markers, table separators) only ever look at the
@@ -255,7 +265,14 @@ export function renderMarkdown(source: string): string {
   // A list marker the writer typed keeps its own number — `۲.` becomes `2.`
   // for the parser's sake (the digits are only transliterated), never `1.`:
   // a single `2.` is the writer's 2, in the preview and in the PDF alike.
-  const normalizedLists = markPageBreaks(withMathPlaceholders).replace(/^(\s*)([۰-۹٠-٩]+)([.)])\s+/gm, (_full, indent: string, number: string, punctuation: string) => `${indent}${latinDigits(number)}${punctuation} `);
+  const normalizedLists = markPageBreaks(withMathPlaceholders).replace(new RegExp(`^(\\s*)(${MARKER})([.)])\\s+`, 'gm'), (_full, indent: string, number: string, punctuation: string) => {
+    const parsed = parseMarker(number);
+    // A letter marker becomes its place in the run for the parser's sake, and
+    // is drawn back as the letter: `الف.` is `1.` to marked and `الف` to the
+    // reader. `۲.` goes the same road and stops at the Persian digits.
+    const latin = parsed ? formatDigits(parsed.number, 'latin') : number;
+    return `${indent}${latinDigits(latin)}${punctuation} `;
+  });
   const { text: normalizedTables, origin } = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
 
@@ -336,11 +353,24 @@ export function renderMarkdown(source: string): string {
     if (lines > 0) element.style.setProperty('contain-intrinsic-block-size', `auto ${(lines * 1.85).toFixed(1)}em`);
   });
   document.querySelectorAll('ol').forEach((list, index) => {
-    if (orderedStyles[index] !== 'persian') return;
+    const style = orderedStyles[index];
+    if (!style) return;
+    const letters = style.alphabet === 'abjad' || style.alphabet === 'abpats'
+      ? orderOf(style.letters.map((token, at) => ({ index: at, token })))
+      : null;
+    // Persian and Arabic-Indic digits are both drawn in Persian digits; an
+    // English list is the platform's own and is left alone.
+    const digits = style.alphabet === 'persian' || style.alphabet === 'arabic';
+    if (!digits && !letters) return;
     list.classList.add('persian-ordered');
     // The list's own start is the writer's first number, not always one.
     const start = Number(list.getAttribute('start') ?? '1') || 1;
-    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => item.setAttribute('data-persian-number', toPersian(start + itemIndex)));
+    if (letters) list.classList.add('lettered-ordered');
+    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => {
+      item.setAttribute('data-persian-number', letters
+        ? formatMarker(start + itemIndex, letters)
+        : toPersian(start + itemIndex));
+    });
   });
   document.querySelectorAll('table').forEach((table, tableIndex) => {
     const firstRow = table.querySelector<HTMLTableRowElement>('thead tr');

@@ -9,11 +9,11 @@ import { createTimestampPicker } from './datePicker';
 import { editFootnote } from './footnoteDialog';
 import { findLatexMath } from './mathNormalize';
 import { showNotice } from './notice';
+import { formatMarker, MARKER, parseMarker, type Alphabet } from './listMarkers';
 
 const PERSIAN_TEXT = /[\u0600-\u06FF]/;
-const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
-// indent, marker (bullet or number+punct), optional task box
-const LIST = /^(\s*)(?:([-*+])|([0-9۰-۹٠-٩]+)([.)]))(\s+)(\[[ xX]\]\s+)?/;
+// indent, marker (bullet, or number/letter + punct), optional task box
+const LIST = new RegExp(`^(\\s*)(?:([-*+])|(${MARKER})([.)]))(\\s+)(\\[[ xX]\\]\\s+)?`);
 const HEADING = /^(#{1,6})(\s+|$)/;
 
 function touchedLines(view: EditorView): Line[] {
@@ -47,17 +47,6 @@ function setPrefix(line: Line, prefix: string): ChangeSpec {
   return { from: line.from + indent, to: line.from + end, insert: prefix };
 }
 
-function toPersian(n: number): string {
-  return String(n).replace(/[0-9]/g, (d) => PERSIAN_DIGITS[Number(d)]);
-}
-function fromDigits(value: string): number {
-  return Number([...value].map((c) => {
-    const p = '۰۱۲۳۴۵۶۷۸۹'.indexOf(c);
-    const a = '٠١٢٣٤٥٦٧٨٩'.indexOf(c);
-    return p >= 0 ? p : a >= 0 ? a : c;
-  }).join(''));
-}
-
 export function cycleHeading(view: EditorView): boolean {
   return apply(view, touchedLines(view).map((line) => {
     const match = HEADING.exec(line.text);
@@ -80,19 +69,20 @@ export function toggleOrdered(view: EditorView): boolean {
   if (lines.every(isOrdered)) return apply(view, lines.map((line) => setPrefix(line, '')), 'input.list');
   // Continue the numbering of an ordered item right above, if there is one.
   let start = 1;
-  let persian = PERSIAN_TEXT.test(lines[0].text);
+  let alphabet: Alphabet = PERSIAN_TEXT.test(lines[0].text) ? 'persian' : 'latin';
   let punct = '.';
   if (lines[0].number > 1) {
     const above = LIST.exec(view.state.doc.line(lines[0].number - 1).text);
-    if (above && above[3]) {
-      start = fromDigits(above[3]) + 1;
-      persian = /[۰-۹٠-٩]/.test(above[3]);
-      punct = above[4];
+    const parsed = above && above[3] ? parseMarker(above[3]) : null;
+    if (parsed) {
+      start = parsed.number + 1;
+      alphabet = parsed.alphabet;
+      punct = above![4];
     }
   }
   return apply(view, lines.map((line, index) => {
     const n = start + index;
-    return setPrefix(line, `${persian ? toPersian(n) : n}${punct} `);
+    return setPrefix(line, `${formatMarker(n, alphabet)}${punct} `);
   }), 'input.list');
 }
 

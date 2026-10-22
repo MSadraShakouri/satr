@@ -3,15 +3,17 @@ import type { SatrEditor } from '../src/editor';
 
 declare global { interface Window { testEditor: SatrEditor } }
 
-// Automatic numbering for ordered lists (the writer's request): Enter on an
-// item numbers the new one after the item above it, and the items below move
-// only as far as they must — each one has to be bigger than the one above it,
-// so a `6.` then `8.` keeps its `8.`. A line that leaves the list (deleted
-// whole, joined upwards, or emptied) brings the numbers below it down, live,
-// whatever key or button did it; editing an item's text moves nothing. A blank
-// line, prose or another list ends the run; nested items number themselves and
-// are stepped over; a note being loaded and a list being pasted keep the
-// numbers they came with.
+// Automatic numbering for ordered lists (the writer's request): a list is
+// numbered from its head, one after another, on every change — `6.` then `3.`
+// becomes `6. 7. 8.`, and the counting starts at the head's own number, never
+// at 1. One list is written in one language: the head decides the digits (or
+// the letters) and a marker typed in another script is written over at once.
+// A line that leaves the list (deleted whole, joined upwards, or emptied)
+// brings the numbers below it down, live, whatever key or button did it. A
+// blank line, prose or another list ends the run; nested items number
+// themselves and are stepped over, though a change inside one still belongs to
+// the list it hangs under. A note being loaded and a list being pasted keep
+// the numbers they came with: material from outside is not the writer typing.
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -66,6 +68,23 @@ async function edit(page: Page, text: string, caret: number, action: Action): Pr
   }, { text, caret, action });
 }
 
+/** The writer typing a line again: the line's whole text is replaced, as a
+ *  change of their own. */
+async function retype(page: Page, text: string, line: number, replacement: string): Promise<string> {
+  return page.evaluate(async ({ text, line, replacement }) => {
+    const ed = window.testEditor;
+    ed.setValue(text);
+    const lines = text.split('\n');
+    const from = lines.slice(0, line - 1).reduce((total, value) => total + value.length + 1, 0);
+    ed.setSelection(from, from + lines[line - 1].length);
+    ed.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    ed.view.dispatch({ changes: { from, to: from + lines[line - 1].length, insert: replacement }, userEvent: 'input.type' });
+    await new Promise((r) => setTimeout(r, 40));
+    return ed.getValue();
+  }, { text, line, replacement });
+}
+
 test('Enter numbers the new item, and the items after it follow it', async ({ page }) => {
   const latin = '1. a\n2. b\n3. c';
   expect((await edit(page, latin, at(latin, 1, 'end'), 'enter')).text).toBe('1. a\n2. \n3. b\n4. c');
@@ -90,14 +109,20 @@ test('Enter numbers the new item, and the items after it follow it', async ({ pa
   expect((await edit(page, latin, at(latin, 1, 'end'), 'button')).text).toBe('1. a\n2. \n3. b\n4. c');
 });
 
-test('the items below move only as far as they must', async ({ page }) => {
-  // 6. → 7. and the 8. below already counts: it stays the writer's 8.
+test('the numbers run on from the head, however the items below were typed', async ({ page }) => {
+  // 6. → 7., and the 8. below already says 8.
   const odd = '6. a\n8. b';
   expect((await edit(page, odd, at(odd, 1, 'end'), 'enter')).text).toBe('6. a\n7. \n8. b');
-  // A 7. below the new 7. would repeat, so that one moves — to 8. — and the
-  // 9. after it already counts and stays.
+  // A 7. below the new 7. would repeat, so that one moves to 8. — and the 9.
+  // after it already says 9.
   const repeat = '6. a\n7. b\n9. c';
   expect((await edit(page, repeat, at(repeat, 1, 'end'), 'enter')).text).toBe('6. a\n7. \n8. b\n9. c');
+  // A number that runs backward is brought forward like any other: the head's
+  // own number is where the counting starts, and every item after it follows.
+  const backward = '6. a\n3. b';
+  expect((await edit(page, backward, at(backward, 1, 'end'), 'enter')).text).toBe('6. a\n7. \n8. b');
+  const skip = '1. a\n5. b';
+  expect((await edit(page, skip, at(skip, 1, 'end'), 'enter')).text).toBe('1. a\n2. \n3. b');
   // The last item has nothing after it, so nothing else moves.
   const last = '1. a\n2. b';
   expect((await edit(page, last, at(last, 2, 'end'), 'enter')).text).toBe('1. a\n2. b\n3. ');
@@ -219,12 +244,15 @@ test('a nested list numbers itself and does not stand between the items above it
   // Enter on the outer item 1: the outer 3. already counts after the new 2.,
   // so it stays, and the nested numbers never move.
   expect((await edit(page, nested, at(nested, 1, 'end'), 'enter')).text).toBe('1. a\n2. \n    1. n1\n    2. n2\n3. c');
-  // Deleting outer item 2: the nested list is stepped over, the outer 2.
-  // continues.
+  // Deleting outer item 2: the nested list is stepped over, and the outer
+  // numbers run on under it — 3. comes down to 2. Only outer items count.
   const withTwo = '1. a\n2. b\n    1. n1\n    2. n2\n3. c';
   expect((await edit(page, withTwo, at(withTwo, 2), 'selectAndDelete')).text).toBe('1. a\n    1. n1\n    2. n2\n2. c');
 });
 
+// A note arriving whole — a file opened, a session coming back, a reload — is
+// not an edit in it, and a paste brings its own numbers with it. Neither is
+// renumbered: the rule counts what the writer writes, and these arrive written.
 test('loading a note or pasting a list keeps the numbers it came with', async ({ page }) => {
   const odd = '5. a\n9. b';
   expect((await edit(page, odd, at(odd, 1, 'end'), 'none')).text).toBe(odd);
@@ -308,4 +336,117 @@ test('Enter uses an empty item already waiting below', async ({ page }) => {
   // And Enter on the empty item itself still leaves the list.
   const leaving = '1. a\n2. \n3. c';
   expect((await edit(page, leaving, at(leaving, 2, 'end'), 'enter')).text).toBe('1. a\n\n2. c');
+});
+
+// One list, one language (the writer's request): the head decides the digits
+// and a marker that arrives in the other script is written over at once. The
+// writer types in whatever script their keyboard happened to be on; the list
+// stays itself, and it goes on counting from the head's own number.
+test('one list, one language: the head decides and the other script is written over', async ({ page }) => {
+  // A Persian marker typed under an English head is English at once — and it
+  // is the second item, so it says 2 whatever number came in.
+  expect(await retype(page, '1. a\n2. b', 2, '۲. b')).toBe('1. a\n2. b');
+  expect(await retype(page, '1. a\n2. b', 2, '٣. b')).toBe('1. a\n2. b');
+  // And an English one under a Persian head is Persian.
+  expect(await retype(page, '۱. a\n۲. b', 2, '2. b')).toBe('۱. a\n۲. b');
+  expect(await retype(page, '۱. a\n۲. b', 2, '٣. b')).toBe('۱. a\n۲. b');
+  // The head is the writer's own and is left exactly as they wrote it — even
+  // when they change it, which moves the whole run to its number.
+  expect(await retype(page, '1. a\n۲. b', 1, '۳. a')).toBe('۳. a\n۴. b');
+  expect(await retype(page, 'الف. a\nب. b', 1, 'ج. a')).toBe('ج. a\nد. b');
+  // Every item follows the head, in order, one after another: from ۵. the
+  // list runs ۶. and ۷., whatever the items said when they were typed.
+  expect(await retype(page, '۵. a\n9. b\n۲. c', 1, '۵. a')).toBe('۵. a\n۶. b\n۷. c');
+});
+
+// Lettered lists (the writer's request): the marker is typed like any other
+// and Enter carries it on — ابجد by default, and a letter that only the
+// Persian order has (a پ) turns the whole list to ابپتث. Nothing new in the
+// toolbar: the letters are the interface.
+test('a lettered list carries on in its own order', async ({ page }) => {
+  const abjad = 'ا. a';
+  expect((await edit(page, abjad, at(abjad, 1, 'end'), 'enter')).text).toBe('ا. a\nب. ');
+  // A list that starts further in counts from where it starts.
+  const jim = 'ج. c';
+  expect((await edit(page, jim, at(jim, 1, 'end'), 'enter')).text).toBe('ج. c\nد. ');
+  // الف is the first letter written out, and it is kept as the writer wrote it.
+  const alef = 'الف. a';
+  expect((await edit(page, alef, at(alef, 1, 'end'), 'enter')).text).toBe('الف. a\nب. ');
+  // The default is ابجد: after ا and ب comes ج.
+  const two = 'ا. a\nب. b';
+  expect((await edit(page, two, at(two, 2, 'end'), 'enter')).text).toBe('ا. a\nب. b\nج. ');
+  // A پ anywhere in the run is proof of the Persian order, and the list turns
+  // ابپتث — the ج the writer had is written over.
+  expect(await retype(page, 'ا. a\nب. b\nج. c', 3, 'پ. c')).toBe('ا. a\nب. b\nپ. c');
+  // And it carries on there: after پ comes ت.
+  const pe = 'ا. a\nب. b\nپ. p';
+  expect((await edit(page, pe, at(pe, 3, 'end'), 'enter')).text).toBe('ا. a\nب. b\nپ. p\nت. ');
+  // A ج is proof of ابجد, and the list turns back.
+  expect(await retype(page, 'ا. a\nب. b\nپ. p', 3, 'ج. c')).toBe('ا. a\nب. b\nج. c');
+  // Past the last letter a list counts in Persian numbers rather than
+  // starting its letters over.
+  const gh = 'غ. a';
+  expect((await edit(page, gh, at(gh, 1, 'end'), 'enter')).text).toBe('غ. a\n۲۹. ');
+  // Under a digit head a letter is still a number: the head decides.
+  expect(await retype(page, '1. a\n2. b', 2, 'ب. b')).toBe('1. a\n2. b');
+});
+
+// Line numbers follow the caret's line (the writer's request): a Persian line
+// counts in Persian digits, an English line in English digits. One formatter
+// draws the column, so it turns together when the caret crosses over.
+test('the line numbers are drawn in the script of the caret’s line', async ({ page }) => {
+  const gutter = await page.evaluate(async () => {
+    const ed = window.testEditor;
+    ed.setLineNumbers(true);
+    const read = async (text: string, caret: number) => {
+      ed.setValue(text);
+      ed.setSelection(caret, caret);
+      ed.focus();
+      await new Promise((r) => setTimeout(r, 40));
+      return [...ed.view.dom.querySelectorAll('.cm-lineNumbers .cm-gutterElement')]
+        .filter((element) => (element as HTMLElement).style.visibility !== 'hidden')
+        .map((element) => element.textContent).join(',');
+    };
+    return {
+      persian: await read('سلام\nدنیا\nخوب', 0),
+      latin: await read('hello\nworld', 0),
+      // The caret sits on the English line first, then on the Persian one.
+      mixedEnglish: await read('hello\nدنیا', 0),
+      mixedPersian: await read('hello\nدنیا', 6),
+    };
+  });
+  expect(gutter.persian).toBe('۱,۲,۳');
+  expect(gutter.latin).toBe('1,2');
+  expect(gutter.mixedEnglish).toBe('1,2');
+  expect(gutter.mixedPersian).toBe('۱,۲');
+});
+
+// The reading view draws the letters a list carries, in the order its own
+// letters prove — the same list, read back.
+test('the reading view draws a lettered list in its own order', async ({ page }) => {
+  const read = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    const one = (text: string) => {
+      host.innerHTML = renderMarkdown(text);
+      const list = host.querySelector('ol');
+      return {
+        lettered: list?.classList.contains('lettered-ordered') ?? false,
+        numbered: list?.classList.contains('persian-ordered') ?? false,
+        labels: [...host.querySelectorAll('ol > li')].map((item) => item.getAttribute('data-persian-number')),
+      };
+    };
+    return {
+      abjad: one('ا. یک\nب. دو\nج. سه'),
+      abpats: one('ا. یک\nب. دو\nپ. سه'),
+      latin: one('1. one\n2. two'),
+    };
+  });
+  expect(read.abjad.lettered).toBe(true);
+  expect(read.abjad.numbered).toBe(true);
+  expect(read.abjad.labels).toEqual(['ا', 'ب', 'ج']);
+  expect(read.abpats.labels).toEqual(['ا', 'ب', 'پ']);
+  // An English list is the platform's own and is left alone.
+  expect(read.latin.lettered).toBe(false);
+  expect(read.latin.numbered).toBe(false);
 });

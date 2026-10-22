@@ -20,6 +20,7 @@ import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 import { typingTop } from './scrollSync';
+import { ABJAD, ABPATS, formatDigits, formatMarker, MARKER, parseMarker, orderOf, type Alphabet } from './listMarkers';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -107,7 +108,7 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
     for (const visible of view.visibleRanges) {
       let line = view.state.doc.lineAt(visible.from);
       while (true) {
-        const match = /^(\s*[۰-۹٠-٩]+[.)])(?=\s)/.exec(line.text);
+        const match = new RegExp(`^(\\s*(?:[۰-۹٠-٩]+|الف|[${ABJAD}${ABPATS}])[.)])(?=\\s)`).exec(line.text);
         if (match) ranges.push(Decoration.mark({ class: 'cm-live-marker' }).range(line.from, line.from + match[1].length));
         if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
         line = view.state.doc.line(line.number + 1);
@@ -153,63 +154,34 @@ const directionPlugin = ViewPlugin.fromClass(class {
 // moved under the reader's eyes while a note drifted towards another
 // language. (The right sidebar's outline still reads the note's majority.)
 
-const digitMaps = {
-  latin: '0123456789',
-  persian: '۰۱۲۳۴۵۶۷۸۹',
-  arabic: '٠١٢٣٤٥٦٧٨٩',
-} as const;
-function parseListNumber(value: string): { number: number; alphabet: keyof typeof digitMaps } {
-  const alphabet = /[۰-۹]/.test(value) ? 'persian' : /[٠-٩]/.test(value) ? 'arabic' : 'latin';
-  const number = [...value].reduce((total, digit) => total * 10 + digitMaps[alphabet].indexOf(digit), 0);
-  return { number, alphabet };
-}
-function formatListNumber(number: number, alphabet: keyof typeof digitMaps): string {
-  return String(number).split('').map((digit) => digitMaps[alphabet][Number(digit)]).join('');
-}
 
-// Automatic numbering for ordered lists (the writer's request). Two moments
-// touch the writer's numbers, and only those two:
+// Automatic numbering for ordered lists (the writer's request): a list is
+// numbered from its head, one after another, and every change in it is
+// numbered again — not only Enter, not only a deletion, but any edit at all,
+// whatever key or button made it. The counting starts at the head's own
+// number, never at 1, so a list that begins at ۵. runs ۵, ۶, ۷; and the head
+// is written exactly as the writer wrote it, because it is what the rest of
+// the list answers to.
 //
-// * Enter on an item writes the new item after the item above it (that is
-//   continueOnEnter), and then lifts the items *below* only as far as they
-//   need to go: each one has to be bigger than the one above it, so `6.` then
-//   Enter gives `7.` and an `8.` under it stays `8.` — it already fits — while
-//   `1. 2. 3.` becomes `1. 2. 3. 4.`
+// A list is one language. The head decides the digits — English, Persian or
+// Arabic-Indic — or the letters, and a marker typed in another script is
+// written over at once, so the writer can type on whatever keyboard is at
+// hand and the list stays itself.
 //
-// * A line that leaves the list — deleted whole, joined to the line above,
-//   or emptied — brings the items below it down by the number of items that
-//   went. Editing an item's text, or its marker, without the line going, moves
-//   nothing.
-//
-// Everything else keeps its numbers: typing, pasting and opening a note never
-// renumber anything, and a blank line, prose or another marker ends the run
-// (two lists separated by a blank line are two lists). A nested list numbers
-// itself and is stepped over; the digits keep the set they were written in, so
-// a Persian list stays Persian.
+// A blank line, prose or another kind of marker ends the run (two lists
+// separated by a blank line are two lists). A nested list numbers itself and
+// is stepped over, though a change inside one still belongs to the list it
+// hangs under, which is renumbered with it. Two things are not edits and are
+// left exactly as they came: a note arriving whole (a file opened, a session
+// coming back, a reload) and a paste or a drop, which is the writer's own
+// material.
 const listRenumber = Annotation.define<boolean>();
-const ITEM_LINE = /^([ \t]*)([0-9۰-۹٠-٩]+)([.)])([ \t])/;
+const ITEM_LINE = new RegExp(`^([ \\t]*)(${MARKER})([.)])([ \\t])`);
 // A line the writer is taking apart: the whole item, "2." with its text gone,
 // or "2" with the marker half-deleted. Only a line that holds nothing else.
-const STRUCK_ITEM = /^([ \t]*)([0-9۰-۹٠-٩]+)([.)])?([ \t]*)$/;
+const STRUCK_ITEM = new RegExp(`^([ \\t]*)(${MARKER})([.)])?([ \\t]*)$`);
 
 interface Marker { indent: string; delimiter: string }
-
-function itemMarker(line: string): Marker | null {
-  const match = ITEM_LINE.exec(line);
-  return match ? { indent: match[1], delimiter: match[3] } : null;
-}
-
-/** The item one Enter made: a new item's marker on a line of its own, and the
- *  number it was given. A marker written by hand, a pasted list or a note
- *  being loaded are not Enter, and none of them renumber anything. */
-function insertedItem(text: string): { marker: Marker | null; number: number } {
-  const lines = text.split('\n');
-  if (lines.length > 2 || !text.includes('\n')) return { marker: null, number: 0 };
-  const line = lines.find((one) => ITEM_LINE.test(one));
-  if (!line) return { marker: null, number: 0 };
-  const match = ITEM_LINE.exec(line)!;
-  return { marker: { indent: match[1], delimiter: match[3] }, number: parseListNumber(match[2]).number };
-}
 
 /** The item lines one change took out of the list, and the marker to match the
  *  run after them against. A line goes when the whole line went, when the
@@ -254,102 +226,158 @@ function removedItems(tr: { changes: { mapPos: (pos: number, assoc: number) => n
   return { count, marker, emptied };
 }
 
-/** The first line starting at or after `pos`: the line a deletion left
- *  behind. A deletion can end on the break before the next line — the app's
- *  own delete-line takes the break *above* the line it removes — so the line
- *  holding `pos` is not always the line to start at. */
-function lineAtOrAfter(doc: EditorState['doc'], pos: number): number {
-  const line = doc.lineAt(pos);
-  return line.from >= pos ? line.number : line.number + 1;
+/** The run an item belongs to: the item lines at its own indent and with its
+ *  own delimiter, up to a blank line, a formula, or a line that is not one of
+ *  them. A nested list is stepped over — it numbers itself. */
+function runAround(doc: EditorState['doc'], number: number, inMathAt: (pos: number) => boolean): { first: number; last: number } {
+  const marker = ITEM_LINE.exec(doc.line(number).text);
+  if (!marker) return { first: number, last: number };
+  const indent = marker[1].length;
+  const delimiter = marker[3];
+  const same = (n: number): boolean => {
+    const match = ITEM_LINE.exec(doc.line(n).text);
+    return Boolean(match) && match![1].length === indent && match![3] === delimiter;
+  };
+  /** A line the run cannot cross: air, a formula, prose, or another list. An
+   *  indented line belongs to the item above it; a deeper item is nested. */
+  const ends = (n: number): boolean => {
+    const line = doc.line(n);
+    if (!line.text.trim() || inMathAt(line.from)) return true;
+    const match = ITEM_LINE.exec(line.text);
+    if (!match) return !/^[ \t]/.test(line.text);
+    return match[1].length < indent || (match[1].length === indent && match[3] !== delimiter);
+  };
+  let first = number;
+  while (first > 1 && !ends(first - 1)) first -= 1;
+  while (first < number && !same(first)) first += 1;
+  let last = number;
+  while (last < doc.lines && !ends(last + 1)) last += 1;
+  while (last > number && !same(last)) last -= 1;
+  return { first, last };
+}
+
+/** One number for every item of the run, counted from the head's own number,
+ *  and every marker written in the head's alphabet: a list is one language,
+ *  and its numbers run 5, 6, 7 however the items below were typed. */
+function normalizeRun(doc: EditorState['doc'], number: number, inMathAt: (pos: number) => boolean): { from: number; to: number; insert: string }[] {
+  const { first, last } = runAround(doc, number, inMathAt);
+  if (first === last) return [];
+  const head = ITEM_LINE.exec(doc.line(first).text)!;
+  const start = parseMarker(head[2]);
+  if (!start) return [];
+  const markers: Array<{ line: number; token: string }> = [];
+  for (let n = first; n <= last; n += 1) {
+    const match = ITEM_LINE.exec(doc.line(n).text);
+    if (!match || match[1].length !== head[1].length || match[3] !== head[3]) continue;
+    markers.push({ line: n, token: match[2] });
+  }
+  // Which of the two letter orders: whatever the letters typed in the run say.
+  const letters = start.alphabet === 'abjad' || start.alphabet === 'abpats'
+    ? orderOf(markers.map((marker, index) => ({ index, token: marker.token })))
+    : null;
+  const alphabet: Alphabet = letters ?? start.alphabet;
+  const changes: { from: number; to: number; insert: string }[] = [];
+  markers.forEach((marker, index) => {
+    // The head is the writer's own, exactly as they wrote it: it is what the
+    // rest of the run answers to.
+    if (index === 0) return;
+    const wanted = formatMarker(start.number + index, alphabet);
+    if (wanted === marker.token) return;
+    const indent = head[1].length;
+    changes.push({ from: doc.line(marker.line).from + indent, to: doc.line(marker.line).from + indent + marker.token.length, insert: wanted });
+  });
+  return changes;
+}
+
+/** The items a line that stopped being one took out of the list: the run below
+ *  comes down by that many, never past 1. */
+function shiftBelow(doc: EditorState['doc'], from: number, gone: { count: number; marker: Marker }): { from: number; to: number; insert: string }[] {
+  const changes: { from: number; to: number; insert: string }[] = [];
+  const indent = gone.marker.indent.length;
+  const delimiter = gone.marker.delimiter;
+  let previous = 0;
+  for (let n = from; n <= doc.lines; n += 1) {
+    const text = doc.line(n).text;
+    if (!text.trim()) continue;
+    const match = ITEM_LINE.exec(text);
+    if (!match || match[1].length !== indent || match[3] !== delimiter) {
+      if (match || /^[ \t]/.test(text)) continue; // nested or hanging: stepped over
+      break;
+    }
+    const parsed = parseMarker(match[2]);
+    if (!parsed) continue;
+    const wanted = previous ? Math.min(parsed.number - gone.count, previous + 1) : parsed.number - gone.count;
+    if (wanted < 1) break;
+    previous = wanted;
+    if (wanted !== parsed.number) {
+      changes.push({ from: doc.line(n).from + indent, to: doc.line(n).from + indent + match[2].length, insert: formatMarker(wanted, parsed.alphabet) });
+    }
+  }
+  return changes;
 }
 
 const listNumbering = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged || tr.annotation(listRenumber)) return tr;
   // A paste or a drop is the writer's own material: whatever numbers came with
-  // it are kept (insertedItem would otherwise read a pasted newline plus item
-  // as an Enter).
+  // it are kept.
   if (tr.isUserEvent('input.paste') || tr.isUserEvent('input.drop')) return tr;
-  // What the edit did to the list: the first change that added or removed an
-  // item decides, and the run after it is the one to renumber.
-  const plan: { kind: 'add' | 'remove' | null; marker: Marker | null; number: number; count: number; from: number } =
-    { kind: null, marker: null, number: 0, count: 0, from: -1 };
-  tr.changes.iterChanges((fromA, toA, _fromB, toB, inserted) => {
-    if (plan.kind) return;
-    if (inCode(tr.startState, fromA) || inMath(tr.startState, fromA)) return;
-    const added = insertedItem(inserted.toString());
-    if (added.marker) {
-      plan.kind = 'add';
-      plan.marker = added.marker;
-      plan.number = added.number;
-      // The run begins after the item that was just made.
-      plan.from = tr.newDoc.lineAt(toB).number + 1;
-      return;
-    }
-    const gone = removedItems(tr, fromA, toA);
-    if (!gone.count || !gone.marker) return;
-    plan.kind = 'remove';
-    plan.marker = gone.marker;
-    plan.count = gone.count;
-    // …or at the line the deletion left behind. A line the writer emptied is
-    // still standing, and holds nothing: the run begins under it.
-    plan.from = lineAtOrAfter(tr.newDoc, toB);
-    if (gone.emptied && plan.from <= tr.newDoc.lines && !tr.newDoc.line(plan.from).text.trim()) plan.from += 1;
-  });
-  if (!plan.kind || !plan.marker || plan.from < 1) return tr;
-  const kind = plan.kind;
-  const marker = plan.marker as Marker;
-  const count = plan.count;
-  const from = plan.from;
+  // A note being loaded, a session coming back, an external reload: one change
+  // that replaces the whole document. Nobody typed it, so nothing is
+  // renumbered — an edit always leaves the document it edited in place.
+  const start = tr.startState.doc.length;
+  let whole = true;
+  tr.changes.iterChangedRanges((fromA, toA) => { if (fromA > 0 || toA < start) whole = false; });
+  if (whole) return tr;
   const doc = tr.newDoc;
+  const inMathAt = (pos: number): boolean => inMath(tr.state, pos);
+  // An item the change made or edited: its run is made sequential, in the
+  // head's alphabet. This is what Enter relies on — the new item is an item,
+  // so the run it lands in answers for it, wherever its own marker came from.
+  const renumber: number[] = [];
+  const left: Array<{ from: number; gone: { count: number; marker: Marker } }> = [];
+  tr.changes.iterChanges((fromA, toA, _fromB, toB) => {
+    if (inCode(tr.startState, fromA) || inMath(tr.startState, fromA)) return;
+    const line = doc.lineAt(Math.min(toB, doc.length)).number;
+    if (ITEM_LINE.test(doc.line(line).text)) { renumber.push(line); return; }
+    // The line just stopped being an item (emptied, its marker deleted, or
+    // joined to the line above): the run below it comes down by what left.
+    const gone = removedItems(tr, fromA, toA);
+    if (gone.count && gone.marker) left.push({ from: line, gone: gone as { count: number; marker: Marker } });
+  });
+  // A nested item's numbers are its own list's business, but a change inside
+  // one still belongs to the list above it: the run that item hangs under is
+  // renumbered too, all the way up.
+  const enclosing = (number: number): number[] => {
+    const out: number[] = [];
+    let indent = (ITEM_LINE.exec(doc.line(number).text)?.[1] ?? '').length;
+    for (let n = number - 1; n >= 1 && indent > 0; n -= 1) {
+      if (!doc.line(n).text.trim()) break;
+      const match = ITEM_LINE.exec(doc.line(n).text);
+      if (!match || match[1].length >= indent) continue;
+      indent = match[1].length;
+      out.push(n);
+    }
+    return out;
+  };
   const changes: { from: number; to: number; insert: string }[] = [];
-  // The number of the last item seen at the list's own level: the next one has
-  // to be bigger than it (an insertion lifts the run), or is moved down with
-  // it (a removal shifts the run).
-  let previous = plan.number;
-  for (let n = from; n <= doc.lines; n += 1) {
-    const line = doc.line(n);
-    // A blank line ends the list, and so does a formula: two lists with air
-    // between them, or a formula holding numbered lines, are left alone.
-    if (!line.text.trim() || inMath(tr.state, line.from)) break;
-    const match = ITEM_LINE.exec(line.text);
-    if (!match) {
-      // Indented text belongs to the item above it; anything else at the
-      // list's own level ends the run.
-      if (/^[ \t]/.test(line.text)) continue;
-      break;
-    }
-    const depth = match[1].length;
-    // A nested list numbers itself; it does not stand between the items of
-    // the list it hangs under.
-    if (depth > marker.indent.length) continue;
-    if (depth < marker.indent.length || match[3] !== marker.delimiter) break;
-    const parsed = parseListNumber(match[2]);
-    let wanted = kind === 'add' ? Math.max(parsed.number, previous + 1) : parsed.number - count;
-    if (wanted < 1) break;
-    if (wanted !== parsed.number) {
-      changes.push({
-        from: line.from + match[1].length,
-        to: line.from + match[1].length + match[2].length,
-        insert: formatListNumber(wanted, parsed.alphabet),
-      });
-    }
-    previous = wanted;
-  }
+  for (const line of new Set([...renumber, ...renumber.flatMap(enclosing)])) changes.push(...normalizeRun(doc, line, inMathAt));
+  for (const { from, gone } of left) changes.push(...shiftBelow(doc, from, gone));
   if (!changes.length) return tr;
-  return [tr, { changes, sequential: true, annotations: listRenumber.of(true) }];
+  const unique = new Map(changes.map((change) => [`${change.from}:${change.to}`, change]));
+  return [tr, { changes: [...unique.values()], sequential: true, annotations: listRenumber.of(true) }];
 });
 
 /** An item with nothing written on it yet: its marker (a to-do box counts)
  *  and nothing else. */
-const EMPTY_ITEM_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])([ \t]+(\[[ xX]\])?)?[ \t]*$/;
+const EMPTY_ITEM_LINE = new RegExp(`^([ \\t]*)([-*+]|${MARKER}[.)])([ \\t]+(\\[[ xX]\\])?)?[ \\t]*$`);
 
 /** Are these two markers the same list continuing? Numbers may differ — the
  *  writer's own spacing is theirs — but the kind and the delimiter must hold. */
 function sameKind(one: string, other: string): boolean {
-  const first = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(one);
-  const second = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(other);
-  if (first && second) return first[2] === second[2];
-  if (first || second) return false;
+  const first = /^(.+?)([.)])$/.exec(one);
+  const second = /^(.+?)([.)])$/.exec(other);
+  const ordered = Boolean(first && parseMarker(first[1]) && second && parseMarker(second[1]));
+  if (ordered) return first![2] === second![2];
   return one === other;
 }
 
@@ -359,14 +387,14 @@ function continueOnEnter(view: EditorView): boolean {
   if (!selection.empty) return false;
   const line = state.doc.lineAt(selection.head);
   const before = state.sliceDoc(line.from, selection.head);
-  const match = /^(\s*)([-*+]|[0-9۰-۹٠-٩]+[.)])\s+(\[[ xX]\]\s+)?/.exec(before);
+  const match = new RegExp(`^(\\s*)([-*+]|${MARKER}[.)])\\s+(\\[[ xX]\\]\\s+)?`).exec(before);
   if (!match) return false;
   const [whole, indent, marker, task] = match;
   if (!before.slice(whole.length).trim()) {
     view.dispatch({ changes: { from: line.from, to: selection.head, insert: '' }, selection: { anchor: line.from }, userEvent: 'input.enter' });
     return true;
   }
-  const ordered = /^([0-9۰-۹٠-٩]+)([.)])$/.exec(marker);
+  const ordered = new RegExp(`^(${MARKER})([.)])$`).exec(marker);
   // An item already sits empty on the next line, waiting for its text: Enter
   // moves into it rather than making a second empty one and pushing every
   // number below it. Only a line of the same kind — same indent, same marker,
@@ -377,8 +405,8 @@ function continueOnEnter(view: EditorView): boolean {
     view.dispatch({ selection: { anchor: nextLine!.from + nextLine!.text.length } });
     return true;
   }
-  const parsed = ordered ? parseListNumber(ordered[1]) : null;
-  const next = parsed ? `${formatListNumber(parsed.number + 1, parsed.alphabet)}${ordered?.[2] ?? '.'}` : marker;
+  const parsed = ordered ? parseMarker(ordered[1]) : null;
+  const next = parsed ? `${formatMarker(parsed.number + 1, parsed.alphabet)}${ordered?.[2] ?? '.'}` : marker;
   // A to-do line continues with a to-do line, and the box is always empty:
   // the item below a finished one is a new thing to do, whatever the line
   // above it says (the writer's request).
@@ -407,11 +435,11 @@ function spaced(text: string): string {
 
 /** An item line holding nothing but its box: the line a pasted to-do item is
  *  about to land on. */
-const EMPTY_TASK_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*$/;
+const EMPTY_TASK_LINE = new RegExp(`^([ \\t]*)([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\][ \\t]*$`);
 /** A line that is a to-do item: a marker, a box, and whatever the writer wrote
  *  — `[ ]` or `[x]`, the space after the box optional (they type what they
  *  type; the clip is theirs either way). */
-const TASK_ITEM_LINE = /^[ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\]([ \t]|$)/;
+const TASK_ITEM_LINE = new RegExp(`^[ \\t]*([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\]([ \\t]|$)`);
 
 /**
  * Copying a to-do item onto an empty to-do line: the item goes where the
@@ -446,7 +474,7 @@ export function pastedOverEmptyTask(lineText: string, clip: string): string | nu
  *  paste brought in beside it. What the writer sees when a paste lands and
  *  nothing steps aside — the shape to put right, whatever the change looked
  *  like on the way in. The item's own box and text are kept as they came. */
-const TWO_TASKS_ON_A_LINE = /^([ \t]*)([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+\[[ xX]\][ \t]*([-*+]|[0-9۰-۹٠-٩]+[.)])[ \t]+(\[[ xX]\])([ \t]*)(.*)$/;
+const TWO_TASKS_ON_A_LINE = new RegExp(`^([ \\t]*)([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\][ \\t]*([-*+]|${MARKER}[.)])[ \\t]+(\\[[ xX]\\])([ \\t]*)(.*)$`);
 
 /**
  * The same rule, run on the transaction rather than on the paste event, and
@@ -844,6 +872,31 @@ const searchFlashDecorations = EditorView.decorations.compute([searchFlashField]
 let touching = false;
 
 const lineNumberSlot = new Compartment();
+// The line numbers read the caret's line: a Persian line gets Persian digits,
+// an English one English digits (a line with no letters of its own carries the
+// one above it, as its direction does). One formatter draws the whole column,
+// so the numbers turn together — the gutter only has to be told when the
+// caret crosses from one script to the other.
+const gutterScript: { script: 'latin' | 'persian'; on: boolean } = { script: 'latin', on: false };
+const lineNumberConfig = (): Extension => [lineNumbers({ formatNumber: (n) => formatDigits(n, gutterScript.script) })];
+
+/** The script the caret's line is written in — RTL lines Persian, LTR lines
+ *  English. The line's direction is already decided (src/direction.ts). */
+function gutterScriptFor(view: EditorView): 'latin' | 'persian' {
+  const dirs = view.state.field(directionsField, false)?.dirs;
+  const line = view.state.doc.lineAt(view.state.selection.main.head).number - 1;
+  return dirs?.[line] === 'rtl' ? 'persian' : 'latin';
+}
+
+/** Follow the caret: when it crosses into a line of the other script, the
+ *  whole column is drawn again in that script's digits. */
+const followCaretScript = EditorView.updateListener.of((update) => {
+  if (!gutterScript.on) return;
+  const next = gutterScriptFor(update.view);
+  if (next === gutterScript.script) return;
+  gutterScript.script = next;
+  update.view.dispatch({ effects: lineNumberSlot.reconfigure(lineNumberConfig()) });
+});
 const readOnlySlot = new Compartment();
 // New tabs start clean; living tabs reattach their complete EditorState.
 // Histories never cross files and are never serialized to disk.
@@ -882,7 +935,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      lineNumberSlot.of(lineNumbers({ formatNumber: (n) => String(n) })), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      followCaretScript, lineNumberSlot.of(gutterScript.on ? lineNumberConfig() : []), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -1269,7 +1322,10 @@ export class SatrEditor {
     this.view.dispatch({ effects: autoSpaceSlot.reconfigure(autoSpace(() => this.autoSpaceOn)) });
   }
   setLineNumbers(on: boolean): void {
-    this.view.dispatch({ effects: lineNumberSlot.reconfigure(on ? lineNumbers({ formatNumber: (n) => String(n) }) : []) });
+    gutterScript.on = on;
+    // The caret line's own script, before the gutter first draws.
+    gutterScript.script = gutterScriptFor(this.view);
+    this.view.dispatch({ effects: lineNumberSlot.reconfigure(on ? lineNumberConfig() : []) });
   }
   /** Settings: the note's font size or line height changed (CSS variables). */
   remeasure(): void { this.view.requestMeasure(); }
