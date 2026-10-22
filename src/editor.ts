@@ -3,7 +3,7 @@ import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, history
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind } from './findBar';
+import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind, revealThirdDown } from './findBar';
 import { collectHeadings, type Heading } from './outline';
 import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, Transaction, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
@@ -1435,7 +1435,7 @@ export class SatrEditor {
     this.unfoldAround(from);
     this.view.dispatch({
       selection: EditorSelection.cursor(to),
-      effects: [searchFlash.of({ from, to }), EditorView.scrollIntoView(from, { y: 'center' })],
+      effects: [searchFlash.of({ from, to }), revealThirdDown(this.view, from)],
     });
     window.clearTimeout(this.flashTimer);
     this.flashTimer = window.setTimeout(() => {

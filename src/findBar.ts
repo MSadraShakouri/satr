@@ -18,6 +18,7 @@ import { RegExpCursor } from '@codemirror/search';
 import { expandReplacement, searchRegExp } from './searchRegex';
 import { EditorSelection, StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, type Panel, showPanel, type ViewUpdate } from '@codemirror/view';
+import { typingTop } from './scrollSync';
 
 interface Match { from: number; to: number }
 interface FindState {
@@ -114,8 +115,23 @@ const ICONS = {
 };
 const hasPhysicalKeyboard = (): boolean => !window.matchMedia('(pointer: coarse)').matches;
 
+/** A hit lands a third of the way down the note, not halfway. The middle of a
+ *  phone's screen is where the keyboard's own top edge sits once the find bar
+ *  has focus, so a centred match was the lowest line the reader could still
+ *  see — with none of the lines that follow it. A third down keeps the match
+ *  and its paragraph on screen together, and it is where the reader's eye
+ *  already is: the outline reads the line two thirds down (src/main.ts), and
+ *  a jump from the outline puts its heading at the top of the note area. */
+export function revealThirdDown(view: EditorView, pos: number): StateEffect<unknown> {
+  // The typing band already holds three body lines above anything the editor
+  // scrolls to (src/scrollSync.ts — the same origin the edit/preview switch
+  // maps from), and CodeMirror adds that margin on top of whatever is asked
+  // for, so ask for the rest of the third and no more.
+  const margin = Math.max(0, Math.round(view.scrollDOM.clientHeight / 3 - typingTop(view)));
+  return EditorView.scrollIntoView(pos, { y: 'start', yMargin: margin });
+}
 function scrollTo(view: EditorView, m: Match | null): StateEffect<unknown>[] {
-  return m ? [EditorView.scrollIntoView(m.from, { y: 'center' })] : [];
+  return m ? [revealThirdDown(view, m.from)] : [];
 }
 function go(view: EditorView, step: 1 | -1): void {
   const s = view.state.field(findField);

@@ -68,3 +68,35 @@ test('typing takes the ring away at once', async ({ page }) => {
   await page.locator('#app .cm-content').press('x');
   await expect(page.locator('#app .cm-search-flash')).toHaveCount(0);
 });
+
+// Where the hit lands. Halfway down was where the keyboard's own top edge
+// sits once the find bar has focus, so the match was the last line the reader
+// could see and none of the lines under it: the reader asked where a word is,
+// and got it balanced on the keys. A third down shows the match with the
+// paragraph that follows it, which is the same origin the edit/preview switch
+// maps from (src/scrollSync.ts: three body lines).
+test('a hit lands a third down the note, not halfway', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const where = await page.evaluate(async () => {
+    const { SatrEditor } = await window.__satr.load('/src/editor.ts');
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;inset:0;background:white;z-index:1000';
+    document.body.appendChild(host);
+    const editor = new SatrEditor(host, () => {});
+    const lines = Array.from({ length: 400 }, (_, i) => `line ${i + 1} some words here`);
+    lines[250] = 'line 251 the needle is here';
+    editor.setValue(lines.join('\n'));
+    await document.fonts.ready;
+    const view = (editor as unknown as { view: { coordsAtPos(p: number): { top: number } | null; scrollDOM: HTMLElement } }).view;
+    const at = editor.getValue().indexOf('needle');
+    editor.flashRange(at, at + 'needle'.length);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const coords = view.coordsAtPos(at)!;
+    const box = view.scrollDOM.getBoundingClientRect();
+    return (coords.top - box.top) / box.height;
+  });
+  // A third, give or take the line the hit sits on (0.52 before this).
+  expect(where).toBeGreaterThan(0.28);
+  expect(where).toBeLessThan(0.40);
+});
