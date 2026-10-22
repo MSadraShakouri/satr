@@ -648,3 +648,71 @@ test('a drawn marker hangs beside its text, not on top of another indent', async
   expect(box.nestedOuter.right - box.nestedInner.right).toBeGreaterThan(30);
   expect(box.nestedWidth).toBeLessThan(box.painted.width);
 });
+
+// A list keeps room for the widest marker it holds. `الف.` is wider than the
+// 3ch strip the platform hangs `1.` in, and what did not fit the strip was
+// painted outside the section — where the reading view clips it
+// (content-visibility, src/style.css), so `الف.` came out as `ف` and a pasted
+// `۱۲۳۴۵.` lost three of its digits. The strip is the widest marker in that
+// list plus the hair of space before the text (src/markdown.ts measures it),
+// so the markers still end on one line against the text and none of them
+// reaches past the list's own edge. A list whose markers fit keeps the
+// platform's strip, to the pixel.
+test('a list keeps room for its widest marker', async ({ page }) => {
+  const measured = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;left:0;top:0;width:600px;font-size:18px';
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    const paint = document.createElement('canvas').getContext('2d')!;
+    const list = (markdown: string) => {
+      host.innerHTML = renderMarkdown(markdown);
+      const ordered = host.querySelector('ol')!;
+      const listBox = ordered.getBoundingClientRect();
+      const items = [...ordered.children] as HTMLElement[];
+      return items.map((item) => {
+        const style = getComputedStyle(item);
+        const box = item.getBoundingClientRect();
+        const rtl = style.direction === 'rtl';
+        paint.font = `${style.fontSize} ${style.fontFamily}`;
+        const drawn = paint.measureText((item.dataset.persianNumber ?? '') + (item.dataset.persianDelimiter ?? '')).width;
+        const gap = 0.4 * parseFloat(style.fontSize);
+        // Where the far end of the marker falls, and how far that is past the
+        // list's own edge (negative is inside, where it belongs).
+        const outer = rtl ? box.right + gap + drawn : box.left - gap - drawn;
+        return {
+          gutter: +parseFloat(style.marginInlineStart).toFixed(1),
+          drawn: +drawn.toFixed(1),
+          gap: +gap.toFixed(1),
+          past: +(rtl ? outer - listBox.right : listBox.left - outer).toFixed(1),
+        };
+      });
+    };
+    return {
+      platform: list('1. one\n2. two'),
+      digits: list('۱. یک\n۲. دو\n۳. سه'),
+      letters: list('الف. الف\nب. ب\nج. ج'),
+      wide: list('۱۲۳۴۵. عدد\n۱۲۳۴۶. عدد'),
+    };
+  });
+  // Nothing a list draws is painted outside the list.
+  for (const [name, items] of Object.entries(measured)) {
+    for (const item of items) expect(item.past, `${name} keeps its marker inside`).toBeLessThanOrEqual(0);
+  }
+  // Markers that fit the platform's strip leave the strip alone.
+  expect(measured.digits[0].gutter).toBe(measured.platform[0].gutter);
+  // Wider ones take exactly the room they need, and every item of one list
+  // keeps the same strip, so the text is a straight edge.
+  for (const list of [measured.letters, measured.wide]) {
+    const widest = Math.max(...list.map((item) => item.drawn));
+    expect(list[0].gutter).toBeGreaterThan(measured.platform[0].gutter);
+    // Exactly the room the widest marker asks for, within the pixel the font
+    // rounds by: the width is measured from the font's own metrics and kept
+    // in em, and a renderer rounds an advance to the size it draws at.
+    expect(list[0].gutter).toBeGreaterThanOrEqual(widest + list[0].gap - 0.1);
+    expect(list[0].gutter).toBeLessThan(widest + list[0].gap + 1.5);
+    expect(new Set(list.map((item) => item.gutter)).size).toBe(1);
+  }
+});

@@ -81,22 +81,26 @@ li > p {
 .persian-ordered {
   list-style: none;
   padding-inline-start: 0;
+  /* The strip the marker hangs in: the widest marker this list holds
+     (--list-marker-width, measured in src/markdown.ts) and the hair of space
+     before the text, and never narrower than the 1.8em a platform list
+     indents by. A list of `۱.` to `۹.` therefore prints exactly as it did;
+     `الف.` and `۱۰۰.`, which used to run out past the page's margin, now
+     stand inside the text's own column. */
+  --list-marker-gutter: max(1.8em, calc(var(--list-marker-width, 0em) + 0.4em));
 }
-/* The text stays 1.8em in, as it always was and as a native list's is; the
-   marker hangs in that strip, its own end 0.4em from the text, as on screen
-   (src/style.css): a wide marker grows outward, into the margin. */
+/* The marker hangs in that strip, its own end 0.4em from the text, as on
+   screen (src/style.css): every marker in the list ends on one line and the
+   widest reaches the column's edge, no further. */
 .persian-ordered > li {
   position: relative;
-  padding-inline-start: 1.8em;
+  padding-inline-start: var(--list-marker-gutter);
 }
 .persian-ordered > li::before {
   content: attr(data-persian-number) attr(data-persian-delimiter);
   position: absolute;
-  /* The 1.8em strip before the text is the marker's: it ends 0.4em short of
-     the text, and a marker too wide for the strip grows out into the page
-     margin rather than shoving the text sideways. */
   inset-inline-start: 0;
-  width: 1.4em;
+  width: calc(var(--list-marker-gutter) - 0.4em);
   text-align: end;
   white-space: nowrap;
 }

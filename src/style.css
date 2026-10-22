@@ -531,6 +531,20 @@ body {
   --list-marker-gutter: var(--list-indent);
   margin-inline-start: var(--list-marker-gutter);
 }
+/* A list the reading view draws itself keeps room for the widest marker it
+   holds (--list-marker-width, measured in src/markdown.ts) and the hair of
+   space before the text. A marker is drawn from its own end, so widening the
+   strip to the widest marker lines every marker in the list up against the
+   text and leaves none of them outside the section — a section is clipped to
+   its own box (content-visibility, above), which is what cut `الف.` down to
+   `ف`. A list whose markers fit the platform's strip keeps the platform's
+   strip: `۱.` to `۱۰.` is 3ch as it has always been. */
+.preview-pane .persian-ordered > li {
+  --list-marker-gutter: max(3ch, calc(var(--list-marker-width, 0em) + 0.4em));
+}
+.preview-pane :where(ul, ol) .persian-ordered > li {
+  --list-marker-gutter: max(var(--list-indent), calc(var(--list-marker-width, 0em) + 0.4em));
+}
 .preview-pane :where(ul, ol) :where(ul, ol) {
   margin-block: 0;
 }
@@ -794,15 +808,17 @@ body {
 }
 /* The marker hangs in the gutter, its own end against the text with a hair
    of space between: the text starts where a platform list's text starts, and
-   a wide marker (`۱۰۰.`) grows outward, into the margin, as a word processor
-   hangs its numbers. Letting the item pad the marker in instead indented the
-   text twice — 3ch of margin and 1.8em of padding. */
+   the gutter is as wide as the list's widest marker, so the marker grows
+   inward from the list's edge rather than out of the page. Letting the item
+   pad the marker in instead indented the text twice — 3ch of margin and
+   1.8em of padding. */
 .preview-pane .persian-ordered > li::before {
   content: attr(data-persian-number) attr(data-persian-delimiter);
   position: absolute;
-  /* The marker's own end sits 0.4em before the text, and its width is its
-     content's: a wide marker (`۱۰۰.`) grows outward instead of shoving the
-     text in, as a word processor hangs its numbers. */
+  /* Drawn from its own end, 0.4em before the text: `۹.` and `۱۰.` line their
+     full stops up, as a word processor aligns its numbers, and the widest
+     marker in the list reaches exactly the list's own edge — the gutter was
+     cut to it (above). */
   inset-inline-end: 100%;
   margin-inline-end: 0.4em;
   white-space: nowrap;

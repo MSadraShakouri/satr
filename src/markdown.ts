@@ -127,6 +127,51 @@ marked.use({
 // A table's own direction: `<!-- table: rtl -->`, `<!-- table: ltr -->` or
 // `<!-- table: auto -->` on the line just above the table.
 export const TABLE_DIRECTIVE = /^\s*<!--\s*table:\s*(rtl|ltr|auto)\s*-->\s*$/i;
+
+// Measured big and reported small: a marker's width is kept as a multiple of
+// the text size, so one measurement holds at every size the note is read at
+// and at the 15px the page prints at.
+const MARKER_MEASURE_PX = 1000;
+let markerPaint: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * How much room each drawn list keeps for its marker: the widest marker the
+ * list holds, written on the list itself as --list-marker-width (em).
+ *
+ * A marker is drawn from its own end — every `۱.` and `الف.` in a list ends
+ * on the same line, a hair before the text — so the room a list needs is the
+ * widest marker in it, and nothing else. Without this the strip was a fixed
+ * 3ch (reading view) or 1.4em (paper), and anything wider was painted outside
+ * it: `الف.` and `۱۲۳۴۵.` were cut off by the section's own box in the reading
+ * view (content-visibility, src/style.css) and ran out to the paper's margin
+ * in the PDF. src/style.css and src/print.css read this and widen the strip to
+ * it; a list whose markers fit the old strip keeps the old strip, to the pixel.
+ *
+ * The canvas answers with the same advance the browser lays the marker out
+ * with, in the font the note is read in. A note rendered before the font has
+ * loaded is measured in the fallback, so src/main.ts measures again when the
+ * font arrives.
+ */
+export function sizeListMarkers(root: ParentNode): void {
+  const host = globalThis.document as Document | undefined;
+  const lists = root.querySelectorAll<HTMLElement>('ol.persian-ordered');
+  if (!host || !lists.length) return;
+  if (markerPaint === undefined) markerPaint = host.createElement('canvas').getContext('2d');
+  if (!markerPaint) return;
+  const face = getComputedStyle(host.body ?? host.documentElement).fontFamily || 'sans-serif';
+  markerPaint.font = `${MARKER_MEASURE_PX}px ${face}`;
+  lists.forEach((list) => {
+    let widest = 0;
+    for (const item of list.children) {
+      const marker = item.getAttribute('data-persian-number');
+      if (marker === null) continue;
+      const text = marker + (item.getAttribute('data-persian-delimiter') ?? '');
+      widest = Math.max(widest, markerPaint!.measureText(text).width / MARKER_MEASURE_PX);
+    }
+    if (widest > 0) list.style.setProperty('--list-marker-width', `${widest.toFixed(3)}em`);
+  });
+}
+
 const WIKI = /^(!?)\[\[([^\[\]|#\n]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?\]\]/;
 // <img> for src/images.ts to fill in. "alt|300" / "alt|300x200" (or just
 // "300") sets the width (and height), as in Obsidian.
@@ -411,6 +456,9 @@ export function renderMarkdown(source: string): string {
       item.setAttribute('data-persian-delimiter', marks[index]?.delimiter ?? fallback);
     });
   });
+  // Every drawn list now says how wide its widest marker is, so the strip the
+  // marker hangs in is cut to that list and no marker is painted outside it.
+  sizeListMarkers(document);
   document.querySelectorAll('table').forEach((table, tableIndex) => {
     const firstRow = table.querySelector<HTMLTableRowElement>('thead tr');
     if (firstRow && [...firstRow.cells].every((cell) => !cell.textContent?.trim())) firstRow.remove();

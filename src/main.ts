@@ -6,7 +6,7 @@ import 'katex/dist/katex.min.css';
 import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
-import { renderMarkdown, TABLE_DIRECTIVE } from './markdown';
+import { renderMarkdown, sizeListMarkers, TABLE_DIRECTIVE } from './markdown';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
@@ -948,7 +948,10 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
 }, { passive: true });
 previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
-document.fonts?.addEventListener?.('loadingdone', () => scheduleMathLayout(preview));
+// A note rendered before the font arrived was measured in the fallback —
+// its formulas and the room its list markers keep (src/markdown.ts) are
+// both answers about width, so both are asked again here.
+document.fonts?.addEventListener?.('loadingdone', () => { sizeListMarkers(preview); scheduleMathLayout(preview); });
 
 function rememberView(): void {
   window.clearTimeout(viewTimer);

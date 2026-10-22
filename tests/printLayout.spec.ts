@@ -188,3 +188,59 @@ test('a Persian phrase in a printed formula reads right to left', async ({ page 
   expect(order, 'the phrase is on the page').not.toBeNull();
   expect(order!.first, `${order!.text} reads right to left`).toBeGreaterThan(order!.second);
 });
+
+// The marker the page draws stays on the page. The strip before the text was
+// a fixed 1.4em, so `الف.` and `۱۰۰.` were printed out over the page's margin
+// and the list read as though it had no indent at all. The strip is now the
+// widest marker of that list and the hair of space before the text
+// (--list-marker-width, measured in src/markdown.ts): the markers still end
+// on one line against the text, the widest reaches the column's edge and no
+// further, and a list of `۱.` to `۹.` prints exactly as it did.
+test('a printed marker keeps inside the text column', async ({ page }) => {
+  await print(page, '۱. یک\n۲. دو\n\nمتن\n\nالف. الف\nب. ب\n\nمتن\n\n۹۸. هشت\n۹۹. نه\n۱۰۰. صد', { columns: 1, direction: 'rtl', mathAlign: 'start' });
+  const lists = await page.evaluate(() => {
+    const column = document.querySelector('.pagedjs_page_content')!.getBoundingClientRect();
+    const paint = document.createElement('canvas').getContext('2d')!;
+    return [...document.querySelectorAll<HTMLElement>('.pagedjs_page_content ol.persian-ordered')].map((list) => {
+      const items = [...list.children] as HTMLElement[];
+      const rows = items.map((item) => {
+        const style = getComputedStyle(item);
+        paint.font = `${style.fontSize} ${style.fontFamily}`;
+        const drawn = paint.measureText((item.dataset.persianNumber ?? '') + (item.dataset.persianDelimiter ?? '')).width;
+        const box = item.getBoundingClientRect();
+        return {
+          // The room the marker is given, and the room it asks for.
+          room: +(parseFloat(getComputedStyle(item, '::before').width) || 0).toFixed(1),
+          drawn: +drawn.toFixed(1),
+          strip: +(parseFloat(style.paddingInlineStart) || 0).toFixed(1),
+          size: parseFloat(style.fontSize),
+          // Right to left: the item starts at the column's right edge.
+          fromColumn: +(column.right - box.right).toFixed(1),
+        };
+      });
+      return { head: items[0].dataset.persianNumber, rows };
+    });
+  });
+  expect(lists.map((list) => list.head)).toEqual(['۱', 'الف', '۹۸']);
+  for (const list of lists) {
+    for (const row of list.rows) {
+      // No marker is drawn wider than the strip it hangs in, and no list
+      // starts outside the column the page gives it.
+      expect(row.drawn, `${list.head}: the marker fits its strip`).toBeLessThanOrEqual(row.room + 0.5);
+      expect(row.fromColumn).toBe(0);
+    }
+    // One strip per list: the text of every item starts on the same line.
+    expect(new Set(list.rows.map((row) => row.strip)).size).toBe(1);
+  }
+  // `۱.` to `۲.` fits the 1.8em a platform list indents by, and keeps it;
+  // the letters ask for more, and are given exactly what they ask for.
+  const [digits, letters] = lists;
+  expect(digits.rows[0].strip).toBeCloseTo(digits.rows[0].size * 1.8, 0);
+  expect(letters.rows[0].strip).toBeGreaterThan(letters.rows[0].size * 1.8);
+  // Exactly the room the widest marker asks for — within the pixel the font
+  // rounds by: the width is measured from the font's own metrics once and
+  // kept in em, and a renderer rounds an advance to the size it draws at.
+  const needs = Math.max(...letters.rows.map((row) => row.drawn)) + letters.rows[0].size * 0.4;
+  expect(letters.rows[0].strip).toBeGreaterThanOrEqual(needs);
+  expect(letters.rows[0].strip).toBeLessThan(needs + 1.5);
+});
