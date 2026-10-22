@@ -119,15 +119,23 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
 });
 
 // CM6 bidi (Unicode): after Persian letters, digits become a number run.
-// CS (, . :) between two numbers joins them; at the end of a number it
+// CS (, . : /) between two numbers joins them; at the end of a number it
 // becomes a neutral and the *next* digit opens a new run — the caret jump
-// on YYYY/MM/DD and 12:30. ET (# $ % and currency) glues to EN the same
-// way. `/` and `-` are NI in CM6 but split dates the same. Isolating each
-// digit+separator sequence as one LTR run stops the extra run so you can
-// still walk through 2026. Inline `$…$` is already its own run; leave it.
+// on YYYY/MM/DD and 12:30, and `/` is NI in CM6 but splits dates the same.
+// Isolating each digit+separator sequence as one LTR run stops the extra
+// run so you can still walk through 2026. Inline `$…$` is already its own
+// run; leave it.
+//
+// Only the separators that hold two numbers together are in the class. ES
+// (`-` `+`) and ET (`%` `#` `$`) do not, once a Persian letter has made the
+// digits Arabic numbers (Unicode W2): isolating across one paints `۳-۲` as a
+// single LTR unit and the editor reads 2-then-3 where the reading view
+// (src/markdown.ts) reads 3-then-2. Nothing is lost by leaving them out —
+// a press is one position either way (this file), and a hyphenated date
+// traces the same x as a slashed one.
 // Read off LowTypes in @codemirror/view (charType).
-const CS_ET_SEP = ',.:/#$%\\-¢£¤¥°±\u00a0';
-const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩][0-9۰-۹٠-٩${CS_ET_SEP}]*`, 'g');
+const CS_SEP = ',.:/';
+const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩][0-9۰-۹٠-٩${CS_SEP}]*`, 'g');
 const ltrIsolate = Decoration.mark({
   attributes: { style: 'unicode-bidi: isolate; direction: ltr' },
   bidiIsolate: Direction.LTR,
