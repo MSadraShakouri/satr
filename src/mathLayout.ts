@@ -44,21 +44,27 @@ function breakBefore(flow: HTMLElement, unit: HTMLElement): void {
   flow.insertBefore(br, unit);
 }
 
-function layoutDisplay(flow: HTMLElement, units: HTMLElement[]): void {
-  const box = flow.parentElement as HTMLElement;
-  const available = contentWidth(box) - 2;
-  if (available <= 0) return;
-  flow.classList.add('is-measuring');
-  const plain = units.map((unit) => width(unit.querySelector(':scope > .math-plain')));
-  const cont = units.map((unit, index) => (index === 0 ? plain[0] : width(unit.querySelector(':scope > .math-cont'))));
-  flow.classList.remove('is-measuring');
+interface Flow {
+  flow: HTMLElement;
+  units: HTMLElement[];
+  display: boolean;
+  available: number;
+  plain: number[];
+  cont: number[];
+}
+
+/** Where a display formula's lines begin, from widths already measured: the
+ *  first unit of every line after the first. Empty when it fits on one line.
+ *  No DOM access — the caller has taken the measurements once, for every
+ *  formula on the page. */
+function displayStarts(units: HTMLElement[], available: number, plain: number[], cont: number[]): number[] {
   const n = units.length;
   const prefix = [0];
   for (const w of plain) prefix.push(prefix[prefix.length - 1] + w);
   // Width of a line holding units i..j (inclusive).
   const lineWidth = (i: number, j: number): number => (i === 0 ? plain[0] : cont[i]) + prefix[j + 1] - prefix[i + 1];
   const fits = (i: number, j: number): boolean => i === j || lineWidth(i, j) <= available;
-  if (fits(0, n - 1)) return; // one line: nothing to do
+  if (fits(0, n - 1)) return []; // one line: nothing to do
 
   // Break points, preferred in this order (data-break from src/math.ts):
   // the writer's own line ends (0), then commas (1), then relations (2),
@@ -92,44 +98,53 @@ function layoutDisplay(flow: HTMLElement, units: HTMLElement[]): void {
     }
     if (cost[l][n] < INF) lines = l;
   }
-  if (!lines) return;
+  if (!lines) return [];
   const starts: number[] = [];
   for (let l = lines, j = n; l > 0; l -= 1) {
     const i = from[l][j];
     starts.push(i);
     j = i;
   }
+  return starts;
+}
+
+function applyDisplay(flow: HTMLElement, units: HTMLElement[], available: number, plain: number[], cont: number[], starts: number[]): void {
+  const n = units.length;
   for (const i of starts) {
     if (i > 0) breakBefore(flow, units[i]);
     const end = starts.find((s) => s > i) ?? n;
-    if (end - 1 === i && lineWidth(i, i) > available) units[i].classList.add('is-overwide');
+    if (end - 1 === i && (i === 0 ? plain[0] : cont[i]) > available) units[i].classList.add('is-overwide');
   }
 }
 
-function layoutInline(flow: HTMLElement, units: HTMLElement[]): void {
-  const block = (flow.closest('p,li,td,th,blockquote,h1,h2,h3,h4,h5,h6,article') ?? flow.parentElement) as HTMLElement;
-  const available = contentWidth(block);
-  if (available <= 0) return;
-  for (const unit of units) if (width(unit) > available) unit.classList.add('is-overwide');
-  if (units.length < 2) return;
-  // Mark units that begin a new visual line; each mark widens that unit (it
-  // gains the repeated relation), so re-measure after every change.
-  for (let guard = 0; guard <= units.length; guard += 1) {
-    let changed = false;
-    for (let i = 1; i < units.length; i += 1) {
-      if (units[i].classList.contains('is-line-start')) continue;
-      const previous = units[i - 1].getClientRects();
-      const current = units[i].getClientRects();
-      if (!previous.length || !current.length) continue;
-      const last = previous[previous.length - 1];
-      if (current[0].top >= last.top + last.height / 2) {
-        units[i].classList.add('is-line-start');
-        flow.classList.add('is-wrapped');
-        changed = true;
-        break;
+/** Mark the units that begin a visual line. Each mark widens that unit (it
+ *  gains the repeated relation), which can push the units after it onto a new
+ *  line, so this repeats until a pass changes nothing. Every formula on the
+ *  page advances together: one layout per pass, instead of one per unit. */
+function markLineStarts(flows: Flow[]): void {
+  let most = 0;
+  for (const f of flows) most = Math.max(most, f.units.length);
+  for (let pass = 0; pass <= most; pass += 1) {
+    const marks: Array<[Flow, HTMLElement]> = [];
+    for (const f of flows) {
+      for (let i = 1; i < f.units.length; i += 1) {
+        const unit = f.units[i];
+        if (unit.classList.contains('is-line-start')) continue;
+        const previous = f.units[i - 1].getClientRects();
+        const current = unit.getClientRects();
+        if (!previous.length || !current.length) continue;
+        const last = previous[previous.length - 1];
+        if (current[0].top >= last.top + last.height / 2) {
+          marks.push([f, unit]);
+          break; // one per formula per pass, as before
+        }
       }
     }
-    if (!changed) break;
+    if (!marks.length) return;
+    for (const [f, unit] of marks) {
+      unit.classList.add('is-line-start');
+      f.flow.classList.add('is-wrapped');
+    }
   }
 }
 
@@ -248,40 +263,144 @@ export function normalizeKatexSvg(root: HTMLElement): void {
   }
 }
 
-/** Grow a display formula's box to its content. No-op when the strut already fits. */
+/** Grow a display formula's box to its content. No-op when the strut already
+ *  fits. Every box is cleared first, then every box is measured, then every
+ *  box is grown: one layout for the page, not one per formula. */
 export function fitDisplayMath(root: HTMLElement): void {
+  const targets: HTMLElement[][] = [];
   for (const box of root.querySelectorAll<HTMLElement>('.math-display')) {
     const frame = box.querySelector<HTMLElement>(':scope > .katex-display');
-    const targets = frame ? [frame] : [...box.querySelectorAll<HTMLElement>(':scope > .math-flow > .math-unit')];
-    for (const el of targets) {
-      el.style.minHeight = '';
+    const els = frame ? [frame] : [...box.querySelectorAll<HTMLElement>(':scope > .math-flow > .math-unit')];
+    for (const el of els) el.style.minHeight = '';
+    targets.push(els);
+  }
+  const grow: Array<{ el: HTMLElement; height: number }> = [];
+  for (const els of targets) {
+    for (const el of els) {
       // scrollHeight includes what overflow-y: hidden (and a short line box)
       // leave out of clientHeight. A pixel of subpixel noise is not a clip.
       const extra = el.scrollHeight - el.clientHeight;
-      if (extra > 1) el.style.minHeight = `${Math.ceil(el.scrollHeight)}px`;
+      if (extra > 1) grow.push({ el, height: Math.ceil(el.scrollHeight) });
     }
   }
+  for (const { el, height } of grow) el.style.minHeight = `${height}px`;
+}
+
+/** The sections a layout pass may touch: the ones it was given, or the ones
+ *  inside it. */
+function sectionsOf(root: HTMLElement): HTMLElement[] {
+  if (root.classList.contains('md-section')) return [root];
+  const found = [...root.querySelectorAll<HTMLElement>('.md-section')];
+  return found.length ? found : [root];
+}
+
+/** The element the page scrolls in, for deciding what is near the window. */
+function scrollerOf(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === 'auto' || overflow === 'scroll') return node;
+  }
+  return null;
+}
+
+/** A section is worth laying out when it is on screen, or within a screen of
+ *  it (so scrolling meets a formula that is already placed). Reads the
+ *  section's own box only: measuring inside a section the browser has skipped
+ *  would lay it out — which is the cost this whole pass exists to avoid. */
+function worthLayingOut(section: HTMLElement, view: DOMRect | null): boolean {
+  if (!view) return true; // the print iframe: everything is on the page
+  const rect = section.getBoundingClientRect();
+  return rect.bottom >= view.top - view.height && rect.top <= view.bottom + view.height;
+}
+
+// Sections already laid out at the current width (style.css gives them
+// content-visibility: auto, so a section far down the note has no boxes yet).
+// Scrolling it into view lays it out then, once.
+let settled = new WeakSet<HTMLElement>();
+let settledWidth = -1;
+
+/** Forget what has been laid out: a resize, a font change, a new render. */
+export function clearMathLayout(): void {
+  settled = new WeakSet<HTMLElement>();
+  settledWidth = -1;
 }
 
 export function layoutMath(root: HTMLElement): void {
-  normalizeKatexSvg(root); // even when hidden: the signs must be right once shown
   if (!root.getClientRects().length) return; // hidden (e.g. preview pane while editing)
-  for (const flow of root.querySelectorAll<HTMLElement>('.math-flow')) {
-    const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
-    reset(flow, units);
-    if (flow.classList.contains('is-display')) layoutDisplay(flow, units);
-    else layoutInline(flow, units);
+  const paneWidth = root.clientWidth;
+  if (paneWidth !== settledWidth) clearMathLayout();
+  settledWidth = paneWidth;
+  const scroller = scrollerOf(root);
+  const view = scroller ? scroller.getBoundingClientRect() : null;
+  const todo = sectionsOf(root).filter((section) => !settled.has(section) && worthLayingOut(section, view));
+  if (!todo.length) return;
+
+  const flows: Flow[] = [];
+  for (const section of todo) {
+    normalizeKatexSvg(section); // the signs must be right wherever they are shown
+    for (const flow of section.querySelectorAll<HTMLElement>('.math-flow')) {
+      const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
+      if (!units.length) continue;
+      const display = flow.classList.contains('is-display');
+      reset(flow, units);
+      if (display) flow.classList.add('is-measuring');
+      flows.push({ flow, units, display, available: 0, plain: [], cont: [] });
+    }
   }
+
+  // Read. This is the single forced layout of the pass: every width below is
+  // then free, however many formulas the page holds.
+  const boxes = new Map<HTMLElement, number>();
+  const widthOfBox = (el: HTMLElement): number => {
+    const known = boxes.get(el);
+    if (known !== undefined) return known;
+    const measured = contentWidth(el);
+    boxes.set(el, measured);
+    return measured;
+  };
+  for (const f of flows) {
+    const box = (f.display
+      ? f.flow.parentElement
+      : f.flow.closest('p,li,td,th,blockquote,h1,h2,h3,h4,h5,h6,article') ?? f.flow.parentElement) as HTMLElement | null;
+    f.available = box ? widthOfBox(box) - (f.display ? 2 : 0) : 0;
+    if (f.display) {
+      f.plain = f.units.map((unit) => width(unit.querySelector(':scope > .math-plain')));
+      f.cont = f.units.map((unit, index) => (index === 0 ? f.plain[0] : width(unit.querySelector(':scope > .math-cont'))));
+    } else {
+      f.plain = f.units.map((unit) => width(unit));
+    }
+  }
+
+  // Write.
+  for (const f of flows) if (f.display) f.flow.classList.remove('is-measuring');
+  const inline: Flow[] = [];
+  for (const f of flows) {
+    if (!(f.available > 0)) continue; // no width to lay out against: ask again later
+    settled.add(f.flow);
+    if (f.display) {
+      applyDisplay(f.flow, f.units, f.available, f.plain, f.cont, displayStarts(f.units, f.available, f.plain, f.cont));
+    } else {
+      f.units.forEach((unit, index) => { if (f.plain[index] > f.available) unit.classList.add('is-overwide'); });
+      if (f.units.length > 1) inline.push(f);
+    }
+  }
+  markLineStarts(inline);
+
   // The print iframe is measured here too; leave it alone (the PDF is already
   // right, and its WebView does not clip the way the preview does).
-  if (isNative() && root.ownerDocument === document) fitDisplayMath(root);
+  if (isNative() && root.ownerDocument === document) for (const section of todo) fitDisplayMath(section);
+  for (const section of todo) settled.add(section);
 }
 
-let pending = 0;
+const pending = new Set<HTMLElement>();
+let pendingFrame = 0;
 export function scheduleMathLayout(root: HTMLElement): void {
-  if (pending) return;
-  pending = window.requestAnimationFrame(() => {
-    pending = 0;
-    layoutMath(root);
+  pending.add(root);
+  if (pendingFrame) return;
+  pendingFrame = window.requestAnimationFrame(() => {
+    pendingFrame = 0;
+    const roots = [...pending];
+    pending.clear();
+    for (const root of roots) layoutMath(root);
   });
 }

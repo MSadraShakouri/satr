@@ -422,6 +422,19 @@ body {
   line-height: var(--note-line-height);
   direction: ltr;
 }
+/* Reading view: a section the reader cannot see has no boxes — no layout, no
+   paint, no KaTeX measurement — until it comes near the window, where
+   src/mathLayout.ts lays its formulas out and main.ts watches it. The
+   estimate is replaced by the section's real height the first time it is
+   seen (contain-intrinsic-size: auto); markdown.ts seeds it from the
+   section's source-line count. This is what keeps opening a long note from
+   costing more than the length of the note. */
+@supports (contain-intrinsic-size: auto 1em) {
+  #preview > .md-section {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 40em;
+  }
+}
 .preview-pane
   :where(
     p,

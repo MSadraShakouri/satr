@@ -301,10 +301,12 @@ export function renderMarkdown(source: string): string {
     FORBID_TAGS: ['style', 'script', 'iframe', 'svg', 'math'],
     FORBID_ATTR: ['style', 'onerror', 'onclick', 'onload'],
   });
-  math.forEach((rendered, index) => {
-    safe = safe.replace(new RegExp(`<span data-satr-math="${index}"></span>`, 'g'), rendered)
-      .replace(new RegExp(`<div data-satr-math="${index}"></div>`, 'g'), rendered);
-  });
+  // One sweep for every formula. A replace per formula rescans the whole
+  // note each time, so a note with a thousand formulas did a thousand passes
+  // over a megabyte of HTML — quadratic, and the biggest single cost of
+  // opening such a note. A function replacement also keeps the formula
+  // literal: a string replacement would read $& and $1 inside KaTeX's output.
+  safe = safe.replace(/<(span|div) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
   const document = new DOMParser().parseFromString(safe, 'text/html');
   document.querySelectorAll<HTMLElement>('.md-section[data-sec]').forEach((element) => {
     const section = sections[Number(element.dataset.sec)];
@@ -327,6 +329,11 @@ export function renderMarkdown(source: string): string {
     } else {
       tag(element, section.start, section.end);
     }
+    // A first height for the reading view before it has been laid out: one
+    // source line is one line of --note-line-height. style.css takes over
+    // from there (content-visibility: auto) and remembers the real height.
+    const lines = Number(element.dataset.lines);
+    if (lines > 0) element.style.setProperty('contain-intrinsic-block-size', `auto ${(lines * 1.85).toFixed(1)}em`);
   });
   document.querySelectorAll('ol').forEach((list, index) => {
     if (orderedStyles[index] !== 'persian') return;

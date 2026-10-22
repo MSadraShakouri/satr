@@ -7,7 +7,7 @@ import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown, TABLE_DIRECTIVE } from './markdown';
-import { layoutMath, scheduleMathLayout } from './mathLayout';
+import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
@@ -315,6 +315,17 @@ const previewVisible = (): boolean => mode === 'preview';
 // Reading view shows the note's name on top, like Obsidian's inline title.
 const escapeText = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 let lastRender = 0;
+// Which sections are near the window: those are the ones whose formulas are
+// laid out (style.css gives a far section no boxes at all, so measuring it
+// would be the very cost the reading view now avoids). A screen of lead on
+// either side, so scrolling meets a formula that is already placed.
+const nearbySections = new IntersectionObserver((entries) => {
+  for (const entry of entries) if (entry.isIntersecting) scheduleMathLayout(entry.target as HTMLElement);
+}, { root: previewPane, rootMargin: '100% 0px' });
+function watchSections(): void {
+  nearbySections.disconnect();
+  for (const section of preview.querySelectorAll<HTMLElement>(':scope > .md-section')) nearbySections.observe(section);
+}
 function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
@@ -326,10 +337,12 @@ function renderPreview(): void {
   if (picture.url && picture.path === filePath) {
     preview.innerHTML = `${title}<p class="md-image-preview"><img class="md-image" src="${escapeText(picture.url)}" alt="${escapeText(fileName(filePath))}"></p>`;
     applyPreviewFolds();
+    watchSections();
     return;
   }
   preview.innerHTML = `${title}${renderMarkdown(editor.getValue())}`;
   applyPreviewFolds();
+  watchSections();
   scheduleMathLayout(preview);
   markBrokenLinks();
   const path = filePath;
@@ -463,6 +476,7 @@ async function refreshOnResume(): Promise<void> {
   try {
     await Promise.allSettled([leftSidebar.refresh(), sidebar.refresh()]);
     editor.remeasure(); // font scale or WebView size may have changed while paused
+    clearMathLayout(); // and every formula has to be measured again
     if (previewVisible()) scheduleMathLayout(preview);
     void refreshLinkIndex();
     const path = filePath;
