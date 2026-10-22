@@ -4,7 +4,7 @@
 // kept by src/theme.ts as before.
 import { loadPrintOptions, savePrintOptions, type PrintOptions } from './printOptions';
 import { setTheme, themeChoice, type ThemeChoice } from './theme';
-import { formatTimestamp, setTimestampStyle, TIMESTAMP_CALENDARS, TIMESTAMP_LOCALES } from './timestamps';
+import { formatTimestamp, setTimestampStyle, timestampLocaleTag, TIMESTAMP_CALENDARS, TIMESTAMP_LOCALES } from './timestamps';
 
 export interface Settings {
   fontSize: number;
@@ -25,6 +25,11 @@ export interface Settings {
   /** The calendar they count by: 'auto' is the language's own; 'persian' is
    *  Jalali whatever the language. */
   timestampCalendar: string;
+  /** The calendar's first column: 0 = Sunday … 6 = Saturday. A setting, never
+   *  the device's own — the phone's locale is not the writer's choice, and a
+   *  week that starts on Monday in the picker and Saturday on the wall is a
+   *  bug the reader cannot fix. Saturday is the default (src/datePicker.ts). */
+  weekStart: number;
   /** PDF page numbers, bottom centre. */
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
@@ -50,8 +55,15 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
   settings: 'Settings',
 };
 const KEY = 'satr:settings';
-const SETTINGS_VERSION = 4;
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: true, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true };
+const SETTINGS_VERSION = 5;
+/** Line numbers are off for a fresh install (Obsidian's showLineNumber: false).
+ *  Only the DEFAULT moves: a reader whose settings were already saved keeps
+ *  whatever they have, so nobody's note grows a gutter or loses one behind
+ *  their back on update. */
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true };
+/** The seven first days, in the order a week can start. Labels come from the
+ *  Dates language, never the device's. */
+export const WEEK_START_CHOICES = [6, 0, 1, 2, 3, 4, 5];
 /** The choices for "after being away", in minutes. */
 export const NEW_TAB_AFTER_CHOICES: [number, string][] = [[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [360, '6 hours'], [1440, '1 day']];
 
@@ -70,6 +82,8 @@ export function loadSettings(): Settings {
     if (!(s.quickAction in QUICK_ACTIONS)) s.quickAction = '';
     if (!TIMESTAMP_LOCALES.some(([value]) => value === s.timestampLocale)) s.timestampLocale = 'auto';
     if (!TIMESTAMP_CALENDARS.some(([value]) => value === s.timestampCalendar)) s.timestampCalendar = 'auto';
+    if (!WEEK_START_CHOICES.includes(Number(s.weekStart))) s.weekStart = DEFAULTS.weekStart;
+    else s.weekStart = Number(s.weekStart);
     if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
     if (typeof s.pdfCss !== 'string') s.pdfCss = '';
     if (!['last', 'empty', 'away'].includes(s.launchTabs)) s.launchTabs = 'last';
@@ -117,6 +131,14 @@ export function openSettings(deps: SettingsDeps): void {
   const pageNumbers: Settings['pdfPageNumbers'][] = ['persian', 'latin', 'none'];
   const toggle = (name: string, on: boolean): string =>
     `<div class="checkbox-container${on ? ' is-enabled' : ''}" role="switch" aria-checked="${on}" data-toggle="${name}"><input type="checkbox" tabindex="-1"${on ? ' checked' : ''}></div>`;
+  // Weekday names for the first-day setting, said in the Dates language — the
+  // same words the picker's own weekday row uses. 2023-11-12 was a Sunday, so
+  // the seven days are indexed from Sunday.
+  const weekdayNames = ((): string[] => {
+    const tag = timestampLocaleTag();
+    return Array.from({ length: 7 }, (_, day) =>
+      new Intl.DateTimeFormat(tag, { weekday: 'long' }).format(new Date(2023, 10, 12 + day)));
+  })();
   const el = document.createElement('div');
   el.className = 'settings-screen';
   el.dataset.ignoreSwipe = '';
@@ -180,6 +202,12 @@ export function openSettings(deps: SettingsDeps): void {
           <div class="setting-item-info"><div class="setting-item-name">Calendar</div><div class="setting-item-description">Auto counts by the language's own calendar — Jalali for Persian.</div></div>
           <select class="dropdown" data-select="timestampCalendar" aria-label="Calendar">
             ${TIMESTAMP_CALENDARS.map(([value, label]) => `<option value="${value}"${settings.timestampCalendar === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">First day of the week</div><div class="setting-item-description">The first column of the date picker's month grid. Chosen here, never read from the device's own locale.</div></div>
+          <select class="dropdown" data-select="weekStart" aria-label="First day of the week">
+            ${WEEK_START_CHOICES.map((day) => `<option value="${day}"${settings.weekStart === day ? ' selected' : ''}>${escapeHtml(weekdayNames[day])}</option>`).join('')}
           </select>
         </div>
         <div class="setting-item mod-column">
@@ -318,13 +346,14 @@ export function openSettings(deps: SettingsDeps): void {
       savePrintOptions(notePath, printOptions);
       return;
     }
-    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"]');
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"], [data-select="weekStart"]');
     if (!select) return;
     if (select.dataset.select === 'quickAction') settings.quickAction = select.value as QuickAction;
     else if (select.dataset.select === 'launchTabs') settings.launchTabs = select.value as Settings['launchTabs'];
     else if (select.dataset.select === 'newTabAfterMinutes') settings.newTabAfterMinutes = Number(select.value);
     else if (select.dataset.select === 'timestampLocale') settings.timestampLocale = select.value;
     else if (select.dataset.select === 'timestampCalendar') settings.timestampCalendar = select.value;
+    else if (select.dataset.select === 'weekStart') settings.weekStart = Number(select.value);
     else settings.mathDigits = select.value as Settings['mathDigits'];
     commit();
   });

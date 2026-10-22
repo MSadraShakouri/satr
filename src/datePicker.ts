@@ -18,6 +18,7 @@
 // words stay live, and how they read is the date style's business alone
 // (src/timestamps.ts).
 import { closeMenu, isMenuOpen } from './menu';
+import { loadSettings } from './settings';
 import { formatTimestamp, timestampLocaleTag, TIMESTAMP_FORMATS, type TimestampFormat } from './timestamps';
 
 const FORMAT_LABELS: Record<TimestampFormat, string> = {
@@ -72,17 +73,22 @@ function monthDays(date: Date, tag: string): Date[] {
   return days;
 }
 
-/** Weekday names in order, starting the week where the locale starts it. */
-function weekdayRow(tag: string): string[] {
+/** Weekday names in order, starting the week where Settings says it starts.
+ *
+ *  The first column is the READER's choice (`weekStart` in src/settings.ts),
+ *  never the device's: `Intl.Locale.weekInfo.firstDay` was consulted here
+ *  before, which meant an English phone began the week on Monday while the
+ *  writer's own calendar begins it on Saturday — a mismatch no setting could
+ *  fix, in an app whose whole Dates section is deliberately device-blind.
+ *  The names themselves are still the Dates language's (the tag), so the row
+ *  and the month grid can never disagree about what a day is called. */
+function weekdayRow(tag: string, weekStart: number): string[] {
   // 2023-11-12 is a Sunday: seven days of known names, indexed from Sunday.
   const names: string[] = [];
   for (let day = 0; day < 7; day += 1) {
     names.push(new Intl.DateTimeFormat(tag, { weekday: 'short' }).format(new Date(2023, 10, 12 + day)));
   }
-  const firstDay = (Intl.Locale.prototype as { weekInfo?: { firstDay: number } }).weekInfo
-    ? (new Intl.Locale(tag) as unknown as { weekInfo: { firstDay: number } }).weekInfo.firstDay
-    : 1; // 1 = Monday … 7 = Sunday
-  const cut = firstDay % 7; // Sunday (7) → 0; Monday (1) → 1 … Saturday (6) → 6
+  const cut = ((Math.trunc(weekStart) % 7) + 7) % 7; // 0 = Sunday … 6 = Saturday
   return [...names.slice(cut), ...names.slice(0, cut)];
 }
 
@@ -110,6 +116,9 @@ export function createTimestampPicker(): TimestampPicker {
   let chosen: Date | null = null;
   let format: TimestampFormat = 'f';
   let onInsert: ((code: string) => void) | null = null;
+  /** The week's first column, read from Settings when the sheet opens — never
+   *  from the device (see weekdayRow). */
+  let weekStart = 6;
   /** The time row is a row of digit slots: behind each field a buffer holds
    *  what was typed, and the field always SHOWS two digits, zero-padded and
    *  live — typing 9 into the hour shows 09 at once. A slot can never be
@@ -168,7 +177,7 @@ export function createTimestampPicker(): TimestampPicker {
    *  never changes height under the finger. */
   function pageHTML(monthDate: Date, isCurrent: boolean): string {
     const localeTag = tag();
-    const row = weekdayRow(localeTag);
+    const row = weekdayRow(localeTag, weekStart);
     const days = monthDays(monthDate, localeTag);
     const lead = leadCells(localeTag, monthStart(monthDate, localeTag), row);
     const chosenParts = chosen ? calParts(localeTag, chosen) : null;
@@ -189,7 +198,7 @@ export function createTimestampPicker(): TimestampPicker {
     if (!sheet || !viewMonth || !chosen) return;
     const localeTag = tag();
     const first = monthStart(viewMonth, localeTag);
-    const row = weekdayRow(localeTag);
+    const row = weekdayRow(localeTag, weekStart);
     const heading = sheet.querySelector<HTMLElement>('.timestamp-picker-month')!;
     if (!jumping) {
       heading.textContent = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
@@ -308,6 +317,7 @@ export function createTimestampPicker(): TimestampPicker {
     if (sheet) { sheet.remove(); backdrop?.remove(); sheet = null; backdrop = null; onInsert = null; }
     for (const el of fading.splice(0)) el.remove();
     if (isMenuOpen()) closeMenu();
+    weekStart = loadSettings().weekStart;
     onInsert = options.onInsert;
     format = options.initial?.format ?? 'f';
     const start = options.initial ? new Date(options.initial.seconds * 1000) : new Date();

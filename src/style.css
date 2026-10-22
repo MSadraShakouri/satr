@@ -1023,9 +1023,17 @@ body {
 }
 /* Text-tight selection (src/selection.ts): boxes hug the selected glyphs,
    skip indentation, and empty lines / line breaks get a caret-sized mark. */
+/* Square, like Obsidian's. Its selection is a plain
+   `background-color: var(--text-selection)` with no radius in any of its
+   rules — ::selection, .cm-selectionBackground or .cm-line .cm-selection —
+   and that is exactly what makes a run of rows read as ONE shape: each row's
+   rect ends flush against the next. A radius here rounds every rect on all
+   four corners, so ten selected rows scallop the left and right edges at
+   every line boundary and any row shorter than the longest one curls away
+   from the block instead of joining it. */
 .cm-satr-selection {
   background: var(--text-selection);
-  border-radius: 2px;
+  border-radius: 0;
 }
 /* ---- Live preview (src/livePreview.ts) ----
    Measurements and colours from Obsidian's editor CSS. */
