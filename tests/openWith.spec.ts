@@ -100,3 +100,41 @@ test('a hand-over of a file the folders already have open goes to that tab', asy
   expect(result.noTime, 'no time to compare').toBeNull();
   expect(result.shared, 'shared text is not a file').toBeNull();
 });
+
+test('a file the device can name is the vault\'s own note, not a hand-over', async ({ page }) => {
+  // The plugin resolves a file:// URI, or a document of the device's own
+  // storage provider, to a path under shared storage — the root the vault
+  // browses — and sends it along as `vaultPath`. Then the app opens an
+  // ordinary note (tree row, "Show in files", normal saving) instead of a
+  // satr-open:// copy. Everything else keeps the copy: a provider path is
+  // not a file the app can find. The resolving itself is Java and the
+  // device proves it; what is pinned here is which answers are accepted.
+  await page.goto('/');
+  const result = await page.evaluate(async (file) => {
+    const { incomingVaultPath } = await window.__satr.load('/src/openWith.ts');
+    const at = (over: Record<string, unknown>) => incomingVaultPath({ ...file, ...over } as never);
+    return {
+      named: at({}),
+      trailingSlash: at({ vaultPath: 'Notes/hw.md/' }),
+      root: at({ vaultPath: 'hw.md' }),
+      none: at({ vaultPath: undefined }),
+      empty: at({ vaultPath: '   ' }),
+      absolute: at({ vaultPath: '/storage/emulated/0/Notes/hw.md' }),
+      aUri: at({ vaultPath: 'content://com.android.providers/1' }),
+      upwards: at({ vaultPath: 'Notes/../../etc/passwd' }),
+      shared: at({ kind: 'shared-text', text: 'hello' }),
+    };
+  }, {
+    id: 'tmp-1', viewId: 'uuid-a', name: 'hw.md', mimeType: 'text/markdown', size: 120,
+    kind: 'text' as const, readOnly: false, modified: 1_700_000_000_000, vaultPath: 'Notes/hw.md',
+  });
+  expect(result.named, 'a path the vault can open').toBe('Notes/hw.md');
+  expect(result.trailingSlash).toBe('Notes/hw.md');
+  expect(result.root, 'a file at the top of storage').toBe('hw.md');
+  expect(result.none, 'Drive, Keep: no path to name').toBeNull();
+  expect(result.empty).toBeNull();
+  expect(result.absolute, 'vault paths are relative to the root').toBeNull();
+  expect(result.aUri).toBeNull();
+  expect(result.upwards, 'nothing climbs out of the vault').toBeNull();
+  expect(result.shared, 'shared text is no file').toBeNull();
+});

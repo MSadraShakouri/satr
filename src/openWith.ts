@@ -17,6 +17,11 @@ export interface IncomingOpenFile {
   text?: string;
   dataUrl?: string;
   modified?: number;
+  /** Where the file really is, when the device could say: a path relative to
+   *  shared storage, the root the vault browses (android/.../OpenFilePlugin:
+   *  a file:// URI, or a document of the device's own storage provider).
+   *  Absent for anything reachable only through its provider. */
+  vaultPath?: string;
 }
 
 interface PendingIncoming { available: boolean; id?: string }
@@ -87,6 +92,20 @@ export function openTabForSameFile(
   const match = candidates.find((candidate) => candidate.mtime && Math.abs(candidate.mtime - file.modified!) < 1000
     && candidate.path.slice(candidate.path.lastIndexOf('/') + 1).toLowerCase() === name);
   return match ? match.path : null;
+}
+
+/** The note this hand-over is, where it is one of the vault's own files:
+ *  a path the app can open as an ordinary note — tree row, "Show in files",
+ *  the usual saving — instead of the satr-open:// copy. Null for a file only
+ *  its provider can reach (Drive, Keep) and for shared text, which is no
+ *  file at all. The path is checked for shape here; whether it is really
+ *  there is the vault's question, asked before it is used. */
+export function incomingVaultPath(file: IncomingOpenFile): string | null {
+  if (file.kind === 'shared-text') return null;
+  const path = (file.vaultPath ?? '').trim().replace(/\/+$/, '');
+  if (!path || path.startsWith('/') || path.includes('://')) return null;
+  if (path.split('/').some((part) => part === '..' || part === '.' || !part)) return null;
+  return path;
 }
 
 export const supportsIncomingFiles = (): boolean => Capacitor.isNativePlatform();

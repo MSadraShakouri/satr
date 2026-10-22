@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import android.webkit.MimeTypeMap;
 import android.util.Base64;
@@ -40,6 +42,16 @@ import java.util.concurrent.Executors;
  * Like Markor, content:// sources are handled through ContentResolver rather
  * than guessing a filesystem path. The original URI remains the source of
  * truth for reads and writes.
+ *
+ * One exception, and it is not a guess: a file:// URI, or a document from the
+ * device's own storage provider (com.android.externalstorage), *is* a file in
+ * shared storage, and it says where — DocumentsContract gives "primary:Notes/
+ * hw.md" for /storage/emulated/0/Notes/hw.md. Where that file is under the
+ * same root the vault reads, and readable, its path travels with the
+ * hand-over (vaultPath) and the page opens it as an ordinary note: a row in
+ * the tree, a working "Show in files", and the usual saving. Anything else —
+ * Drive, Keep, a share, another volume — has no path to find and stays an
+ * incoming file, read and written through the provider that handed it over.
  *
  * Every file is opened: plain UTF-8 text (any extension, .patch included)
  * is editable; anything else is decoded best effort — the bytes that aren't
@@ -263,6 +275,8 @@ public class OpenFilePlugin extends Plugin {
         // This does not retain a grant or reopen a file without permission.
         result.put("viewId", UUID.nameUUIDFromBytes(uri.toString().getBytes(StandardCharsets.UTF_8)).toString());
         result.put("name", name);
+        String vaultPath = vaultPath(uri);
+        if (vaultPath != null) result.put("vaultPath", vaultPath);
         result.put("mimeType", mime);
         result.put("size", Math.max(0, size));
         result.put("modified", modifiedTime(id));
@@ -386,6 +400,51 @@ public class OpenFilePlugin extends Plugin {
         } catch (CharacterCodingException error) {
             return null;
         }
+    }
+
+    /**
+     * Where this hand-over really is, as a path relative to shared storage
+     * (/storage/emulated/0) — the same root the vault browses — or null when
+     * the URI is not a file of that root, or is not readable as one. Nothing
+     * is guessed: only a file:// path, or the document id the device's own
+     * storage provider hands out, counts.
+     */
+    private String vaultPath(Uri uri) {
+        try {
+            File file = localFile(uri);
+            if (file == null || !file.isFile() || !file.canRead()) return null;
+            String root = Environment.getExternalStorageDirectory().getCanonicalPath();
+            String path = file.getCanonicalPath();
+            if (!path.startsWith(root + "/")) return null; // an SD card, or elsewhere
+            return path.substring(root.length() + 1);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /** The file a URI names, for the two schemes that do name one. */
+    private File localFile(Uri uri) {
+        String scheme = uri.getScheme();
+        if ("file".equalsIgnoreCase(scheme)) {
+            String path = uri.getPath();
+            return path == null || path.isEmpty() ? null : new File(path);
+        }
+        if (!"content".equalsIgnoreCase(scheme)) return null;
+        if (!"com.android.externalstorage.documents".equals(uri.getAuthority())) return null;
+        String documentId;
+        try {
+            documentId = DocumentsContract.getDocumentId(uri);
+        } catch (Exception ignored) {
+            return null; // a tree, or something else that is not a document
+        }
+        if (documentId == null) return null;
+        int colon = documentId.indexOf(':');
+        if (colon < 0) return null;
+        String volume = documentId.substring(0, colon);
+        String relative = documentId.substring(colon + 1);
+        if (relative.isEmpty()) return null;
+        if (!"primary".equalsIgnoreCase(volume)) return null; // only shared storage
+        return new File(Environment.getExternalStorageDirectory(), relative);
     }
 
     private String displayName(Uri uri) {

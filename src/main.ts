@@ -37,7 +37,7 @@ import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
-import { incomingIdentities, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
+import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 
@@ -1526,6 +1526,20 @@ async function handleIncomingId(id: string): Promise<void> {
     closeTabSwitcher();
     closeSettings();
     closeTimestampPicker();
+    // The device named the real file (a file:// URI, or a document of its own
+    // storage provider): then this is not a hand-over to keep at arm's length
+    // but a note of the vault, and it opens as one — its row in the tree, a
+    // working "Show in files", its name in the search results, the ordinary
+    // save. Only when the vault can actually see the file; a file manager may
+    // name something the app cannot read, and anything from Drive, Keep or a
+    // share has no path to name at all, so those stay incoming files.
+    const vaultPath = incomingVaultPath(file);
+    if (vaultPath && await backend.stat(vaultPath).catch(() => null)) {
+      await openFile(vaultPath);
+      toggleFiles(false);
+      renderNavButtons();
+      return;
+    }
     // The same source again (shared, or opened from the file manager, while its
     // tab is still open) is that tab, not a second one. The identity is the
     // plugin's source (viewId) first, then what the file says about itself —
