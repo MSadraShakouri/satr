@@ -2376,10 +2376,22 @@ input.mod-no-match {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* Find, in the note: every match wears a ring, and the CURRENT one is the
+   one that is loud. Obsidian's reading view draws exactly this pair — a 2px
+   ring in --text-normal at 30% for a match, and a 3px ring in --text-accent
+   at full strength for the active one (`.search-highlight > div` and
+   `> div.is-active`). It can fade the non-active ones with `opacity` because
+   its highlight is an overlay div; these marks wrap the text itself, so the
+   same weight is written as a translucent colour instead. Without the second
+   rule both classes paint the same ring, which is why the current match could
+   not be told apart from its neighbours (src/findBar.ts: `mod-all`). */
 .cm-editor .obsidian-search-match-highlight {
   border-radius: 2px;
   box-shadow: 0 0 0 3px var(--text-accent);
   mix-blend-mode: var(--highlight-mix-blend-mode);
+}
+.cm-editor .obsidian-search-match-highlight.mod-all {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-normal) 30%, transparent);
 }
 
 /* ---- Side drawers (src/drawers.ts, src/leftSidebar.ts, src/rightSidebar.ts) ----
