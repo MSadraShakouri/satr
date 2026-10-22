@@ -329,10 +329,69 @@ let lastRender = 0;
 // would be the very cost the reading view now avoids). A screen of lead on
 // either side, so scrolling meets a formula that is already placed.
 const nearbySections = new IntersectionObserver((entries) => {
-  for (const entry of entries) if (entry.isIntersecting) scheduleMathLayout(entry.target as HTMLElement);
+  const near: HTMLElement[] = [];
+  for (const entry of entries) if (entry.isIntersecting) { scheduleMathLayout(entry.target as HTMLElement); near.push(entry.target as HTMLElement); }
+  // Next frame, by which time the browser has laid out what it just
+  // decided was near enough to matter — measuring now would mostly read
+  // back the estimate these sections are still standing on.
+  if (near.length) window.requestAnimationFrame(() => { for (const section of near) measureSection(section); });
 }, { root: previewPane, rootMargin: '100% 0px' });
+// What a source line is worth in the reading view, learned from the
+// sections that have been laid out. Everything the reader has not reached
+// yet is standing on this number (markdown.ts writes each section's height
+// as its own span times --md-line), and 1.85em a line — the figure it
+// started from — is only ever right by accident: a heading is shorter, a
+// sentence of Persian that wraps four times is several lines tall. A note
+// measured in a number that is wrong by a factor is a note whose length
+// changes under the reader as they read it. Obsidian's reading view does
+// the same thing, averaging the heights it has measured and using that for
+// the sections it has not (updateVirtualDisplay).
+let lineHeightGuess = 0; // px per source line, 0 until something is measured
+let measuredLines = 0;
+let measuredHeight = 0;
+let guessApplied = 0;
+function measureSection(section: HTMLElement): void {
+  const span = Number(section.dataset.span);
+  if (!(span > 0)) return;
+  const height = section.getBoundingClientRect().height;
+  // A section still standing on its estimate measures the estimate back:
+  // that is the number talking to itself, not the note being measured.
+  const unit = guessApplied > 0 ? guessApplied : 1.85 * (parseFloat(getComputedStyle(preview).fontSize) || 16);
+  if (height <= 0 || Math.abs(height - unit * span) < 1) return;
+  measuredHeight += height;
+  measuredLines += span;
+  lineHeightGuess = measuredHeight / measuredLines;
+  applyLineGuess();
+}
+/** Hand the learned figure to the sections that are still guessing. The
+ *  reader is held in place while this happens (src/scrollSync.ts), so the
+ *  page changing length under them is corrected, not felt. */
+function applyLineGuess(): void {
+  // Enough of the note to be an average rather than whichever section the
+  // reader happened to open on, and inside the range a line can be: one
+  // tall picture in a one-line section is not what a line costs.
+  if (!(lineHeightGuess > 0) || measuredLines < 8) return;
+  const guess = Math.min(120, Math.max(8, lineHeightGuess));
+  // Only when it is worth the relayout: the first real figure, then a
+  // quarter off the one in use.
+  if (guessApplied > 0 && Math.abs(guess - guessApplied) / guessApplied < 0.25) return;
+  // Every section the reader has not seen is about to change height,
+  // including the ones above them, so the note moves under the reader
+  // unless their place is taken first and put back after. (A switch or a
+  // restore is already holding the place itself; don't fight it.)
+  const y = scrollBand();
+  const hold = previewVisible() && !restoringView && !syncingScroll ? previewScroll(previewPane, preview, y) : null;
+  guessApplied = guess;
+  preview.style.setProperty('--md-line', `${guess.toFixed(1)}px`);
+  if (hold !== null) applyPreviewScroll(previewPane, preview, hold, () => true, false, y);
+}
 function watchSections(): void {
   nearbySections.disconnect();
+  // The figure carries from note to note — it is a property of the font and
+  // the width of the screen, not of the note — but each note measures
+  // itself from scratch so one long table does not follow the reader about.
+  measuredLines = 0;
+  measuredHeight = 0;
   for (const section of preview.querySelectorAll<HTMLElement>(':scope > .md-section')) nearbySections.observe(section);
 }
 function renderPreview(): void {
