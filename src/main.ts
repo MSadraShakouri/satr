@@ -1144,7 +1144,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   sidebar.refresh();
   // Mark the open note, and clear the mark when this file isn't in the tree
   // (opened from another app, or read-only rubbish).
-  leftSidebar.reveal(path);
+  leftSidebar.markActive(path);
   if (!incoming) void loadSiblings();
 }
 /** Open a file: its tab if it has one, else a new tab after this one (or
@@ -1422,7 +1422,7 @@ function showIncomingScreen(path: string, file: IncomingOpenFile): void {
   });
   renderNavButtons();
   // A file from another app isn't in the tree: nothing stays selected there.
-  leftSidebar.reveal('');
+  leftSidebar.markActive('');
 }
 
 function formatBytes(size: number): string {

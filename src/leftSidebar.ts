@@ -42,7 +42,6 @@ export interface LeftSidebarDeps {
 
 type Sort = 'name' | 'name-desc' | 'mtime' | 'mtime-old';
 const SORT_KEY = 'satr:sort';
-const FOLLOW_KEY = 'satr:follow-active';
 /** A path the app made up for a file another app handed over
  *  ("satr-open://…", src/main.ts) is not a folder on the phone. */
 const isIncomingPath = (path: string): boolean => path.includes('://');
@@ -58,7 +57,7 @@ const ICONS = {
   newNote: icon('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>'),
   newFolder: icon('<path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
   sort: icon('<path d="m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4"/>'),
-  // "Always show the current file": a crosshair on the file being read.
+  // "Reveal current file": a crosshair on the file being read.
   locate: icon('<circle cx="12" cy="12" r="7"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>'),
   collapseAll: icon('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
   expandAll: icon('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'),
@@ -90,7 +89,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
           <button type="button" class="clickable-icon nav-action-button" data-act="new-folder" aria-label="New folder">${ICONS.newFolder}</button>
           <button type="button" class="clickable-icon nav-action-button" data-act="sort" aria-label="Change sort order">${ICONS.sort}</button>
           <button type="button" class="clickable-icon nav-action-button" data-act="collapse" aria-label="Collapse all">${ICONS.collapseAll}</button>
-          <button type="button" class="clickable-icon nav-action-button" data-act="follow" aria-label="Always show the current file" aria-pressed="false">${ICONS.locate}</button>
+          <button type="button" class="clickable-icon nav-action-button" data-act="locate" aria-label="Reveal current file">${ICONS.locate}</button>
         </div>
       </div>
       <div class="workspace-drawer-header mod-vault-profile">
@@ -111,7 +110,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   const infoEl = root.querySelector<HTMLElement>('.workspace-drawer-header-info')!;
   const countEl = root.querySelector<HTMLElement>('.workspace-drawer-count')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
-  const followButton = root.querySelector<HTMLButtonElement>('[data-act="follow"]')!;
+  const locateButton = root.querySelector<HTMLButtonElement>('[data-act="locate"]')!;
   const filterInput = root.querySelector<HTMLInputElement>('.nav-filter-input')!;
   const filterQuery = (): string => filterInput.value.trim().toLocaleLowerCase();
 
@@ -127,21 +126,16 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   loadExpanded();
   let renderToken = 0;
   let renaming: string | null = null;
-  // "Always show the current file", after Obsidian's setting of that name:
-  // whenever the note changes, open its ancestors in a space, or move the
-  // "All files" walker to the note's parent folder. Off, the reader's chosen
-  // folder arrangement is left alone. It starts on for a new reader; only the
-  // reader's own "0" turns it off.
-  let follow = localStorage.getItem(FOLLOW_KEY) !== '0';
-  followButton.classList.toggle('is-active', follow);
-  followButton.setAttribute('aria-pressed', String(follow));
-  /** The note and scope last followed. A scope switch should refocus the same
-   *  note, while manually browsing folders within that scope should not. */
-  let followedPath = '';
-  let followedScope = '';
   /** The note the drawn tree belongs to; compared with the open one when the
    *  drawer comes back, so a highlight can never outlive the note it marks. */
   let renderedPath = deps.currentPath();
+  /** "Reveal current file" needs a real note to point at — an empty tab or a
+   *  file another app handed over has no row anywhere in the tree. Asked by
+   *  every draw and by every note change (which draws nothing). */
+  const syncLocate = (): void => {
+    const reading = deps.currentPath();
+    locateButton.disabled = !reading || isIncomingPath(reading);
+  };
 
   const sorted = (entries: Entry[]): Entry[] => entries
     .filter((e) => !e.name.startsWith('.'))
@@ -190,6 +184,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const token = ++renderToken;
     scope = currentScope();
     nameEl.textContent = scopeName(scope);
+    syncLocate();
     const walking = scope.kind === 'all';
     root.classList.toggle('mod-walker', walking);
     collapseButton.innerHTML = walking ? ICONS.up : (expanded.size ? ICONS.collapseAll : ICONS.expandAll);
@@ -227,33 +222,34 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     list.innerHTML = html;
     renderedPath = deps.currentPath();
     if (renaming) startRename(renaming);
-    if (follow) void showCurrent();
   }
 
-  /** Bring the open note back into view: open its ancestors in a space, or
-   *  switch the All files walker to its parent folder. The saved scope and note
-   *  form the follow key: opening a folder by hand is respected until either
-   *  the note or the scope changes. */
-  async function showCurrent(): Promise<void> {
+  /** Bring the open note into view, wherever it lives: the space that holds
+   *  it (the deepest, where two of them do), or All files at its folder. This
+   *  is the one thing that ever moves the panel — opening a note does not, so
+   *  reading can never change what a search covers or where a note is made. */
+  async function locate(): Promise<void> {
     const path = deps.currentPath();
-    const scopeKey = scope.kind === 'space' ? `space:${scope.space.id}:${scope.space.path}` : 'all';
-    if (!path || isIncomingPath(path) || (path === followedPath && scopeKey === followedScope)) return;
-    followedPath = path;
-    followedScope = scopeKey;
-    let changed = false;
-    if (scope.kind === 'space' && within(path, scope.space.path)) {
-      for (let dir = dirname(path); dir && dir !== scope.space.path && within(dir, scope.space.path); dir = dirname(dir)) {
-        if (!expanded.has(dir)) { expanded.add(dir); changed = true; }
+    if (!path || isIncomingPath(path)) return;
+    const home = loadSpaces()
+      .filter((space) => space.path && within(path, space.path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    if (home) {
+      if (!(scope.kind === 'space' && scope.space.id === home.id && scope.space.path === home.path)) {
+        adopt({ kind: 'space', space: home });
+        deps.scopeChanged();
       }
-      if (changed) saveExpanded();
-    } else if (scope.kind === 'all') {
+      for (let dir = dirname(path); dir && dir !== home.path && within(dir, home.path); dir = dirname(dir)) expanded.add(dir);
+      saveExpanded();
+    } else {
       const dir = dirname(path);
-      if (walkDir() !== dir) {
-        setWalkDir(dir);
-        changed = true;
+      if (scope.kind !== 'all') {
+        adopt({ kind: 'all' });
+        deps.scopeChanged();
       }
+      if (walkDir() !== dir) setWalkDir(dir);
     }
-    if (changed) await render();
+    await render();
     scrollActive();
   }
   // Filter by name: files and folders anywhere under the space (or the
@@ -457,10 +453,15 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const clear = (): void => { if (!document.querySelector('.menu.is-open:not(.is-closing)')) { row?.classList.remove('has-active-menu'); return; } window.setTimeout(clear, 200); };
     window.setTimeout(clear, 300);
   }
-  function switchTo(next: Scope): void {
+  /** Take a scope without drawing it. A reader's own switch draws at once;
+   *  "Reveal current file" sets the whole picture up and draws once. */
+  function adopt(next: Scope): void {
     setScope(next);
     scope = next;
     loadExpanded();
+  }
+  function switchTo(next: Scope): void {
+    adopt(next);
     void render();
     deps.scopeChanged();
   }
@@ -519,15 +520,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       case 'new-note': deps.createNote(baseDir()); break;
       case 'new-folder': void newFolder(baseDir()); break;
       case 'sort': sortMenu(); break;
-      case 'follow':
-        follow = !follow;
-        localStorage.setItem(FOLLOW_KEY, follow ? '1' : '0');
-        followButton.classList.toggle('is-active', follow);
-        followButton.setAttribute('aria-pressed', String(follow));
-        followedPath = ''; // turning it on shows the file now, not next time
-        followedScope = '';
-        void render(); // and render's tail follows, when it is on
-        break;
+      case 'locate': void locate(); break;
       case 'collapse':
         if (scope.kind === 'all') { setWalkDir(dirname(walkDir())); void render(); break; }
         if (expanded.size) expanded.clear();
@@ -634,19 +627,14 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     refresh: render,
     /** Ask, then delete a note (the ≡ menu's Delete note). */
     deleteFile: (path: string) => remove(path, false),
-    /** The note being read changed: mark it, and while "Always show the current
-     *  file" is on, bring it back into view — showCurrent opens the folders
-     *  above it and scrolls the tree to it, and in "All files" steps the walker
-     *  to its folder. Off, the tree is left exactly where the reader put it and
-     *  only the mark moves. */
-    reveal(path: string): void {
-      const mark = (): void => {
-        list.querySelectorAll('.tree-item-self.is-active').forEach((el) => el.classList.remove('is-active'));
-        rowOf(path)?.classList.add('is-active');
-        renderedPath = deps.currentPath(); // drawn, marks and all
-      };
-      if (!follow) { mark(); return; }
-      void showCurrent().then(mark);
+    /** The note being read changed: move the mark, and nothing else. The tree
+     *  stays exactly where the reader left it — `locate` (the footer's
+     *  "Reveal current file") is the only thing that moves the panel. */
+    markActive(path: string): void {
+      list.querySelectorAll('.tree-item-self.is-active').forEach((el) => el.classList.remove('is-active'));
+      rowOf(path)?.classList.add('is-active');
+      renderedPath = deps.currentPath(); // drawn, marks and all
+      syncLocate();
     },
     /** Open a folder in the tree and bring it into view — the search's folder
      *  rows (src/rightSidebar.ts, the new tab's search) and nothing else. The

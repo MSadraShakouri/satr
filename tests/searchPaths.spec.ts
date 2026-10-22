@@ -23,10 +23,9 @@ async function boot(
   files: Record<string, string>,
   active: string,
   scope?: string,
-  follow = true,
 ) {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(({ files, active, scope, follow }) => {
+  await page.addInitScript(({ files, active, scope }) => {
     // Folders are whatever the files need, so a fixture can be as deep as the
     // test wants without a second list to keep in step.
     const folders = [...new Set(Object.keys(files).flatMap((path) => {
@@ -43,8 +42,7 @@ async function boot(
     // scope, which is what the folder is shown relative to.
     localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
     if (scope) localStorage.setItem('satr:scope', scope);
-    localStorage.setItem('satr:follow-active', follow ? '1' : '0');
-  }, { files, active, scope, follow });
+  }, { files, active, scope });
   await page.goto('/');
   await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
 }
