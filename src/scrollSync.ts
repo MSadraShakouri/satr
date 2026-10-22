@@ -109,6 +109,11 @@ export function previewScroll(pane: HTMLElement, preview: HTMLElement, anchor = 
 }
 
 export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0): void {
+  // What this last asked the pane for, as the pane was able to answer it
+  // (short of the end of a note it scrolls to the end instead). The reader
+  // moving a single pixel of their own is the one thing that ends the
+  // corrections: see keepPlaced below.
+  let placed: number | null = null;
   const place = (): void => {
     if (!isCurrent()) return;
     if (!(position > 0)) { scrollInstantly(pane, 0); return; }
@@ -146,38 +151,55 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
     const end = last.bottom;
     if (target === null) target = end;
     const wanted = pane.scrollTop + target - (paneTop + anchor);
-    if (!past) { scrollInstantly(pane, Math.max(0, wanted)); return; }
+    if (!past) { scrollInstantly(pane, Math.max(0, wanted)); placed = pane.scrollTop; return; }
     const tail = Math.max(end, (preview.lastElementChild ?? preview).getBoundingClientRect().bottom);
     const foot = pane.scrollTop + tail - paneTop - pane.clientHeight;
     scrollInstantly(pane, Math.max(0, Math.min(wanted, Math.max(0, foot))));
+    placed = pane.scrollTop; // what it could actually do, not what was asked
   };
   place();
-  if (!settle) return;
-  // Rendered math and tables are taller or shorter than their source lines,
-  // and the numbers move under us after the jump: KaTeX's fonts, the Android
-  // grow-box pass, lazy images. Measure the rendered heights again once
-  // they settle, and compensate the scroll with the new ones. Do it several
-  // times so a tall display math that changes height after font load doesn't
-  // leave the user feeling a jump.
-  const settlePlace = (): void => {
-    if (!isCurrent()) return;
+  // The reading view is not finished when the jump lands. Formulas and
+  // images arrive, and — the big one — every section the reader has never
+  // seen is standing on an estimate until the browser lays it out, which
+  // it does tens of milliseconds after the scroll that made that section
+  // matter, not in the next frame. So the note's own length goes on
+  // changing for as long as the reader keeps reading. When it shortens
+  // past the offset they are at, the browser clamps them to the new end of
+  // the note and there they stay.
+  //
+  // The corrections could not cover that: two timers, fonts, and at most
+  // eight resize callbacks inside two seconds. So the place is held
+  // instead — the same answer applied again whenever the page changes
+  // shape, until the reader moves the pane themselves. A finger on the
+  // glass is not that: they tap a link, they rest a thumb, and the old
+  // rule (any touch cancels every outstanding correction) threw the
+  // corrections away at exactly the moment a reader who had landed in the
+  // wrong place reached for the screen. Only their scrolling counts, and
+  // it is read from the pane — a pixel away from what was placed and this
+  // stops for good.
+  let stopped = false;
+  const stop = (): void => { stopped = true; ro?.disconnect(); };
+  const keepPlaced = (): void => {
+    if (stopped) return;
+    if (!isCurrent()) { stop(); return; }
+    if (placed !== null && Math.abs(pane.scrollTop - placed) > 2) { stop(); return; }
     place();
   };
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-    settlePlace();
-    window.setTimeout(settlePlace, 120);
-    window.setTimeout(settlePlace, 350);
+    keepPlaced();
+    window.setTimeout(keepPlaced, 120);
+    window.setTimeout(keepPlaced, 350);
   }));
-  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(settlePlace));
-  // Images and KaTeX may load after fonts; observe height changes.
-  if (typeof ResizeObserver !== 'undefined') {
-    let observed = 0;
-    const ro = new ResizeObserver(() => {
-      if (!isCurrent() || observed++ > 8) { ro.disconnect(); return; }
-      settlePlace();
-    });
-    // Observe the preview container; any math/table growth changes it.
-    ro.observe(preview);
-    window.setTimeout(() => ro.disconnect(), 2000);
-  }
+  const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => keepPlaced());
+  // The whole page, not just the element being placed against: a section
+  // further down resolving from its estimate changes the note's length
+  // without changing anything about that element.
+  ro?.observe(preview);
+  // A switch waits for the fonts too, and is covered for as long as a cold
+  // note can take to settle on a slow phone. A plain placement is held for
+  // a moment — long enough for the sections it landed among to be laid
+  // out. Either way a page that is not changing shape never calls back.
+  if (!settle) { window.setTimeout(stop, 1_000); return; }
+  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(keepPlaced));
+  window.setTimeout(stop, 12_000);
 }
