@@ -270,3 +270,30 @@ test('the caret on the empty line between two math blocks sits at the left', asy
   expect(report.dir, JSON.stringify(report)).toBe('ltr');
   expect(Math.abs(report.caret - report.left), JSON.stringify(report)).toBeLessThan(4);
 });
+
+// The full stop after a number belongs to the line, not to the number. In an
+// RTL line `۲` then `.` reads full-stop-left — how a sentence ending in a
+// number and a list marker both look in the reading view. Only a separator
+// with a digit on *both* sides is part of the number (a date, a decimal), so
+// only that is isolated: isolating `۲.` drew `.۲`.
+test('a full stop after a number stays on the line’s side', async ({ page }) => {
+  await draft(page, 'خط فارسی ۲.\n');
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const painted = await paintedLine(page, '۲.');
+  expect(painted.dir, JSON.stringify(painted)).toBe('rtl');
+  const chars = painted.chars!;
+  const digit = chars.find((p) => p.c === '۲')!;
+  const dot = chars.find((p) => p.c === '.')!;
+  expect(digit.x, JSON.stringify(chars.map((p) => `${p.c}@${p.x}`))).toBeGreaterThan(dot.x);
+});
+
+test('a list marker keeps its full stop on the line’s side', async ({ page }) => {
+  await draft(page, '۲. خط فهرست\n');
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const painted = await paintedLine(page, 'خط فهرست');
+  expect(painted.dir, JSON.stringify(painted)).toBe('rtl');
+  const chars = painted.chars!;
+  const digit = chars.find((p) => p.c === '۲')!;
+  const dot = chars.find((p) => p.c === '.')!;
+  expect(digit.x, JSON.stringify(chars.map((p) => `${p.c}@${p.x}`))).toBeGreaterThan(dot.x);
+});

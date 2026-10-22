@@ -126,6 +126,15 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
 // run so you can still walk through 2026. Inline `$…$` is already its own
 // run; leave it.
 //
+// A separator only joins when a digit follows it, and only a run that holds
+// one is isolated. A trailing separator belongs to the line, not to the
+// number: in an RTL line `۲` then `.` reads period-left, which is what a
+// list marker or a sentence ending in a number looks like in the reading
+// view. Inside an LTR isolate the same two characters read period-right,
+// so `۲.` at the head of a Persian line drew `.۲` and a Persian sentence
+// ending in `۵.` flipped its full stop. A plain run of digits needs no
+// isolate at all — it is already one run.
+//
 // Only the separators that hold two numbers together are in the class. ES
 // (`-` `+`) and ET (`%` `#` `$`) do not, once a Persian letter has made the
 // digits Arabic numbers (Unicode W2): isolating across one paints `۳-۲` as a
@@ -135,7 +144,7 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
 // traces the same x as a slashed one.
 // Read off LowTypes in @codemirror/view (charType).
 const CS_SEP = ',.:/';
-const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩][0-9۰-۹٠-٩${CS_SEP}]*`, 'g');
+const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩]+(?:[${CS_SEP}][0-9۰-۹٠-٩]+)+`, 'g');
 const ltrIsolate = Decoration.mark({
   attributes: { style: 'unicode-bidi: isolate; direction: ltr' },
   bidiIsolate: Direction.LTR,
