@@ -20,7 +20,7 @@ import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 import { typingTop } from './scrollSync';
-import { ABJAD, ABPATS, formatDigits, formatMarker, MARKER, parseMarker, orderOf, type Alphabet } from './listMarkers';
+import { ABJAD, ABPATS, formatDigits, formatMarker, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -276,6 +276,8 @@ function normalizeRun(doc: EditorState['doc'], number: number, inMathAt: (pos: n
     ? orderOf(markers.map((marker, index) => ({ index, token: marker.token })))
     : null;
   const alphabet: Alphabet = letters ?? start.alphabet;
+  // An English letter is a list only where it already reads as one.
+  if (!sequential(markers.map((marker) => marker.token), alphabet)) return [];
   const changes: { from: number; to: number; insert: string }[] = [];
   markers.forEach((marker, index) => {
     // The head is the writer's own, exactly as they wrote it: it is what the
@@ -295,6 +297,21 @@ function shiftBelow(doc: EditorState['doc'], from: number, gone: { count: number
   const changes: { from: number; to: number; insert: string }[] = [];
   const indent = gone.marker.indent.length;
   const delimiter = gone.marker.delimiter;
+  // The run below is read before it is moved: English letters are shifted only
+  // when they already read as a list, so no sentence is rewritten.
+  const tokens: string[] = [];
+  for (let n = from; n <= doc.lines; n += 1) {
+    const text = doc.line(n).text;
+    if (!text.trim()) continue;
+    const match = ITEM_LINE.exec(text);
+    if (!match || match[1].length !== indent || match[3] !== delimiter) {
+      if (match || /^[ \t]/.test(text)) continue;
+      break;
+    }
+    tokens.push(match[2]);
+  }
+  const first = tokens[0] ? parseMarker(tokens[0]) : null;
+  if (first && !sequential(tokens, first.alphabet)) return [];
   let previous = 0;
   for (let n = from; n <= doc.lines; n += 1) {
     const text = doc.line(n).text;

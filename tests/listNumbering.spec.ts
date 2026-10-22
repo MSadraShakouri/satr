@@ -389,6 +389,21 @@ test('a lettered list carries on in its own order', async ({ page }) => {
   expect((await edit(page, gh, at(gh, 1, 'end'), 'enter')).text).toBe('غ. a\n۲۹. ');
   // Under a digit head a letter is still a number: the head decides.
   expect(await retype(page, '1. a\n2. b', 2, 'ب. b')).toBe('1. a\n2. b');
+  // The English alphabet, in either case, is a list of its own.
+  const lower = 'a. one';
+  expect((await edit(page, lower, at(lower, 1, 'end'), 'enter')).text).toBe('a. one\nb. ');
+  const upper = 'A. one';
+  expect((await edit(page, upper, at(upper, 1, 'end'), 'enter')).text).toBe('A. one\nB. ');
+  // Past z the list counts in English numbers rather than starting over.
+  const zed = 'z. one';
+  expect((await edit(page, zed, at(zed, 1, 'end'), 'enter')).text).toBe('z. one\n27. ');
+  // And one list is one case: a number typed under a letter head is a letter,
+  // and a lower-case letter under an upper-case head is upper case. (A lone
+  // `A.` is a sentence, though — the run has to read as a list already.)
+  expect(await retype(page, 'a. one\n2. two', 2, '2. two')).toBe('a. one\nb. two');
+  expect(await retype(page, 'A. Smith\nA. Jones', 2, 'A. Jones')).toBe('A. Smith\nA. Jones');
+  expect(await retype(page, 'A. one\nB. two', 2, 'b. two')).toBe('A. one\nB. two');
+  expect(await retype(page, 'a. one\nb. two', 1, 'A. one')).toBe('A. one\nB. two');
 });
 
 // Line numbers follow the caret's line (the writer's request): a Persian line
@@ -421,32 +436,50 @@ test('the line numbers are drawn in the script of the caret’s line', async ({ 
   expect(gutter.mixedPersian).toBe('۱,۲');
 });
 
-// The reading view draws the letters a list carries, in the order its own
-// letters prove — the same list, read back.
-test('the reading view draws a lettered list in its own order', async ({ page }) => {
+// The reading view draws the markers the writer wrote, item by item: `الف`
+// stays `الف`, `٣` stays `٣`, and a nested list keeps its own numbers. Every
+// item is read from its own source line, so one note's lists cannot take
+// another's place.
+test('the reading view draws each item’s own marker', async ({ page }) => {
   const read = await page.evaluate(async () => {
     const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
     const host = document.createElement('article');
     const one = (text: string) => {
       host.innerHTML = renderMarkdown(text);
-      const list = host.querySelector('ol');
-      return {
-        lettered: list?.classList.contains('lettered-ordered') ?? false,
-        numbered: list?.classList.contains('persian-ordered') ?? false,
-        labels: [...host.querySelectorAll('ol > li')].map((item) => item.getAttribute('data-persian-number')),
-      };
+      return [...host.querySelectorAll('ol')].map((list) => ({
+        lettered: list.classList.contains('lettered-ordered'),
+        numbered: list.classList.contains('persian-ordered'),
+        labels: [...list.querySelectorAll<HTMLElement>(':scope > li')].map((item) => item.getAttribute('data-persian-number')),
+      }));
     };
     return {
       abjad: one('ا. یک\nب. دو\nج. سه'),
+      alef: one('الف. یک\nب. دو'),
       abpats: one('ا. یک\nب. دو\nپ. سه'),
+      arabic: one('٣. ثالث\n٤. رابع'),
+      nested: one('۱. یک\n    ۲. دو\n    ۳. سه'),
+      letters: one('a. one\nb. two'),
+      upper: one('A. one\nB. two'),
       latin: one('1. one\n2. two'),
+      // A formula on its own line, with the list right under it: the list is
+      // still a list (the block used to run on and swallow it).
+      underMath: one('$$x$$\n۱. یک\n۲. دو'),
+      underMathLetters: one('$$x$$\nا. یک\nب. دو'),
+      // Two lists, one above the other: each keeps its own markers.
+      above: one('1. one\n2. two\n\nprose\n\nا. یک\nب. دو'),
     };
   });
-  expect(read.abjad.lettered).toBe(true);
-  expect(read.abjad.numbered).toBe(true);
-  expect(read.abjad.labels).toEqual(['ا', 'ب', 'ج']);
-  expect(read.abpats.labels).toEqual(['ا', 'ب', 'پ']);
+  expect(read.abjad).toEqual([{ lettered: true, numbered: true, labels: ['ا', 'ب', 'ج'] }]);
+  expect(read.alef[0].labels).toEqual(['الف', 'ب']);
+  expect(read.abpats[0].labels).toEqual(['ا', 'ب', 'پ']);
+  expect(read.arabic[0].labels).toEqual(['٣', '٤']);
+  expect(read.nested[1].labels).toEqual(['۲', '۳']);
+  expect(read.letters[0].labels).toEqual(['a', 'b']);
+  expect(read.upper[0].labels).toEqual(['A', 'B']);
   // An English list is the platform's own and is left alone.
-  expect(read.latin.lettered).toBe(false);
-  expect(read.latin.numbered).toBe(false);
+  expect(read.latin[0].numbered).toBe(false);
+  expect(read.latin[0].lettered).toBe(false);
+  expect(read.underMath[0].labels).toEqual(['۱', '۲']);
+  expect(read.underMathLetters[0].labels).toEqual(['ا', 'ب']);
+  expect(read.above[1].labels).toEqual(['ا', 'ب']);
 });

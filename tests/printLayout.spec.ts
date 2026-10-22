@@ -117,7 +117,8 @@ test('the printed list keeps the writer’s number', async ({ page }) => {
   expect(lists).toEqual([
     { start: '2', persian: false, label: null },
     { start: '2', persian: true, label: '۲' },
-    { start: '3', persian: true, label: '۳' },
+    // The marker is drawn exactly as it was written, Arabic-Indic and all.
+    { start: '3', persian: true, label: '٣' },
     { start: '4', persian: false, label: null },
   ]);
 });

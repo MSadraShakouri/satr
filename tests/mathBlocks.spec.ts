@@ -123,3 +123,26 @@ test('the reading view renders a broken pair as the markdown it is', async ({ pa
   expect(report.spaced.displays).toBe(0);
   expect(report.price.displays).toBe(0);
 });
+
+// A display block that cannot have a line of its own — inside a list item, or
+// after text on a line — is still worth its delimiters: `$$  $$`, one space
+// either side of the caret for the writer to fill in. On a line of its own the
+// block still opens as it always did.
+test('a $$ where no block can open writes the pair with room around the caret', async ({ page }) => {
+  const typed = async (text: string, keys: string) => {
+    await draft(page, text);
+    await page.keyboard.type(keys);
+    await page.waitForTimeout(40);
+    return page.evaluate(() => ({
+      text: window.testEditor.getValue(),
+      caret: window.testEditor.getSelection()[0],
+    }));
+  };
+  // A list item with text on it, an empty item, and a line of prose: the
+  // delimiters go in where they stand, the caret between them.
+  expect(await typed('- یک|', '$$')).toEqual({ text: '- یک$$  $$', caret: 7 });
+  expect(await typed('- |', '$$')).toEqual({ text: '- $$  $$', caret: 5 });
+  expect(await typed('hello|', '$$')).toEqual({ text: 'hello$$  $$', caret: 8 });
+  // A line of its own is still a display block, and nothing is lost to it.
+  expect(await typed('|', '$$')).toEqual({ text: '$$\n\n$$', caret: 3 });
+});

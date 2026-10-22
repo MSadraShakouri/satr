@@ -6,7 +6,7 @@ import { renderMath } from './math';
 import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamps';
 import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
-import { formatDigits, formatMarker, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
+import { formatDigits, formatMarker, LOWER, MARKER, orderOf, parseMarker, UPPER, type Alphabet } from './listMarkers';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
@@ -220,7 +220,11 @@ function splitMath(source: string, spans: readonly MathSpan[]): string {
     out += source.slice(cursor, span.from);
     out += span.display
       // Keep the lines the formula spanned, so everything below it keeps its number.
-      ? `<div data-satr-math="${id}"></div>${'\n'.repeat(newlines(source.slice(span.from, span.to)))}`
+      // `pre` rather than `div` on purpose: the parser ends an HTML block at the
+      // closing tag of a `pre` on the same line, while a `div` keeps the block
+      // open until the next blank line — which used to swallow the lines under
+      // a formula, a list under it arriving as plain text.
+      ? `<pre data-satr-math="${id}"></pre>${'\n'.repeat(newlines(source.slice(span.from, span.to)))}`
       : `<span data-satr-math="${id}"></span>`;
     cursor = span.to;
   });
@@ -240,22 +244,6 @@ export function renderMarkdown(source: string): string {
   const normalized = source.replace(/\r\n?/g, '\n');
   // Front matter becomes blank lines, so line numbers don't shift.
   const withoutFrontMatter = normalized.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, (block) => block.replace(/[^\n]/g, ''));
-  // One entry per ordered list, in the order the lists appear: the head's
-  // marker decides what the list is drawn with — Persian numbers, or one of
-  // the two letter orders (where the letters typed below settle which).
-  const orderedStyles: Array<{ alphabet: Alphabet; letters: string[] }> = [];
-  let run: { alphabet: Alphabet; letters: string[] } | null = null;
-  withoutFrontMatter.split('\n').forEach((line) => {
-    const marker = new RegExp(`^\\s*(${MARKER})[.)]\\s+`).exec(line);
-    if (!marker) { run = null; return; }
-    const parsed = parseMarker(marker[1]);
-    if (run === null) {
-      run = { alphabet: parsed?.alphabet ?? 'latin', letters: [marker[1]] };
-      orderedStyles.push(run);
-    } else {
-      run.letters.push(marker[1]);
-    }
-  });
   // Math first: the placeholders hold no markdown, and the transforms below
   // (page breaks, list markers, table separators) only ever look at the
   // lines' text, so the reading view and the editor agree on every formula.
@@ -265,14 +253,36 @@ export function renderMarkdown(source: string): string {
   // A list marker the writer typed keeps its own number — `۲.` becomes `2.`
   // for the parser's sake (the digits are only transliterated), never `1.`:
   // a single `2.` is the writer's 2, in the preview and in the PDF alike.
-  const normalizedLists = markPageBreaks(withMathPlaceholders).replace(new RegExp(`^(\\s*)(${MARKER})([.)])\\s+`, 'gm'), (_full, indent: string, number: string, punctuation: string) => {
-    const parsed = parseMarker(number);
+  //
+  // An English letter is a list marker only where it reads as one: `a.` and
+  // `b.` on neighbouring lines are a list, while `A. Smith` on its own, or two
+  // lines opening `A.`, are sentences. (Persian letters and the three digit
+  // sets never look like prose, and are always read as markers.)
+  const latinItem = (line: string): { indent: number; letter: string } | null => {
+    const match = new RegExp(`^([ \\t]*)([${LOWER}${UPPER}])[.)][ \\t]+`).exec(line);
+    return match ? { indent: match[1].length, letter: match[2] } : null;
+  };
+  const nextLetter = (one: string, other: string): boolean => Math.abs(one.charCodeAt(0) - other.charCodeAt(0)) === 1
+    && (one === one.toLowerCase()) === (other === other.toLowerCase());
+  const listLines = markPageBreaks(withMathPlaceholders).split('\n');
+  const lettered = listLines.map((line, index) => {
+    const item = latinItem(line);
+    if (!item) return false;
+    return [index - 1, index + 1].some((neighbour) => {
+      const other = listLines[neighbour] === undefined ? null : latinItem(listLines[neighbour]);
+      return Boolean(other && other.indent === item.indent && nextLetter(item.letter, other.letter));
+    });
+  });
+  const grow = new RegExp(`^([ \\t]*)(${MARKER})([.)])[ \\t]+`);
+  const normalizedLists = listLines.map((line, index) => line.replace(grow, (whole, indent: string, marker: string, punctuation: string) => {
+    if (latinItem(line) && !lettered[index]) return whole;
+    const parsed = parseMarker(marker);
     // A letter marker becomes its place in the run for the parser's sake, and
     // is drawn back as the letter: `الف.` is `1.` to marked and `الف` to the
-    // reader. `۲.` goes the same road and stops at the Persian digits.
-    const latin = parsed ? formatDigits(parsed.number, 'latin') : number;
+    // reader. `۲.` goes the same road and stops at its own digits.
+    const latin = parsed ? formatDigits(parsed.number, 'latin') : marker;
     return `${indent}${latinDigits(latin)}${punctuation} `;
-  });
+  })).join('\n');
   const { text: normalizedTables, origin } = ensureTableSeparators(normalizedLists);
   const tableAlignments = extractTableAlignments(normalizedTables);
 
@@ -323,7 +333,7 @@ export function renderMarkdown(source: string): string {
   // over a megabyte of HTML — quadratic, and the biggest single cost of
   // opening such a note. A function replacement also keeps the formula
   // literal: a string replacement would read $& and $1 inside KaTeX's output.
-  safe = safe.replace(/<(span|div) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
+  safe = safe.replace(/<(span|div|pre) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
   const document = new DOMParser().parseFromString(safe, 'text/html');
   document.querySelectorAll<HTMLElement>('.md-section[data-sec]').forEach((element) => {
     const section = sections[Number(element.dataset.sec)];
@@ -333,17 +343,34 @@ export function renderMarkdown(source: string): string {
       target.dataset.line = String(sourceLine(from));
       target.dataset.lines = String(Math.max(1, sourceLine(to) - sourceLine(from)));
     };
-    const list = section.token.type === 'list' ? element.querySelector(':scope > ul, :scope > ol') : null;
-    const items = list ? [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[] : [];
-    const rawItems = section.token.type === 'list' ? (section.token as Token & { items: Array<{ raw: string }> }).items : [];
-    if (list && items.length === rawItems.length) {
-      let itemLine = section.start;
+    // Each `<li>` is tagged with the line its own marker was written on, and a
+    // nested list is walked too: an item of it is an item of the note, with a
+    // line of its own (what the reading view reads its marker from, and what
+    // the scroll passes through).
+    type ListToken = Token & { items: Array<{ raw: string; tokens?: Token[] }> };
+    const tagList = (token: ListToken, list: Element, start: number, end: number): boolean => {
+      const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
+      if (items.length !== token.items.length) return false;
+      let itemLine = start;
       items.forEach((item, index) => {
-        const next = itemLine + newlines(rawItems[index].raw);
-        tag(item, itemLine, index === items.length - 1 ? section.end : next);
+        const raw = token.items[index].raw ?? '';
+        const next = itemLine + newlines(raw);
+        tag(item, itemLine, index === items.length - 1 ? end : next);
+        const parts = token.items[index].tokens ?? [];
+        const nested = parts.find((one) => one.type === 'list') as ListToken | undefined;
+        const nestedList = nested ? item.querySelector(':scope > ul, :scope > ol') : null;
+        if (nested && nestedList) {
+          // Where the nested list begins: the lines of everything the item
+          // wrote before it.
+          const before = parts.slice(0, parts.indexOf(nested)).reduce((total, one) => total + newlines(one.raw ?? ''), 0);
+          tagList(nested, nestedList, itemLine + before, next);
+        }
         itemLine = next;
       });
-    } else {
+      return true;
+    };
+    const list = section.token.type === 'list' ? element.querySelector(':scope > ul, :scope > ol') : null;
+    if (!list || !tagList(section.token as ListToken, list, section.start, section.end)) {
       tag(element, section.start, section.end);
     }
     // A first height for the reading view before it has been laid out: one
@@ -352,24 +379,38 @@ export function renderMarkdown(source: string): string {
     const lines = Number(element.dataset.lines);
     if (lines > 0) element.style.setProperty('contain-intrinsic-block-size', `auto ${(lines * 1.85).toFixed(1)}em`);
   });
-  document.querySelectorAll('ol').forEach((list, index) => {
-    const style = orderedStyles[index];
-    if (!style) return;
-    const letters = style.alphabet === 'abjad' || style.alphabet === 'abpats'
-      ? orderOf(style.letters.map((token, at) => ({ index: at, token })))
+  // A list is drawn from its own markers, read back from the lines they were
+  // written on: every item shows the marker the writer typed — `الف` stays
+  // `الف`, `٣` stays `٣` — and the head's marker decides whether the list is
+  // drawn at all (an English list is the platform's own). Matching lists to
+  // lines by position, as this used to, went wrong the moment a note held
+  // another list, a nested one, or two lists a blank line was all that
+  // separated: the styles landed on the wrong <ol> and the list came out in
+  // English numbers.
+  const sourceLines = withoutFrontMatter.split('\n');
+  const markerOn = (line: number): string | null => {
+    const match = new RegExp(`^[ \\t]*(${MARKER})[.)][ \\t]+`).exec(sourceLines[line] ?? '');
+    return match ? match[1] : null;
+  };
+  document.querySelectorAll('ol').forEach((list) => {
+    const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
+    const tokens = items.map((item) => markerOn(Number(item.dataset.line)));
+    // The first marker that is not English decides what the list is drawn
+    // with; a list of English numbers is the platform's own and is left alone.
+    const parsed = tokens.map((token) => (token ? parseMarker(token) : null)).find((one) => one && one.alphabet !== 'latin') ?? null;
+    if (!parsed) return;
+    // Which of the two Persian orders: whatever the letters typed in the list
+    // say, exactly as the editor reads them.
+    const order = parsed.alphabet === 'abjad' || parsed.alphabet === 'abpats'
+      ? orderOf(tokens.flatMap((token, index) => (token ? [{ index, token }] : [])))
       : null;
-    // Persian and Arabic-Indic digits are both drawn in Persian digits; an
-    // English list is the platform's own and is left alone.
-    const digits = style.alphabet === 'persian' || style.alphabet === 'arabic';
-    if (!digits && !letters) return;
+    const alphabet: Alphabet = order ?? parsed.alphabet;
     list.classList.add('persian-ordered');
-    // The list's own start is the writer's first number, not always one.
+    if (alphabet !== 'persian' && alphabet !== 'arabic') list.classList.add('lettered-ordered');
+    // Only an item whose own line has no marker falls back to counting.
     const start = Number(list.getAttribute('start') ?? '1') || 1;
-    if (letters) list.classList.add('lettered-ordered');
-    list.querySelectorAll(':scope > li').forEach((item, itemIndex) => {
-      item.setAttribute('data-persian-number', letters
-        ? formatMarker(start + itemIndex, letters)
-        : toPersian(start + itemIndex));
+    items.forEach((item, index) => {
+      item.setAttribute('data-persian-number', tokens[index] ?? formatMarker(start + index, alphabet));
     });
   });
   document.querySelectorAll('table').forEach((table, tableIndex) => {
@@ -444,10 +485,6 @@ function latinDigits(value: string): string {
     const persian = '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit);
     return String(persian >= 0 ? persian : '٠١٢٣٤٥٦٧٨٩'.indexOf(digit));
   });
-}
-
-function toPersian(number: number): string {
-  return String(number).replace(/[0-9]/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[Number(digit)]);
 }
 
 function extractTableAlignments(source: string): Array<Array<'left' | 'center' | 'right'>> {

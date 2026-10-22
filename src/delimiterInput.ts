@@ -99,6 +99,11 @@ function displayBlock(state: EditorState, from: number, to: number) {
   };
 }
 
+/** A display formula that cannot have a line of its own — inside a list item,
+ *  or after text on the line — is still worth its delimiters: `$$ | $$`, a
+ *  space either side of the caret for the writer to fill in. */
+const SPACED_MATH = '$$  $$';
+
 function insertForRange(state: EditorState, range: SelectionRange, text: string) {
   const { from, to } = range;
   const literal = () => ({ changes: { from, to, insert: text }, range: EditorSelection.cursor(from + text.length) });
@@ -131,6 +136,7 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
     if (mark === '$') {
       const block = displayBlock(state, pair.from, pair.to);
       if (block) return block;
+      return { changes: { from: pair.from, to: pair.to, insert: SPACED_MATH }, range: EditorSelection.cursor(pair.from + 3) };
     }
     return {
       changes: { from: pair.from, to: pair.to, insert: next + next },
@@ -148,10 +154,17 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
 
   const closing = closingAt(state, from, mark);
   if (closing >= 0) return { range: EditorSelection.cursor(Math.min(closing, from + text.length)) };
-  if (inMath(state, from)) return literal();
 
   const before = state.sliceDoc(Math.max(0, from - 1), from);
   const after = state.sliceDoc(to, to + 1);
+  // The second `$` of a `$$` written by hand — the first stood after a word,
+  // where no pair opens — and a display block cannot have a line of its own
+  // here: the two are written with room around the caret. A `$` that closes a
+  // formula, or one inside an open one, is an ordinary dollar and stays one.
+  if (text === '$' && before === '$' && closingMathDelimiter(state, from - 1) < 0 && !inMath(state, from - 1)) {
+    return { changes: { from: from - 1, to, insert: SPACED_MATH }, range: EditorSelection.cursor(from + 2) };
+  }
+  if (inMath(state, from)) return literal();
   // No accidental formatting in snake_case, prices, escapes, or mid-word.
   if (/[\p{L}\p{N}_]/u.test(before) || (after && !/[\s)\]}.,;:!?،؛»]/.test(after))) return literal();
   // The second `=` (or `~`): the writer has just typed one, so this one opens
@@ -169,6 +182,7 @@ function insertForRange(state: EditorState, range: SelectionRange, text: string)
   if (text === '$$') {
     const block = displayBlock(state, from, to);
     if (block) return block;
+    return { changes: { from, to, insert: SPACED_MATH }, range: EditorSelection.cursor(from + 3) };
   }
   // Three backticks in one input event are the same fence the third press
   // makes: the run ends there, no closing half is inserted, and Enter opens
