@@ -7,7 +7,7 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc
 
-- [ ] no dual pane in horizontal, can be done right now, but in big screens text shouldn't cling to the sides of the screen
+- [x] no dual pane in horizontal, can be done right now, but in big screens text shouldn't cling to the sides of the screen (done in this round: there is no dual pane at any width. One pane, reading and editing are modes of it, as in Obsidian — whose mobile app is one leaf and whose `readableLineLength` keeps the text in a 700px centred column. `.workspace` is `display: block`, the old `grid-template-columns: 1fr 1fr` above 760px is gone, and the measured column at 2400px is 700px with 848px of margin each side)
 
 - [ ] image adding and image editing (mostly crop)
 
@@ -35,6 +35,8 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [ ] possibly open PDFs too, a great idea would be to have something open dual panes manually so one could both read a PDF or any other file and write it down in the text bar, maybe something at the top, would really help me personally, but would not load the entire pdf at once to keep the app light. Overlay over text area to not touch it would probably be an optimal solution
 
+- [ ] opened pdf or other files have the option to crop a part of it and insert that into notes
+
 - [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
 
 - [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
@@ -43,29 +45,69 @@ APK. Lint and GitHub stay deferred. Do not invent extra items.
 
 - [x] display math (and maybe code, though I haven't tested that) in new lines when empty, the caret sticks to the right instead of left, when there's $$ $$ with one line between, the empty line caret sticks to right (done in this patch: an empty line whose nearest lines above and below are both not-prose — math, code, indented code — takes their direction and not the line above it, so its caret sits at the left; an empty line against prose still follows the prose)
 
-- [ ] search doesn't show the current result (like 5/8) highlighted or anything, would be good if that happened
+- [ ] search doesn't show the current result (like 5/8) highlighted or anything, would be good if that happened (the count and the ring are in the code — `src/findBar.ts` writes "3 / 12" into the field and rings the current match — so what is left is a visibility/layout bug on the phone, not a missing feature)
 
 - [ ] search in normal might need thought, the sidebar search is usually better and normal has very little use cases
+
+- [x] select lines, currently there's no space between selections (finally) but each selection is rounded a tiny bit, and places where it starts together it looks bad, very tiny, but unappealing (done in this round: the radius was 2px on every painted row rect, so ten selected rows scalloped both edges at every line boundary. Now 0 — Obsidian's selection is a plain background colour with no radius in any of its rules, which is what makes a run of rows read as one shape. Measured: Ctrl+A on a note paints 45 rects, all 0px)
+
+- [x] default line numbers disabled (done in this round: `DEFAULTS.lineNumbers` is false, matching Obsidian's `showLineNumber: false`. Only the default moved — a stored choice is never rewritten, so an existing reader keeps whatever they have)
+
+- [x] calendar first day of week Saturday, or options for it (done in this round: a setting, all seven days, default Saturday, labelled in the Dates language. The picker used to read `Intl.Locale.weekInfo.firstDay`, which is the device's week — an English phone started the week on Monday while the writer's calendar starts it on Saturday, and no setting could fix it. Nothing reads the device now; a test forces `weekInfo` to 1 and asserts Saturday still wins)
+
+- [ ] some times after being gone, it doesn't open a new tab, I don't know why
+
+- [ ] the app splash screen launch, I'm not sure it works properly, might need further testing
+
+- [ ] nested lists
+
+- [ ] in Persian RTL, the numbered lists, the number is on the right of the number
+
+- [ ] numbers should be RTL, should they not?
+
+- [ ] scroll up issue happened again once, happens less but happened once (scroll up issue happens, much less often but at least once a day)
+
+- [ ] search results are weird
+
+- [ ] I think I'm making the RTL LTR rules too complex, they should be much simpler, needs thought, I need to check was Obsidian does for it, or any other oss app, or literally any text field (answered by reading Obsidian's bundle: its whole editor policy is `dir(line) = firstStrong(prefixStripped(line)) ?? dir(line above) ?? "auto"` written onto each line, and the reading view is `unicode-bidi: plaintext` in CSS. No voting, no heading-boundary stack, no section consensus — only the "carry from the line above" survives, which is what this app already has. The simplification is a deletion, not a redesign)
+
+- [x] the right and left of tables in RTL mode should mirror the left one, sources use ---: to mark right but in RTL that becomes the opposite and is unintuitive, that one aspect should follow LTR while keeping everything else (settled without a change: the code already does the physical thing — `extractTableAlignments` maps `---:` to "right" and the CSS is physical, so the marker never mirrors while the column order does. Checked against an A/B render and confirmed: physical is what was wanted, so this needs no work)
+
+- [ ] opening URLs should have a warning I believe, and ask to open app or site and have a copy option, be nice
+
+- [ ] html in preview would be epic, at minimum in export
+
+- [ ] code syntax highlighting like obsidian
+
+- [ ] app launch is slow on big files even after "away time", I think maybe the order of checking is bad
+
+- [ ] would be great if in source mode there was a background process that converted the math and tables and stuff (didn't display, just prepare) so the edit to preview mode would switch faster, doesn't need a full page rebuild probably, should definitely be a background process
+
+- [ ] tab numbers thing is still broken, in two digits it's touching and in single digits it's not centered, maybe it needs to be smaller though
+
+- [ ] math split needs a bit thought, it's great overall but in some places it's not great
+
+- [ ] maybe remove the spaces thing of math, I usually use \text{} and I believe that handles it, needs feedback
 
 ## claimed fixes, needs testing
 
 The fix is in the tree and the phone is what confirms it. Nothing leaves this section until the writer has seen it on the device.
 
-- [ ] when scrolling up, sometimes (less than half, usually on app open and changing files) the android status bar flashes but if you go down a bit, it gets fixed when going up again. Very strange (claim to be fixed, needs testing on APK) (the fix is in this round: the bars move once per beat and only for a real move, and the Android side asks the window before asking for a bar again — tests/navAutoHide.spec.ts)
+- [x] when scrolling up, sometimes (less than half, usually on app open and changing files) the android status bar flashes but if you go down a bit, it gets fixed when going up again. Very strange (claim to be fixed, needs testing on APK) (the fix is in this round: the bars move once per beat and only for a real move, and the Android side asks the window before asking for a bar again — tests/navAutoHide.spec.ts)
 
-- [ ] the ✓ button for file name to first line is a bit jumpy, would be great if it were possible for it to work normally (might possibly be a lag with file creation, enter on existing files has no delay, web is smooth but APK lags) (one time I didn't lag, I don't know the reason of it) (claim to be fixed, needs APK testing) (the fix is in this round: the rename is one awaited call, the note is never held read-only, and the save is chained to the move)
+- [x] the ✓ button for file name to first line is a bit jumpy, would be great if it were possible for it to work normally (might possibly be a lag with file creation, enter on existing files has no delay, web is smooth but APK lags) (one time I didn't lag, I don't know the reason of it) (claim to be fixed, needs APK testing) (the fix is in this round: the rename is one awaited call, the note is never held read-only, and the save is chained to the move)
 
-- [ ] app launch is still weird, shows the main screen twice, once loading the app itself and once the app loading, one screen twice (claim to be fixed, needs testing) (the fix is in this round: the system splash is held until the web app has booted, so the cover's removal is not a second animation)
+- [x] app launch is still weird, shows the main screen twice, once loading the app itself and once the app loading, one screen twice (claim to be fixed, needs testing) (the fix is in this round: the system splash is held until the web app has booted, so the cover's removal is not a second animation)
 
 - [ ] image sizes in print, huge right now (claims to be fixed, needs testing either on APK or on site after I can add images) (the fix is in the tree: an unsized picture is capped at 9 cm tall in print, a size written in the note still wins, and Settings → PDF custom CSS has the last word)
 
-- [ ] bad handling of opening images, it first tries to open as text then the app gets very slow (claims to be fixed, needs testing on APK) (the fix is in this round: a picture is never decoded as text — the plugin returns it as binary with its data URL, and the page never reads its bytes)
+- [x] bad handling of opening images, it first tries to open as text then the app gets very slow (claims to be fixed, needs testing on APK) (the fix is in this round: a picture is never decoded as text — the plugin returns it as binary with its data URL, and the page never reads its bytes)
 
-- [ ] opening an image has a very weird bug and never lets you change the page (I think forever stuck), image opening needs proper handling (claims to be fixed, needs testing on APK) (the fix is in this round: a picture tab holds no text, opens read-only in the reading view, and is never written over)
+- [x] opening an image has a very weird bug and never lets you change the page (I think forever stuck), image opening needs proper handling (claims to be fixed, needs testing on APK) (the fix is in this round: a picture tab holds no text, opens read-only in the reading view, and is never written over)
 
-- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one (claims fix, needs testing on APK) (the fix is in this round: a hand-over is matched by the plugin's source id first, then by the file's name, size and modification time, and a share by the text itself — the road is native-only, so the APK is the confirmation)
+- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one (claims fix, needs testing on APK) (not fixed, no need to add it) (the fix is in this round: a hand-over is matched by the plugin's source id first, then by the file's name, size and modification time, and a share by the text itself — the road is native-only, so the APK is the confirmation)
 
-- [ ] obsidian has a setting where in the left sidebar it always shows the file you're in (regardless of folder depth; the option is at the bottom near new file) (diagnosed: a fresh APK has no saved spaces, so its default scope is "All files"; the old implementation deliberately left that walker's folder unchanged, and the existing follow test only covered a space) (fixed: with the switch on, the All files walker now moves to the current note's parent folder; with it off, the chosen folder is preserved. Browser tests cover a fresh no-space scope, deep paths, tab changes and on/off. APK verification is still pending)
+- [ ] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff) (claims to be done, needs testing on APK) (doesn't work) (unintuitive, can't know if it's on or not, should mimic Obsidian, doesn't open closed folders to show) (diagnosed: a fresh APK has no saved spaces, so its default scope is "All files"; the old implementation deliberately left that walker's folder unchanged, and the existing follow test only covered a space) (fixed: with the switch on, the All files walker now moves to the current note's parent folder; with it off, the chosen folder is preserved. Browser tests cover a fresh no-space scope, deep paths, tab changes and on/off. APK verification is still pending) (Obsidian's own shape, for when this is revisited: `revealActiveFile()` expands EVERY closed folder above the item first, scrolls after that, and queues itself if the drawer is closed — and the toggle is a header button with an active state, not a menu row)
 
 ## deferred for later
 
@@ -80,6 +122,12 @@ The fix is in the tree and the phone is what confirms it. Nothing leaves this se
 - [ ] possible lint/fixer in the app (deferred for later)
 
 - [ ] later add GitHub connection like my markdown editor site, I don't mean sync, I mean read write access in a scope method way to do so (my project implemented it nicely but the UI of that is bad compared to Satr, and it's desktop first rather than mobile app) (deferred for later)
+
+- [ ] settings into parts, a locale part in it too because right now a lot of the settings are simply locales
+
+- [ ] have option to sort toolbar stuff
+
+- [ ] maybe be able to have a quick note or something, needs thought, I think Obsidian has a daily thing perhaps (Obsidian's answer: the `daily-notes` core plugin — one command, a folder, a date format and a template, `getDailyNote()`. No UI beyond a toolbar button)
 
 ## note lint criteria
 
