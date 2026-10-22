@@ -118,7 +118,16 @@ const isExternalPath = (path: string): boolean => path.startsWith(EXTERNAL_PATH_
 const externalPath = (id: string, name: string): string => `${EXTERNAL_PATH_PREFIX}${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
 const displayNameForPath = (path: string): string => {
   const external = externalFilesByPath.get(path);
-  return external ? (external.name.replace(/\.[^.]+$/, '') || external.name) : stem(path);
+  if (external) return external.name.replace(/\.[^.]+$/, '') || external.name;
+  // A handed-over path is a token (satr-open://<id>/<name>), not a place: its
+  // last part is the file's own name, escaped. Read it back, so a tab left
+  // over from a previous run still says what it is instead of its token.
+  if (isExternalPath(path)) {
+    let name = path.slice(path.lastIndexOf('/') + 1);
+    try { name = decodeURIComponent(name); } catch { /* not escaped: as is */ }
+    return name.replace(/\.[^.]+$/, '') || name;
+  }
+  return stem(path);
 };
 /** Any file opens: Satr shows what a picture or a binary contains as text if
  *  it must (see looksBinary). Only a file too large to load is refused. */
@@ -1868,10 +1877,11 @@ async function runEmptySearch(): Promise<void> {
   // from the note list that is already here — no extra read — and a folder is
   // only offered while it holds notes, which is what a search over notes can
   // know.
-  const nameFiles = notes.filter((note) => stem(note.path).toLocaleLowerCase().includes(needle))
+  const nameFiles = notes.filter((note) => displayNameForPath(note.path).toLocaleLowerCase().includes(needle))
     .map((note) => note.path).sort((a, b) => a.localeCompare(b)).slice(0, EMPTY_NAMES_MAX);
   const dirs = new Set<string>();
   for (const note of notes) {
+    if (isExternalPath(note.path)) continue; // a token, not a folder to offer
     for (let dir = dirname(note.path); dir; dir = dirname(dir)) dirs.add(dir);
   }
   const nameFolders = [...dirs]
@@ -1899,7 +1909,7 @@ async function runEmptySearch(): Promise<void> {
   const nameGroup = named
     ? `<div class="empty-state-group"><div class="empty-state-group-title">Files and folders</div>`
       + nameFiles.map((path) => `<button type="button" class="empty-state-hit" data-hit-note="${escapeText(path)}">`
-        + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${mark(stem(path))}</span>`
+        + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${mark(displayNameForPath(path))}</span>`
         + (folders.get(path) ? `<span class="search-result-file-path" dir="auto">${escapeText(folders.get(path)!)}</span>` : '')
         + `</span></button>`).join('')
       + nameFolders.map((dir) => `<button type="button" class="empty-state-hit" data-hit-folder="${escapeText(dir)}">`
@@ -1911,7 +1921,7 @@ async function runEmptySearch(): Promise<void> {
   const contentGroup = hits.length
     ? `<div class="empty-state-group"><div class="empty-state-group-title">In notes</div>`
       + hits.map((hit) => `<button type="button" class="empty-state-hit" data-hit-note="${escapeText(hit.path)}" data-hit-from="${hit.from}" data-hit-to="${hit.to}">`
-      + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${escapeText(stem(hit.path))}</span>`
+      + `<span class="empty-state-hit-title"><span class="empty-state-recent-name" dir="auto">${escapeText(displayNameForPath(hit.path))}</span>`
       + (hit.folder ? `<span class="search-result-file-path" dir="auto">${escapeText(hit.folder)}</span>` : '')
       + `</span><span class="empty-state-hit-line" dir="auto">${escapeText(hit.text.trimStart()).replace(pattern, (m) => `<span class="search-result-file-matched-text">${escapeText(m)}</span>`)}</span></button>`).join('')
       + `</div>`
@@ -2249,8 +2259,12 @@ async function folderPathLabels(dirs: readonly string[]): Promise<Map<string, st
   return out;
 }
 async function folderLabels(paths: readonly string[]): Promise<Map<string, string>> {
-  const labels = await folderPathLabels([...new Set(paths.map((path) => dirname(path)))]);
-  return new Map(paths.map((path) => [path, labels.get(dirname(path)) ?? dirname(path)]));
+  // A file another app handed over sits in no folder of the vault — its path
+  // is a token — so a result row for it shows its name and nothing under it.
+  const inVault = paths.filter((path) => !isExternalPath(path));
+  const labels = await folderPathLabels([...new Set(inVault.map((path) => dirname(path)))]);
+  return new Map(paths.map((path) => [path,
+    isExternalPath(path) ? '' : labels.get(dirname(path)) ?? dirname(path)]));
 }
 function sidebarGoToLine(line: number): void {
   ownScroll(400);
@@ -2284,6 +2298,9 @@ const sidebar = createRightSidebar(rightPanel, {
   notes: allNotes,
   currentPath: () => filePath,
   currentText: () => editor.getValue(),
+  // A note another app handed over is open at a token, not at a path: the
+  // rows ask for its real name rather than reading "satr-open" out of it.
+  externalName: (path) => (isExternalPath(path) ? displayNameForPath(path) : null),
   noteDir: () => majorityDirection(editor.getValue()),
   scopeName: () => scopeName(currentScope()),
   // The folder the note list was taken from, so a result can say where it

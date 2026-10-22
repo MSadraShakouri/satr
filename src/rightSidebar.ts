@@ -45,6 +45,10 @@ export interface SidebarDeps {
   onFolder(path: string): void;
   /** The current note's majority direction; the whole tree flips for it. */
   noteDir(): 'ltr' | 'rtl';
+  /** The name of a note another app handed over — its path is a token
+   *  (satr-open://…), so the rows cannot read a name out of it. Null for an
+   *  ordinary note, which is named by its path as always. */
+  externalName?(path: string): string | null;
 }
 export type SearchScope = 'note' | 'all';
 
@@ -115,10 +119,13 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   // rest follow the default (only the current note is open).
   const touched = new Set<string>();
   let headings: Heading[] = [];
+  /** What a row calls a note: the file's own name where another app handed
+   *  it over, the name in the path everywhere else. */
+  const nameOf = (path: string): string => deps.externalName?.(path) ?? stem(path);
 
   function renderChrome(): void {
     viewName.textContent = scope === 'note' ? 'Outline' : 'Search';
-    noteName.textContent = scope === 'note' ? stem(deps.currentPath()) : deps.scopeName();
+    noteName.textContent = scope === 'note' ? nameOf(deps.currentPath()) : deps.scopeName();
     // The note's own size, under its name: its words and its characters, read
     // from the live text so the line keeps step with the writer (the panel
     // refreshes on the same beat as the outline). The all-notes scope names
@@ -249,7 +256,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const current = deps.currentPath();
     const notes = await deps.notes();
     if (mine !== run) return; // a newer search started meanwhile
-    notes.sort((a, b) => (a.path === current ? -1 : b.path === current ? 1 : stem(a.path).localeCompare(stem(b.path))));
+    notes.sort((a, b) => (a.path === current ? -1 : b.path === current ? 1 : nameOf(a.path).localeCompare(nameOf(b.path))));
     const headingsOf = (note: { path: string; text: string }): Heading[] => (note.path === current ? deps.headings() : headingsOfText(note.text));
     // Names are reused across folders, so a result says which folder it is in:
     // the path relative to the root being searched, in small faint text after
@@ -289,10 +296,11 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     if (nameRe) {
       for (const note of notes) {
         if (fileMatches.length >= MAX_NAMES) break;
-        if (nameRe.test(stem(note.path))) fileMatches.push(note.path);
+        if (nameRe.test(nameOf(note.path))) fileMatches.push(note.path);
       }
       const seenFolders = new Set<string>();
       for (const note of notes) {
+        if (deps.externalName?.(note.path)) continue; // a token, not a folder
         for (let dir = dirname(note.path); dir; dir = dirname(dir)) {
           if (dir === root || seenFolders.has(dir)) continue;
           seenFolders.add(dir);
@@ -317,15 +325,18 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       }
       shortened.set(relative, shortenPath(relative, (at) => siblings.get(at) ?? null, { base, anchor: true }));
     };
-    for (const note of notes) await shortenDir(dirname(note.path));
+    for (const note of notes) if (!deps.externalName?.(note.path)) await shortenDir(dirname(note.path));
     for (const dir of folderMatches) await shortenDir(dir);
     const noteRow = (path: string, flair: string, children: string): string => {
       const key = `n:${path}`;
-      const folder = shortened.get(folderOf(path)) ?? folderOf(path);
+      // Handed over by another app: its own name, and no folder under it —
+      // the path it is open at is a token and would read "satr-open".
+      const external = deps.externalName?.(path) ?? null;
+      const folder = external ? '' : shortened.get(folderOf(path)) ?? folderOf(path);
       return `<div class="tree-item search-result${collapsed.has(key) ? ' is-collapsed' : ''}" data-key="${escapeHtml(key)}">`
         + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(path)}">`
         + (children ? `<span class="tree-item-icon collapse-icon" data-toggle="${escapeHtml(key)}">${ICONS.chevron}</span>` : '')
-        + `<span class="tree-item-inner" dir="auto">${escapeHtml(stem(path))}</span>`
+        + `<span class="tree-item-inner" dir="auto">${escapeHtml(external ?? stem(path))}</span>`
         + (folder ? `<span class="search-result-file-path" dir="auto">${escapeHtml(folder)}</span>` : '')
         + `${flair}</div>`
         + (children ? `<div class="tree-item-children">${children}</div>` : '') + '</div>';
@@ -377,10 +388,10 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         + `<div class="search-result-group-title">Files and folders</div>`
         + fileMatches.map((path) => {
           const dir = dirname(path);
-          const relative = folderOf(path);
+          const relative = deps.externalName?.(path) ? '' : folderOf(path);
           return `<div class="tree-item search-result" data-key="f:${escapeHtml(path)}">`
             + `<div class="search-result-file-title tree-item-self is-clickable" data-note="${escapeHtml(path)}">`
-            + `<span class="tree-item-inner" dir="auto">${markText(stem(path), nameRe!)}</span>`
+            + `<span class="tree-item-inner" dir="auto">${markText(nameOf(path), nameRe!)}</span>`
             + (relative ? `<span class="search-result-file-path" dir="auto">${escapeHtml(shortened.get(relative) ?? relative)}</span>` : '')
             + `</div></div>`;
         }).join('')

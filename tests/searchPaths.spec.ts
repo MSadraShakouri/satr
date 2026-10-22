@@ -211,3 +211,60 @@ test('a name row opens the note, and the note scope stays content-only', async (
   await panel.locator('.vault-search').fill('solo');
   await expect(panel.locator('.search-result-group')).toHaveCount(0);
 });
+
+test('a file another app handed over is named, not "satr-open"', async ({ page }) => {
+  // Its path is a token (satr-open://<id>/<name>), not a place, so the rows
+  // ask the app what to call it: the file's own name, and no folder line
+  // under it — the token used to be shortened like a path and came out as
+  // the folder "satr-open". The road from another app is native-only, so the
+  // sidebar is mounted here directly with the same dependency the app gives
+  // it (src/main.ts: externalName).
+  await page.goto('/');
+  const out = await page.evaluate(async () => {
+    const { createRightSidebar } = await window.__satr.load('/src/rightSidebar.ts');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const handed = `satr-open://tmp-1/${encodeURIComponent('homework draft.md')}`;
+    const sidebar = createRightSidebar(host, {
+      headings: () => [],
+      currentLine: () => 0,
+      onHeading: () => {},
+      notes: async () => [
+        { path: 'Notes/Physics/lecture 1.md', text: 'the needle is here\n' },
+        { path: handed, text: 'the needle is in the handed-over one too\n' },
+      ],
+      currentPath: () => handed,
+      currentText: () => 'the needle is in the handed-over one too\n',
+      scopeName: () => 'All files',
+      rootPath: () => '',
+      folderNames: async () => null,
+      onResult: () => {},
+      onFolder: () => {},
+      noteDir: () => 'ltr' as const,
+      externalName: (path: string) => (path.startsWith('satr-open://')
+        ? decodeURIComponent(path.slice(path.lastIndexOf('/') + 1)).replace(/\.[^.]+$/, '')
+        : null),
+    });
+    sidebar.setScope('all');
+    const input = host.querySelector<HTMLInputElement>('.vault-search')!;
+    input.value = 'needle';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((done) => window.setTimeout(done, 600));
+    const rows = [...host.querySelectorAll<HTMLElement>('.search-result-file-title')].map((row) => ({
+      path: row.getAttribute('data-note') ?? '',
+      name: row.querySelector('.tree-item-inner')?.textContent ?? '',
+      folder: row.querySelector('.search-result-file-path')?.textContent ?? '',
+    }));
+    const header = host.querySelector('.drawer-note-name')?.textContent ?? '';
+    host.remove();
+    return { rows, header, handed };
+  });
+  const handed = out.rows.find((row) => row.path.startsWith('satr-open://'));
+  expect(handed, 'the handed-over note is in the results').toBeTruthy();
+  expect(handed!.name).toBe('homework draft');
+  expect(handed!.folder, 'a token is not a folder').toBe('');
+  const vault = out.rows.find((row) => !row.path.startsWith('satr-open://'));
+  expect(vault!.name, 'an ordinary note is unchanged').toBe('lecture 1');
+  expect(vault!.folder).toBe('Notes/Physics');
+  expect(out.rows.some((row) => row.name.includes('satr-open') || row.folder.includes('satr-open'))).toBe(false);
+});
