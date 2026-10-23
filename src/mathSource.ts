@@ -13,12 +13,7 @@
 import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type MathSpan } from './mathScan';
 import { StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-// StringStream from the package the legacy modes are typed against: the
-// copy @codemirror/language re-exports is the same class, but TypeScript
-// counts the two declarations as different types.
-import { StringStream } from '@codemirror/streamparser';
-import { stexMath } from '@codemirror/legacy-modes/mode/stex';
-import { mathError } from './math';
+import { mathFault } from './math';
 
 /** Every math span of the document, cached until the text changes. The
  * preview's renderMarkdown() computes the same spans from the same source. */
@@ -41,78 +36,186 @@ export function inCode(state: EditorState, pos: number): boolean {
 
 const mathText = Decoration.mark({ class: 'cm-math' });
 const mathDelim = Decoration.mark({ class: 'cm-math-delim' });
+const mathDelimWrong = Decoration.mark({ class: 'cm-math-delim cm-math-delim-wrong' });
 
 // ---- What the formula is made of ----
-// Obsidian runs CodeMirror's `stex` mode over its math source and colours
-// the tokens from its --code-* palette; this is that, token for token. The
-// mode has two faces and the difference is the whole point: plain `stex` is
-// the document mode, which only ever sees commands and braces, while
-// `stexMath` is the one inside the dollars — it tells a subscript from a
-// superscript, a variable from a number, an alignment & from a stray \\.
-// Obsidian's own map, read out of its app.css:
-//   .cm-tag → --code-tag          \frac, \alpha, _, ^, &
-//   .cm-bracket → --code-punctuation
-//   .cm-number → --code-value
-//   .cm-variable-2 → --code-property
-//   .cm-string → --code-string    .cm-comment → --code-comment
-//   .cm-builtin → --code-function .cm-keyword → --code-keyword
-//   .cm-error → --text-error
-// The monospace italic the formula already had stays underneath all of it.
-const TOKEN_CLASS: Record<string, string> = {
-  tag: 'cm-math-command',
-  bracket: 'cm-math-brace',
-  number: 'cm-math-number',
-  atom: 'cm-math-number',
-  variableName: 'cm-math-name',
-  string: 'cm-math-string',
-  comment: 'cm-math-comment',
-  keyword: 'cm-math-keyword',
-  builtin: 'cm-math-builtin',
-  operator: 'cm-math-operator',
-  error: 'cm-math-wrong',
-};
+// A code fence is colourful because a language has many KINDS of word:
+// keywords, strings, numbers, comments, types, functions. Run CodeMirror's
+// `stex` over a formula — which is what Obsidian does — and almost
+// everything comes back as one kind, "tag": \frac, \alpha, \sum, _ and ^ are
+// all the same red, `+` and `=` get no colour at all, and the formula ends
+// up two hues and some grey. That is the whole of Obsidian's math colouring
+// too, so matching it exactly was always going to look thin next to the
+// fence sitting above it.
+//
+// LaTeX does have the kinds; they are just not in the token name, they are
+// in which command it is. So the formula is read here, and a backslash word
+// is placed in one of three families:
+//
+//   structure   \begin \end \left \right \big \displaystyle   --code-keyword
+//   functions   \frac \sqrt \sum \int \lim \text \mathbb      --code-function
+//   symbols     \alpha \infty \to \leq \cdot \partial         --code-important
+//
+// ...and the rest of the formula gets the same palette the reading view
+// gives code, with the names Obsidian uses for them:
+//
+//   numbers     1  3.14  ۴۲          --code-value
+//   variables   x  y  n              --code-property
+//   _ ^ & \\                         --code-tag
+//   + - = < > | '                    --code-operator
+//   { } [ ] ( ) , ;                  --code-punctuation
+//   % to end of line                 --code-comment
+//   what is inside \text{…}, and the environment name in \begin{…}
+//                                    --code-string
+//
+// Seven hues in a formula where there were two. This is deliberately denser
+// than Obsidian: Obsidian's own source math is the sparse version, and the
+// ask was for the fence's density, not for Obsidian's.
+const STRUCTURE = new Set(('begin end left right middle over atop choose above brace brack'
+  + ' big Big bigg Bigg bigl Bigl biggl Biggl bigr Bigr biggr Biggr bigm Bigm biggm Biggm'
+  + ' displaystyle textstyle scriptstyle scriptscriptstyle limits nolimits substack'
+  + ' hline hdashline cline newline cr noalign').split(' '));
+const FUNCTIONS = new Set(('frac dfrac tfrac cfrac genfrac binom dbinom tbinom brace brack'
+  + ' sqrt root overline underline overbrace underbrace overset underset stackrel'
+  + ' hat widehat tilde widetilde bar vec overrightarrow overleftarrow dot ddot acute grave'
+  + ' breve check mathring boxed fbox colorbox fcolorbox color textcolor phantom hphantom vphantom'
+  + ' mathbb mathbf mathcal mathfrak mathrm mathit mathsf mathtt mathnormal boldsymbol bm pmb'
+  + ' text textbf textit textrm texttt textsf textnormal operatorname tag label href htmlClass'
+  + ' sum prod coprod int iint iiint iiiint oint oiint bigcup bigcap bigvee bigwedge bigoplus'
+  + ' bigotimes bigodot biguplus bigsqcup lim limsup liminf max min sup inf arg det gcd deg dim'
+  + ' hom ker Pr exp log ln lg sin cos tan cot sec csc sinh cosh tanh coth arcsin arccos arctan'
+  + ' sgn mod bmod pmod pod').split(' '));
+/** Commands whose first {…} is words or a name, not a formula: it reads as a
+ *  string, the way a fence's quoted text does. \begin{matrix} is the same
+ *  shape — the environment is named, not computed. */
+const TEXTISH = new Set(('begin end text textbf textit textrm texttt textsf textnormal mathrm'
+  + ' operatorname tag label color textcolor href htmlClass htmlId').split(' '));
+
+const TOKEN = 'cm-math-token ';
+const KEYWORD = 'cm-math-keyword';
+const FUNCTION = 'cm-math-function';
+const SYMBOL = 'cm-math-symbol';
+const STRING = 'cm-math-string';
+const NUMBER = 'cm-math-number';
+const NAME = 'cm-math-name';
+const SCRIPT = 'cm-math-script';
+const OPERATOR = 'cm-math-operator';
+const BRACE = 'cm-math-brace';
+const PUNCT = 'cm-math-punct';
+const COMMENT = 'cm-math-comment';
+/** The part KaTeX blames, painted in the error colour INSTEAD of its own —
+ *  not on top of it: two marks over one range leave it to the browser which
+ *  span ends up inside, and the inner one wins whatever the stylesheet says. */
+const WRONG = 'cm-math-wrong';
+
+// Persian and Arabic-Indic digits count as digits: the formula may be
+// written in either (src/math.ts maps them for KaTeX).
+const DIGIT = /[0-9\u06f0-\u06f9\u0660-\u0669]/;
+const LATIN = /[A-Za-z]/;
+const OPERATORS = new Set(['+', '-', '=', '<', '>', '*', '/', '|', "'", '~', ':',
+  '\u00b1', '\u00d7', '\u00f7', '\u2260', '\u2264', '\u2265', '\u2192', '\u2190']);
+const PUNCTUATION = new Set(['{', '}', '[', ']', '(', ')', ',', ';', '.', '!', '?']);
+
+type Token = [number, number, string];
+
+/** The `}` that closes the `{` at `open`, or -1 while it is still being
+ *  written. An escaped brace closes nothing. */
+function braceEnd(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '\\') { i += 1; continue; }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') { depth -= 1; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+function latexTokens(text: string): Token[] {
+  const out: Token[] = [];
+  const push = (from: number, to: number, cls: string): void => { if (to > from) out.push([from, to, cls]); };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    // A comment runs to the end of its line, and takes the line break with
+    // it the way TeX does.
+    if (ch === '%') {
+      const stop = text.indexOf('\n', i);
+      const end = stop < 0 ? text.length : stop;
+      push(i, end, COMMENT);
+      i = end;
+      continue;
+    }
+    if (ch === '\\') {
+      const name = /^[A-Za-z]+/.exec(text.slice(i + 1))?.[0] ?? '';
+      if (!name) {
+        // \\ ends a row; \, \; \! \{ \% are one escaped character.
+        const next = text[i + 1] ?? '';
+        push(i, i + 2, next === '\\' ? SCRIPT : PUNCT);
+        i += 2;
+        continue;
+      }
+      const end = i + 1 + name.length;
+      push(i, end, STRUCTURE.has(name) ? KEYWORD : FUNCTIONS.has(name) ? FUNCTION : SYMBOL);
+      i = end;
+      if (TEXTISH.has(name)) {
+        let at = i;
+        while (text[at] === ' ') at += 1;
+        if (text[at] === '{') {
+          const close = braceEnd(text, at);
+          push(at, at + 1, BRACE);
+          push(at + 1, close < 0 ? text.length : close, STRING);
+          if (close < 0) return out; // still being written: the rest is its word
+          push(close, close + 1, BRACE);
+          i = close + 1;
+        }
+      }
+      continue;
+    }
+    if (ch === '_' || ch === '^' || ch === '&') { push(i, i + 1, SCRIPT); i += 1; continue; }
+    if (DIGIT.test(ch)) {
+      let j = i;
+      // 3.14 and 1,000 are one number; a comma that ends a number is not.
+      while (j < text.length
+        && (DIGIT.test(text[j]) || ((text[j] === '.' || text[j] === ',') && DIGIT.test(text[j + 1] ?? '')))) j += 1;
+      push(i, j, NUMBER);
+      i = j;
+      continue;
+    }
+    if (LATIN.test(ch)) {
+      let j = i;
+      while (j < text.length && LATIN.test(text[j])) j += 1;
+      push(i, j, NAME);
+      i = j;
+      continue;
+    }
+    if (PUNCTUATION.has(ch)) { push(i, i + 1, ch === ',' || ch === ';' || ch === '.' || ch === '!' || ch === '?' ? PUNCT : BRACE); i += 1; continue; }
+    if (OPERATORS.has(ch)) { push(i, i + 1, OPERATOR); i += 1; continue; }
+    i += 1; // spaces, and anything else, keep the formula's own colour
+  }
+  return out;
+}
+
 const tokenMarks = new Map<string, Decoration>();
 function tokenMark(cls: string): Decoration {
   let deco = tokenMarks.get(cls);
   if (!deco) {
-    deco = Decoration.mark({ class: `cm-math-token ${cls}` });
+    deco = Decoration.mark({ class: TOKEN + cls });
     tokenMarks.set(cls, deco);
   }
   return deco;
 }
 /** One formula's tokens as [from, to, class] offsets from its own start,
  *  kept until its text changes: a redraw, a scroll or a caret moving must
- *  not tokenise anything again. */
-const tokenCache = new Map<string, [number, number, string][]>();
+ *  not read anything again. */
+const tokenCache = new Map<string, Token[]>();
 /** Long enough for any formula a note holds; past it the colouring is not
  *  worth the pass (and a pasted blob is not being read anyway). */
 const MAX_TOKENISED = 4000;
-function mathTokens(text: string): [number, number, string][] {
+function mathTokens(text: string): Token[] {
   const hit = tokenCache.get(text);
   if (hit) return hit;
-  const out: [number, number, string][] = [];
-  if (text.length <= MAX_TOKENISED) {
-    const state = stexMath.startState?.(2) ?? {};
-    let at = 0;
-    for (const line of text.split('\n')) {
-      if (line) {
-        const stream = new StringStream(line, 4, 2);
-        // A mode that returns without consuming would spin: every turn of
-        // this loop must move, and the line's own length bounds it.
-        for (let guard = 0; !stream.eol() && guard <= line.length; guard += 1) {
-          const type = stexMath.token(stream, state) ?? '';
-          if (stream.pos === stream.start) stream.pos += 1;
-          // "variableName.special" and the like: the family decides.
-          const cls = TOKEN_CLASS[type.split('.')[0].split(' ')[0]];
-          if (cls) out.push([at + stream.start, at + stream.pos, cls]);
-          stream.start = stream.pos;
-        }
-      } else {
-        stexMath.blankLine?.(state, 2);
-      }
-      at += line.length + 1;
-    }
-  }
+  const out = text.length <= MAX_TOKENISED ? latexTokens(text) : [];
   if (tokenCache.size > 400) tokenCache.clear();
   tokenCache.set(text, out);
   return out;
@@ -121,18 +224,21 @@ function mathTokens(text: string): [number, number, string][] {
 // ---- Whether KaTeX can read it ----
 // renderMath() renders with `throwOnError: false`, so a typo is a red
 // formula in the reading view and in the PDF, and nothing says so while it
-// is being written. mathError() is KaTeX's own verdict on the same text the
-// reading view will be given. KaTeX is in the app's first load either way
-// (the reading view and the PDF both want it), so asking it is a function
-// call, not a download — but it is a parse, so each answer is kept until
-// that formula's text changes, and only what is on screen is ever asked
-// about.
-const verdicts = new Map<string, string | null>();
-function verdict(text: string, display: boolean): string | null {
+// is being written. mathFault() is KaTeX's own verdict on the same text the
+// reading view will be given, plus where in the formula it gave up. KaTeX is
+// in the app's first load either way (the reading view and the PDF both want
+// it), and a verdict on a 90-character formula costs a tenth of a
+// millisecond — so this runs on every keystroke, with no pause to wait
+// through. Each answer is still kept until that formula's text changes, and
+// only what is on screen is ever asked about, so a note full of formulas
+// costs one parse per keystroke, not one per formula.
+type Fault = { message: string; from: number; to: number };
+const verdicts = new Map<string, Fault | null>();
+function verdict(text: string, display: boolean): Fault | null {
   const key = `${display ? 'd' : 'i'}${text}`;
   const known = verdicts.get(key);
-  if (known !== undefined || verdicts.has(key)) return known ?? null;
-  const answer = mathError(text, display);
+  if (known !== undefined) return known;
+  const answer = mathFault(text, display);
   if (verdicts.size > 400) verdicts.clear();
   verdicts.set(key, answer);
   return answer;
@@ -142,23 +248,31 @@ function errorMark(message: string): Decoration {
   let deco = errorMarks.get(message);
   if (!deco) {
     // Colour, not a squiggle: a red underline reads as a spelling mistake,
-    // and this is not prose. The formula goes the colour KaTeX will paint it
-    // in the reading view and in the PDF (--text-error, which is what
-    // Obsidian gives .cm-error too), so the editor is showing what is about
-    // to happen rather than commenting on it. The reason rides along in the
-    // title for anything that can show one.
+    // and this is not prose. The formula keeps a faint red behind it — the
+    // colour KaTeX will paint it in the reading view and in the PDF — its
+    // dollars turn that red, and the piece KaTeX actually choked on is
+    // painted red instead of its own colour. What it does NOT do any more is
+    // take the whole formula red: that threw away the colouring the formula
+    // had just been given, and said "something here is wrong" where it can
+    // say "this". The reason rides in the title.
     deco = Decoration.mark({ class: 'cm-math-error', attributes: { title: message } });
     errorMarks.set(message, deco);
   }
   return deco;
 }
-/** How long the writing has to stop before a half-typed formula is called
- *  wrong. "Math syntax checking while typing" is the ask, but a formula is
- *  wrong for every keystroke of the time it takes to write one, so the
- *  colour waits for the writer to pause rather than following the caret. */
-const TYPING_PAUSE_MS = 700;
 
-function build(view: EditorView, typing = false): DecorationSet {
+/** Where the word under the caret starts. A backslash command is spelled out
+ *  one letter at a time, and \a, \al, \alp are all undefined control
+ *  sequences on the way to \alpha — so a complaint that begins inside the
+ *  word being written waits for the word to end, and nothing else waits for
+ *  anything. Typing the `{` after it is enough; so is a space, a digit, or
+ *  moving the caret away. */
+function writingFrom(text: string, caret: number): number {
+  const word = /\\[A-Za-z]*$/.exec(text.slice(0, caret));
+  return word ? word.index : caret;
+}
+
+function build(view: EditorView): DecorationSet {
   const { state } = view;
   const out: Range<Decoration>[] = [];
   const spans = state.field(mathSpans);
@@ -167,23 +281,41 @@ function build(view: EditorView, typing = false): DecorationSet {
       if (span.to < from || span.from > to) continue;
       const open = span.from + span.delim;
       const close = span.to - span.delim;
-      out.push(mathDelim.range(span.from, open));
       const text = open < close ? state.sliceDoc(open, close) : '';
       // Only the things between the dollars are monospace; an empty pair (the
       // writing line of a block being opened) has nothing between them.
-      if (text.trim()) {
-        // The formula under the caret is only judged once the writing stops:
-        // half of what is being typed is wrong on the way to being right.
-        // Every other formula is judged as it stands.
-        const here = state.selection.ranges.some((range) => range.to >= span.from && range.from <= span.to);
-        const message = here && typing ? null : verdict(text, span.delim > 1);
-        if (message) out.push(errorMark(message).range(open, close));
-        out.push(mathText.range(open, close));
-        for (const [tokenFrom, tokenTo, cls] of mathTokens(text)) {
-          out.push(tokenMark(cls).range(open + tokenFrom, open + tokenTo));
-        }
+      if (!text.trim()) {
+        out.push(mathDelim.range(span.from, open));
+        out.push(mathDelim.range(close, span.to));
+        continue;
       }
-      out.push(mathDelim.range(close, span.to));
+      const fault = verdict(text, span.delim > 1);
+      // Where the caret is inside THIS formula, if it is: the only thing
+      // that holds a complaint back, and only for the word it is in.
+      let caret = -1;
+      for (const range of state.selection.ranges) {
+        if (range.head >= open && range.head <= close) caret = range.head - open;
+      }
+      const writing = caret >= 0 && (fault === null || fault.from < 0 || fault.from >= writingFrom(text, caret));
+      const wrong = fault !== null && !(caret >= 0 && writing);
+      out.push((wrong ? mathDelimWrong : mathDelim).range(span.from, open));
+      if (wrong) out.push(errorMark(fault.message).range(open, close));
+      out.push(mathText.range(open, close));
+      // The blamed range in the formula's own coordinates, clamped: KaTeX
+      // points past the end for "unexpected end of input", and there is
+      // nothing there to paint.
+      const blameFrom = wrong && fault !== null && fault.from >= 0 ? Math.min(fault.from, text.length) : -1;
+      const blameTo = blameFrom < 0 || fault === null ? -1 : Math.min(Math.max(fault.to, blameFrom), text.length);
+      let blamed = false;
+      for (const [tokenFrom, tokenTo, cls] of mathTokens(text)) {
+        const hit = blameFrom >= 0 && tokenFrom < blameTo && tokenTo > blameFrom;
+        blamed = blamed || hit;
+        out.push(tokenMark(hit ? WRONG : cls).range(open + tokenFrom, open + tokenTo));
+      }
+      if (blameFrom >= 0 && blameTo > blameFrom && !blamed) {
+        out.push(tokenMark(WRONG).range(open + blameFrom, open + blameTo));
+      }
+      out.push((wrong ? mathDelimWrong : mathDelim).range(close, span.to));
     }
   }
   // Sorted by where a mark starts, and the widest of those first: a token
@@ -194,33 +326,14 @@ function build(view: EditorView, typing = false): DecorationSet {
 
 const mathDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
-  /** Set while the writing is still going on, so the formula being typed is
-   *  not called wrong between two keystrokes. */
-  private typing = false;
-  private timer = 0;
-  constructor(private view: EditorView) { this.decorations = build(view); }
+  constructor(view: EditorView) { this.decorations = build(view); }
   update(update: ViewUpdate): void {
-    const hasMath = update.state.field(mathSpans).length > 0;
-    if (update.docChanged && hasMath) {
-      this.typing = true;
-      window.clearTimeout(this.timer);
-      // The pause the colour waits for. A measure, not a transaction: the
-      // writer has stopped, nothing in the document has changed, and the
-      // only thing that needs re-reading is the formula they left behind.
-      this.timer = window.setTimeout(() => {
-        this.typing = false;
-        this.decorations = build(this.view, false);
-        this.view.requestMeasure();
-        this.view.dispatch({});
-      }, TYPING_PAUSE_MS);
-    }
-    // The caret moving into a formula and out of it changes which one is
-    // being written, so a selection change counts too — but only in a note
-    // that has math in it at all.
-    const moved = update.selectionSet && hasMath;
-    if (update.docChanged || update.viewportChanged || moved) this.decorations = build(update.view, this.typing);
+    // A selection change counts: the caret leaving the word it was writing
+    // is what lets that word's complaint through, and it is the only thing
+    // the caret still decides.
+    const moved = update.selectionSet && update.state.field(mathSpans).length > 0;
+    if (update.docChanged || update.viewportChanged || moved) this.decorations = build(update.view);
   }
-  destroy(): void { window.clearTimeout(this.timer); }
 }, { decorations: (value) => value.decorations });
 
 export const mathSource = [mathSpans, mathDecorations];

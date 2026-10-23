@@ -7,12 +7,19 @@ import { expect, test, type Page } from '@playwright/test';
 // for the fence's language on demand, and runs the `stex` mode over the text
 // between the dollars — while its reading view runs a different highlighter
 // (Prism) over the same colours. Satr does the same split: Lezer here,
-// highlight.js in the reading view, one --code-* palette. What Obsidian does
-// not do is say that a formula will not render: KaTeX renders with
-// throwOnError: false, so a typo is a silent red formula in the preview and
-// in the PDF. Here it is underlined where it stands, with KaTeX's own
-// complaint on it — except while the caret is inside it, because half of
-// what is being typed is briefly wrong.
+// highlight.js in the reading view, one --code-* palette.
+//
+// The formula goes further than Obsidian does, on purpose: `stex` calls
+// \frac, \alpha, _ and ^ all one kind of thing and leaves + and = colourless,
+// which is two hues under a fence using seven. A backslash word is sorted
+// here into structure / function / symbol instead, so the formula is as
+// told-apart as the code above it.
+//
+// What Obsidian does not do at all is say that a formula will not render:
+// KaTeX renders with throwOnError: false, so a typo is a silent red formula
+// in the preview and in the PDF. Here it is said in colour — never a
+// squiggle — the moment the writer is not in the middle of spelling a
+// command out.
 
 const NOTE = [
   '# Colour',
@@ -24,6 +31,8 @@ const NOTE = [
   '```',
   '',
   'Sound: $\\frac{1}{2} + \\alpha_1 x^2$ stands.',
+  '',
+  'Words: $\\begin{cases} y \\end{cases} \\text{so}$ too.',
   '',
   'Typo: $\\fracc{1}{2}$ does not.',
   '',
@@ -53,6 +62,9 @@ const paint = (page: Page, needle: string, within: string) => page.evaluate(({ t
   };
   const palette = {
     keyword: resolve('--code-keyword'),
+    function: resolve('--code-function'),
+    important: resolve('--code-important'),
+    operator: resolve('--code-operator'),
     value: resolve('--code-value'),
     string: resolve('--code-string'),
     tag: resolve('--code-tag'),
@@ -111,18 +123,24 @@ test('prose keeps its own colour: the code palette stops at the fence', async ({
   expect(prose.coloured).toEqual([]);
 });
 
-test('a formula is told apart in the source, the way Obsidian tells it apart', async ({ page }) => {
+test('a formula is told apart part by part, as densely as the fence above it', async ({ page }) => {
   await boot(page);
-  // Obsidian's own map, read out of its app.css: .cm-tag → --code-tag for a
-  // command and for the _ and ^ that carry one, .cm-bracket →
-  // --code-punctuation, .cm-number → --code-value, .cm-variable-2 →
-  // --code-property. Which needs the `stexMath` mode, not plain `stex`:
-  // outside the dollars the mode only ever sees commands and braces.
+  // LaTeX's kinds are in WHICH command it is, not in the token name, so they
+  // are sorted here: a command that takes something (\\frac) from one that IS
+  // something (\\alpha) from the scaffolding (\\begin). The rest of the
+  // formula gets the palette the reading view gives code, with the names
+  // Obsidian uses: numbers --code-value, variables --code-property, _ and ^
+  // --code-tag, braces --code-punctuation.
   const command = await paint(page, '\\frac', 'Sound:');
-  expect(command.cls).toContain('cm-math-command');
-  expect(command.colour).toBe(command.palette.tag);
+  expect(command.cls).toContain('cm-math-function');
+  expect(command.colour).toBe(command.palette.function);
+  const symbol = await paint(page, '\\alpha', 'Sound:');
+  expect(symbol.cls).toContain('cm-math-symbol');
+  expect(symbol.colour).toBe(symbol.palette.important);
   const sub = await paint(page, '_', 'Sound:');
   expect(sub.colour).toBe(sub.palette.tag);
+  const plus = await paint(page, '+', 'Sound:');
+  expect(plus.colour).toBe(plus.palette.operator);
   const brace = await paint(page, '{', 'Sound:');
   expect(brace.colour).toBe(brace.palette.punctuation);
   const number = await paint(page, '1', 'Sound:');
@@ -131,10 +149,19 @@ test('a formula is told apart in the source, the way Obsidian tells it apart', a
   const variable = await paint(page, 'x', 'Sound:');
   expect(variable.cls).toContain('cm-math-name');
   expect(variable.colour).toBe(variable.palette.property);
+  // The formula uses as many of the palette as the fence does, which is the
+  // whole point of sorting the commands.
+  const hues = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#app .cm-content .cm-line')]
+      .find((element) => (element.textContent ?? '').includes('Sound:'))!;
+    return new Set([...row.querySelectorAll('.cm-math-token')]
+      .map((element) => getComputedStyle(element).color)).size;
+  });
+  expect(hues).toBeGreaterThanOrEqual(5);
   // Still monospace and still italic: the colouring is added to what the
   // formula already looked like, not instead of it.
   const style = await page.evaluate(() => {
-    const span = [...document.querySelectorAll('#app .cm-content .cm-math-command')]
+    const span = [...document.querySelectorAll('#app .cm-content .cm-math-function')]
       .find((element) => element.textContent === '\\frac') as HTMLElement;
     const seen = getComputedStyle(span);
     return { style: seen.fontStyle, family: seen.fontFamily };
@@ -143,7 +170,20 @@ test('a formula is told apart in the source, the way Obsidian tells it apart', a
   expect(style.family.toLowerCase()).toMatch(/mono|vazir.?code/);
 });
 
-test('a formula KaTeX cannot read goes the colour it will be, not a squiggle', async ({ page }) => {
+test('an environment is named, and the words inside \\text are words', async ({ page }) => {
+  await boot(page);
+  const begin = await paint(page, '\\begin', 'Words:');
+  expect(begin.cls).toContain('cm-math-keyword');
+  expect(begin.colour).toBe(begin.palette.keyword);
+  const named = await paint(page, 'cases', 'Words:');
+  expect(named.cls).toContain('cm-math-string');
+  expect(named.colour).toBe(named.palette.string);
+  const words = await paint(page, 'so', 'Words:');
+  expect(words.cls).toContain('cm-math-string');
+  expect(words.colour).toBe(words.palette.string);
+});
+
+test('a formula KaTeX cannot read says so in colour, and says where', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
   await expect(broken).toHaveCount(1);
@@ -154,39 +194,57 @@ test('a formula KaTeX cannot read goes the colour it will be, not a squiggle', a
     document.body.appendChild(probe);
     probe.style.color = 'var(--text-error)';
     const error = getComputedStyle(probe).color;
+    probe.style.color = 'var(--code-value)';
+    const value = getComputedStyle(probe).color;
     probe.remove();
-    const token = element.querySelector('.cm-math-token') as HTMLElement;
+    const blamed = element.querySelector('.cm-math-wrong') as HTMLElement | null;
+    const digit = [...element.querySelectorAll('.cm-math-token')]
+      .find((span) => span.textContent === '1') as HTMLElement | undefined;
+    const dollar = element.closest('.cm-line')?.querySelector('.cm-math-delim-wrong') as HTMLElement | null;
     return {
       error,
-      colour: getComputedStyle(element).color,
-      tokenColour: token ? getComputedStyle(token).color : null,
+      value,
+      wash: getComputedStyle(element).backgroundColor,
+      blamed: blamed?.textContent ?? null,
+      blamedColour: blamed ? getComputedStyle(blamed).color : null,
+      digitColour: digit ? getComputedStyle(digit).color : null,
+      dollarColour: dollar ? getComputedStyle(dollar).color : null,
       decoration: getComputedStyle(element).textDecorationLine,
     };
   });
-  // The colour KaTeX will paint it in the reading view and in the PDF —
-  // and the parts inside give up their own colours to it, so the formula
-  // reads as one red thing rather than a half-coloured one.
-  expect(look.colour).toBe(look.error);
-  expect(look.tokenColour).toBe(look.error);
+  // A faint red behind the whole formula — the colour KaTeX will paint it in
+  // the reading view and in the PDF — and the dollars in that red.
+  expect(look.wash).not.toBe('rgba(0, 0, 0, 0)');
+  expect(look.dollarColour).toBe(look.error);
+  // The piece it choked on, named: \fracc, not "something in here".
+  expect(look.blamed).toBe('\\fracc');
+  expect(look.blamedColour).toBe(look.error);
+  // ...and the rest of the formula keeps the colouring it was just given.
+  expect(look.digitColour).toBe(look.value);
   // No spell-check underline anywhere near it.
   expect(look.decoration).toBe('none');
 });
 
-test('the formula being typed is left alone until the writing stops', async ({ page }) => {
+test('the verdict is instant, except on the word being spelled out', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
   await expect(broken).toHaveCount(1);
-  // Break the good one by typing in it: nothing is said while the keys are
-  // still coming.
+  // Break the good one by typing in it. \\fracqq is an undefined control
+  // sequence the moment the second q lands — but the caret is still inside
+  // the word, and \\a, \\al, \\alp are all undefined on the way to \\alpha.
   await place(page, '\\frac{1}', 5);
   await page.keyboard.type('qq');
+  await page.waitForTimeout(300);
   expect(await broken.count()).toBe(1);
-  // ...and once the writing stops, it is said — caret still inside it.
-  await expect(broken).toHaveCount(2, { timeout: 3000 });
-  // Taking the typo out clears it again, after the same pause.
+  // The caret leaving the word is enough — no pause to wait through.
+  await page.keyboard.press('ArrowRight');
+  await expect(broken).toHaveCount(2, { timeout: 500 });
+  // And taking the typo out clears it just as fast.
+  await place(page, '\\fracqq{1}', 7);
   await page.keyboard.press('Backspace');
   await page.keyboard.press('Backspace');
-  await expect(broken).toHaveCount(1, { timeout: 3000 });
+  await page.keyboard.press('ArrowRight');
+  await expect(broken).toHaveCount(1, { timeout: 500 });
 });
 
 test('fixing the typo clears the colour', async ({ page }) => {

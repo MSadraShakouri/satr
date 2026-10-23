@@ -1580,19 +1580,31 @@ body[data-mode="preview"] .workspace > .preview-pane {
   font-family: inherit !important;
   color: inherit !important;
 }
-/* The formula's own parts, told apart by the same `stex` mode Obsidian runs
-   over its source, in the colours the reading view gives code — commands,
-   braces, numbers and % comments. Obsidian colours these too; what it does
-   not do is say when a formula will not render, which is the squiggle below.
+/* The formula's own parts. A fence is colourful because a language has many
+   kinds of word; `stex` — the mode Obsidian runs over its own math source —
+   has almost one, so matching Obsidian exactly left a formula at two hues
+   and some grey, sitting under a fence that uses seven. The kinds ARE there
+   in LaTeX, just in which command it is rather than in the token name, so
+   src/mathSource.ts sorts a backslash word into structure, function or
+   symbol and gives the rest of the formula the same --code-* palette the
+   reading view gives code. Denser than Obsidian on purpose.
    .cm-math-token is how these escape the two rules above: prose styling
-   still may not reach into a formula, but its own colouring may — and the
-   same goes for .cm-math-error, whose squiggle those rules would otherwise
-   turn off with their `text-decoration: none`. */
-.cm-math-token.cm-math-command {
-  color: var(--code-tag);
+   still may not reach into a formula, but its own colouring may. */
+.cm-math-token.cm-math-keyword {
+  /* \begin \end \left \right \displaystyle — the formula's scaffolding */
+  color: var(--code-keyword);
 }
-.cm-math-token.cm-math-brace {
-  color: var(--code-punctuation);
+.cm-math-token.cm-math-function {
+  /* \frac \sqrt \sum \int \lim \text — a command that takes something */
+  color: var(--code-function);
+}
+.cm-math-token.cm-math-symbol {
+  /* \alpha \infty \to \leq \cdot — a command that IS something */
+  color: var(--code-important);
+}
+.cm-math-token.cm-math-string {
+  /* the words inside \text{…}, the environment named by \begin{…} */
+  color: var(--code-string);
 }
 .cm-math-token.cm-math-number {
   color: var(--code-value);
@@ -1600,39 +1612,45 @@ body[data-mode="preview"] .workspace > .preview-pane {
 .cm-math-token.cm-math-name {
   color: var(--code-property);
 }
-.cm-math-token.cm-math-string {
-  color: var(--code-string);
-}
-.cm-math-token.cm-math-comment {
-  color: var(--code-comment);
-}
-.cm-math-token.cm-math-keyword {
-  color: var(--code-keyword);
-}
-.cm-math-token.cm-math-builtin {
-  color: var(--code-function);
+.cm-math-token.cm-math-script {
+  /* _ ^ & \\ — what carries a part rather than being one */
+  color: var(--code-tag);
 }
 .cm-math-token.cm-math-operator {
   color: var(--code-operator);
 }
-/* The mode's own verdict on a token — a stray `\\`, a brace that closes
-   nothing. Obsidian paints .cm-error the same colour. */
-.cm-math-token.cm-math-wrong {
-  color: var(--text-error);
+.cm-math-token.cm-math-brace,
+.cm-math-token.cm-math-punct {
+  color: var(--code-punctuation);
 }
-/* A formula KaTeX cannot read, said in the colour it will be: renderMath
-   runs with throwOnError: false, so the reading view and the PDF draw this
-   formula in red, and the source says so before the reader gets there. No
-   underline — a red squiggle reads as a spelling mistake, and a formula is
-   not prose. The parts inside give up their own colours to it; the reason
-   rides in the title. Not while the formula is being typed (src/mathSource.ts). */
+.cm-math-token.cm-math-comment {
+  color: var(--code-comment);
+}
+/* A formula KaTeX cannot read, said in colour and not with a squiggle:
+   renderMath runs with throwOnError: false, so the reading view and the PDF
+   draw this formula red, and the source says so before the reader gets
+   there. No underline — a red squiggle reads as a spelling mistake, and a
+   formula is not prose. Three things say it, and none of them costs the
+   formula the colouring it has just been given: a faint red behind the
+   whole formula, its dollars in that red, and the one piece KaTeX choked on
+   painted red INSTEAD of its own colour, so the message is "this", not
+   "something in here". The reason rides in the title. */
 .cm-math-error,
 .cm-editor .cm-content .cm-math-error,
-.cm-editor .cm-line .cm-math-error,
-.cm-math-error .cm-math-token,
-.cm-editor .cm-content .cm-math-error .cm-math-token,
-.cm-editor .cm-line .cm-math-error .cm-math-token {
+.cm-editor .cm-line .cm-math-error {
+  background: color-mix(in srgb, var(--text-error) 14%, transparent);
+  border-radius: 3px;
+}
+.cm-math-delim.cm-math-delim-wrong {
   color: var(--text-error);
+}
+/* The piece itself: the error colour alone would not single it out, because
+   a `+` or a `_` beside it is already --code-operator red. A deeper wash of
+   the same red over the formula's own faint one is what says "here". */
+.cm-math-token.cm-math-wrong {
+  color: var(--text-error);
+  background: color-mix(in srgb, var(--text-error) 22%, transparent);
+  border-radius: 2px;
 }
 
 /* ---- Bottom bar (no keyboard) ----

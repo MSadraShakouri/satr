@@ -411,6 +411,39 @@ export function mathError(raw: string, display: boolean): string | null {
   }
 }
 
+/** The same verdict, plus where in the formula KaTeX gave up, so the editor
+ *  can paint that piece rather than the whole thing.
+ *
+ *  Two questions, because they are about two different texts. WHETHER a
+ *  formula is broken has to be asked about the text the reading view will be
+ *  given — digits mapped, spaces marked, Persian runs wrapped — or the
+ *  editor could disagree with the page. WHERE it broke has to be in the
+ *  writer's own characters, and that preparation moves them (one space can
+ *  become "\ "), so the position is read from a second parse of the raw
+ *  text. It costs a tenth of a millisecond and only runs when something is
+ *  already wrong. If the raw text parses where the prepared one did not, the
+ *  blame has nowhere to land and `from` stays -1. */
+export type MathFault = { message: string; from: number; to: number };
+export function mathFault(raw: string, display: boolean): MathFault | null {
+  const message = mathError(raw, display);
+  if (message === null) return null;
+  let from = -1;
+  let to = -1;
+  try {
+    // __parse is KaTeX's own entry point for "read this, don't draw it";
+    // the published types stop at render/renderToString.
+    (katex as unknown as { __parse: (tex: string, options: object) => unknown })
+      .__parse(raw, { displayMode: display, throwOnError: true });
+  } catch (error) {
+    const spot = error as { position?: number; length?: number };
+    if (typeof spot.position === 'number' && spot.position >= 0) {
+      from = spot.position;
+      to = from + (typeof spot.length === 'number' ? spot.length : 0);
+    }
+  }
+  return { message, from, to };
+}
+
 export function renderMath(raw: string, display: boolean): string {
   // Empty display math is still a blank display line, not zero-height KaTeX.
   if (display && !raw.trim()) return '<div class="math-display"><br></div>';
