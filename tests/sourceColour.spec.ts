@@ -23,7 +23,7 @@ const NOTE = [
   'const greeting = "hello";',
   '```',
   '',
-  'Sound: $\\frac{1}{2} + \\alpha$ stands.',
+  'Sound: $\\frac{1}{2} + \\alpha_1 x^2$ stands.',
   '',
   'Typo: $\\fracc{1}{2}$ does not.',
   '',
@@ -55,8 +55,11 @@ const paint = (page: Page, needle: string, within: string) => page.evaluate(({ t
     keyword: resolve('--code-keyword'),
     value: resolve('--code-value'),
     string: resolve('--code-string'),
-    muted: resolve('--text-muted'),
-    faint: resolve('--text-faint'),
+    tag: resolve('--code-tag'),
+    property: resolve('--code-property'),
+    punctuation: resolve('--code-punctuation'),
+    comment: resolve('--code-comment'),
+    error: resolve('--text-error'),
     normal: resolve('--text-normal'),
   };
   probe.remove();
@@ -108,16 +111,26 @@ test('prose keeps its own colour: the code palette stops at the fence', async ({
   expect(prose.coloured).toEqual([]);
 });
 
-test('a formula is told apart in the source: commands, braces and numbers', async ({ page }) => {
+test('a formula is told apart in the source, the way Obsidian tells it apart', async ({ page }) => {
   await boot(page);
+  // Obsidian's own map, read out of its app.css: .cm-tag → --code-tag for a
+  // command and for the _ and ^ that carry one, .cm-bracket →
+  // --code-punctuation, .cm-number → --code-value, .cm-variable-2 →
+  // --code-property. Which needs the `stexMath` mode, not plain `stex`:
+  // outside the dollars the mode only ever sees commands and braces.
   const command = await paint(page, '\\frac', 'Sound:');
   expect(command.cls).toContain('cm-math-command');
-  expect(command.colour).toBe(command.palette.keyword);
+  expect(command.colour).toBe(command.palette.tag);
+  const sub = await paint(page, '_', 'Sound:');
+  expect(sub.colour).toBe(sub.palette.tag);
   const brace = await paint(page, '{', 'Sound:');
-  expect(brace.colour).toBe(brace.palette.muted);
+  expect(brace.colour).toBe(brace.palette.punctuation);
   const number = await paint(page, '1', 'Sound:');
   expect(number.cls).toContain('cm-math-number');
   expect(number.colour).toBe(number.palette.value);
+  const variable = await paint(page, 'x', 'Sound:');
+  expect(variable.cls).toContain('cm-math-name');
+  expect(variable.colour).toBe(variable.palette.property);
   // Still monospace and still italic: the colouring is added to what the
   // formula already looked like, not instead of it.
   const style = await page.evaluate(() => {
@@ -130,36 +143,55 @@ test('a formula is told apart in the source: commands, braces and numbers', asyn
   expect(style.family.toLowerCase()).toMatch(/mono|vazir.?code/);
 });
 
-test('a formula KaTeX cannot read is underlined, with the reason on it', async ({ page }) => {
+test('a formula KaTeX cannot read goes the colour it will be, not a squiggle', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
   await expect(broken).toHaveCount(1);
   await expect(broken).toHaveText('\\fracc{1}{2}');
   await expect(broken).toHaveAttribute('title', /undefined control sequence/i);
-  // Drawn as a squiggle, not as the plain underline a link would get.
-  const line = await broken.evaluate((element) => {
-    const seen = getComputedStyle(element);
-    return { style: seen.textDecorationStyle, line: seen.textDecorationLine };
+  const look = await broken.evaluate((element) => {
+    const probe = document.createElement('span');
+    document.body.appendChild(probe);
+    probe.style.color = 'var(--text-error)';
+    const error = getComputedStyle(probe).color;
+    probe.remove();
+    const token = element.querySelector('.cm-math-token') as HTMLElement;
+    return {
+      error,
+      colour: getComputedStyle(element).color,
+      tokenColour: token ? getComputedStyle(token).color : null,
+      decoration: getComputedStyle(element).textDecorationLine,
+    };
   });
-  expect(line.line).toContain('underline');
-  expect(line.style).toBe('wavy');
+  // The colour KaTeX will paint it in the reading view and in the PDF —
+  // and the parts inside give up their own colours to it, so the formula
+  // reads as one red thing rather than a half-coloured one.
+  expect(look.colour).toBe(look.error);
+  expect(look.tokenColour).toBe(look.error);
+  // No spell-check underline anywhere near it.
+  expect(look.decoration).toBe('none');
 });
 
-test('the formula being written is not marked while the caret is in it', async ({ page }) => {
+test('the formula being typed is left alone until the writing stops', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
   await expect(broken).toHaveCount(1);
-  await place(page, '\\fracc', 3);
-  await expect(broken).toHaveCount(0);
-  // And it comes back when the caret leaves.
-  await place(page, '# Colour', 2);
-  await expect(broken).toHaveCount(1);
+  // Break the good one by typing in it: nothing is said while the keys are
+  // still coming.
+  await place(page, '\\frac{1}', 5);
+  await page.keyboard.type('qq');
+  expect(await broken.count()).toBe(1);
+  // ...and once the writing stops, it is said — caret still inside it.
+  await expect(broken).toHaveCount(2, { timeout: 3000 });
+  // Taking the typo out clears it again, after the same pause.
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await expect(broken).toHaveCount(1, { timeout: 3000 });
 });
 
-test('typing a formula marks it only once it is left, and clears when fixed', async ({ page }) => {
+test('fixing the typo clears the colour', async ({ page }) => {
   await boot(page);
   await expect(page.locator('#app .cm-content .cm-math-error')).toHaveCount(1);
-  // Fix the typo: one c out, and the mark goes with it.
   await page.evaluate(async () => {
     const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;

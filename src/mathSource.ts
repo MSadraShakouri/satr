@@ -17,7 +17,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 // copy @codemirror/language re-exports is the same class, but TypeScript
 // counts the two declarations as different types.
 import { StringStream } from '@codemirror/streamparser';
-import { stex } from '@codemirror/legacy-modes/mode/stex';
+import { stexMath } from '@codemirror/legacy-modes/mode/stex';
 import { mathError } from './math';
 
 /** Every math span of the document, cached until the text changes. The
@@ -43,21 +43,33 @@ const mathText = Decoration.mark({ class: 'cm-math' });
 const mathDelim = Decoration.mark({ class: 'cm-math-delim' });
 
 // ---- What the formula is made of ----
-// Obsidian runs the same `stex` mode over the text between its dollars
-// (getMode(e, {name:"stex"}) in its bundle) and colours the tokens from its
-// --code-* palette; this is that, in Satr's own palette — the one the
-// reading view already gives code (src/style.css, .preview-pane .hljs-*).
-// The monospace italic the formula already had stays underneath.
+// Obsidian runs CodeMirror's `stex` mode over its math source and colours
+// the tokens from its --code-* palette; this is that, token for token. The
+// mode has two faces and the difference is the whole point: plain `stex` is
+// the document mode, which only ever sees commands and braces, while
+// `stexMath` is the one inside the dollars — it tells a subscript from a
+// superscript, a variable from a number, an alignment & from a stray \\.
+// Obsidian's own map, read out of its app.css:
+//   .cm-tag → --code-tag          \frac, \alpha, _, ^, &
+//   .cm-bracket → --code-punctuation
+//   .cm-number → --code-value
+//   .cm-variable-2 → --code-property
+//   .cm-string → --code-string    .cm-comment → --code-comment
+//   .cm-builtin → --code-function .cm-keyword → --code-keyword
+//   .cm-error → --text-error
+// The monospace italic the formula already had stays underneath all of it.
 const TOKEN_CLASS: Record<string, string> = {
-  tag: 'cm-math-command',       // \frac, \alpha, \text
-  keyword: 'cm-math-command',
-  builtin: 'cm-math-command',
-  bracket: 'cm-math-brace',     // { } [ ]
-  atom: 'cm-math-number',
+  tag: 'cm-math-command',
+  bracket: 'cm-math-brace',
   number: 'cm-math-number',
+  atom: 'cm-math-number',
+  variableName: 'cm-math-name',
   string: 'cm-math-string',
-  comment: 'cm-math-comment',   // % to the end of the line
-  'variable-2': 'cm-math-name',
+  comment: 'cm-math-comment',
+  keyword: 'cm-math-keyword',
+  builtin: 'cm-math-builtin',
+  operator: 'cm-math-operator',
+  error: 'cm-math-wrong',
 };
 const tokenMarks = new Map<string, Decoration>();
 function tokenMark(cls: string): Decoration {
@@ -80,7 +92,7 @@ function mathTokens(text: string): [number, number, string][] {
   if (hit) return hit;
   const out: [number, number, string][] = [];
   if (text.length <= MAX_TOKENISED) {
-    const state = stex.startState?.(2) ?? {};
+    const state = stexMath.startState?.(2) ?? {};
     let at = 0;
     for (const line of text.split('\n')) {
       if (line) {
@@ -88,14 +100,15 @@ function mathTokens(text: string): [number, number, string][] {
         // A mode that returns without consuming would spin: every turn of
         // this loop must move, and the line's own length bounds it.
         for (let guard = 0; !stream.eol() && guard <= line.length; guard += 1) {
-          const type = stex.token(stream, state) ?? '';
+          const type = stexMath.token(stream, state) ?? '';
           if (stream.pos === stream.start) stream.pos += 1;
-          const cls = TOKEN_CLASS[type.split(' ')[0]];
+          // "variableName.special" and the like: the family decides.
+          const cls = TOKEN_CLASS[type.split('.')[0].split(' ')[0]];
           if (cls) out.push([at + stream.start, at + stream.pos, cls]);
           stream.start = stream.pos;
         }
       } else {
-        stex.blankLine?.(state, 2);
+        stexMath.blankLine?.(state, 2);
       }
       at += line.length + 1;
     }
@@ -128,13 +141,24 @@ const errorMarks = new Map<string, Decoration>();
 function errorMark(message: string): Decoration {
   let deco = errorMarks.get(message);
   if (!deco) {
+    // Colour, not a squiggle: a red underline reads as a spelling mistake,
+    // and this is not prose. The formula goes the colour KaTeX will paint it
+    // in the reading view and in the PDF (--text-error, which is what
+    // Obsidian gives .cm-error too), so the editor is showing what is about
+    // to happen rather than commenting on it. The reason rides along in the
+    // title for anything that can show one.
     deco = Decoration.mark({ class: 'cm-math-error', attributes: { title: message } });
     errorMarks.set(message, deco);
   }
   return deco;
 }
+/** How long the writing has to stop before a half-typed formula is called
+ *  wrong. "Math syntax checking while typing" is the ask, but a formula is
+ *  wrong for every keystroke of the time it takes to write one, so the
+ *  colour waits for the writer to pause rather than following the caret. */
+const TYPING_PAUSE_MS = 700;
 
-function build(view: EditorView): DecorationSet {
+function build(view: EditorView, typing = false): DecorationSet {
   const { state } = view;
   const out: Range<Decoration>[] = [];
   const spans = state.field(mathSpans);
@@ -148,13 +172,11 @@ function build(view: EditorView): DecorationSet {
       // Only the things between the dollars are monospace; an empty pair (the
       // writing line of a block being opened) has nothing between them.
       if (text.trim()) {
-        // A formula the caret is inside is being written, and half of what is
-        // written is briefly wrong: it is never marked. Everything else that
-        // KaTeX cannot read is.
-        const writing = state.selection.ranges.some((range) => range.to >= span.from && range.from <= span.to);
-        const message = writing ? null : verdict(text, span.delim > 1);
-        // Outermost, so the squiggle is drawn over the whole formula and the
-        // marks inside it cannot turn the underline off.
+        // The formula under the caret is only judged once the writing stops:
+        // half of what is being typed is wrong on the way to being right.
+        // Every other formula is judged as it stands.
+        const here = state.selection.ranges.some((range) => range.to >= span.from && range.from <= span.to);
+        const message = here && typing ? null : verdict(text, span.delim > 1);
         if (message) out.push(errorMark(message).range(open, close));
         out.push(mathText.range(open, close));
         for (const [tokenFrom, tokenTo, cls] of mathTokens(text)) {
@@ -172,14 +194,33 @@ function build(view: EditorView): DecorationSet {
 
 const mathDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
-  constructor(view: EditorView) { this.decorations = build(view); }
+  /** Set while the writing is still going on, so the formula being typed is
+   *  not called wrong between two keystrokes. */
+  private typing = false;
+  private timer = 0;
+  constructor(private view: EditorView) { this.decorations = build(view); }
   update(update: ViewUpdate): void {
-    // The caret moving into a formula takes its error mark off and moving out
-    // puts it back, so a selection change counts too — but only in a note
+    const hasMath = update.state.field(mathSpans).length > 0;
+    if (update.docChanged && hasMath) {
+      this.typing = true;
+      window.clearTimeout(this.timer);
+      // The pause the colour waits for. A measure, not a transaction: the
+      // writer has stopped, nothing in the document has changed, and the
+      // only thing that needs re-reading is the formula they left behind.
+      this.timer = window.setTimeout(() => {
+        this.typing = false;
+        this.decorations = build(this.view, false);
+        this.view.requestMeasure();
+        this.view.dispatch({});
+      }, TYPING_PAUSE_MS);
+    }
+    // The caret moving into a formula and out of it changes which one is
+    // being written, so a selection change counts too — but only in a note
     // that has math in it at all.
-    const moved = update.selectionSet && update.state.field(mathSpans).length > 0;
-    if (update.docChanged || update.viewportChanged || moved) this.decorations = build(update.view);
+    const moved = update.selectionSet && hasMath;
+    if (update.docChanged || update.viewportChanged || moved) this.decorations = build(update.view, this.typing);
   }
+  destroy(): void { window.clearTimeout(this.timer); }
 }, { decorations: (value) => value.decorations });
 
 export const mathSource = [mathSpans, mathDecorations];

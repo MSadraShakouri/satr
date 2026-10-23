@@ -994,15 +994,16 @@ export class SatrEditor {
         // grammar emits are listed: a markdown marker is a
         // processingInstruction and a heading is a heading, and neither may
         // be recoloured by this block.
-        { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--text-faint)' },
+        { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--code-comment)' },
         { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.operatorKeyword, tags.modifier, tags.self, tags.null, tags.typeName, tags.namespace], color: 'var(--code-keyword)' },
         { tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character, tags.inserted], color: 'var(--code-string)' },
         { tag: [tags.number, tags.bool, tags.atom, tags.literal, tags.unit], color: 'var(--code-value)' },
         { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.function(tags.definition(tags.variableName)), tags.className, tags.macroName], color: 'var(--code-function)' },
         { tag: [tags.propertyName, tags.attributeName, tags.variableName, tags.labelName], color: 'var(--code-property)' },
-        { tag: [tags.tagName, tags.operator, tags.deleted], color: 'var(--code-tag)' },
+        { tag: [tags.tagName, tags.deleted], color: 'var(--code-tag)' },
+        { tag: [tags.operator, tags.derefOperator, tags.arithmeticOperator, tags.logicOperator, tags.compareOperator], color: 'var(--code-operator)' },
         { tag: [tags.meta, tags.annotation, tags.standard(tags.variableName)], color: 'var(--code-important)' },
-        { tag: [tags.punctuation, tags.separator, tags.bracket, tags.squareBracket, tags.paren, tags.brace, tags.angleBracket], color: 'var(--text-muted)' },
+        { tag: [tags.punctuation, tags.separator, tags.bracket, tags.squareBracket, tags.paren, tags.brace, tags.angleBracket], color: 'var(--code-punctuation)' },
       ])),
       titleField,
       rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
