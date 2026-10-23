@@ -699,18 +699,25 @@ export function createTimestampPicker(): TimestampPicker {
       const width = viewport.clientWidth || 1;
       const pages = track.children.length;
       if ((pages - 1) * width - viewport.scrollLeft < width) {
+        // Appending costs nothing: the track grows away from the finger and
+        // no existing page moves.
         track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, offsetAt(pages), tag()), false));
       }
       if (fingerDown && viewport.scrollLeft < width * 1.5) {
-        // While the finger drags: prepend and compensate at once — the very
-        // next touchmove is relative to where we just put the track, so the
-        // correction cannot be seen, and a second swipe always has a page
-        // to land on. The margin is a page and a half: mandatory snap
-        // quantises positions to whole pages, so "within one page" can be
-        // swallowed by the rounding.
+        // Prepending moves every page one width along, so the offset has to
+        // move with it or the grid jumps a month under the finger. The write
+        // is only ours to make when the main thread still owns the offset:
+        // DURING a touch scroll the compositor owns it and silently keeps
+        // its own, which is how one swipe back used to turn two months. So
+        // the page goes in, the compensation is attempted, and the result is
+        // read back: kept, the runway grew; refused, the page comes straight
+        // back out in the same frame, before anything is painted, and the
+        // five pages already on the track carry the gesture.
+        const was = viewport.scrollLeft;
         track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, offsetAt(-1), tag()), false));
-        anchor = offsetAt(-1);
-        viewport.scrollLeft += width;
+        viewport.scrollLeft = was + width;
+        if (Math.abs(viewport.scrollLeft - (was + width)) <= 1) anchor = offsetAt(-1);
+        else track.firstElementChild?.remove();
       }
       // The far tail trims only with the finger up, far from the finger.
       if (!fingerDown && track.children.length > 29 && viewport.scrollLeft < (track.children.length - 9) * width) {

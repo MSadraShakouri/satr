@@ -1176,6 +1176,38 @@ async function fingerSwipe(page: Page, dx: number): Promise<void> {
 }
 
 const monthsOf = (locale: string) => Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2020, month, 1)));
+
+test('a finger turns exactly one month, each way', async ({ page }) => {
+  // The track prepends a page when the finger nears its start, and moves the
+  // scroll offset by a page to keep the grid still. DURING a touch scroll the
+  // compositor owns that offset and kept its own, so the page landed
+  // uncompensated: the grid jumped and every swipe backwards turned TWO
+  // months while forwards turned one. The compensation is read back now, and
+  // a refused one takes the page straight back out.
+  await boot(page);
+  await openPicker(page);
+  await settled(page);
+  const title = sheet(page).locator('.timestamp-picker-month');
+  const months = monthsOf('en');
+  const at = async (): Promise<number> => {
+    const [name, year] = (await title.textContent())!.trim().split(' ');
+    return Number(year) * 12 + months.indexOf(name);
+  };
+  const start = await at();
+  for (let step = 1; step <= 3; step += 1) {
+    await fingerSwipe(page, 240); // finger to the right: the month before
+    expect(await at()).toBe(start - step);
+  }
+  for (let step = 1; step <= 3; step += 1) {
+    await fingerSwipe(page, -240); // and back, one at a time
+    expect(await at()).toBe(start - 3 + step);
+  }
+  await settled(page); // every turn leaves the track centred again
+  const nudged = await at();
+  await fingerSwipe(page, -40); // a nudge is not a turn
+  expect(await at()).toBe(nudged);
+});
+
 test('the months run the way the language reads', async ({ page }) => {
   // Persian reads right to left, so the month before is to the right: the
   // track is laid out latest-first and the step arrows swap ends with it.
