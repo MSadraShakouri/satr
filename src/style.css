@@ -3164,6 +3164,16 @@ input.mod-no-match {
   white-space: pre;
   unicode-bidi: plaintext;
 }
+/* Under the name of a tab holding a file another app handed over. */
+.mobile-tab-source {
+  overflow: hidden;
+  margin-top: 1px;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .mobile-tab-switcher-menubar {
   position: fixed;
   right: 0;

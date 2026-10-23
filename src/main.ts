@@ -2091,7 +2091,7 @@ function showTabs(): void {
   void (async () => {
     if (!await leaveCurrent()) return;
     openTabSwitcher({
-      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path })),
+      tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path, external: Boolean(t.path) && isExternalPath(t.path) })),
       preview: async (i) => {
         const path = tabs[i].path;
         if (!path) return '';

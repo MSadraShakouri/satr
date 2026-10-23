@@ -9,7 +9,17 @@
 // hold a card to pick it up and drag it to a new place.
 import { openMenu } from './menu';
 
-export interface TabCard { title: string; active: boolean; empty: boolean }
+export interface TabCard {
+  title: string;
+  active: boolean;
+  empty: boolean;
+  /** A file another app handed over (ACTION_VIEW / ACTION_SEND), not a note
+   *  of the vault. Handing the same file over twice opens a second tab —
+   *  there is no way back from the token it arrives as to the tab already
+   *  showing it — so the card says where the file came from instead, and two
+   *  tabs with one name can be told apart. */
+  external: boolean;
+}
 export interface TabSwitcherDeps {
   tabs(): TabCard[];
   /** Rendered HTML of the start of a tab's note. */
@@ -76,6 +86,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
             <div class="mobile-tab-preview-empty">${ICONS.file}</div>
           </div>
           <div class="mobile-tab-title" dir="auto">${escapeHtml(tab.title)}</div>
+          ${tab.external ? '<div class="mobile-tab-source">from another app</div>' : ''}
         </div>
       </div>`).join('');
     tabs.forEach((_, i) => {
