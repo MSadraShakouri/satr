@@ -1739,6 +1739,9 @@ body[data-mode="preview"] .workspace > .preview-pane {
   font-weight: 600;
   text-align: center;
 }
+.timestamp-picker-head[dir="rtl"] .timestamp-picker-step svg {
+  transform: scaleX(-1); /* the month before is to the RIGHT when the month reads that way */
+}
 .timestamp-picker-step {
   display: grid;
   place-items: center;
@@ -1778,7 +1781,7 @@ body[data-mode="preview"] .workspace > .preview-pane {
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
-  direction: ltr; /* scrollLeft counts from the first page whatever the sheet's direction */
+  direction: ltr; /* scrollLeft counts from the first page; the TRACK carries the language's order */
   scrollbar-width: none;
 }
 .timestamp-picker-viewport::-webkit-scrollbar {

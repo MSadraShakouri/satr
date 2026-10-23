@@ -86,8 +86,9 @@ function monthDays(date: Date, tag: string): Date[] {
 function weekdayRow(tag: string, weekStart: number): string[] {
   // 2023-11-12 is a Sunday: seven days of known names, indexed from Sunday.
   const names: string[] = [];
+  const naming = new Intl.DateTimeFormat(tag, { weekday: 'short' }); // one formatter, not seven
   for (let day = 0; day < 7; day += 1) {
-    names.push(new Intl.DateTimeFormat(tag, { weekday: 'short' }).format(new Date(2023, 10, 12 + day)));
+    names.push(naming.format(new Date(2023, 10, 12 + day)));
   }
   const cut = ((Math.trunc(weekStart) % 7) + 7) % 7; // 0 = Sunday … 6 = Saturday
   return [...names.slice(cut), ...names.slice(0, cut)];
@@ -170,7 +171,7 @@ export function createTimestampPicker(): TimestampPicker {
    *  and a no-op when the track already rests there. */
   const centerTrack = (): void => {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
-    if (viewport) viewport.scrollLeft = 2 * viewport.clientWidth;
+    if (viewport) viewport.scrollLeft = indexFor(0) * viewport.clientWidth;
   };
 
   /** One month as a page: the weekday row and a FIXED six-week grid — 42
@@ -199,9 +200,28 @@ export function createTimestampPicker(): TimestampPicker {
     // the row used to be dir="auto" (RTL for Persian) inside a grid that
     // followed the SHEET (LTR for an English app), which mirrored every
     // column against its own label.
-    const dirText = strongDirection(row.join('')) ?? 'ltr';
+    const dirText = monthDir();
     return `<div class="timestamp-picker-page${isCurrent ? ' is-current' : ''}"${isCurrent ? '' : ' aria-hidden="true"'} style="direction:${dirText}">${weekdays}<div class="timestamp-picker-grid">${cells}</div></div>`;
   }
+
+  /** The month's own reading direction, taken from the weekday names of the
+   *  Dates language — the single answer the header row, the day grid, the
+   *  track's order and the step arrows all read. */
+  let monthDirFor: { key: string; dir: 'ltr' | 'rtl' } | null = null;
+  function monthDir(): 'ltr' | 'rtl' {
+    // Remembered per language: this is read on every scroll frame, and a
+    // weekday row costs a date formatter and seven dates.
+    const key = `${tag()}|${weekStart}`;
+    if (monthDirFor?.key !== key) monthDirFor = { key, dir: strongDirection(weekdayRow(tag(), weekStart).join('')) ?? 'ltr' };
+    return monthDirFor.dir;
+  }
+
+  /** The month a page carries, from where it sits on the track. In Persian
+   *  the months run right to left like everything else on the page, so the
+   *  track is laid out latest-first and the index counts the other way. */
+  const offsetAt = (index: number): number => anchor + (monthDir() === 'rtl' ? -index : index);
+  /** Where a month sits: the inverse of offsetAt. */
+  const indexFor = (offset: number): number => (monthDir() === 'rtl' ? anchor - offset : offset - anchor);
 
   function render(): void {
     if (!sheet || !viewMonth || !chosen) return;
@@ -212,7 +232,7 @@ export function createTimestampPicker(): TimestampPicker {
     if (!jumping) {
       heading.textContent = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
       heading.dir = 'auto';
-      titleIndex = 2;
+      titleIndex = indexFor(0);
     }
     // The calendar switch: both calendars stay where they are, in one fixed
     // order, and only the highlight moves to the one the sheet is wearing.
@@ -225,8 +245,14 @@ export function createTimestampPicker(): TimestampPicker {
     }
     const current = viewMonth;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
-    track.innerHTML = [-2, -1, 0, 1, 2].map((offset) => pageHTML(addMonths(current, offset, localeTag), offset === 0)).join('');
-    anchor = -2;
+    const rtl = monthDir() === 'rtl';
+    const order = rtl ? [2, 1, 0, -1, -2] : [-2, -1, 0, 1, 2];
+    track.innerHTML = order.map((offset) => pageHTML(addMonths(current, offset, localeTag), offset === 0)).join('');
+    anchor = order[0];
+    // The head reads the month's way too, so the step arrows sit where that
+    // language expects them: in Persian the month before is to the right.
+    const head = sheet.querySelector<HTMLElement>('.timestamp-picker-head');
+    if (head) head.dir = rtl ? 'rtl' : 'ltr';
     centerTrack();
     // The format chips and the Insert button say the same moment the grid does.
     const picked = chosen;
@@ -268,7 +294,7 @@ export function createTimestampPicker(): TimestampPicker {
   function turnMonth(dir: -1 | 1): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
-    viewport.scrollTo({ left: viewport.clientWidth * (-anchor + dir), behavior: 'smooth' });
+    viewport.scrollTo({ left: viewport.clientWidth * indexFor(dir), behavior: 'smooth' });
   }
 
   /** Arrow presses landing while a turn still glides chain through the
@@ -290,10 +316,10 @@ export function createTimestampPicker(): TimestampPicker {
     if (!viewport || !track || !viewMonth) return;
     const width = viewport.clientWidth;
     const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
-    const offset = anchor + index;
+    const offset = offsetAt(index);
     if (offset !== 0) {
       viewMonth = addMonths(viewMonth, offset, tag());
-      render(); // recentres at once: anchor -2, five pages; runway regrows on demand
+      render(); // recentres at once: five pages around the new month, runway regrows on demand
     } else {
       titleIndex = index;
     }
@@ -317,7 +343,7 @@ export function createTimestampPicker(): TimestampPicker {
     const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
     if (index === titleIndex) return;
     titleIndex = index;
-    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, anchor + index, tag()), tag()));
+    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, offsetAt(index), tag()), tag()));
   }
 
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
@@ -558,7 +584,7 @@ export function createTimestampPicker(): TimestampPicker {
         jumping = false;
         const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
         const dir = Number(step.dataset.stampStep) as -1 | 1;
-        if (viewport && Math.abs(viewport.scrollLeft - -anchor * viewport.clientWidth) > 2) pendingTurn += dir;
+        if (viewport && Math.abs(viewport.scrollLeft - indexFor(0) * viewport.clientWidth) > 2) pendingTurn += dir;
         else turnMonth(dir);
         return;
       }
@@ -621,7 +647,7 @@ export function createTimestampPicker(): TimestampPicker {
         // knows, whatever the runway has grown to.
         const track = sheet!.querySelector<HTMLElement>('.timestamp-picker-track')!;
         const pageIndex = Array.from(track.children).indexOf(day.closest<HTMLElement>('.timestamp-picker-page')!);
-        const picked = monthDays(addMonths(viewMonth!, anchor + pageIndex, tag()), tag())[Number(day.dataset.stampDay)];
+        const picked = monthDays(addMonths(viewMonth!, offsetAt(pageIndex), tag()), tag())[Number(day.dataset.stampDay)];
         if (picked) {
           const at = new Date(picked);
           at.setHours(slotNum('hour'), slotNum('minute'), slotNum('second'), 0);
@@ -673,7 +699,7 @@ export function createTimestampPicker(): TimestampPicker {
       const width = viewport.clientWidth || 1;
       const pages = track.children.length;
       if ((pages - 1) * width - viewport.scrollLeft < width) {
-        track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, anchor + pages, tag()), false));
+        track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, offsetAt(pages), tag()), false));
       }
       if (fingerDown && viewport.scrollLeft < width * 1.5) {
         // While the finger drags: prepend and compensate at once — the very
@@ -682,8 +708,8 @@ export function createTimestampPicker(): TimestampPicker {
         // to land on. The margin is a page and a half: mandatory snap
         // quantises positions to whole pages, so "within one page" can be
         // swallowed by the rounding.
-        track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, anchor - 1, tag()), false));
-        anchor -= 1;
+        track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, offsetAt(-1), tag()), false));
+        anchor = offsetAt(-1);
         viewport.scrollLeft += width;
       }
       // The far tail trims only with the finger up, far from the finger.

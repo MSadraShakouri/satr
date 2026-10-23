@@ -1144,3 +1144,71 @@ test('switching the calendar lands on the month that holds the chosen day', asyn
   await picker.locator('[data-stamp-cal]').click(); // -> Persian
   await expect(title).toHaveText(jalali({ year: 'numeric', month: 'long' }, new Date(2030, 0, 15)));
 });
+
+/** A REAL finger on the track: CDP touch points, so Chromium's own gesture,
+ *  fling and snap run — the synthetic drag above writes scrollLeft from the
+ *  main thread, which is exactly where the compositor behaves differently. */
+async function fingerSwipe(page: Page, dx: number): Promise<void> {
+  // The sheet slides in; a finger put down mid-animation lands on wherever
+  // the track was a frame ago. Wait for the box to stop moving first.
+  const where = async (): Promise<number> => Math.round((await page.locator('.timestamp-picker-viewport').boundingBox())!.y);
+  for (let tries = 0; tries < 40; tries += 1) {
+    const first = await where();
+    await page.waitForTimeout(50);
+    if (first === await where()) break;
+  }
+  const box = (await page.locator('.timestamp-picker-viewport').boundingBox())!;
+  const y = box.y + box.height / 2;
+  const x = box.x + box.width / 2;
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type: 'touchStart' | 'touchMove' | 'touchEnd', at: number) => cdp.send('Input.dispatchTouchEvent', {
+    type,
+    touchPoints: type === 'touchEnd' ? [] : [{ x: at, y, radiusX: 12, radiusY: 12, force: 1 }],
+  });
+  await send('touchStart', x);
+  for (let step = 1; step <= 6; step += 1) {
+    await page.waitForTimeout(10);
+    await send('touchMove', x + (dx * step) / 6);
+  }
+  await send('touchEnd', x + dx);
+  await cdp.detach();
+  await page.waitForTimeout(900); // the fling, the snap and the settle
+}
+
+const monthsOf = (locale: string) => Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2020, month, 1)));
+test('the months run the way the language reads', async ({ page }) => {
+  // Persian reads right to left, so the month before is to the right: the
+  // track is laid out latest-first and the step arrows swap ends with it.
+  // The claim is made without any calendar arithmetic — the finger and the
+  // arrow that means "next month" must simply agree.
+  await boot(page, { timestampLocale: 'fa', timestampCalendar: 'persian', weekStart: 6 });
+  await openPicker(page);
+  await settled(page);
+  const picker = sheet(page);
+  const title = picker.locator('.timestamp-picker-month');
+  const here = (await title.textContent())!.trim();
+
+  await picker.locator('[data-stamp-step="1"]').click(); // the next month
+  await expect(title).not.toHaveText(here);
+  const next = (await title.textContent())!.trim();
+  await picker.locator('[data-stamp-step="-1"]').click();
+  await expect(title).toHaveText(here);
+  await settled(page);
+
+  await fingerSwipe(page, 240); // a finger to the RIGHT is forward in this language
+  await expect(title).toHaveText(next);
+  await fingerSwipe(page, -240);
+  await expect(title).toHaveText(here);
+
+  // The arrows sit where that reading puts them: the month before is on the
+  // right, and its chevron points that way too.
+  const head = await page.evaluate(() => {
+    const row = document.querySelector<HTMLElement>('.timestamp-picker-head')!;
+    const x = (selector: string) => row.querySelector<HTMLElement>(selector)!.getBoundingClientRect().x;
+    const flip = getComputedStyle(row.querySelector('[data-stamp-step="-1"] svg')!).transform;
+    return { dir: row.dir, previous: x('[data-stamp-step="-1"]'), next: x('[data-stamp-step="1"]'), flip };
+  });
+  expect(head.dir).toBe('rtl');
+  expect(head.previous).toBeGreaterThan(head.next);
+  expect(head.flip).toBe('matrix(-1, 0, 0, 1, 0, 0)');
+});
