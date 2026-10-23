@@ -1244,3 +1244,21 @@ test('the months run the way the language reads', async ({ page }) => {
   expect(head.previous).toBeGreaterThan(head.next);
   expect(head.flip).toBe('matrix(-1, 0, 0, 1, 0, 0)');
 });
+
+test('the chosen day stays lit on whichever page holds it', async ({ page }) => {
+  // The highlight was drawn only on the page at rest in the middle, so a
+  // swipe into the chosen day's month showed a grid with nothing lit until
+  // the track settled — and the month either side of it never showed it.
+  await boot(page);
+  await openPicker(page);
+  await settled(page);
+  const picker = sheet(page);
+  const today = String(new Date().getDate());
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected')).toHaveText(today);
+  await picker.locator('[data-stamp-step="-1"]').click(); // to the month before
+  await settled(page);
+  // Today's month is now the page to the right, and it is still lit.
+  const pages = picker.locator('.timestamp-picker-page');
+  await expect(pages.nth(3).locator('.timestamp-picker-day.is-selected')).toHaveText(today);
+  await expect(pages.nth(2).locator('.timestamp-picker-day.is-selected')).toHaveCount(0);
+});

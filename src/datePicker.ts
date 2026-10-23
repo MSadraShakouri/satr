@@ -186,7 +186,10 @@ export function createTimestampPicker(): TimestampPicker {
     const cells = Array.from({ length: lead }, () => '<span class="timestamp-picker-day is-blank"></span>').join('')
       + days.map((day, index) => {
         const parts = calParts(localeTag, day);
-        const selected = isCurrent && chosenParts !== null
+        // The chosen day is marked on WHICHEVER page holds it, not only on
+        // the one at rest in the middle: swiping to its month used to bring
+        // up a grid with nothing lit on it until the track settled.
+        const selected = chosenParts !== null
           && parts.year === chosenParts.year && parts.month === chosenParts.month && parts.day === chosenParts.day;
         return `<button type="button" class="timestamp-picker-day${selected ? ' is-selected' : ''}" data-stamp-day="${index}" aria-label="${number(parts.day)}" aria-pressed="${selected}"${isCurrent ? '' : ' tabindex="-1"'}>${number(parts.day)}</button>`;
       }).join('')
