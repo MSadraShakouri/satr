@@ -42,8 +42,12 @@ import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 
 type Mode = 'edit' | 'preview';
-// The first note in a fresh browser: the demo (demo.md, at the top of the repo).
+// The tour (demo.md, at the top of the repo): the first note in a fresh
+// browser, and the "Satr demo" row on the new-tab page everywhere else. It is
+// shown, never written — it becomes a note of yours the moment you write in it.
 const starter = demoNote;
+const DEMO_NAME = 'demo.md';
+const DEMO_SHOWN_KEY = 'satr:demoShown';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -290,6 +294,11 @@ if (isExternalPath(filePath)) { filePath = ''; localStorage.removeItem(CURRENT_K
 let fileBase = stem(filePath);
 interface FileVersion { text: string; mtime: number }
 let diskBase: { path: string; text: string; mtime: number } | null = null;
+// A note the app put on screen that has no file behind it: the demo, or the
+// first note offered in a space with nothing in it. Leaving it must not write
+// it — an install the writer only looked at ends with their folders as empty
+// as they found them. The first keystroke makes it an ordinary note.
+let onlyOnScreen: { path: string; text: string } | null = null;
 let activeSave: Promise<boolean> | null = null;
 /** The open note's file is being moved (the title's ✓) right now. A save that
  *  arrives while it is set waits for it and writes to the name the file landed
@@ -692,6 +701,13 @@ async function saveNow(): Promise<boolean> {
     return true;
   }
   const text = editor.getValue();
+  // Nothing of the writer's to keep: a note that was only ever shown, still
+  // word for word as it was offered, and with no file of its own. Closing its
+  // tab, opening another note or leaving the app writes nothing at all — the
+  // first keystroke is what makes it a note. (Said here rather than in
+  // performSave, whose caller retries while the text differs from the disk's,
+  // which for a note that was never written is always.)
+  if (onlyOnScreen?.path === path && onlyOnScreen.text === text && !(await backend.stat(path))) return true;
   const task = performSave(path, text);
   activeSave = task;
   let saved = false;
@@ -1464,13 +1480,24 @@ async function firstNote(): Promise<{ path: string; text: string }> {
     const text = await backend.read(note.path);
     if (text !== null) return { path: note.path, text };
   }
-  // Nothing there. The note is only written once you type in it.
+  // Nothing there: a name for a note that does not exist yet. The caller
+  // decides whether to offer it (and it is written only once you type).
   return { path: joinPath(root, await freeName(root, 'Untitled', '.md')), text: '' };
 }
-async function openFallback(): Promise<void> {
-  const { path, text } = await firstNote();
+/** The tour. Their own copy if they have written one, otherwise the note as
+ *  it ships — on screen, with no file behind it. */
+async function openDemo(): Promise<void> {
+  const path = joinPath(notesHome(), DEMO_NAME);
+  if (await backend.stat(path)) { void openFile(path); return; }
+  if (!await leaveCurrent()) return;
+  if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
+  localStorage.setItem(DEMO_SHOWN_KEY, '1');
+  onlyOnScreen = { path, text: starter };
   filePath = '';
-  showFile(path, text);
+  showFile(path, starter);
+  setMode('edit');
+  toggleFiles(false);
+  renderNavButtons();
 }
 // Where a new note goes when nobody said where: the folder the writer is
 // already working in — the folder of the note in front of them. Notes are kept
@@ -1711,6 +1738,10 @@ async function openTab(tab: Tab, after?: () => void): Promise<void> {
   const opened = await backend.readText(tab.path);
   if (curTab() !== tab) return; // a newer tab activation won the read race
   if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
+  // The tour has no file of its own until it is written in: coming back to
+  // its tab shows it again, rather than closing the tab as a note that went
+  // missing.
+  if (onlyOnScreen?.path === tab.path) { showFile(tab.path, onlyOnScreen.text, after); return; }
   if (opened.status === 'too-large') leftSidebar.hint(`“${fileName(tab.path)}” is too large to open here (${formatBytes(opened.size)}).`, true);
   if (tabs.length > 1) {
     const at = tabs.indexOf(tab);
@@ -1936,6 +1967,7 @@ async function renderEmptyTab(): Promise<void> {
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
         <button type="button" class="empty-state-action" data-act="files">Go to file</button>
+        <button type="button" class="empty-state-action" data-act="demo">Open the Satr demo</button>
         ${tabs.length > 1 ? '<button type="button" class="empty-state-action" data-act="close">Close</button>' : ''}
       </div>
       <div class="empty-state-results"${emptyQuery ? '' : ' hidden'}></div>
@@ -1969,6 +2001,7 @@ emptyTab.addEventListener('click', (event) => {
   if (recent) { void openFile(recent.dataset.path!); return; }
   const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (act === 'new') void newFile();
+  else if (act === 'demo') void openDemo();
   else if (act === 'files') toggleFiles(true);
   else if (act === 'search') emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field')?.focus();
   else if (act === 'close') closeTab(activeTab);
@@ -2737,11 +2770,25 @@ async function openFirstNote(): Promise<void> {
   else if (path) text = await backend.read(path);
   if (text === null) {
     ({ path, text } = await firstNote());
-    // Very first start in a browser: the demo note.
-    if (backend.kind === 'web' && !text && !(await backend.stat(path))) {
-      path = joinPath(DEFAULT_FOLDER, 'Untitled.md');
-      text = starter;
-      await backend.write(path, text);
+    // There is nothing to open: the space holds no note this tab can show.
+    // A fresh install lands here, and it must not be given a note it never
+    // asked for — the empty "Untitled" that used to sit here became a real
+    // file in the writer's folder the moment they tapped anything.
+    if (!text && !(await backend.stat(path))) {
+      // The very first run in a browser opens the tour instead; everywhere
+      // else (the app, and every run after the first) the new-tab page says
+      // what to do next, with the tour one tap away on it.
+      if (backend.kind === 'web' && !localStorage.getItem(DEMO_SHOWN_KEY)) {
+        localStorage.setItem(DEMO_SHOWN_KEY, '1');
+        path = joinPath(notesHome(), DEMO_NAME);
+        text = starter;
+        onlyOnScreen = { path, text };
+      } else {
+        curTab().path = '';
+        showEmptyTab();
+        void leftSidebar.refresh();
+        return;
+      }
     }
   }
   filePath = '';
