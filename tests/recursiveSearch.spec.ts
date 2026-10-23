@@ -57,8 +57,16 @@ async function openAllSearch(page: Page, query: string): Promise<void> {
   const input = panel.locator('.vault-search');
   await expect(input).toBeVisible();
   await input.fill(query);
-  // Wait for results to settle; the panel shows a summary when done.
-  await expect(panel.locator('.search-summary')).not.toHaveText('', { timeout: 5000 });
+  // Wait for the search to have run: the panel either summarises what it
+  // found or says there is nothing. A summary on its own is not the signal —
+  // a search that turns up only names or folders has no count to show, and
+  // the non-empty text this used to wait for was the note count standing
+  // there from before the query was typed.
+  await expect(async () => {
+    const summary = (await panel.locator('.search-summary').textContent()) ?? '';
+    const empty = (await panel.locator('.pane-empty').count()) ? await panel.locator('.pane-empty').textContent() : '';
+    expect(summary !== '' || empty === 'No results').toBe(true);
+  }).toPass({ timeout: 5000 });
 }
 
 test('recursive on finds deep notes, off finds only top-level', async ({ page }) => {

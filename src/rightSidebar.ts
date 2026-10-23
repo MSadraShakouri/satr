@@ -119,6 +119,10 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   // rest follow the default (only the current note is open).
   const touched = new Set<string>();
   let headings: Heading[] = [];
+  /** How many notes the all-notes scope is looking at, once a pass over them
+   *  has finished; null until then. The header says it, so the line under the
+   *  name is filled in both scopes. */
+  let notesInScope: number | null = null;
   /** What a row calls a note: the file's own name where another app handed
    *  it over, the name in the path everywhere else. */
   const nameOf = (path: string): string => deps.externalName?.(path) ?? stem(path);
@@ -126,15 +130,20 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   function renderChrome(): void {
     viewName.textContent = scope === 'note' ? 'Outline' : 'Search';
     noteName.textContent = scope === 'note' ? nameOf(deps.currentPath()) : deps.scopeName();
-    // The note's own size, under its name: its words and its characters, read
-    // from the live text so the line keeps step with the writer (the panel
-    // refreshes on the same beat as the outline). The all-notes scope names
-    // the space, not a note, and says nothing.
+    // The size of whatever the panel is showing, under its name: a note's
+    // words and characters, read from the live text so the line keeps step
+    // with the writer (the panel refreshes on the same beat as the outline),
+    // and how many notes the space holds when the scope is all of them. The
+    // line is there in both scopes on purpose: it used to disappear with the
+    // note, which moved the search field, the scope switch and every result
+    // under the reader's finger each time they changed scope.
     const path = deps.currentPath();
     if (scope === 'note' && path) {
       const text = deps.currentText();
       const words = text.match(/\S+/g)?.length ?? 0;
       noteCount.textContent = `${words} ${words === 1 ? 'word' : 'words'}, ${text.length} ${text.length === 1 ? 'character' : 'characters'}`;
+    } else if (scope === 'all' && notesInScope !== null) {
+      noteCount.textContent = `${notesInScope} note${notesInScope === 1 ? '' : 's'}`;
     } else noteCount.textContent = '';
     segmented.dataset.value = scope;
     segmented.style.setProperty('--index', scope === 'all' ? '1' : '0');
@@ -256,6 +265,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const current = deps.currentPath();
     const notes = await deps.notes();
     if (mine !== run) return; // a newer search started meanwhile
+    notesInScope = notes.length;
     notes.sort((a, b) => (a.path === current ? -1 : b.path === current ? 1 : nameOf(a.path).localeCompare(nameOf(b.path))));
     const headingsOf = (note: { path: string; text: string }): Heading[] => (note.path === current ? deps.headings() : headingsOfText(note.text));
     // Names are reused across folders, so a result says which folder it is in:
@@ -349,7 +359,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         if (touched.has(key)) continue;
         if (note.path === current) collapsed.delete(key); else collapsed.add(key);
       }
-      summary.textContent = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
+      summary.textContent = '';
       list.innerHTML = notes.map((note) => noteRow(note.path, '', headingTree(note.path, note.text, headingsOf(note), null, [], `${note.path}|`))).join('')
         || `<div class="pane-empty">No notes in ${escapeHtml(deps.scopeName())}</div>`;
       renderChrome();

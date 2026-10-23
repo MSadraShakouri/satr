@@ -208,12 +208,20 @@ test('one word and one character read in the singular', async ({ page }) => {
   expect((await header(page, '#right-panel')).count?.text).toBe('1 word, 1 character');
 });
 
-test('the all-notes search says nothing about a note', async ({ page }) => {
+test('the all-notes scope measures the space, not the note', async ({ page }) => {
   await seed(page, { 'Notes/A.md': 'alpha beta\n' }, [{ id: 'notes', name: 'Notes', path: 'Notes' }], 'Notes/A.md');
   await openOutline(page);
+  const inNote = await header(page, '#right-panel');
+  expect(inNote.count?.text).toBe('2 words, 11 characters');
   await page.locator('#app #right-panel [data-scope="all"]').click();
   await expect(page.locator('#app #right-panel .drawer-note-name')).toHaveText('Notes');
-  expect((await header(page, '#right-panel')).count?.text).toBe('');
+  const inSpace = await header(page, '#right-panel');
+  // Nothing about the open note's text — that is what the space has no
+  // business claiming — but the line is still there, with the size of the
+  // thing being shown, and in the same place: the panel underneath it must
+  // not move when the reader changes scope.
+  expect(inSpace.count?.text).toBe('1 note');
+  expect(inSpace.count?.y).toBe(inNote.count?.y);
 });
 
 test('the count keeps step with the note as it is written', async ({ page }) => {

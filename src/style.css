@@ -2595,6 +2595,13 @@ input.mod-no-match {
 .workspace-drawer-count:empty {
   display: none;
 }
+/* The right drawer's count line keeps its place even in the moment before it
+   has a figure to show (the all-notes count arrives with the notes): the
+   panel must not slide under the reader when the scope changes. */
+.workspace-drawer-header-info.drawer-note-count:empty {
+  display: block;
+  min-height: 1lh;
+}
 .workspace-drawer-header-info,
 .workspace-drawer-count {
   margin-top: 4px;
