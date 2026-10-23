@@ -8,12 +8,11 @@ ROADMAP.md. Italic notes are the state of play, not new work.
 ## typing and the keyboard
 
 - [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing) (important for typing UX) — *not started. The editor already sends the keyboard exactly Obsidian's own attributes (spellcheck on, autocorrect on, autocapitalize on) and no longer second-guesses a typed space, so whatever is left is somewhere else and has never been traced.*
-- [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
+- [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really — *still happening, and nothing has been done about it yet. It needs the device: the swipe is the keyboard's own gesture and arrives as a run of deletions with no key event, so the next step is to watch what the note receives at position 0 and refuse anything that would walk out of it.*
 
 ## source mode and the reading view
 
 - [x] source to preview isn't 1:1 of the same space on screen, would be great if the source mode could mimic the display of preview so the switch wouldn't be noticable in normal text and lists and stuff — *0.13: prose, bullets, numbered lists, to-dos, quotes and every level of their nesting start at the same x in both views (the marker hangs in the strip the reading view reserves for it, a nested level steps by the same amount however it was typed, and a row now breaks at the same word in both). Not mimicked, and not planned: tables, math and mermaid (live preview deliberately leaves those as source), the guide line beside a nested list, and the vertical spacing between blocks.*
-- [ ] caret position becomes unpredictable with `### ` hidden and jumps a bit (important, learn from obsidian) — *0.13: measured. On a heading that fits one row the caret lands on the character tapped. On a heading that **wraps**, the tap is still right (±1 character) but revealing `### ` re-wraps the line under the finger, so a tap near the end of a row ends up one row lower and about 235px to the left. Fix is a decision, not a measurement: either stop revealing the marker on a heading that has text (Obsidian's own exception is a line that is only `###`), or reserve its width so nothing reflows (which would undo the parity above).*
 - [x] nested lists should be easier to make, maybe not > < buttons but in source mode they should align whether two spaces or more, I'm not too sure about it — *0.13: the aligning half is done — two spaces, four or a tab all draw one step, the same step the reading view uses. No > < buttons; say the word if you still want them.*
 - [ ] in preview mode, tapping anywhere of a header make it collapse (idea, might be a bad one, but the current hitbox is still a bit small)
 - [ ] would be great if in source mode there was a background process that converted the math and tables and stuff (didn't display, just prepare) so the edit to preview mode would switch faster, doesn't need a full page rebuild probably, should definitely be a background process (it got faster in the batches but I think this would make it instantaneous)
@@ -38,10 +37,9 @@ ROADMAP.md. Italic notes are the state of play, not new work.
 
 - [x] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff)
 - [x] switching between single file and all files in right sidebar moves some elements down, undesired and needs thought
-- [ ] subfolder option enabled in space mode should show the name of the folder, probably
+- [x] subfolder option enabled in space mode should show the name of the folder, probably — *it showed the name of the **space**, not the folder in it. With subfolders off a space searches the open note's own folder (and in All files the walker searches the folder it stands in), while the drawer header named the space either way, so one folder's results looked like the whole space's. The header now names the folder being read, and goes back to the space's name when the whole space is what is being read.*
 - [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
 - [ ] tab number digits aren't vertically centered, in two digits it's touching and in single digits it's not centered, maybe it needs to be smaller though (needs a lot of work)
-- [ ] some times after being gone, it doesn't open a new tab, I don't know why (needs testing, I don't know when this happens) (happens rarely, I don't know if it's fixed or not)
 
 ## images
 
@@ -67,9 +65,17 @@ ROADMAP.md. Italic notes are the state of play, not new work.
 ## launch and scrolling
 
 - [x] app launch is slow on big files even after "away time", I think maybe the order of checking is bad
-- [x] scroll up issue happened again once, happens less but happened once
-- [x] source to preview switch once stayed at the bottom, might be a bug, I'm not sure (happened multiple times, maybe it's related to closing app or something)
-- [ ] scroll up sometimes is weird, it still bounces, going down a tiny bit fixes it but it bounces when going up (this thing changed so many times but never fully got resolved)
+- [ ] scroll up sometimes is weird, it still bounces, going down a tiny bit fixes it but it bounces when going up (this thing changed so many times but never fully got resolved) — *still happening, and not addressed in 0.13: the reading-place work was about where a jump lands, not about this. What has been ruled out already: the reading view's sections do carry `contain-intrinsic-size: auto …`, so the browser remembers a section's real height once it has drawn it, and scroll anchoring is only turned off on the date picker's own track. Next is a reproduction on a long note — which view it happens in (source or reading) would narrow it a great deal.*
+
+## seen once, waiting for it to happen again
+
+Bugs I hit once and have not been able to bring back. Some may already be
+fixed by something else; none can be diagnosed until they show up again.
+
+- [ ] caret position becomes unpredictable with `### ` hidden and jumps a bit (important, learn from obsidian) — *could not be reproduced on a one-row heading: the caret lands on the character tapped. What **is** reproducible on a heading that **wraps**: the tap is right (±1 character) but revealing `### ` re-wraps the line under the finger, so a tap near the end of a row ends up one row lower and about 235px to the left. If that is what it was, the fix is a decision — stop revealing the marker on a heading that has text (Obsidian's own exception is a line that is only `###`), or reserve its width so nothing reflows.*
+- [ ] some times after being gone, it doesn't open a new tab, I don't know why (happens rarely, it has been a while since it last happened)
+- [x] scroll up issue happened again once, happens less but happened once — *believed fixed, still worth watching.*
+- [x] source to preview switch once stayed at the bottom, might be a bug, I'm not sure (happened multiple times, maybe it's related to closing app or something) — *believed fixed by 0.13's reading-place work, still worth watching.*
 
 ## later
 

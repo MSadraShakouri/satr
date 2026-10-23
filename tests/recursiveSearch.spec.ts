@@ -220,3 +220,28 @@ test('subfolders off searches the open note\'s folder — not the space root, no
     els.map((el) => el.getAttribute('data-note')));
   expect(paths.sort()).toEqual(['Notes/sub/deep.md', 'Notes/sub/other.md']);
 });
+
+test('the header names the folder the search is reading, not the space it sits in', async ({ page }) => {
+  // "It shows the name of the space and not the folder in it": with
+  // subfolders off, a space searches the open note's own folder, so the
+  // header has to say which folder the results came from.
+  const files: Record<string, string> = {
+    'Notes/top.md': 'needle at the space root\n',
+    'Notes/sub/deep.md': "needle in the open note's own folder\n",
+  };
+  await boot(page, files, 'Notes/sub/deep.md', { recursiveSearch: false, version: 4 });
+  await openAllSearch(page, 'needle');
+  const name = page.locator('#app #right-panel .drawer-note-name');
+  await expect(name).toHaveText('sub');
+
+  // Subfolders back on: the whole space is being read, so the space is what
+  // the header names.
+  await page.locator('#app #right-panel [data-recursive-toggle]').click();
+  await expect(name).toHaveText('Notes');
+});
+
+test('a note at the space root leaves the header on the space name', async ({ page }) => {
+  await boot(page, FILES, 'Notes/top.md', { recursiveSearch: false, version: 4 });
+  await openAllSearch(page, 'needle');
+  await expect(page.locator('#app #right-panel .drawer-note-name')).toHaveText('Notes');
+});

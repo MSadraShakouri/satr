@@ -2464,7 +2464,16 @@ const sidebar = createRightSidebar(rightPanel, {
   // rows ask for its real name rather than reading "satr-open" out of it.
   externalName: (path) => (isExternalPath(path) ? displayNameForPath(path) : null),
   noteDir: () => majorityDirection(editor.getValue()),
-  scopeName: () => scopeName(currentScope()),
+  // What the search is actually reading, which is not always what the scope
+  // is called: with subfolders off a space searches the open note's own
+  // folder, and in All files the walker searches the folder it is standing
+  // in — while the header said the space's name (or "All files") for both,
+  // so the results looked like the whole space's when they were one folder's.
+  scopeName: () => {
+    const scope = currentScope();
+    const root = searchRoot();
+    return root && root !== scopeRoot(scope) ? basename(root) : scopeName(scope);
+  },
   // The folder the note list was taken from, so a result can say where it
   // sits relative to what is being searched (src/rightSidebar.ts).
   rootPath: searchRoot,
