@@ -195,7 +195,7 @@ export function createTimestampPicker(): TimestampPicker {
   /** Put the scroll on the page that carries the viewed month, instantly. */
   const centerTrack = (): void => {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
-    if (viewport) viewport.scrollLeft = indexFor(0) * viewport.clientWidth;
+    if (viewport) viewport.scrollLeft = scrollFor(viewport, indexFor(0));
   };
 
   /** What goes INSIDE one page: the weekday row and a FIXED six-week grid —
@@ -320,7 +320,6 @@ export function createTimestampPicker(): TimestampPicker {
   function turnMonth(dir: -1 | 1): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
-    const width = viewport.clientWidth || 1;
     const here = nearestIndex();
     const step = monthDir() === 'rtl' ? -dir : dir;
     let want = clampIndex(toIndex + step);
@@ -343,7 +342,7 @@ export function createTimestampPicker(): TimestampPicker {
     glideBy = performance.now() + 700;
     followTitle(want);
     watchTrack();
-    viewport.scrollTo({ left: want * width, behavior: Math.abs(want - here) > 1 ? 'auto' : 'smooth' });
+    viewport.scrollTo({ left: scrollFor(viewport, want), behavior: Math.abs(want - here) > 1 ? 'auto' : 'smooth' });
   }
 
   /** The track is a FIXED ladder of month pages — the model the Persian
@@ -383,11 +382,49 @@ export function createTimestampPicker(): TimestampPicker {
   const clampIndex = (index: number): number => Math.max(0, Math.min(PAGES - 1, index));
   const pageAt = (index: number): HTMLElement | null =>
     (sheet?.querySelector<HTMLElement>('.timestamp-picker-track')?.children[index] as HTMLElement | undefined) ?? null;
+  /** Pages to pixels, measured rather than multiplied. `clientWidth` is a
+   *  whole number of pixels; a page's real width often is not — 1080
+   *  physical pixels at 2.75x is 392.72 CSS px — and this ladder is six
+   *  hundred pages long, so that rounding adds up to nearly half a page by
+   *  the middle of the track. Multiplying therefore put the boundary
+   *  between two months nowhere near the middle of a swipe: measured on a
+   *  392.72px page, the month turned after a tenth of a drag one way and
+   *  not until the settle the other, which is exactly the lopsided gesture
+   *  a reader feels. Reading one page's own box instead keeps the error at
+   *  a fraction of a pixel, wherever on the ladder the track stands. */
+  const snapCentre = (viewport: HTMLElement): number =>
+    viewport.getBoundingClientRect().left + viewport.clientLeft + viewport.clientWidth / 2;
+  /** How far the track stands from the page it last came to rest on, in
+   *  page widths, and which page that is. Everything else is read off this
+   *  one measurement. */
+  function standing(viewport: HTMLElement): { base: number; away: number } {
+    const page = viewport.querySelector<HTMLElement>('.timestamp-picker-page.is-current')
+      ?? viewport.querySelector<HTMLElement>('.timestamp-picker-page');
+    if (!page) return { base: CENTRE, away: 0 };
+    const box = page.getBoundingClientRect();
+    return {
+      base: Number(page.dataset.stampPage),
+      away: (snapCentre(viewport) - (box.left + box.width / 2)) / (box.width || 1),
+    };
+  }
+  /** Which page is nearest the snap point — where the track will come to
+   *  rest, which is what a settle, an arrow's next step and a tapped day
+   *  all have to agree about. */
+  function indexAt(viewport: HTMLElement): number {
+    const { base, away } = standing(viewport);
+    return clampIndex(base + Math.round(away));
+  }
+  /** Where the scroll has to stand for page `index` to be the one on screen. */
+  function scrollFor(viewport: HTMLElement, index: number): number {
+    const page = pageAt(index);
+    if (!page) return index * (viewport.clientWidth || 1);
+    const box = page.getBoundingClientRect();
+    return viewport.scrollLeft + (box.left + box.width / 2) - snapCentre(viewport);
+  }
   /** Where the scroll stands, in pages. */
   function nearestIndex(): number {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
-    if (!viewport) return CENTRE;
-    return clampIndex(Math.round(viewport.scrollLeft / (viewport.clientWidth || 1)));
+    return viewport ? indexAt(viewport) : CENTRE;
   }
 
   /** Draw the grid of the month this frame carries. Nothing moves: the frame
@@ -875,11 +912,11 @@ export function createTimestampPicker(): TimestampPicker {
       const tick = (): void => {
         frame = 0;
         const at = viewport.scrollLeft;
-        const index = clampIndex(Math.round(at / (viewport.clientWidth || 1)));
+        const index = indexAt(viewport);
         if (index !== titleIndex) {
           if (fingerDown) toIndex = index; // a swipe moves the target with it
           // The month turns as the page nearest the snap point changes,
-          // which is halfway through the drag — where the Persian Calendar
+          // which is halfway through the swipe — where the Persian Calendar
           // app's pager turns its own title.
           if (!gliding) followTitle(index);
           fillAround(index);

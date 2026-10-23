@@ -42,27 +42,33 @@ const sheet = (page: Page) => page.locator('.timestamp-picker');
  *  (the current one is the one under the scroll). Resting ON a snap point is
  *  not enough on its own: a glide has not left its starting page in the
  *  first frames, and a test would read that as the settle it is waiting for. */
+/** Where the track stands, measured off a page's own box rather than
+ *  calculated from clientWidth: a page is not always a whole number of
+ *  pixels wide, and six hundred pages of that rounding is half a page. */
+const trackNow = (page: Page) => page.locator('.timestamp-picker-viewport').evaluate((el) => {
+  const current = el.querySelector<HTMLElement>('.timestamp-picker-page.is-current');
+  const ref = current ?? el.querySelector<HTMLElement>('.timestamp-picker-page')!;
+  const box = ref.getBoundingClientRect();
+  const centre = el.getBoundingClientRect().left + el.clientLeft + el.clientWidth / 2;
+  const away = (centre - (box.left + box.width / 2)) / (box.width || 1);
+  return {
+    at: el.scrollLeft,
+    index: Number(ref.dataset.stampPage) + Math.round(away),
+    off: Math.abs(away - Math.round(away)) * box.width,
+    current: current ? Number(current.dataset.stampPage) : Number.NaN,
+  };
+});
 const settled = async (page: Page): Promise<void> => {
   let last = Number.NaN;
   await expect.poll(async () => {
-    const now = await page.locator('.timestamp-picker-viewport').evaluate((el) => {
-      const at = el.scrollLeft;
-      const index = Math.round(at / el.clientWidth);
-      return {
-        at,
-        onPage: Math.abs(at - index * el.clientWidth) <= 2,
-        adopted: Number(el.querySelector<HTMLElement>('.timestamp-picker-page.is-current')?.dataset.stampPage) === index,
-      };
-    });
+    const now = await trackNow(page);
     const stable = now.at === last;
     last = now.at;
-    return now.onPage && now.adopted && stable;
+    return now.off <= 2 && now.current === now.index && stable;
   }, { timeout: 5000, intervals: [60, 60, 100, 150, 250, 500] }).toBe(true);
 };
 /** Which page of the ladder the scroll stands on, and which one is current. */
-const atPage = (page: Page) => page.locator('.timestamp-picker-viewport').evaluate(
-  (el) => Math.round(el.scrollLeft / el.clientWidth),
-);
+const atPage = async (page: Page): Promise<number> => (await trackNow(page)).index;
 const currentPage = (page: Page) => page.locator('.timestamp-picker-page.is-current').evaluate(
   (el) => Number((el as HTMLElement).dataset.stampPage),
 );
@@ -1525,4 +1531,46 @@ test('the heading turns under the finger, whichever way it goes', async ({ page 
     await settled(page);
     await expect(title).not.toHaveText(before); // and it stayed turned
   }
+});
+
+test('a page that is a fraction of a pixel wide turns at the middle either way', async ({ page }) => {
+  // 1080 physical pixels at 2.75x is 392.72 CSS px, which clientWidth rounds
+  // to 393. The ladder is six hundred pages long, so dividing the scroll
+  // offset by that rounded width drifted nearly half a page by the middle of
+  // the track and put the month boundary nowhere near the middle of a swipe:
+  // measured on this very width, the heading turned after 0.08 of a drag one
+  // way and 0.95 the other — one side instant, the other only at the settle.
+  // Pages are measured now, so the boundary is the middle, both ways. The
+  // finger has to be a real one: a programmatic scroll is snapped straight
+  // back, so it can never be held a fraction of a page over.
+  await boot(page, { timestampLocale: 'fa', timestampCalendar: 'persian', weekStart: 6 });
+  await page.addStyleTag({ content: '.timestamp-picker-viewport { width: 392.727px !important; }' });
+  await openPicker(page);
+  await settled(page);
+  const title = sheet(page).locator('.timestamp-picker-month');
+  const span = await page.evaluate(() => document.querySelector('.timestamp-picker-page')!.getBoundingClientRect().width);
+  expect(Number.isInteger(span)).toBe(false); // the page really is a fraction of a pixel wide
+  expect(await page.evaluate(() => document.querySelector('.timestamp-picker-viewport')!.clientWidth)).not.toBe(span);
+  const cdp = await page.context().newCDPSession(page);
+  const box = (await page.locator('.timestamp-picker-viewport').boundingBox())!;
+  const y = box.y + box.height / 2;
+  const x0 = box.x + box.width / 2;
+  for (const way of [1, -1, 1, -1]) {
+    const before = (await title.textContent())!.trim();
+    const walk = async (to: number): Promise<void> => {
+      for (let i = 1; i <= 4; i += 1) {
+        await page.waitForTimeout(30);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 - way * span * to * (i / 4), y }] });
+      }
+    };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+    await walk(0.4); // not yet halfway: the heading has nothing to say
+    await page.waitForTimeout(120);
+    await expect(title).toHaveText(before);
+    await walk(0.6); // over the middle, finger still down
+    await expect(title).not.toHaveText(before);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await settled(page);
+  }
+  await cdp.detach();
 });
