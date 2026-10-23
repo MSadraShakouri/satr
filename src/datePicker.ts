@@ -17,6 +17,7 @@
 // `<t:unix>` or `<t:unix:fmt>` in their hands — the note keeps the code, the
 // words stay live, and how they read is the date style's business alone
 // (src/timestamps.ts).
+import { strongDirection } from './direction';
 import { closeMenu, isMenuOpen } from './menu';
 import { loadSettings } from './settings';
 import { formatTimestamp, timestampLocaleTag, TIMESTAMP_FORMATS, type TimestampFormat } from './timestamps';
@@ -189,8 +190,16 @@ export function createTimestampPicker(): TimestampPicker {
         return `<button type="button" class="timestamp-picker-day${selected ? ' is-selected' : ''}" data-stamp-day="${index}" aria-label="${number(parts.day)}" aria-pressed="${selected}"${isCurrent ? '' : ' tabindex="-1"'}>${number(parts.day)}</button>`;
       }).join('')
       + Array.from({ length: 42 - lead - days.length }, () => '<span class="timestamp-picker-day is-blank"></span>').join('');
-    const weekdays = `<div class="timestamp-picker-weekdays" dir="auto">${row.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</div>`;
-    const dirText = sheet ? getComputedStyle(sheet).direction : 'ltr';
+    const weekdays = `<div class="timestamp-picker-weekdays">${row.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</div>`;
+    // One direction for the whole page, read from the WEEKDAY NAMES — so the
+    // header row and the day grid can never disagree about which column is
+    // which. Persian names turn the month right-to-left (Saturday on the
+    // right, as every Jalali wall calendar prints it), English ones keep it
+    // left-to-right. The language decides, never the app's own direction:
+    // the row used to be dir="auto" (RTL for Persian) inside a grid that
+    // followed the SHEET (LTR for an English app), which mirrored every
+    // column against its own label.
+    const dirText = strongDirection(row.join('')) ?? 'ltr';
     return `<div class="timestamp-picker-page${isCurrent ? ' is-current' : ''}"${isCurrent ? '' : ' aria-hidden="true"'} style="direction:${dirText}">${weekdays}<div class="timestamp-picker-grid">${cells}</div></div>`;
   }
 

@@ -1062,3 +1062,50 @@ test('?kbdebug=1 puts the numbers on the screen, the bar’s clearance included'
   expect(text).toMatch(/safe --safe-bottom \d+ env \d+ innerBottom \d+/);
   expect(text).toMatch(/navbar [\d.]+\.\.[\d.]+ \(gap \d+\)/);
 });
+
+test('the weekday row reads the way its own language does, and the grid lines up under it', async ({ page }) => {
+  // The header row took its direction from its own text (dir="auto") while
+  // the day grid took it from the app's direction: with a Persian Dates
+  // language inside an English app the two ran opposite ways and every column
+  // stood under the wrong name — Friday's cell under Saturday's label. One
+  // direction, the language's, now settles both, so they cannot disagree.
+  const columns = () => page.evaluate(() => {
+    const current = document.querySelector<HTMLElement>('.timestamp-picker-page.is-current')!;
+    const centre = (el: Element): number => {
+      const box = el.getBoundingClientRect();
+      return Math.round(box.left + box.width / 2);
+    };
+    const selected = current.querySelector<HTMLElement>('.timestamp-picker-day.is-selected');
+    return {
+      labels: [...current.querySelectorAll<HTMLElement>('.timestamp-picker-weekdays span')]
+        .map((span) => ({ name: (span.textContent ?? '').trim(), x: centre(span) })),
+      selected: selected ? centre(selected) : null,
+    };
+  });
+  const under = (seen: Awaited<ReturnType<typeof columns>>, tag: string): number => {
+    const name = new Intl.DateTimeFormat(tag, { weekday: 'short' }).format(new Date());
+    return seen.labels.find((label) => label.name === name)!.x;
+  };
+
+  // Persian: the week opens with Saturday on the RIGHT and ends with Friday
+  // on the left — the DOM order runs right to left, as the screen does.
+  await boot(page, { timestampLocale: 'fa', timestampCalendar: 'persian', weekStart: 6 });
+  await openPicker(page);
+  const persian = await columns();
+  expect(persian.labels.map((label) => label.name))
+    .toEqual([...persian.labels].sort((a, b) => b.x - a.x).map((label) => label.name));
+  expect(Math.abs(persian.selected! - under(persian, 'fa-u-ca-persian'))).toBeLessThanOrEqual(1);
+
+  // English: the same week, read the other way — Saturday on the left.
+  await page.evaluate(() => {
+    const settings = JSON.parse(localStorage.getItem('satr:settings') ?? '{}');
+    localStorage.setItem('satr:settings', JSON.stringify({ ...settings, timestampLocale: 'en', timestampCalendar: 'gregory' }));
+  });
+  await page.reload();
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+  await openPicker(page);
+  const english = await columns();
+  expect(english.labels.map((label) => label.name))
+    .toEqual([...english.labels].sort((a, b) => a.x - b.x).map((label) => label.name));
+  expect(Math.abs(english.selected! - under(english, 'en'))).toBeLessThanOrEqual(1);
+});
