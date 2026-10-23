@@ -1,75 +1,92 @@
 # The plan
 
-Remaining work for this PR, in the order of the list below. Web first, then
-APK. Lint and GitHub stay deferred. Do not invent extra items.
+The author's list, as it stands after 0.13.0. Web first, then APK. Lint and
+GitHub stay deferred. Do not invent extra items. A ticked item is kept only
+while something open sits beside it; finished and isolated items live in
+ROADMAP.md. Italic notes are the state of play, not new work.
 
-## main
+## typing and the keyboard
 
-- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing) (needs doing) (important for typing UX)
-- [x] no dual pane in horizontal, can be done right now, but in big screens text shouldn't cling to the sides of the screen
+- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing) (important for typing UX) — *not started. The editor already sends the keyboard exactly Obsidian's own attributes (spellcheck on, autocorrect on, autocapitalize on) and no longer second-guesses a typed space, so whatever is left is somewhere else and has never been traced.*
+- [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
+
+## source mode and the reading view
+
+- [x] source to preview isn't 1:1 of the same space on screen, would be great if the source mode could mimic the display of preview so the switch wouldn't be noticable in normal text and lists and stuff — *0.13: prose, bullets, numbered lists, to-dos, quotes and every level of their nesting start at the same x in both views (the marker hangs in the strip the reading view reserves for it, a nested level steps by the same amount however it was typed, and a row now breaks at the same word in both). Not mimicked, and not planned: tables, math and mermaid (live preview deliberately leaves those as source), the guide line beside a nested list, and the vertical spacing between blocks.*
+- [ ] caret position becomes unpredictable with `### ` hidden and jumps a bit (important, learn from obsidian) — *0.13: measured. On a heading that fits one row the caret lands on the character tapped. On a heading that **wraps**, the tap is still right (±1 character) but revealing `### ` re-wraps the line under the finger, so a tap near the end of a row ends up one row lower and about 235px to the left. Fix is a decision, not a measurement: either stop revealing the marker on a heading that has text (Obsidian's own exception is a line that is only `###`), or reserve its width so nothing reflows (which would undo the parity above).*
+- [x] nested lists should be easier to make, maybe not > < buttons but in source mode they should align whether two spaces or more, I'm not too sure about it — *0.13: the aligning half is done — two spaces, four or a tab all draw one step, the same step the reading view uses. No > < buttons; say the word if you still want them.*
+- [ ] in preview mode, tapping anywhere of a header make it collapse (idea, might be a bad one, but the current hitbox is still a bit small)
+- [ ] would be great if in source mode there was a background process that converted the math and tables and stuff (didn't display, just prepare) so the edit to preview mode would switch faster, doesn't need a full page rebuild probably, should definitely be a background process (it got faster in the batches but I think this would make it instantaneous)
+- [ ] code syntax highlighting like obsidian — *the reading view and the PDF already colour code by language; in source mode a fence is a grey block in one colour.*
+- [ ] html in preview would be epic, at minimum in export
+
+## math
+
+- [ ] math syntax checking while typing would be great, also colors and highlighting, learn from obsidian (maybe change the math things to be closer to Obsidian)
+- [ ] math split lines needs a bit thought, it's great overall but in some places it's not great
+- [ ] maybe remove the spaces thing of math, I usually use \text{} and I believe that handles it, needs feedback
+
+## search
+
+- [x] search doesn't show the current result (like 5/8) highlighted or anything, would be good if that happened
+- [x] in-file search highlight is weird, it's too down on the page, it works but the position of it is bad (should be 1/3 top of screen like the source to preview switch)
+- [x] search in normal mode isn't 1/3, I think it counts the search bar too because closing and opening it brings the search bar up and down which is undesired
+- [x] search in normal mode shouldn't select the text by default
+- [ ] search in normal might need thought, the sidebar search is usually better and normal has very little use cases
+
+## sidebar, tabs and files
+
+- [x] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff)
+- [x] switching between single file and all files in right sidebar moves some elements down, undesired and needs thought
+- [ ] subfolder option enabled in space mode should show the name of the folder, probably
+- [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
+- [ ] tab number digits aren't vertically centered, in two digits it's touching and in single digits it's not centered, maybe it needs to be smaller though (needs a lot of work)
+- [ ] some times after being gone, it doesn't open a new tab, I don't know why (needs testing, I don't know when this happens) (happens rarely, I don't know if it's fixed or not)
+
+## images
+
 - [ ] image adding and image editing (mostly crop)
 - [ ] image compression when adding, something like squoosh open source project if it isn't huge, it claims to use browser codecs which is exactly what we need
 - [ ] image filters like CamScanner, optional, have an interactive way, smart guessing, monochrome options and such
-- [ ] maybe add something for image sizes like the table RTL LTR settings which it would add a comment to choose the size. Should size be relative to height? What should the basis even be? (Something like this exists but I don't know how this works)
-- [ ] tab number digits aren't vertically centered (still yet not) (now a bit down) (needs a lot of work)
-- [x] the /folder X files, Y folders doesn't even show, maybe remove it or take it somewhere else, even the folder name truncates, maybe remove it or wrap it? If wrapping, the file and folder count should be something separate and on another line
-- [x] at the top of the right sidebar, show word and char count possibly below the file name
-- [ ] switching between single file and all files in right sidebar moves some elements down, undesired and needs thought
-- [ ] subfolder option enabled in space mode should show the name of the folder, probably
-- [ ] caret position becomes unpredictable with `### ` hidden and jumps a bit (important, learn from obsidian)
+- [ ] maybe add something for image sizes like the table RTL LTR settings which it would add a comment to choose the size. Should size be relative to height? What should the basis even be? (`|300` and `|300x200` already work, as Obsidian's — this is about a nicer way to say it)
+- [x] image sizes in print, huge right now — *fixed and tested on the web; a real check on the phone still waits on being able to add an image.*
+
+## PDF, and other files beside the note
+
 - [ ] pdf compression with something like ghostscript, the method not the tool, tested normal file and 108kb became 98kb, but in files with images it compresses images, if we do something like squoosh we probably won't need to do this
-- [ ] in preview mode, tapping anywhere of a header make it collapse (idea, might be a bad one, but the current hitbox is still a bit small)
 - [ ] possibly open PDFs too, a great idea would be to have something open dual panes manually so one could both read a PDF or any other file and write it down in the text bar, maybe something at the top, would really help me personally, but would not load the entire pdf at once to keep the app light. Overlay over text area to not touch it would probably be an optimal solution
 - [ ] opened pdf or other files have the option to crop a part of it and insert that into notes
-- [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
-- [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really
-- [x] search doesn't show the current result (like 5/8) highlighted or anything, would be good if that happened
-- [x] in-file search highlight is weird, it's too down on the page, it works but the position of it is bad, needs thought (should be 1/3 top of screen like the source to preview switch)
-- [ ] search in normal mode isn't 1/3, I think it counts the search bar too because closing and opening it brings the search bar up and down which is undesired
-- [ ] search in normal might need thought, the sidebar search is usually better and normal has very little use cases
-- [ ] search in normal mode shouldn't select the text by default
-- [ ] some times after being gone, it doesn't open a new tab, I don't know why (needs testing, I don't know when this happens) (happens rarely, I don't know if it's fixed or not)
-- [x] the app splash screen launch, I'm not sure it works properly, might need further testing, I think it stays for too long
-- [x] app splash screen shows the secondary icon a flash but it's a lot faster (needs testing on APK, claimed fix)
-- [ ] nested lists should be easier to make, maybe not > < buttons but in source mode they should align whether two spaces or more, I'm not too sure about it
+
+## direction
+
+- [x] I think I'm making the RTL LTR rules too complex, they should be much simpler, needs thought, I need to check what Obsidian does for it, or any other oss app, or literally any text field
 - [x] in Persian RTL, the numbered lists, the number is on the right of the number, numbers are still LTR for a reason, directly related to the weird long list of RTL rules we have
-- [x] numbers should be RTL, should they not? (No, other things need changes)
-- [x] scroll up issue happened again once, happens less but happened once (scroll up issue happens, much less often but at least once a day) (needs testing on APK)
-- [x] I think I'm making the RTL LTR rules too complex, they should be much simpler, needs thought, I need to check was Obsidian does for it, or any other oss app, or literally any text field (did I do this between 11.3 and 12.0?)
-- [x] the right and left of tables in RTL mode should mirror the left one, sources use ---: to mark right but in RTL that becomes the opposite and is unintuitive, that one aspect should follow LTR while keeping everything else (claimed fix, I don't recall when it happened) (I'm not sure if it's correct, maybe the source mode is weird in displaying, not an issue with display/print)
-- [ ] opening URLs should have a warning I believe, and ask to open app or site and have a copy option, be nice
-- [ ] html in preview would be epic, at minimum in export
-- [ ] code syntax highlighting like obsidian
-- [ ] math syntax checking while typing would be great, also colors and highlighting, learn from obsidian
-- [x] app launch is slow on big files even after "away time", I think maybe the order of checking is bad
-- [ ] would be great if in source mode there was a background process that converted the math and tables and stuff (didn't display, just prepare) so the edit to preview mode would switch faster, doesn't need a full page rebuild probably, should definitely be a background process (it got faster in the batches but I think this would make it instantaneous)
-- [ ] tab numbers thing is still broken, in two digits it's touching and in single digits it's not centered, maybe it needs to be smaller though
-- [ ] math split lines needs a bit thought, it's great overall but in some places it's not great
-- [ ] maybe remove the spaces thing of math, I usually use \text{} and I believe that handles it, needs feedback
-- [ ] the folder subsearch icon is a bit too right on the right sidebar, relative to other stuff I mean, maybe it should be a bit left, like the opposite end of the search bar against to the "Search" title, needs good execution
+- [x] the right and left of tables in RTL mode should mirror the left one, sources use ---: to mark right but in RTL that becomes the opposite and is unintuitive, that one aspect should follow LTR while keeping everything else — *done on screen and on paper. The doubt left was source mode, and that is a different thing: live preview shows a table as source text, it doesn't lay it out.*
 - [ ] text runs LTR RTL clinging needs thought, in lines with Persian digits RTL for example it's very visible, before and after the digit are both on the left side of it
-- [x] source to preview switch once stayed at the bottom, might be a bug, I'm not sure, needs testing it (happened multiple times, maybe it's related to closing app or something, it happens for a few times and then gets fixed without issues after it)
-- [ ] tapping on source to preview button makes it blue (normal browser selection blue) which is undesired, everything like this should be disabled
-- [ ] source to preview isn't 1:1 of the same space on screen, would be great if the source mode could mimic the display of preview so the switch wouldn't be noticable in normal text and lists and stuff
 
-## claimed fixes, needs testing
+## launch and scrolling
 
-- [x] image sizes in print, huge right now (claims to be fixed, needs testing either on APK or on site after I can add images) (needs thought, and I can't even test it well because I can't add images, I need stuff for image sizes, possibly like table comments)
-- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one (claims fix, needs testing on APK) (not fixed, no need to add it) (possibly impossible to fix, because we're calling satr-open) (many stuff attempted, just forgo it, I don't need it, maybe revert to say it's an externally opened file)
-- [x] obsidian has a settings where in the left sidebar it always shows the file you're in (always focuses on that, regardless of how deep the user is in a folder, always shows the file rather than keeping a random dir, obsidian has the option at the bottom near new file and stuff)  (claims to be done, needs testing on APK) (doesn't work) (unintuitive, can't know if it's on or not, should mimic Obsidian, doesn't open closed folders to show) (claimed fix, needs testing on APK)
-- [x] splash screen showed twice, claimed, needs testing on APK
+- [x] app launch is slow on big files even after "away time", I think maybe the order of checking is bad
+- [x] scroll up issue happened again once, happens less but happened once
+- [x] source to preview switch once stayed at the bottom, might be a bug, I'm not sure (happened multiple times, maybe it's related to closing app or something)
+- [ ] scroll up sometimes is weird, it still bounces, going down a tiny bit fixes it but it bounces when going up (this thing changed so many times but never fully got resolved)
 
-## deferred for later
+## later
 
 - [ ] text direction incredibly unpredictable with ←→ buttons, needs thought, issue that some lines ← is back while in others it's forward, and can lead to loops, I don't know what to do. Could make lines between math LTR too, would help with predictability
 - [ ] normal toolbar hamburger menu icon open it as a growing pop-up like chromium rather than showing up a menu (I'm not sure about this, should I do it?)
-- [ ] tablet support later
+- [ ] tablet support later — *the groundwork is in: no dual pane in landscape, and on a wide screen the text no longer clings to the edges.*
 - [ ] Unix timestamps picker maybe make it floating, fixes many of the issues, don't know if the benefits outweigh the losts
-- [ ] possible lint/fixer in the app (deferred for later)
-- [ ] later add GitHub connection like my markdown editor site, I don't mean sync, I mean read write access in a scope method way to do so (my project implemented it nicely but the UI of that is bad compared to Satr, and it's desktop first rather than mobile app) (deferred for later)
+- [ ] possible lint/fixer in the app (criteria below)
+- [ ] later add GitHub connection like my markdown editor site, I don't mean sync, I mean read write access in a scope method way to do so (my project implemented it nicely but the UI of that is bad compared to Satr, and it's desktop first rather than mobile app)
 - [ ] settings into parts, a locale part in it too because right now a lot of the settings are simply locales
 - [ ] have option to sort toolbar stuff
 - [ ] maybe be able to have a quick note or something, needs thought, I think Obsidian has a daily thing perhaps
+
+## decided against
+
+- [ ] opening an already open tab from an external app opens the tab again, ideal to open the already open one — *forgone: the hand-over carries a token a file manager is free to change, so there is no reliable way back to the tab that already has the file. What it does instead, since 0.13: the tab is named after the file rather than "satr-open", it says it came from another app, and "Show in files" works on it.*
+- [x] numbers should be RTL, should they not? — *no. Other things needed changing instead; those are above.*
 
 ## note lint criteria
 
@@ -84,4 +101,4 @@ for the in-app lint/fixer above, measured on term_three with the app's own scann
 7. run every formula through `renderMath` and fail on any `katex-error` — katex is `throwOnError: false`, so a typo is a silent red formula in the reading view and in the PDF, and there is no other way to notice
 8. assert the latex-style converter never fires on a real line break: `\\[6pt]` in Linear Algebra 03:38 is a `\\[6pt]` skip, not a `\[…\]` pair. today correct by two independent guards (the preceding backslash, and the enclosing `$$` span) — worth pinning so neither guard is ever weakened
 
-not criteria, deliberately: callouts/dataview/graph/tags (not supported, would render literally), table separator styles and headerless tables (`ensureTableSeparators` inserts the separator, then the empty header row is removed), persian `۱.` ordered lists (transliterated, then re-rendered as persian), bare emails (gfm autolinks them), math digit style (a settings choice), and unifying `$$ x $$` against bare `$$` (both are `display: true`, they render the same).
+not criteria, deliberately: callouts/dataview/graph/tags (not supported, would render literally), table separator styles and headerless tables (`ensureTableSeparators` inserts the separator, then the empty header row is removed), persian `۱.` ordered lists (transliterated, then re-rendered as persian), bare emails (gfm autolinks them), math digit style (a settings choice), and unifying `$$ x $$` against bare `$$` (both are `display: true`, they render the same)
