@@ -68,7 +68,7 @@ Each release is signed with the same key, so a new APK installs over the old one
 npm install
 npm run dev          # the web app at http://localhost:5173 (notes live in the browser's storage)
 npm run build        # type-check and build to dist/
-npm start            # build, then serve dist/ on the network (open it on the phone)
+npm start            # build, then serve dist/ on the network, also at :5173 (open it on the phone)
 ```
 
 Browser regression tests cover editor input, selection geometry, pagination and PDF rendering:
