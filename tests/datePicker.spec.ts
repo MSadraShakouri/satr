@@ -455,12 +455,14 @@ test('the runway grows mid-scroll: a six-page run finds real months all the way'
   await viewport(page).evaluate(async (el) => {
     const width = el.clientWidth;
     for (let step = 1; step <= 6; step += 1) {
-      el.scrollLeft = width * (2 + step);
+      el.scrollLeft += width; // one page on from wherever the track is now
       el.dispatchEvent(new Event('scroll'));
       await new Promise((resolve) => window.setTimeout(resolve, 16));
     }
   });
-  expect(await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).toBeGreaterThan(8);
+  // Each completed scroll is adopted where it stopped — the track does not
+  // hoard pages any more — so what matters is that six pages of travel land
+  // six months on, with a real grid under them.
   // Rest: the month six on is adopted, re-centred, and its 1st is real.
   await page.waitForTimeout(400); // past the settle debounce
   const expected = new Date(now.getFullYear(), now.getMonth() + 6, 1);
@@ -509,7 +511,12 @@ test('nothing adopts under the finger: the drag owns the track until it lifts', 
   await openPicker(page);
   const picker = sheet(page);
   const before = await picker.locator('.timestamp-picker-month').textContent();
-  // Finger down, then the drag arrives below the prepend threshold.
+  const shape = () => viewport(page).evaluate((el) => ({
+    pages: el.querySelectorAll('.timestamp-picker-page').length,
+    first: el.querySelector('.timestamp-picker-page')!.textContent,
+    at: Math.round(el.scrollLeft),
+  }));
+  // Finger down, then the drag carries the track most of a page along.
   await page.evaluate(() => {
     document.querySelector<HTMLElement>('.timestamp-picker-viewport')!
       .dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
@@ -518,10 +525,15 @@ test('nothing adopts under the finger: the drag owns the track until it lifts', 
     el.scrollLeft = Math.round(el.clientWidth * 0.5);
     el.dispatchEvent(new Event('scroll'));
   });
-  await expect(viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).resolves.toBeGreaterThan(5);
-  // Held past the settle window: still the finger's track, nothing rebuilt.
+  const held = await shape();
+  // The title follows the page under the finger at once — that is what it is
+  // for — but the track itself is untouched.
+  await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(before!);
+  // Held past the settle window: the same pages, in the same order, at the
+  // same offset. Nothing is adopted, and nothing is inserted at the start of
+  // the track, which would move every page under the finger.
   await page.waitForTimeout(300);
-  await expect(viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).resolves.toBeGreaterThan(5);
+  expect(await shape()).toEqual(held);
   // The finger lifts: the quiet settle adopts the month before.
   await page.evaluate(() => {
     const el = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
@@ -1148,7 +1160,7 @@ test('switching the calendar lands on the month that holds the chosen day', asyn
 /** A REAL finger on the track: CDP touch points, so Chromium's own gesture,
  *  fling and snap run — the synthetic drag above writes scrollLeft from the
  *  main thread, which is exactly where the compositor behaves differently. */
-async function fingerSwipe(page: Page, dx: number): Promise<void> {
+async function fingerSwipe(page: Page, dx: number, pace: 'flick' | 'push' = 'flick'): Promise<void> {
   // The sheet slides in; a finger put down mid-animation lands on wherever
   // the track was a frame ago. Wait for the box to stop moving first.
   const where = async (): Promise<number> => Math.round((await page.locator('.timestamp-picker-viewport').boundingBox())!.y);
@@ -1165,10 +1177,15 @@ async function fingerSwipe(page: Page, dx: number): Promise<void> {
     type,
     touchPoints: type === 'touchEnd' ? [] : [{ x: at, y, radiusX: 12, radiusY: 12, force: 1 }],
   });
+  // A flick and a push: the same distance thrown off in 60ms or walked over
+  // 300ms, which is the difference between a fling the compositor carries
+  // and a drag that ends where the finger left it.
+  const moves = pace === 'flick' ? 4 : 12;
+  const wait = pace === 'flick' ? 15 : 25;
   await send('touchStart', x);
-  for (let step = 1; step <= 6; step += 1) {
-    await page.waitForTimeout(10);
-    await send('touchMove', x + (dx * step) / 6);
+  for (let step = 1; step <= moves; step += 1) {
+    await page.waitForTimeout(wait);
+    await send('touchMove', x + (dx * step) / moves);
   }
   await send('touchEnd', x + dx);
   await cdp.detach();
@@ -1178,12 +1195,11 @@ async function fingerSwipe(page: Page, dx: number): Promise<void> {
 const monthsOf = (locale: string) => Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2020, month, 1)));
 
 test('a finger turns exactly one month, each way', async ({ page }) => {
-  // The track prepends a page when the finger nears its start, and moves the
-  // scroll offset by a page to keep the grid still. DURING a touch scroll the
-  // compositor owns that offset and kept its own, so the page landed
-  // uncompensated: the grid jumped and every swipe backwards turned TWO
-  // months while forwards turned one. The compensation is read back now, and
-  // a refused one takes the page straight back out.
+  // The swipe that runs towards the START of the track is the one that went
+  // wrong: first it turned two months at a time, because a page was being
+  // inserted there mid-gesture and the compensating scroll write was refused;
+  // then, when that was merely rolled back, it turned none at all, because the
+  // mutation killed the fling it interrupted.
   await boot(page);
   await openPicker(page);
   await settled(page);
@@ -1193,26 +1209,38 @@ test('a finger turns exactly one month, each way', async ({ page }) => {
     const [name, year] = (await title.textContent())!.trim().split(' ');
     return Number(year) * 12 + months.indexOf(name);
   };
-  const start = await at();
-  for (let step = 1; step <= 3; step += 1) {
-    await fingerSwipe(page, 240); // finger to the right: the month before
-    expect(await at()).toBe(start - step);
-  }
-  for (let step = 1; step <= 3; step += 1) {
-    await fingerSwipe(page, -240); // and back, one at a time
-    expect(await at()).toBe(start - 3 + step);
+  for (const pace of ['flick', 'push'] as const) {
+    const start = await at();
+    for (let step = 1; step <= 2; step += 1) {
+      await fingerSwipe(page, 240, pace); // towards the start of the track
+      expect(await at()).toBe(start - step);
+    }
+    for (let step = 1; step <= 2; step += 1) {
+      await fingerSwipe(page, -240, pace); // and away from it, one at a time
+      expect(await at()).toBe(start - 2 + step);
+    }
+    expect(await at()).toBe(start);
   }
   await settled(page); // every turn leaves the track centred again
+  // A 40px push is a page turn on this engine and no more than one: mandatory
+  // snap with scroll-snap-stop:always commits to the NEXT page for any drag
+  // that moves the track at all. What may never happen is a nudge landing two
+  // months away, which is what the uncompensated prepend used to do.
   const nudged = await at();
-  await fingerSwipe(page, -40); // a nudge is not a turn
-  expect(await at()).toBe(nudged);
+  await fingerSwipe(page, -40, 'push');
+  expect(Math.abs(await at() - nudged)).toBeLessThanOrEqual(1);
+  const back = await at();
+  await fingerSwipe(page, 40, 'push');
+  expect(Math.abs(await at() - back)).toBeLessThanOrEqual(1);
 });
 
 test('the months run the way the language reads', async ({ page }) => {
   // Persian reads right to left, so the month before is to the right: the
   // track is laid out latest-first and the step arrows swap ends with it.
-  // The claim is made without any calendar arithmetic — the finger and the
-  // arrow that means "next month" must simply agree.
+  // The claim is made without any calendar arithmetic — the arrows give the
+  // months in order, and the finger must walk the same ones, one a swipe,
+  // in both directions. Forward here is the finger moving RIGHT, which is
+  // the direction that runs towards the start of the track.
   await boot(page, { timestampLocale: 'fa', timestampCalendar: 'persian', weekStart: 6 });
   await openPicker(page);
   await settled(page);
@@ -1220,17 +1248,27 @@ test('the months run the way the language reads', async ({ page }) => {
   const title = picker.locator('.timestamp-picker-month');
   const here = (await title.textContent())!.trim();
 
-  await picker.locator('[data-stamp-step="1"]').click(); // the next month
-  await expect(title).not.toHaveText(here);
-  const next = (await title.textContent())!.trim();
-  await picker.locator('[data-stamp-step="-1"]').click();
+  const ahead: string[] = [];
+  for (let step = 0; step < 3; step += 1) {
+    const before = (await title.textContent())!.trim();
+    await picker.locator('[data-stamp-step="1"]').click();
+    await expect(title).not.toHaveText(before);
+    ahead.push((await title.textContent())!.trim());
+  }
+  for (let step = 0; step < 3; step += 1) await picker.locator('[data-stamp-step="-1"]').click();
   await expect(title).toHaveText(here);
   await settled(page);
 
-  await fingerSwipe(page, 240); // a finger to the RIGHT is forward in this language
-  await expect(title).toHaveText(next);
-  await fingerSwipe(page, -240);
-  await expect(title).toHaveText(here);
+  for (const pace of ['flick', 'push'] as const) {
+    for (const month of ahead) {
+      await fingerSwipe(page, 240, pace);
+      await expect(title).toHaveText(month);
+    }
+    for (const month of [ahead[1], ahead[0], here]) {
+      await fingerSwipe(page, -240, pace);
+      await expect(title).toHaveText(month);
+    }
+  }
 
   // The arrows sit where that reading puts them: the month before is on the
   // right, and its chevron points that way too.

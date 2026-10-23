@@ -298,6 +298,7 @@ export function createTimestampPicker(): TimestampPicker {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
     turning = true;
+    gestured = true;
     viewport.scrollTo({ left: viewport.clientWidth * indexFor(dir), behavior: 'smooth' });
   }
 
@@ -309,8 +310,16 @@ export function createTimestampPicker(): TimestampPicker {
    *  pixel in its first frames, so a second press read the track as resting
    *  and asked for the SAME destination again: one month for two presses. */
   let turning = false;
+  /** The scroll now under way was asked for by a finger or by an arrow.
+   *  Only those settle the moment they stop: a scroll nobody asked for —
+   *  the browser bringing a focused day into view, which mandatory snap
+   *  then rounds up to a whole page — has to be allowed to come back
+   *  before it is read as a month. */
+  let gestured = false;
   /** The calendar-month offset of the track's FIRST page relative to
-   *  `viewMonth` — -2 after every render, drifting as runway grows. */
+   *  `viewMonth`: -2 after every render where the months read left to
+   *  right, +2 where they read the other way, and drifting as runway
+   *  grows. Read it through offsetAt/indexFor, never by hand. */
   let anchor = -2;
   /** Which absolute page index the title is wearing; render() resets it. */
   let titleIndex = 2;
@@ -324,12 +333,15 @@ export function createTimestampPicker(): TimestampPicker {
     const track = sheet?.querySelector<HTMLElement>('.timestamp-picker-track');
     if (!viewport || !track || !viewMonth) return;
     const width = viewport.clientWidth;
+    gestured = false;
     const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
     const offset = offsetAt(index);
     if (offset !== 0) {
       turning = false; // a turn that was gliding has landed
       viewMonth = addMonths(viewMonth, offset, tag());
       render(); // recentres at once: five pages around the new month, runway regrows on demand
+    } else if (track.children.length !== 5 || Math.abs(viewport.scrollLeft - indexFor(0) * width) > 1) {
+      render(); // the runway grew but the month did not change: put the five pages back
     } else {
       titleIndex = index;
     }
@@ -702,20 +714,30 @@ export function createTimestampPicker(): TimestampPicker {
     const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
     const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
     let settleTimer = 0;
-    /** The finger owns the deltas from touchstart to touchend: prepends and
-     *  their compensating scrollLeft write are safe exactly in that window —
-     *  a drag's next move is relative, so the correction is invisible. A
-     *  finger-UP fling gets no prepends (its momentum is absolute): it has
-     *  the runway from the last rest, and a monster fling that exhausts it
-     *  settles at the wall — one clean adopt, never a fight. */
+    /** Nothing is ever put at the START of the track while a finger is on
+     *  it. Doing so moves every page along by its width, so the scroll
+     *  offset has to move with it — and that write is refused once a touch
+     *  scroll is running, because the compositor owns the offset then and
+     *  keeps its own. Written anyway, the grid jumped a month; rolled back,
+     *  the mutation re-resolved the snap points and the fling it
+     *  interrupted died where it stood, which is a swipe that turns nothing
+     *  at all. The track grows at its END, where no page that exists has to
+     *  move, and the two pages the window always holds behind the reader
+     *  carry the gesture; a fling long enough to exhaust them settles at
+     *  the wall — one clean adopt, never a fight. */
     let fingerDown = false;
     viewport.addEventListener('touchstart', () => {
       fingerDown = true;
       turning = false; // a finger on the track cancels any glide it had
+      gestured = true;
     }, { passive: true });
     const fingerUp = (): void => {
       fingerDown = false;
-      if (settleTimer) { window.clearTimeout(settleTimer); settleTimer = window.setTimeout(normalize, 120); }
+      // Every lift ends in a settle, scroll or no scroll: the scroll events
+      // of a slow drag may have stopped arriving well before the finger
+      // left, and nothing else would then ask the track to come to rest.
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(rest, 120);
     };
     viewport.addEventListener('touchend', fingerUp, { passive: true });
     viewport.addEventListener('touchcancel', fingerUp, { passive: true });
@@ -728,35 +750,35 @@ export function createTimestampPicker(): TimestampPicker {
         // no existing page moves.
         track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, offsetAt(pages), tag()), false));
       }
-      if (fingerDown && viewport.scrollLeft < width * 1.5) {
-        // Prepending moves every page one width along, so the offset has to
-        // move with it or the grid jumps a month under the finger. The write
-        // is only ours to make when the main thread still owns the offset:
-        // DURING a touch scroll the compositor owns it and silently keeps
-        // its own, which is how one swipe back used to turn two months. So
-        // the page goes in, the compensation is attempted, and the result is
-        // read back: kept, the runway grew; refused, the page comes straight
-        // back out in the same frame, before anything is painted, and the
-        // five pages already on the track carry the gesture.
-        const was = viewport.scrollLeft;
-        track.insertAdjacentHTML('afterbegin', pageHTML(addMonths(viewMonth, offsetAt(-1), tag()), false));
-        viewport.scrollLeft = was + width;
-        if (Math.abs(viewport.scrollLeft - (was + width)) <= 1) anchor = offsetAt(-1);
-        else track.firstElementChild?.remove();
-      }
       // The far tail trims only with the finger up, far from the finger.
       if (!fingerDown && track.children.length > 29 && viewport.scrollLeft < (track.children.length - 9) * width) {
         track.lastElementChild?.remove();
       }
     };
-    // Rest is scrollend — but neither a scroll still warm (this frame or the
-    // last) nor a finger still down is rest: the adoption waits for quiet
-    // AND a lifted finger, then the debounced settle takes it. Nothing
+    // Rest is scrollend with the finger up: the scroll is over by
+    // definition, so the month is adopted and the five pages are rebuilt
+    // THERE, at once. It used to be deferred 120ms for warmth, and a reader
+    // paging quickly cancelled that timer with the next swipe every time —
+    // the track never re-centred, never regrew its runway, and slid into
+    // the end of its own pages, where a swipe turns nothing at all.
+    // A finger still down is not rest, whatever the scroll says: nothing
     // rebuilds or recentres under the writer's hand — the mid-drag adopt
-    // was the second-swipe breakage.
+    // was the second-swipe breakage. The debounce stays as the fallback for
+    // engines that do not fire scrollend.
     let lastScrollT = 0;
+    let restAt = -1;
     const rest = (): void => {
-      if (fingerDown || performance.now() - lastScrollT < 80) {
+      // A snap animation does not always end in a scrollend: a gentle drag
+      // leaves one crawling the last pixel or two into the page, firing
+      // scroll events all the way, and "the scroll is still warm" then
+      // defers the settle for as long as the crawl lasts — which is past
+      // the next swipe. So warmth alone does not postpone rest: the track
+      // must actually be MOVING, measured between two looks. A fling moves
+      // pages between them; a crawl moves nothing worth seeing.
+      const here = viewport.scrollLeft;
+      const moving = Math.abs(here - restAt) > 2;
+      restAt = here;
+      if (fingerDown || (moving && performance.now() - lastScrollT < 80)) {
         window.clearTimeout(settleTimer);
         settleTimer = window.setTimeout(rest, 120);
       } else {
@@ -765,8 +787,14 @@ export function createTimestampPicker(): TimestampPicker {
       }
     };
     viewport.addEventListener('scrollend', () => {
-      if (performance.now() - lastScrollT < 80) rest();
-      else normalize();
+      if (!fingerDown && gestured) {
+        window.clearTimeout(settleTimer);
+        settleTimer = 0;
+        normalize();
+      } else {
+        window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(rest, 120);
+      }
     });
     viewport.addEventListener('scroll', () => {
       lastScrollT = performance.now();
