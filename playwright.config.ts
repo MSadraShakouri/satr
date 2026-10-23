@@ -20,6 +20,9 @@ const onAndroid = process.platform === 'android'
   || process.env.TERMUX_VERSION !== undefined
   || process.env.ANDROID_DATA !== undefined;
 
+const PREVIEW = 'npx vite preview --config vite.config.ts --outDir test-dist --host 127.0.0.1 --port 5173 --strictPort';
+const SKIP_BUILD = process.env.SATR_TEST_BUILD === 'skip';
+
 export default defineConfig({
   testDir: './tests',
   timeout: 60_000,
@@ -44,9 +47,20 @@ export default defineConfig({
     // The production build (plus the test hook from tests/support/expose.ts),
     // served the way the app ships. Built fresh on every run, so the server is
     // never reused: a reused one could be serving last run's files.
-    command: 'npx vite build --config tests/vite.test.config.ts && npx vite preview --config vite.config.ts --outDir test-dist --host 127.0.0.1 --port 5173 --strictPort',
+    //
+    // That build is most of the wall clock on a phone, and anyone iterating on
+    // one spec pays it again on every invocation. It can be skipped on
+    // request, once, by hand:
+    //
+    //     npx vite build --config tests/vite.test.config.ts
+    //     SATR_TEST_BUILD=skip npx playwright test tests/datePicker.spec.ts
+    //
+    // which serves the test-dist already on disk and reuses a preview that is
+    // already up. Nothing changes unless that variable is set: a plain run
+    // still builds, still serves its own build, and still never reuses one.
+    command: SKIP_BUILD ? PREVIEW : `npx vite build --config tests/vite.test.config.ts && ${PREVIEW}`,
     url: 'http://127.0.0.1:5173',
-    reuseExistingServer: false,
+    reuseExistingServer: SKIP_BUILD,
     timeout: 180_000,
   },
 });
