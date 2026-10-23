@@ -731,8 +731,11 @@ body {
   width: 17px;
   height: 17px;
   margin: 0;
-  margin-inline-start: calc(17px * -1.5);
-  margin-inline-end: 0.6em;
+  /* hung in the strip before the text and costing it nothing: -25.5 + 17 +
+     8.5 = 0, so a task's text starts where a bullet's does (the parser's
+     space after the box is dropped in src/markdown.ts) */
+  margin-inline-start: -25.5px;
+  margin-inline-end: 8.5px;
   border: 1px solid var(--checkbox-border-color);
   border-radius: 4px;
   background: transparent center / 12px no-repeat;
@@ -1123,30 +1126,67 @@ body {
 }
 /* ---- Live preview (src/livePreview.ts) ----
    Measurements and colours from Obsidian's editor CSS. */
+/* A row breaks where the reading view breaks it. CodeMirror's wrapped mode
+   asks for `break-spaces`, which makes the space after the last word have to
+   fit on the row too — so source mode dropped a word to the next row that the
+   reading view kept ("…enough to wrap" against "…enough to wrap onto"). With
+   `pre-wrap` the space hangs at the row's end, as it does in HTML, and the
+   two views break the same line in the same place. The spaces are all still
+   there and still editable; only where they are allowed to hang changes. */
+.cm-editor .cm-line {
+  white-space: pre-wrap;
+}
 .cm-editor .cm-line.cm-lp-list-line {
   padding-block: var(--list-spacing);
 }
 .cm-lp-bullet {
-  /* the "-" stays in the text, invisible; the dot is drawn on top, 0.75em
-     in (Obsidian's --list-indent-editing) */
+  /* the "-" stays in the text, invisible; the dot is drawn 0.75em into the
+     strip the marker hangs in — where the reading view paints its own disc */
   position: relative;
-  padding-inline-start: 0.75em;
   color: transparent;
 }
 .cm-lp-bullet::after {
   content: "";
   position: absolute;
   top: 50%;
-  left: calc(50% + 0.375em);
+  inset-inline-start: 0.75em;
+  margin-inline-start: -0.15em; /* half the dot, so 0.75em is its centre */
   width: 0.3em; /* --list-bullet-size */
   height: 0.3em;
   border-radius: 50%;
   background: var(--list-marker-color);
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   pointer-events: none;
 }
-.cm-line[dir="rtl"] .cm-lp-bullet::after {
-  left: calc(50% - 0.375em);
+/* The room a marker hangs in (src/livePreview.ts). The characters are all
+   still there — the line's own indentation is just drawn to one step per
+   level, and the marker with the space after it to the strip the reading
+   view gives them, so `-`, `1.`, `10.` and a checkbox all leave the text in
+   the same place: the place the reading view puts it. Written in the same
+   units as the reading view's rules above (3ch, --list-indent), so a late
+   webfont re-lays both views out together. */
+.cm-lp-indent,
+.cm-lp-marker,
+.cm-lp-quote-step {
+  display: inline-block;
+  box-sizing: border-box;
+  /* the line's hanging indent is the line's own: a box inside it is a block
+     container of its own, and would take the negative indent a second time */
+  text-indent: 0;
+}
+.cm-lp-marker {
+  min-width: 3ch; /* --list-marker-gutter */
+}
+/* A number is drawn from its own end, as the reading view's markers are. */
+.cm-lp-marker.is-number {
+  text-align: end;
+  padding-inline-end: 6px;
+}
+/* One ">" = one step of quote indent (QUOTE_STEP_PX in src/livePreview.ts),
+   whether the mark is showing or transparent, so nothing moves when the
+   caret arrives and the rules stand where the reading view's borders do. */
+.cm-lp-quote-step {
+  width: 26px;
 }
 /* A list marker the markdown parser does not know — a Persian number, a
    letter — is dimmed like the one it doesn't: `1.` is drawn at 0.42 by the
@@ -1188,7 +1228,7 @@ body {
   box-sizing: border-box;
   width: 17px;
   height: 17px;
-  margin-inline: 7px 0.25em;
+  margin-inline: 2px 0; /* hung as the reading view hangs its checkbox */
   vertical-align: -3px;
   border: 1px solid var(--checkbox-border-color);
   border-radius: 4px;

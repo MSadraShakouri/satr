@@ -133,7 +133,7 @@ li > p > input[type="checkbox"] {
   height: 15px;
   margin: 0;
   margin-inline-start: -1.4em;
-  margin-inline-end: 0.5em;
+  margin-inline-end: 0.7em; /* the box's own gap: the parser's space after it is dropped (src/markdown.ts) */
   border: 1px solid #ababab;
   border-radius: 3px;
   background: transparent center / 11px no-repeat;

@@ -101,14 +101,20 @@ test('the tappable area is the box and the line around it, and stops at the text
   // The drawn box is 17px, and the marker's own pseudo-element only ever
   // covered its upper-left half: a finger aiming at the square landed on the
   // line and placed a caret — "the hit box is small", and the caret coming
-  // back, were the same thing. The area is the marker's own rect now (the box
-  // and the 7px of margin it carries) taken to the line's full height: a tap
-  // anywhere in it, at any height in the line, ticks the box.
+  // back, were the same thing. The area is the room the marker hangs in —
+  // from the text column's leading edge to where the task's first character
+  // starts — taken to the line's full height: a tap anywhere in it, at any
+  // height in the line, ticks the box. (The box itself hangs at the text's
+  // margin now, as the reading view's does, so the room left of it is the
+  // pane's own padding rather than a margin on the marker.)
   for (const dy of [-16, -8, 0, 4]) {
     await reset(page);
-    expect((await touchAt(page, -12, dy)).taskLine, `left of the box at ${dy}`).toBe('- [x] a task to tick');
-    await reset(page);
     expect((await touchAt(page, 6, dy)).taskLine, `over the box at ${dy}`).toBe('- [x] a task to tick');
+    await reset(page);
+    // The strip the box hangs in runs on past it, up to the text: that room
+    // is the box's too, which is where the margin that used to sit on the
+    // marker's leading side went.
+    expect((await touchAt(page, 13, dy)).taskLine, `in the strip after the box at ${dy}`).toBe('- [x] a task to tick');
   }
   // Below the box's own row, too: the area is the line's height, and a finger
   // that lands low in it is still aiming at the square.
@@ -127,7 +133,7 @@ test('the tappable area is the box and the line around it, and stops at the text
   expect(onFirstChar.taskLine).toBe('- [ ] a task to tick');
   // And the line above is not this marker's to take.
   await reset(page);
-  const above = await touchAt(page, -12, -24);
+  const above = await touchAt(page, -6, -24);
   expect(above.taskLine).toBe('- [ ] a task to tick');
 });
 

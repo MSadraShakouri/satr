@@ -86,62 +86,88 @@ const inlineCode = Decoration.mark({ class: 'cm-lp-inline-code' });
 const plainText = Decoration.mark({ class: 'cm-lp-plain' });
 const linkText = Decoration.mark({ class: 'cm-lp-link' });
 const doneText = Decoration.mark({ class: 'cm-lp-task-done' });
-// Quote lines get a hanging indent the width of their "> " prefix, so wrapped
-// lines line up with the text instead of running under the rule (Obsidian
-// does the same: padding-inline-start plus a negative text-indent).
+// The reading view's geometry, written once and used by both views, so a
+// block starts at the same x in source mode and in the reading view
+// (style.css; tests/viewParity.spec.ts holds them to it): a marker hangs in a
+// 3ch strip before the text, every list level after the first steps in by
+// --list-indent, and a quote steps past its own rule.
+/** The strip a list marker hangs in, before the text (--list-marker-gutter). */
+const LIST_GUTTER_CH = 3;
+/** One level of nesting (--list-indent). */
+const LIST_INDENT_EM = 2.25;
+/** A quote's rule plus its padding (.preview-pane blockquote). */
+const QUOTE_STEP_PX = 2 + 24;
+// Quote lines get a hanging indent of one step per level, so wrapped lines
+// line up with the text instead of running under the rule, and the text sits
+// where the reading view's does (padding-inline-start plus a negative
+// text-indent, as Obsidian does it).
 const quoteLines = new Map<number, Decoration>();
-function quoteLine(indent: number): Decoration {
-  const px = Math.round(indent * 10) / 10;
-  let deco = quoteLines.get(px);
+function quoteLine(depth: number): Decoration {
+  let deco = quoteLines.get(depth);
   if (!deco) {
+    const px = depth * QUOTE_STEP_PX;
     deco = Decoration.line({
       class: 'cm-lp-quote',
       attributes: px > 0 ? { style: `padding-inline-start:${px}px;text-indent:-${px}px` } : {},
     });
-    quoteLines.set(px, deco);
+    quoteLines.set(depth, deco);
   }
   return deco;
 }
 // List lines, as Obsidian's .HyperMD-list-line: a hair of space above and
-// below, and a hanging indent the width of the drawn marker so wrapped lines
-// start under the text, not under the bullet.
+// below, and a hanging indent to the strip the reading view gives the marker,
+// so wrapped rows start under the text rather than under the bullet — and in
+// the same place as the reading view's.
 const listLines = new Map<string, Decoration>();
-/** A list line's own decoration — and, when it is a task, the tappable leading
- *  a marker the tap handler knows by (see .cm-lp-task-line in style.css): the
- *  drawn box is 17px, and the box's own rect is what the handler measures the
- *  tap against. */
-function listLine(indent: number, task = false): Decoration {
-  const px = Math.round(indent * 10) / 10;
-  const key = `${px}${task ? ':task' : ''}`;
+/** A list line's own decoration — the hanging indent that puts a wrapped row
+ *  under the text — and, when it is a task, the tappable leading a marker the
+ *  tap handler knows by (see .cm-lp-task-line in style.css). The indent is
+ *  written in the reading view's own units rather than measured: a webfont
+ *  that arrives late re-lays the line out by itself, where a measurement
+ *  taken before it loaded would have stood 5px wrong for good. */
+function listLine(level: number, task = false): Decoration {
+  const key = `${level}${task ? ':task' : ''}`;
   let deco = listLines.get(key);
   if (!deco) {
+    const indent = level > 1
+      ? `calc(${LIST_GUTTER_CH}ch + ${LIST_INDENT_EM}em * ${level - 1})`
+      : `${LIST_GUTTER_CH}ch`;
     deco = Decoration.line({
       class: task ? 'cm-lp-list-line cm-lp-task-line' : 'cm-lp-list-line',
-      attributes: px > 0 ? { style: `padding-inline-start:${px}px;text-indent:-${px}px` } : {},
+      attributes: { style: `padding-inline-start:${indent};text-indent:calc(-1 * ${indent})` },
     });
     listLines.set(key, deco);
   }
   return deco;
 }
-/** The bullet's padding before the dot (Obsidian's --list-indent-editing, 0.75em). */
-const BULLET_PAD_EM = 0.75;
-/** A checkbox's drawn width: 17px box, 7px before, 0.25em after. */
-const TASK_BOX_PX = 17 + 7;
-let measureContext: CanvasRenderingContext2D | null = null;
-const editorFonts = new WeakMap<EditorView, string>();
-function textWidth(view: EditorView, text: string): number {
-  measureContext ??= document.createElement('canvas').getContext('2d');
-  if (!measureContext) return 0;
-  // The editor font is read once per editor, not per quote line per keystroke
-  // (getComputedStyle can force a style recalculation).
-  let font = editorFonts.get(view);
-  if (!font) {
-    const style = getComputedStyle(view.contentDOM);
-    font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    editorFonts.set(view, font);
+/** The line's own indentation, drawn to one step per level however its writer
+ *  spelled it — two spaces, four, a tab. */
+const indentBoxes = new Map<number, Decoration>();
+function indentBox(level: number): Decoration {
+  let deco = indentBoxes.get(level);
+  if (!deco) {
+    deco = Decoration.mark({ class: 'cm-lp-indent', attributes: { style: `width:calc(${LIST_INDENT_EM}em * ${level - 1})` } });
+    indentBoxes.set(level, deco);
   }
-  measureContext.font = font;
-  return measureContext.measureText(text).width;
+  return deco;
+}
+// A marker is drawn to the strip, not to its own characters: the marker and
+// the space after it are given the width the reading view gives them, so `-`,
+// `1.`, `10.` and a checkbox all leave the text in one place — the place the
+// reading view puts it — and the hanging indent above brings a wrapped row to
+// the same place. A number is drawn from its own end, as a list marker is.
+const markerPlain = Decoration.mark({ class: 'cm-lp-marker' });
+const markerNumber = Decoration.mark({ class: 'cm-lp-marker is-number' });
+/** Every ">" is drawn one step wide, so the rules stand where the reading
+ *  view's borders do and the text starts past the last of them. */
+const quoteStep = Decoration.mark({ class: 'cm-lp-quote-step' });
+/** How deep a list item sits; 1 for a top-level item. */
+function listDepth(item: SyntaxNode | null | undefined): number {
+  let depth = 0;
+  for (let node = item ?? null; node; node = node.parent) {
+    if (node.name === 'BulletList' || node.name === 'OrderedList') depth += 1;
+  }
+  return Math.max(depth, 1);
 }
 // Obsidian keeps the ">" in place but transparent (so text doesn't shift when
 // it is revealed); the first level's border is drawn by the line, deeper
@@ -261,9 +287,15 @@ function build(view: EditorView): DecorationSet {
             const line = state.doc.lineAt(node.from);
             const first = node.from === line.from + line.text.indexOf('>');
             if (first) {
-              const prefix = /^\s*(?:>\s?)+/.exec(line.text)?.[0] ?? '';
-              out.push(quoteLine(textWidth(view, prefix)).range(line.from));
+              const depth = (/^\s*(?:>\s*)+/.exec(line.text)?.[0].match(/>/g) ?? []).length;
+              out.push(quoteLine(depth).range(line.from));
             }
+            // One step per ">", whatever it is made of: the mark is drawn to
+            // the step's width and the space after it to nothing, so the text
+            // starts where the reading view's does and the rules stand where
+            // its borders do — at the same x whether the mark is showing or
+            // not, so nothing moves when the caret arrives.
+            out.push(quoteStep.range(node.from, node.to + (/^[ \t]?/.exec(line.text.slice(node.to - line.from))?.[0].length ?? 0)));
             if (!touches(line.from, line.to)) out.push((first ? quoteMarkFirst : quoteMarkNested).range(node.from, node.to));
             return;
           }
@@ -282,21 +314,19 @@ function build(view: EditorView): DecorationSet {
               const line = state.doc.lineAt(node.from);
               const before = line.text.slice(0, node.from - line.from);
               if (!before.includes('>')) {
-                textWidth(view, ''); // fills the font cache
-                const em = parseFloat(editorFonts.get(view)?.split(' ')[2] ?? '') || 16;
-                const indentText = before.replace(/\t/g, '  ');
                 const isTask = task?.name === 'TaskMarker' && spaced(task.to);
                 const drawnTask = isTask && !inside(list?.name === 'BulletList' ? node.from : task!.from, task!.to);
-                let px = textWidth(view, indentText);
-                if (drawnTask) {
-                  if (list?.name !== 'BulletList') px += textWidth(view, state.sliceDoc(node.from, task!.from));
-                  px += TASK_BOX_PX + 0.25 * em + textWidth(view, ' ');
-                } else {
-                  const markEnd = isTask ? task!.to : node.to;
-                  px += textWidth(view, state.sliceDoc(node.from, markEnd) + ' ');
-                  if (list?.name === 'BulletList' && spaced(node.to) && !inside(node.from, node.to)) px += BULLET_PAD_EM * em;
+                const ordered = list?.name === 'OrderedList';
+                const level = listDepth(item);
+                const markEnd = isTask ? task!.to : node.to;
+                // The space after the marker belongs to the strip, so there
+                // has to be one: `-` alone is a dash, not an item.
+                const after = /^[ \t]*/.exec(line.text.slice(markEnd - line.from))?.[0].length ?? 0;
+                if (after > 0) {
+                  if (node.from > line.from) out.push(indentBox(level).range(line.from, node.from));
+                  out.push((ordered && !drawnTask ? markerNumber : markerPlain).range(node.from, markEnd + after));
+                  out.push(listLine(level, drawnTask).range(line.from));
                 }
-                out.push(listLine(px, drawnTask).range(line.from));
               }
             }
             if (task && task.name === 'TaskMarker') {
@@ -433,7 +463,11 @@ function addFootnotes(view: EditorView, out: Range<Decoration>[]): void {
  *  longer select the first few chars of a checklist item"). */
 function inTaskLeadingArea(line: HTMLElement, marker: HTMLElement, clientX: number): boolean {
   const lineBox = line.getBoundingClientRect();
-  const markerBox = marker.getBoundingClientRect();
+  // The room the marker hangs in is room, not text, so the area reaches
+  // across all of it — and still stops where the first character starts.
+  // The box hangs at the text's own margin now, as the reading view's does,
+  // so that room is the strip after the box rather than a margin before it.
+  const markerBox = (marker.closest('.cm-lp-marker') ?? marker).getBoundingClientRect();
   return getComputedStyle(line).direction === 'rtl'
     ? clientX >= markerBox.left + 1 && clientX <= lineBox.right + 2
     : clientX <= markerBox.right - 1 && clientX >= lineBox.left - 2;

@@ -367,6 +367,16 @@ export function renderMarkdown(source: string): string {
   // literal: a string replacement would read $& and $1 inside KaTeX's output.
   safe = safe.replace(/<(span|div|pre) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
   const document = new DOMParser().parseFromString(safe, 'text/html');
+  // A checkbox hangs in the strip before the text and takes no room of its
+  // own (style.css), so the space the parser writes after it would push a
+  // task's first line past every other item's. The space is dropped here, in
+  // the markup, rather than guessed at in em: a task's text then starts
+  // exactly where a bullet's does, in the reading view and in source mode
+  // alike (src/livePreview.ts; tests/viewParity.spec.ts).
+  document.querySelectorAll('li > input[type="checkbox"], li > p > input[type="checkbox"]').forEach((box) => {
+    const next = box.nextSibling;
+    if (next?.nodeType === 3 && next.textContent?.startsWith(' ')) next.textContent = next.textContent.slice(1);
+  });
   document.querySelectorAll<HTMLElement>('.md-section[data-sec]').forEach((element) => {
     const section = sections[Number(element.dataset.sec)];
     element.removeAttribute('data-sec');
