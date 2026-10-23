@@ -233,12 +233,25 @@ test('an overwide group breaks at its own punctuation, never at an arbitrary ato
         lineCount: lines.length,
         lines,
         balanced: (lines.join('').match(/\(/g) ?? []).length === (lines.join('').match(/\)/g) ?? []).length,
+        // The group itself was split: the first line opens a parenthesis it
+        // does not close.
+        groupSplit: (lines[0].match(/\(/g) ?? []).length > (lines[0].match(/\)/g) ?? []).length,
+        // What the line really takes, so a width can be asked for in terms
+        // of the rendering instead of in hard-coded pixels.
+        ink: Math.round(units.reduce((sum, unit) => sum + unit.getBoundingClientRect().width, 0)),
         overflow: Math.round(box.scrollWidth - box.clientWidth),
       };
       host.remove();
       return out;
     };
-    return { narrow: read(200), wide: read(1600) };
+    // The narrow width is measured, never hard-coded: font metrics drift
+    // between browser versions, and a fixed 200px landed on a width where
+    // the group fitted whole and the line broke at the relation instead —
+    // true to the rule, but no longer a test of a breaking group. Just under
+    // half of what the expression takes cannot hold the group, so the group
+    // must break inside itself, which is what this test is about.
+    const natural = read(4000);
+    return { narrow: read(Math.round(natural.ink * 0.45)), wide: read(1600) };
   }, tex);
   // Wide enough: one line, nothing is split — the group's own break points
   // are not used just because they exist.
@@ -250,7 +263,10 @@ test('an overwide group breaks at its own punctuation, never at an arbitrary ato
   expect(report.narrow.lineCount).toBeGreaterThanOrEqual(2);
   expect(report.narrow.overwide).toBe(0);
   expect(report.narrow.overflow).toBeLessThanOrEqual(1);
-  expect(report.narrow.lines.slice(0, -1).every((line) => line.endsWith(','))).toBe(true);
+  // Every line ends on one of the group's OWN break points — a comma, or
+  // the relation when a comma will not fit — never on an arbitrary atom.
+  expect(report.narrow.lines.slice(0, -1).every((line) => /[,=]$/.test(line))).toBe(true);
+  expect(report.narrow.groupSplit).toBe(true);
   expect(report.narrow.balanced).toBe(true);
   expect(report.narrow.lines.join(' ')).toContain('κ');
 });
