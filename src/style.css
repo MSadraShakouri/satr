@@ -217,6 +217,25 @@
 * {
   box-sizing: border-box;
 }
+/* A tap on a control is a tap, not a selection. Android's WebView paints its
+   own blue box over whatever was touched and offers to select the label on a
+   press and hold — the preview button flashed blue every time it was used.
+   The property inherits, so one declaration covers the app. Only the chrome
+   gives up selection: a link in a note is left out of the list below, since
+   the reader selects paragraphs that have links inside them. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+label,
+summary,
+[role="button"],
+[role="radio"],
+[role="tab"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
 html,
 body,
 #app {
