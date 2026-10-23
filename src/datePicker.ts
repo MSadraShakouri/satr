@@ -612,6 +612,15 @@ export function createTimestampPicker(): TimestampPicker {
         // was nowhere on it. Anchor on the chosen day when it is in view, on
         // the middle of the viewed month otherwise.
         if (viewMonth) {
+          // Whatever the track is showing IS the month being re-worded, even
+          // if the scroll has not settled into it yet: reading the stale
+          // viewMonth is how a switch mid-swipe landed a month or two away.
+          const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
+          const track = sheet!.querySelector<HTMLElement>('.timestamp-picker-track');
+          if (viewport && track && viewport.clientWidth) {
+            const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / viewport.clientWidth)));
+            if (offsetAt(index) !== 0) viewMonth = addMonths(viewMonth, offsetAt(index), tag());
+          }
           const was = tag();
           const first = monthStart(viewMonth, was);
           const here = calParts(was, first);

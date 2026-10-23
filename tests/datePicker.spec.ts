@@ -1262,3 +1262,24 @@ test('the chosen day stays lit on whichever page holds it', async ({ page }) => 
   await expect(pages.nth(3).locator('.timestamp-picker-day.is-selected')).toHaveText(today);
   await expect(pages.nth(2).locator('.timestamp-picker-day.is-selected')).toHaveCount(0);
 });
+
+test('a calendar switch mid-swipe re-words the month on screen', async ({ page }) => {
+  // The switch read the month the track had last SETTLED on. Thrown before
+  // the settle, it re-worded a month that was no longer on screen and the
+  // grid came up one or two months away from where the finger had left it.
+  await boot(page);
+  await openPicker(page);
+  await settled(page);
+  const picker = sheet(page);
+  const now = new Date();
+  const away = new Date(now.getFullYear(), now.getMonth() + 2, 15); // far enough that no Jalali month holds both
+  // Scroll two pages on and switch in the same breath: no settle can run in
+  // between, so the sheet has only the scroll position to go by.
+  await page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    viewport.scrollLeft = 4 * viewport.clientWidth;
+    document.querySelector<HTMLElement>('[data-stamp-cal]')!.click();
+  });
+  await expect(picker.locator('.timestamp-picker-month'))
+    .toHaveText(new Intl.DateTimeFormat('en-u-ca-persian', { year: 'numeric', month: 'long' }).format(away));
+});
