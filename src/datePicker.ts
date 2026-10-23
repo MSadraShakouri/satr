@@ -342,6 +342,7 @@ export function createTimestampPicker(): TimestampPicker {
     gliding = true;
     glideBy = performance.now() + 700;
     followTitle(want);
+    watchTrack();
     viewport.scrollTo({ left: want * width, behavior: Math.abs(want - here) > 1 ? 'auto' : 'smooth' });
   }
 
@@ -364,6 +365,9 @@ export function createTimestampPicker(): TimestampPicker {
    *  another page moves this number and nothing else — no rebuild, no
    *  re-centring. Read it through offsetAt/indexFor, never by hand. */
   let anchor = -CENTRE;
+  /** Set while the sheet is wired up: ask the frame loop to watch the track
+   *  from here (a turn started by an arrow has no finger to start it). */
+  let watchTrack: () => void = () => {};
   /** Which page the title is wearing. */
   let titleIndex = CENTRE;
   /** A turn of the sheet's own is in flight: the glide is on its way to
@@ -854,7 +858,40 @@ export function createTimestampPicker(): TimestampPicker {
       gestured = false;
       adopt();
     }
+    /** Read the track and name what it is showing — every frame, for as
+     *  long as it is moving. A scroll event is not a reliable heartbeat: it
+     *  is throttled to the frame, dropped while the main thread is busy,
+     *  and on a phone the drag itself runs on the compositor, so the
+     *  handler can arrive late or in clumps and the heading looks like it
+     *  is waiting for the track to settle. A frame loop costs one property
+     *  read per frame while something moves and nothing at all when it
+     *  stops, and it cannot be out of date by more than a frame in either
+     *  direction. */
+    let frame = 0;
+    let lastAt = -1;
+    watchTrack = () => followTrack();
+    function followTrack(): void {
+      if (frame) return;
+      const tick = (): void => {
+        frame = 0;
+        const at = viewport.scrollLeft;
+        const index = clampIndex(Math.round(at / (viewport.clientWidth || 1)));
+        if (index !== titleIndex) {
+          if (fingerDown) toIndex = index; // a swipe moves the target with it
+          // The month turns as the page nearest the snap point changes,
+          // which is halfway through the drag — where the Persian Calendar
+          // app's pager turns its own title.
+          if (!gliding) followTitle(index);
+          fillAround(index);
+        }
+        if (at === lastAt && !fingerDown) return; // come to rest
+        lastAt = at;
+        frame = window.requestAnimationFrame(tick);
+      };
+      frame = window.requestAnimationFrame(tick);
+    }
     viewport.addEventListener('touchstart', () => {
+      followTrack();
       fingerDown = true;
       gestured = true;
       gliding = false; // the finger takes the title and the step base over
@@ -875,15 +912,7 @@ export function createTimestampPicker(): TimestampPicker {
       if (!fingerDown && gestured) { window.clearTimeout(settleTimer); settle(); } else defer();
     });
     viewport.addEventListener('scroll', () => {
-      const index = nearestIndex();
-      if (index !== titleIndex) {
-        if (fingerDown) toIndex = index; // a swipe moves the target with it
-        // Under a finger the title follows the page nearest the snap point,
-        // which turns the month halfway through the drag — the same place
-        // the Persian Calendar app's pager turns its own title.
-        if (!gliding) followTitle(index);
-        fillAround(index);
-      }
+      followTrack(); // a glide, a fling, or anything else that moves the track
       defer();
     }, { passive: true });
         rebase();

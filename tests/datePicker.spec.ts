@@ -1504,3 +1504,25 @@ test('arrows pressed faster than one animation turn one month each', async ({ pa
   expect(await currentPage(page)).toBe(here);
   await expect(title).toHaveText(name);
 });
+
+test('the heading turns under the finger, whichever way it goes', async ({ page }) => {
+  // Both ways, and before the finger lifts: the heading is read off the
+  // track every frame it moves, so it can never be waiting for the settle.
+  await boot(page, { timestampLocale: 'fa', timestampCalendar: 'persian', weekStart: 6 });
+  await openPicker(page);
+  await settled(page);
+  const title = sheet(page).locator('.timestamp-picker-month');
+  for (const way of [1, -1, 1, -1]) {
+    const before = (await title.textContent())!.trim();
+    await page.evaluate((dir) => {
+      const track = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+      track.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
+      track.scrollLeft += dir * track.clientWidth * 0.6; // three fifths over, finger still down
+    }, way);
+    await expect(title).not.toHaveText(before);
+    await page.evaluate(() => document.querySelector<HTMLElement>('.timestamp-picker-viewport')!
+      .dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true })));
+    await settled(page);
+    await expect(title).not.toHaveText(before); // and it stayed turned
+  }
+});
