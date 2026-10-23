@@ -108,6 +108,16 @@ export function previewScroll(pane: HTMLElement, preview: HTMLElement, anchor = 
   return seen ? passed : null;
 }
 
+/** The place the reading view is being held at, while it is being held —
+ *  see the hold in applyPreviewScroll. Until it lets go, this is where the
+ *  reader is meant to be, and the pane itself is not evidence of anything:
+ *  it is mid-answer, and halfway through a cold note it can be sitting at
+ *  the end of a note that is still growing. */
+let holding: { pane: HTMLElement; position: number; token: object } | null = null;
+export function heldPreviewPlace(pane: HTMLElement): number | null {
+  return holding && holding.pane === pane ? holding.position : null;
+}
+
 export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0): void {
   // What this last asked the pane for, as the pane was able to answer it
   // (short of the end of a note it scrolls to the end instead). The reader
@@ -194,8 +204,14 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   // wrong place reached for the screen. Only their scrolling counts, and
   // it is read from the pane — a pixel away from what was placed and this
   // stops for good.
+  const token = {};
+  holding = { pane, position, token };
   let stopped = false;
-  const stop = (): void => { stopped = true; ro?.disconnect(); };
+  const stop = (): void => {
+    stopped = true;
+    ro?.disconnect();
+    if (holding?.token === token) holding = null;
+  };
   // The page's own length, last time this looked. The browser moves the
   // pane by itself when content above the reader changes size — scroll
   // anchoring, keeping what they can see where it is — and that move is

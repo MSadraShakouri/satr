@@ -8,7 +8,7 @@ import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown, sizeListMarkers, TABLE_DIRECTIVE } from './markdown';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
-import { applyEditorScroll, applyPreviewScroll, editorScroll, previewScroll, typingTop } from './scrollSync';
+import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
@@ -380,7 +380,16 @@ function applyLineGuess(): void {
   // unless their place is taken first and put back after. (A switch or a
   // restore is already holding the place itself; don't fight it.)
   const y = scrollBand();
-  const hold = previewVisible() && !restoringView && !syncingScroll ? previewScroll(previewPane, preview, y) : null;
+  // A place is already being held in the reading view (a switch, a restore,
+  // a jump the note is still settling under): that place is where the
+  // reader is meant to be, and the pane is in the middle of answering for
+  // it. Change the figure and let the hold put them back. Reading the pane
+  // here is how a reader who had been clamped to the end of a note that
+  // was still growing got pinned there instead of rescued: the misreading
+  // became the place, and the place was then saved.
+  const held = heldPreviewPlace(previewPane);
+  const hold = held !== null || !previewVisible() || restoringView || syncingScroll
+    ? null : previewScroll(previewPane, preview, y);
   guessApplied = guess;
   preview.style.setProperty('--md-line', `${guess.toFixed(1)}px`);
   if (hold !== null) applyPreviewScroll(previewPane, preview, hold, () => true, false, y);
@@ -1062,7 +1071,13 @@ function rememberView(): void {
   window.clearTimeout(viewTimer);
   if (restoringView) return;
   const y = scrollBand();
-  const line = mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y);
+  // A place is being held in the reading view: the note is still settling
+  // under a switch or a restore, and the pane is in the middle of
+  // answering for it. The place being held is where the reader is — what
+  // the pane reads mid-answer is not, and written here it would outlive
+  // the app.
+  const held = mode === 'preview' ? heldPreviewPlace(previewPane) : null;
+  const line = held ?? (mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y));
   // Nothing to read in the reading view (not rendered yet, every section
   // folded away): the place this note was last left at is better than a
   // number made up now, and a made-up one here outlives the app.
