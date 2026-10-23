@@ -14,6 +14,8 @@
 //   Enter in the replace field replaces and goes to the next match.
 // - Closing with a field focused selects the current match in the note and
 //   puts the caret there (keyboard stays up); otherwise the note is left as is.
+// - Opening and closing the bar does not move the note under the reader, and
+//   a hit lands a third down the screen with the bar counted (revealThirdDown).
 import { RegExpCursor } from '@codemirror/search';
 import { expandReplacement, searchRegExp } from './searchRegex';
 import { EditorSelection, StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
@@ -127,8 +129,40 @@ export function revealThirdDown(view: EditorView, pos: number): StateEffect<unkn
   // scrolls to (src/scrollSync.ts — the same origin the edit/preview switch
   // maps from), and CodeMirror adds that margin on top of whatever is asked
   // for, so ask for the rest of the third and no more.
-  const margin = Math.max(0, Math.round(view.scrollDOM.clientHeight / 3 - typingTop(view)));
+  //
+  // A third of the *screen*, not a third of what is left of it: the find bar
+  // stands between the top of the screen and the text, and the scroller it
+  // would otherwise be measured against is only what remains underneath. A
+  // third measured there put a hit 42% down a 844px phone — nearly half, the
+  // very place the rule exists to avoid, and lower the moment the replace row
+  // dropped. With no bar open `above` is 0 and nothing changes.
+  const above = chromeAbove(view);
+  const margin = Math.max(0, Math.round((above + view.scrollDOM.clientHeight) / 3 - above - typingTop(view)));
   return EditorView.scrollIntoView(pos, { y: 'start', yMargin: margin });
+}
+/** How much of the editor sits above its scrolling text — the find bar, and
+ *  the replace row with it, when they are open. */
+function chromeAbove(view: EditorView): number {
+  const scroller = view.scrollDOM.getBoundingClientRect().top;
+  const editor = view.dom.getBoundingClientRect().top;
+  return Math.max(0, Math.round(scroller - editor));
+}
+/** Run a change that adds or removes the bar, and leave the text where the
+ *  reader was looking at it. The bar takes its height out of the editor, so
+ *  by itself opening it pushed every line 66px down the screen and closing it
+ *  pulled them back up — a jump under the eye of someone who is reading, in
+ *  the one moment they are looking for something. The line at the top of the
+ *  text area is measured before and after, and the scroller makes up the
+ *  difference. */
+function keepingPlace(view: EditorView, change: () => void): void {
+  const content = view.contentDOM.getBoundingClientRect();
+  const scroller = view.scrollDOM.getBoundingClientRect();
+  const pos = view.posAtCoords({ x: content.left + 1, y: scroller.top + 1 }, false);
+  const before = view.coordsAtPos(pos)?.top ?? null;
+  change();
+  if (before === null) return;
+  const after = view.coordsAtPos(pos)?.top ?? null;
+  if (after !== null && after !== before) view.scrollDOM.scrollTop += after - before;
 }
 function scrollTo(view: EditorView, m: Match | null): StateEffect<unknown>[] {
   return m ? [revealThirdDown(view, m.from)] : [];
@@ -321,7 +355,11 @@ export function openFind(view: EditorView, replace = false): void {
     if (!replace) input?.select();
     return;
   }
-  view.dispatch({ effects: [setFind.of({ open: true, replaceMode: replace, query, current }), ...scrollTo(view, current)] });
+  // The bar lands first and the hit is shown second: a scroll asked for in
+  // the same transaction is measured against an editor that still has no bar
+  // in it, and lands a bar's height too low.
+  keepingPlace(view, () => view.dispatch({ effects: setFind.of({ open: true, replaceMode: replace, query, current }) }));
+  if (current) view.dispatch({ effects: scrollTo(view, current) });
 }
 
 export function closeFind(view: EditorView): void {
@@ -329,10 +367,10 @@ export function closeFind(view: EditorView): void {
   if (!s.open) return;
   const panel = view.dom.querySelector('.document-search-container');
   const hadFocus = Boolean(panel && panel.contains(document.activeElement));
-  view.dispatch({
+  keepingPlace(view, () => view.dispatch({
     effects: setFind.of({ open: false }),
     ...(hadFocus && s.current ? { selection: EditorSelection.single(s.current.from, s.current.to) } : {}),
-  });
+  }));
   // The keyboard was up (a field had focus): hand it to the note.
   if (hadFocus) view.focus();
 }
