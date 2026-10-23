@@ -16,12 +16,12 @@ ROADMAP.md. Italic notes are the state of play, not new work.
 - [x] nested lists should be easier to make, maybe not > < buttons but in source mode they should align whether two spaces or more, I'm not too sure about it — *0.13: the aligning half is done — two spaces, four or a tab all draw one step, the same step the reading view uses. No > < buttons; say the word if you still want them.*
 - [ ] in preview mode, tapping anywhere of a header make it collapse (idea, might be a bad one, but the current hitbox is still a bit small)
 - [ ] would be great if in source mode there was a background process that converted the math and tables and stuff (didn't display, just prepare) so the edit to preview mode would switch faster, doesn't need a full page rebuild probably, should definitely be a background process (it got faster in the batches but I think this would make it instantaneous)
-- [ ] code syntax highlighting like obsidian — *the reading view and the PDF already colour code by language; in source mode a fence is a grey block in one colour.*
+- [x] code syntax highlighting like obsidian — *source mode colours a fence now too: the editor fetches a CodeMirror language the first time a fence asks for it (143 of them, each its own file, none of them in the way of the first line of text) and paints it in the same `--code-*` colours the reading view gives the same tokens. Obsidian's own arrangement, two highlighters over one palette: Lezer in the editor, highlight.js still in the reading view and the PDF.*
 - [ ] html in preview would be epic, at minimum in export
 
 ## math
 
-- [ ] math syntax checking while typing would be great, also colors and highlighting, learn from obsidian (maybe change the math things to be closer to Obsidian)
+- [x] math syntax checking while typing would be great, also colors and highlighting, learn from obsidian (maybe change the math things to be closer to Obsidian) — *both halves. The parts of a formula are told apart by the very `stex` mode Obsidian runs over its own math source — commands, braces, numbers, `%` comments — in the code palette, over the monospace italic the formula already had. And the half Obsidian does not do: a formula KaTeX cannot read is underlined where it stands with its own complaint on it (`renderMath` runs with `throwOnError: false`, so until now a typo was a silent red formula in the reading view and in the PDF). Never while the caret is inside it: half of what is being typed is briefly wrong.*
 - [ ] math split lines needs a bit thought, it's great overall but in some places it's not great
 - [ ] maybe remove the spaces thing of math, I usually use \text{} and I believe that handles it, needs feedback
 

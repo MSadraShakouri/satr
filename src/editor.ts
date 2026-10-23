@@ -13,6 +13,7 @@ import { wikiLinks, wikiRuntime } from './wikiLinks';
 import { livePreview } from './livePreview';
 import { autoSpace } from './autoSpace';
 import { Highlight, highlightTag } from './highlightSyntax';
+import { languages } from '@codemirror/language-data';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
 import { tightSelection } from './selection';
@@ -971,7 +972,14 @@ export class SatrEditor {
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
       // marker as the caret reaches it (see livePreview.ts).
-      markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight] }),
+      // Fenced code is parsed in its own language, so the editor colours it
+      // the way the reading view does. @codemirror/language-data imports each
+      // grammar only when a fence asks for it (Vite gives each its own
+      // chunk), which is how Obsidian does it too: its editor loads modes out
+      // of lib/codemirror/modes.min.js on demand, while its reading view runs
+      // Prism. Two highlighters, one set of colours — ours are hljs in the
+      // reading view and Lezer here, both painted from the --code-* palette.
+      markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages }),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
         { tag: tags.strong, fontWeight: '700' },
@@ -981,6 +989,20 @@ export class SatrEditor {
         { tag: tags.link, color: 'var(--accent)' },
         { tag: tags.url, opacity: '0.62' },
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
+        // Code inside a fence, in the colours the reading view gives the same
+        // tokens (src/style.css, .preview-pane .hljs-*). Only tags a code
+        // grammar emits are listed: a markdown marker is a
+        // processingInstruction and a heading is a heading, and neither may
+        // be recoloured by this block.
+        { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--text-faint)' },
+        { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.operatorKeyword, tags.modifier, tags.self, tags.null, tags.typeName, tags.namespace], color: 'var(--code-keyword)' },
+        { tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character, tags.inserted], color: 'var(--code-string)' },
+        { tag: [tags.number, tags.bool, tags.atom, tags.literal, tags.unit], color: 'var(--code-value)' },
+        { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.function(tags.definition(tags.variableName)), tags.className, tags.macroName], color: 'var(--code-function)' },
+        { tag: [tags.propertyName, tags.attributeName, tags.variableName, tags.labelName], color: 'var(--code-property)' },
+        { tag: [tags.tagName, tags.operator, tags.deleted], color: 'var(--code-tag)' },
+        { tag: [tags.meta, tags.annotation, tags.standard(tags.variableName)], color: 'var(--code-important)' },
+        { tag: [tags.punctuation, tags.separator, tags.bracket, tags.squareBracket, tags.paren, tags.brace, tags.angleBracket], color: 'var(--text-muted)' },
       ])),
       titleField,
       rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,

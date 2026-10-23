@@ -1552,11 +1552,11 @@ body[data-mode="preview"] .workspace > .preview-pane {
    both the live preview's own decorations and the syntax highlighter's theme,
    which colours links with the accent and gives inline code the code font. */
 .cm-math,
-.cm-math *,
+.cm-math *:not(.cm-math-token):not(.cm-math-error),
 .cm-editor .cm-content .cm-math,
-.cm-editor .cm-content .cm-math *,
+.cm-editor .cm-content .cm-math *:not(.cm-math-token):not(.cm-math-error),
 .cm-editor .cm-line .cm-math,
-.cm-editor .cm-line .cm-math * {
+.cm-editor .cm-line .cm-math *:not(.cm-math-token):not(.cm-math-error) {
   font-weight: 400 !important;
   font-style: italic !important;
   text-decoration: none !important;
@@ -1566,11 +1566,52 @@ body[data-mode="preview"] .workspace > .preview-pane {
 /* Inherit, not a fixed value: only the descendants — the formula's own font
    and colour are what they inherit from, so writing these on `.cm-math` too
    would hand the monospace back to the note's prose font. */
-.cm-math *,
-.cm-editor .cm-content .cm-math *,
-.cm-editor .cm-line .cm-math * {
+.cm-math *:not(.cm-math-token):not(.cm-math-error),
+.cm-editor .cm-content .cm-math *:not(.cm-math-token):not(.cm-math-error),
+.cm-editor .cm-line .cm-math *:not(.cm-math-token):not(.cm-math-error) {
   font-family: inherit !important;
   color: inherit !important;
+}
+/* The formula's own parts, told apart by the same `stex` mode Obsidian runs
+   over its source, in the colours the reading view gives code — commands,
+   braces, numbers and % comments. Obsidian colours these too; what it does
+   not do is say when a formula will not render, which is the squiggle below.
+   .cm-math-token is how these escape the two rules above: prose styling
+   still may not reach into a formula, but its own colouring may — and the
+   same goes for .cm-math-error, whose squiggle those rules would otherwise
+   turn off with their `text-decoration: none`. */
+.cm-math-token.cm-math-command {
+  color: var(--code-keyword);
+}
+.cm-math-token.cm-math-brace {
+  color: var(--text-muted);
+}
+.cm-math-token.cm-math-number {
+  color: var(--code-value);
+}
+.cm-math-token.cm-math-string {
+  color: var(--code-string);
+}
+.cm-math-token.cm-math-name {
+  color: var(--code-property);
+}
+.cm-math-token.cm-math-comment {
+  color: var(--text-faint);
+}
+/* A formula KaTeX cannot read, marked where it stands: the reading view and
+   the PDF would draw it in red (renderMath runs with throwOnError: false),
+   and the writer should not have to switch to preview to find that out. Not
+   while the caret is in it — half of what is being typed is briefly wrong.
+   The title carries KaTeX's own complaint. Written at the specificity of the
+   .cm-math blanket above, and after it, so the underline survives its
+   `text-decoration: none`. */
+.cm-math-error,
+.cm-editor .cm-content .cm-math-error,
+.cm-editor .cm-line .cm-math-error {
+  text-decoration: underline wavy var(--color-red) !important;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 0.28em;
+  text-decoration-thickness: from-font;
 }
 
 /* ---- Bottom bar (no keyboard) ----

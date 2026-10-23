@@ -390,6 +390,27 @@ function mapDigits(tex: string): string {
   });
 }
 
+/** What KaTeX makes of a formula, for the editor to mark: the message
+ *  render() swallows — it runs with `throwOnError: false`, which is why a
+ *  typo is otherwise a silent red formula in the reading view and in the PDF
+ *  (PLAN.md's lint criterion 7) — or null when the formula is sound. The
+ *  preparation is render()'s own, digits, spaces and Persian runs included,
+ *  so the editor can never disagree with what the reading view will draw. */
+export function mathError(raw: string, display: boolean): string | null {
+  if (!raw.trim()) return null;
+  const tex = markMathSpaces(mapDigits(raw)).split(SPACE).join('\\ ');
+  try {
+    katex.renderToString(persianTextRuns(tex), { displayMode: display, throwOnError: true });
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // KaTeX says "KaTeX parse error: Undefined control sequence: \fracc at
+    // position 1: …" — the reader needs the complaint, not the prefix, and
+    // not the caret diagram it draws with the source it was given.
+    return message.replace(/^KaTeX\s+(parse|auto-render)\s+error:\s*/i, '').split(' at position ')[0].trim();
+  }
+}
+
 export function renderMath(raw: string, display: boolean): string {
   // Empty display math is still a blank display line, not zero-height KaTeX.
   if (display && !raw.trim()) return '<div class="math-display"><br></div>';

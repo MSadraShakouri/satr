@@ -80,9 +80,22 @@ test('links, code spans and footnote references stay source inside math', async 
       footrefs: line.querySelectorAll('.cm-lp-footref').length,
       // The theme still colours the parser's link/code tokens inside the
       // formula (the markdown parser does not know it is inside dollars), so
-      // the formula must win over it: one colour, one font, everywhere in it.
+      // the formula must win over it: one font everywhere in it, and one
+      // colour for everything except the formula's own parts — a command, a
+      // brace, a number — which are coloured on purpose (src/mathSource.ts).
       families: [...new Set(math.flatMap((m) => [m, ...m.querySelectorAll('*')].map((el) => getComputedStyle(el).fontFamily)))],
-      colours: [...new Set(math.flatMap((m) => [m, ...m.querySelectorAll('*')].map((el) => getComputedStyle(el).color)))],
+      colours: [...new Set(math.flatMap((m) => [m, ...m.querySelectorAll('*')]
+        .filter((el) => !el.closest('.cm-math-token'))
+        .map((el) => getComputedStyle(el).color)))],
+      // The one colour that would mean a link had won: the accent.
+      accentInside: (() => {
+        const probe = document.createElement('span');
+        document.body.appendChild(probe);
+        probe.style.color = 'var(--accent)';
+        const accent = getComputedStyle(probe).color;
+        probe.remove();
+        return math.flatMap((m) => [m, ...m.querySelectorAll('*')]).some((el) => getComputedStyle(el).color === accent);
+      })(),
     };
   });
   expect(report.text).toContain('[a](b)');
@@ -93,6 +106,7 @@ test('links, code spans and footnote references stay source inside math', async 
   expect(report.code).toBe(0);
   expect(report.families.length).toBe(1);
   expect(report.colours.length).toBe(1);
+  expect(report.accentInside).toBe(false);
 });
 
 test('prose links and code spans outside math still render', async ({ page }) => {
