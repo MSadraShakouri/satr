@@ -1109,3 +1109,38 @@ test('the weekday row reads the way its own language does, and the grid lines up
     .toEqual([...english.labels].sort((a, b) => a.x - b.x).map((label) => label.name));
   expect(Math.abs(english.selected! - under(english, 'en'))).toBeLessThanOrEqual(1);
 });
+
+test('switching the calendar lands on the month that holds the chosen day', async ({ page }) => {
+  // A month's first day in one calendar sits mid-month in the other, so
+  // carrying that Date across the switch opened the NEIGHBOURING month and
+  // left the grid with no selected day at all: on 23 October the Jalali side
+  // came up on Mehr — the month that holds 1 October — while today was
+  // 1 Aban. The chosen day decides where the switch lands.
+  await boot(page);
+  await openPicker(page);
+  const picker = sheet(page);
+  const title = picker.locator('.timestamp-picker-month');
+  const selected = picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-selected');
+  const now = new Date();
+  const jalali = (options: Intl.DateTimeFormatOptions, at: Date = now): string =>
+    new Intl.DateTimeFormat('en-u-ca-persian', options).format(at);
+
+  await picker.locator('[data-stamp-cal]').click(); // -> Persian
+  await expect(title).toHaveText(jalali({ year: 'numeric', month: 'long' }));
+  await expect(selected).toHaveText(jalali({ day: 'numeric' }));
+  await picker.locator('[data-stamp-cal]').click(); // -> Gregorian again
+  await expect(title).toHaveText(new Intl.DateTimeFormat('en', { year: 'numeric', month: 'long' }).format(now));
+  await expect(selected).toHaveText(String(now.getDate()));
+
+  // Paged away from the chosen day there is nothing to hold on to, so the
+  // switch keeps the neighbourhood: the month holding the middle of the one
+  // on screen, never a month the reader did not ask for.
+  await picker.locator('[data-stamp-jump]').click(); // away to January 2030
+  await picker.locator('[data-stamp-jump-month]').fill('1');
+  await picker.locator('[data-stamp-jump-month]').press('Enter');
+  await picker.locator('[data-stamp-jump-year]').fill('2030');
+  await picker.locator('[data-stamp-jump-year]').press('Enter');
+  await expect(title).toHaveText(new Intl.DateTimeFormat('en', { year: 'numeric', month: 'long' }).format(new Date(2030, 0, 1)));
+  await picker.locator('[data-stamp-cal]').click(); // -> Persian
+  await expect(title).toHaveText(jalali({ year: 'numeric', month: 'long' }, new Date(2030, 0, 15)));
+});

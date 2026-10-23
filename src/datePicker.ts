@@ -576,6 +576,21 @@ export function createTimestampPicker(): TimestampPicker {
       }
       if (target.closest('[data-stamp-cal]')) {
         const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
+        // Re-anchor the view BEFORE the words change: a month's first day in
+        // one calendar sits mid-month in the other, so carrying that Date
+        // over opened the neighbouring month — on 23 October the Jalali grid
+        // came up on Mehr, the month that holds 1 October, and the chosen day
+        // was nowhere on it. Anchor on the chosen day when it is in view, on
+        // the middle of the viewed month otherwise.
+        if (viewMonth) {
+          const was = tag();
+          const first = monthStart(viewMonth, was);
+          const here = calParts(was, first);
+          const at = chosen ? calParts(was, chosen) : null;
+          const middle = new Date(first);
+          middle.setDate(middle.getDate() + 14);
+          viewMonth = chosen && at && at.year === here.year && at.month === here.month ? new Date(chosen) : middle;
+        }
         calendarOverride = active === 'persian' ? 'gregory' : 'persian';
         render(); // the same Dates, re-worded — the grid answers in place
         return;
