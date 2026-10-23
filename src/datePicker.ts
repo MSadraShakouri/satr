@@ -32,10 +32,35 @@ const latinDigits = (value: string): string => value
   .replace(/[\u06F0-\u06F9]/g, (digit) => String(digit.charCodeAt(0) - 0x06F0))
   .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660));
 
+/** Intl formatters are costly to build and this sheet needs them by the
+ *  hundred: one month page asks the calendar for its parts eighty-odd times,
+ *  once per day cell and again for every step of the month walk. They are
+ *  pure functions of their locale and shape, so one of each is kept for the
+ *  life of the tab. Building them per call cost about fifteen milliseconds a
+ *  page — a dropped frame every time a page was drawn, which is what a swipe
+ *  felt like when it stuck for a moment. */
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+function dateFormat(tag: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${tag}|${options.year ?? ''}|${options.month ?? ''}|${options.day ?? ''}|${options.weekday ?? ''}`;
+  const known = dateFormats.get(key);
+  if (known) return known;
+  const made = new Intl.DateTimeFormat(tag, options);
+  dateFormats.set(key, made);
+  return made;
+}
+const numberFormats = new Map<string, Intl.NumberFormat>();
+function numberFormat(tag: string): Intl.NumberFormat {
+  const known = numberFormats.get(tag);
+  if (known) return known;
+  const made = new Intl.NumberFormat(tag);
+  numberFormats.set(tag, made);
+  return made;
+}
+
 /** Parts of a date as the chosen calendar counts them — in numbers, whatever
  *  digits the locale writes them with (a Jalali year is ۱۴۰۵ on paper). */
 function calParts(tag: string, date: Date): { year: number; month: number; day: number } {
-  const parts = new Intl.DateTimeFormat(tag, { year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(date);
+  const parts = dateFormat(tag, { year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(date);
   const read = (type: string): number => Number(latinDigits(parts.find((part) => part.type === type)?.value ?? ''));
   return { year: read('year'), month: read('month'), day: read('day') };
 }
@@ -86,7 +111,7 @@ function monthDays(date: Date, tag: string): Date[] {
 function weekdayRow(tag: string, weekStart: number): string[] {
   // 2023-11-12 is a Sunday: seven days of known names, indexed from Sunday.
   const names: string[] = [];
-  const naming = new Intl.DateTimeFormat(tag, { weekday: 'short' }); // one formatter, not seven
+  const naming = dateFormat(tag, { weekday: 'short' });
   for (let day = 0; day < 7; day += 1) {
     names.push(naming.format(new Date(2023, 10, 12 + day)));
   }
@@ -97,7 +122,7 @@ function weekdayRow(tag: string, weekStart: number): string[] {
 /** Where the first day of the month sits in a grid whose week starts at
  *  `row[0]`: how many lead cells come before it. */
 function leadCells(tag: string, first: Date, row: string[]): number {
-  const name = new Intl.DateTimeFormat(tag, { weekday: 'short' }).format(first);
+  const name = dateFormat(tag, { weekday: 'short' }).format(first);
   return Math.max(0, row.indexOf(name));
 }
 
@@ -154,7 +179,7 @@ export function createTimestampPicker(): TimestampPicker {
     const base = timestampLocaleTag();
     return calendarOverride ? `${base.split('-u-ca-')[0]}-u-ca-${calendarOverride}` : base;
   };
-  const number = (value: number): string => new Intl.NumberFormat(tag()).format(value);
+  const number = (value: number): string => numberFormat(tag()).format(value);
 
   const close = (): void => {
     if (!sheet) return;
@@ -233,7 +258,7 @@ export function createTimestampPicker(): TimestampPicker {
     const row = weekdayRow(localeTag, weekStart);
     const heading = sheet.querySelector<HTMLElement>('.timestamp-picker-month')!;
     if (!jumping) {
-      heading.textContent = new Intl.DateTimeFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
+      heading.textContent = dateFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
       heading.dir = 'auto';
       titleIndex = indexFor(0);
     }
@@ -368,7 +393,7 @@ export function createTimestampPicker(): TimestampPicker {
     const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
     if (index === titleIndex) return;
     titleIndex = index;
-    heading.textContent = new Intl.DateTimeFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, offsetAt(index), tag()), tag()));
+    heading.textContent = dateFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, offsetAt(index), tag()), tag()));
   }
 
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
