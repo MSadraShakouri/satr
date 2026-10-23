@@ -991,9 +991,66 @@ function flushNavigation(): void {
   // away for good.
   const backToTop = !pending.hide && top <= 0;
   if (pending.hide ? -moved < NAV_HELD : (moved < NAV_HELD && !backToTop)) return;
+  // The hand may have changed its mind during the beat; the top of the note
+  // is the reader's own doing whatever the hand is up to.
+  if (!backToTop && !readerWent(pending.hide)) return;
   scrollAnchors.set(pending.el, top);
   if (pending.hide) hideNavigation();
   else restoreNavigation();
+}
+// ---- Which way the reader is actually going ----
+// A scroll position is not a gesture. The editor corrects its own estimated
+// heights as the reader flies up through a stretch of the note it has not
+// measured yet, and the reading view does the same as sections come into
+// view: scrollTop is moved precisely SO THAT the text on screen does not.
+// Read off scrollTop alone, that correction is indistinguishable from the
+// reader turning around — and one landing in the tail of a flick is what
+// took the bars away again on the way up, with nothing moving on screen to
+// explain it ("it comes and goes quickly while going up"). Measured: a flick
+// up shows the bars, a 130px correction two frames later hides them.
+//
+// So the bars follow the reader's hand, not the scrollbar: a finger on the
+// glass, a wheel, or a scrolling key. Momentum carries no finger, so the way
+// the flick was going still stands while the note coasts — which is also
+// what the reader expects, that bars brought up on the way up stay up. A
+// device that has produced none of the three (a synthetic scroll, a spec)
+// keeps the old rule, so nothing that cannot have a hand behind it changes.
+const WAY_DOWN = 1;
+const WAY_UP = -1;
+let gestureWay = 0;
+let gestureEver = false;
+let touchedY = 0;
+function noteGesture(way: number): void {
+  if (!way) return;
+  gestureEver = true;
+  gestureWay = way;
+}
+/** Does the reader's own last move agree with the way the bars want to go? */
+function readerWent(hide: boolean): boolean {
+  return !gestureEver || gestureWay === (hide ? WAY_DOWN : WAY_UP);
+}
+const SCROLL_KEYS: Record<string, number> = {
+  ArrowDown: WAY_DOWN, PageDown: WAY_DOWN, End: WAY_DOWN,
+  ArrowUp: WAY_UP, PageUp: WAY_UP, Home: WAY_UP,
+};
+function watchGestures(el: HTMLElement): void {
+  el.addEventListener('touchstart', (event: TouchEvent) => {
+    touchedY = event.touches[0]?.clientY ?? touchedY;
+  }, { passive: true, capture: true });
+  el.addEventListener('touchmove', (event: TouchEvent) => {
+    const y = event.touches[0]?.clientY;
+    if (y === undefined) return;
+    const dy = touchedY - y; // the finger going up the glass takes the note down
+    if (Math.abs(dy) < 2) return;
+    touchedY = y;
+    noteGesture(dy > 0 ? WAY_DOWN : WAY_UP);
+  }, { passive: true, capture: true });
+  el.addEventListener('wheel', (event: WheelEvent) => {
+    noteGesture(event.deltaY > 0 ? WAY_DOWN : WAY_UP);
+  }, { passive: true, capture: true });
+  el.addEventListener('keydown', (event: KeyboardEvent) => {
+    noteGesture(SCROLL_KEYS[event.key] ?? 0);
+  }, { passive: true, capture: true });
 }
 const scrollAnchors = new WeakMap<Element, number>();
 let programmaticUntil = 0;
@@ -1035,6 +1092,10 @@ function onNavScroll(el: HTMLElement): void {
   // re-checks NAV_HELD). One that landed after the beat walked straight into
   // restoreNavigation() — a flash with no gesture behind it.
   if (Math.abs(delta) < NAV_HELD) return;
+  // ...and it has to be the reader's own. The anchor keeps up either way, so
+  // a correction the editor made is not counted again later as distance the
+  // reader has travelled.
+  if (!readerWent(hide)) { scrollAnchors.set(el, top); return; }
   if (navSettling()) { holdNavigation(el, hide); return; } // the anchor stays where the bars moved
   scrollAnchors.set(el, top);
   if (hide) hideNavigation();
@@ -1077,6 +1138,8 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
   releaseFoldSlack(editor.view.scrollDOM, editor.view.contentDOM);
 }, { passive: true });
 previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
+watchGestures(editor.view.scrollDOM);
+watchGestures(previewPane);
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 // A note rendered before the font arrived was measured in the fallback —
 // its formulas and the room its list markers keep (src/markdown.ts) are

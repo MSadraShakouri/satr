@@ -20,6 +20,15 @@
 // A finger sends a stream of scroll events, not one, and the app ignores the
 // scrolls it makes itself (syncingScroll, src/main.ts) — so a single event can
 // be swallowed. Every gesture here is a short ramp of events, as a finger is.
+//
+// Reported again after that: on the way up they come back and then leave
+// again, and nothing on screen moves when they do. That one is not a flash
+// between two gestures — it is a scroll position that moved without a reader:
+// the editor corrects a stretch of estimated line heights as the note flies
+// past, and moves scrollTop precisely so that the text on screen stays put.
+// The bars are told from the reader's hand now (a finger, a wheel, a
+// scrolling key), and what the hand has not asked for cannot turn them
+// around. The last two tests here are that rule.
 import { expect, test, type Page } from '@playwright/test';
 
 const NOTE = 'a line of prose to scroll through\n'.repeat(200);
@@ -157,4 +166,81 @@ test('a note kept down does not flash: the bars move once per gesture', async ({
   await page.waitForTimeout(SETTLE + 150);
   expect((await moves(page)).map((m) => m.hidden)).toEqual([true]);
   await expectOneMovePerBeat(page);
+});
+
+// ---- A scroll position is not a gesture ----
+test.describe('the hand behind the scroll', () => {
+  test.use({ hasTouch: true });
+
+  /** Scroll the note the way a finger does: the ramp of scroll events, with
+   *  the finger that caused them on the glass. Going UP the note is the
+   *  finger sliding DOWN it. */
+  async function swipe(page: Page, by: number, ms = 50) {
+    await page.evaluate(async ({ by, ms }) => {
+      const scroller = document.querySelector<HTMLElement>('.cm-scroller')!;
+      const start = scroller.scrollTop;
+      const t0 = performance.now();
+      let fingerY = 400;
+      const touch = (type: string): void => {
+        const point = new Touch({ identifier: 1, target: scroller, clientX: 195, clientY: fingerY });
+        scroller.dispatchEvent(new TouchEvent(type, { touches: [point], bubbles: true }));
+      };
+      touch('touchstart');
+      await new Promise<void>((resolve) => {
+        const tick = (): void => {
+          const done = performance.now() - t0;
+          const to = start + by * Math.min(1, done / ms);
+          fingerY -= (to - scroller.scrollTop) / 4; // the glass under the note
+          scroller.scrollTop = to;
+          touch('touchmove');
+          scroller.dispatchEvent(new Event('scroll'));
+          if (done < ms) requestAnimationFrame(tick);
+          else { scroller.dispatchEvent(new TouchEvent('touchend', { touches: [], bubbles: true })); resolve(); }
+        };
+        tick();
+      });
+    }, { by, ms });
+  }
+
+  /** What the editor does when it finds a stretch above the viewport is
+   *  taller than it had estimated: scrollTop moves, the text does not, and
+   *  no finger is anywhere near the glass. */
+  const correction = (page: Page, by: number) => page.evaluate((px) => {
+    const scroller = document.querySelector<HTMLElement>('.cm-scroller')!;
+    scroller.scrollTop += px;
+    scroller.dispatchEvent(new Event('scroll'));
+  }, by);
+
+  test('a correction nobody made cannot take the bars away again', async ({ page }) => {
+    await boot(page);
+    await swipe(page, 400);
+    await expect.poll(() => hidden(page)).toBe(true);
+    await page.waitForTimeout(SETTLE + 60);
+    await swipe(page, -400);
+    await expect.poll(() => hidden(page)).toBe(false);
+    clearMoves(page);
+    // Ten times the threshold, and twice over, with the beat well past: the
+    // old rule took the bars away on the first one.
+    await page.waitForTimeout(SETTLE + 60);
+    await correction(page, 130);
+    await page.waitForTimeout(80);
+    await correction(page, 130);
+    await page.waitForTimeout(SETTLE + 120);
+    expect(await hidden(page)).toBe(false);
+    expect(await moves(page)).toEqual([]);
+  });
+
+  test('a real swipe down still takes them away at once', async ({ page }) => {
+    await boot(page);
+    await swipe(page, 400);
+    await expect.poll(() => hidden(page)).toBe(true);
+    await page.waitForTimeout(SETTLE + 60);
+    await swipe(page, -400);
+    await expect.poll(() => hidden(page)).toBe(false);
+    await page.waitForTimeout(SETTLE + 60);
+    await correction(page, 130); // ignored, as above
+    await swipe(page, 400);
+    await expect.poll(() => hidden(page)).toBe(true);
+    await expectOneMovePerBeat(page);
+  });
 });
