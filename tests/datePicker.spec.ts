@@ -1283,3 +1283,28 @@ test('a calendar switch mid-swipe re-words the month on screen', async ({ page }
   await expect(picker.locator('.timestamp-picker-month'))
     .toHaveText(new Intl.DateTimeFormat('en-u-ca-persian', { year: 'numeric', month: 'long' }).format(away));
 });
+
+test('a quick second press of an arrow is not swallowed', async ({ page }) => {
+  // A smooth scroll has not moved a pixel in its first frames, so a press
+  // landing there read the track as resting and asked for the SAME
+  // destination again: three presses turned two months. Re-centring after a
+  // turn is itself a scroll, and its scrollend did the same thing from the
+  // inside — it started the next queued turn on top of the one already
+  // gliding.
+  await boot(page);
+  await openPicker(page);
+  await settled(page);
+  const picker = sheet(page);
+  const title = picker.locator('.timestamp-picker-month');
+  const months = monthsOf('en');
+  const at = async (): Promise<number> => {
+    const [name, year] = (await title.textContent())!.trim().split(' ');
+    return Number(year) * 12 + months.indexOf(name);
+  };
+  const start = await at();
+  for (const [dir, want] of [[1, 3], [-1, 0]] as const) {
+    for (let press = 0; press < 3; press += 1) await picker.locator(`[data-stamp-step="${dir}"]`).click();
+    await expect.poll(at, { timeout: 5000 }).toBe(start + want);
+    await settled(page);
+  }
+});

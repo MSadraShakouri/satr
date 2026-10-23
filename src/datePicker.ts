@@ -297,12 +297,18 @@ export function createTimestampPicker(): TimestampPicker {
   function turnMonth(dir: -1 | 1): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
+    turning = true;
     viewport.scrollTo({ left: viewport.clientWidth * indexFor(dir), behavior: 'smooth' });
   }
 
   /** Arrow presses landing while a turn still glides chain through the
    *  settle, one month each, instead of being swallowed mid-flight. */
   let pendingTurn = 0;
+  /** A turn is gliding: its scroll has been asked for but has not arrived.
+   *  The position cannot stand in for this — a smooth scroll has not moved a
+   *  pixel in its first frames, so a second press read the track as resting
+   *  and asked for the SAME destination again: one month for two presses. */
+  let turning = false;
   /** The calendar-month offset of the track's FIRST page relative to
    *  `viewMonth` — -2 after every render, drifting as runway grows. */
   let anchor = -2;
@@ -321,12 +327,16 @@ export function createTimestampPicker(): TimestampPicker {
     const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
     const offset = offsetAt(index);
     if (offset !== 0) {
+      turning = false; // a turn that was gliding has landed
       viewMonth = addMonths(viewMonth, offset, tag());
       render(); // recentres at once: five pages around the new month, runway regrows on demand
     } else {
       titleIndex = index;
     }
-    if (pendingTurn) {
+    // A queued press waits for the one before it to land: starting another
+    // turn on top of one still gliding replaces it, and the press it came
+    // from is swallowed.
+    if (pendingTurn && !turning) {
       const dir = (pendingTurn > 0 ? 1 : -1) as -1 | 1;
       pendingTurn -= dir;
       turnMonth(dir);
@@ -587,7 +597,7 @@ export function createTimestampPicker(): TimestampPicker {
         jumping = false;
         const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
         const dir = Number(step.dataset.stampStep) as -1 | 1;
-        if (viewport && Math.abs(viewport.scrollLeft - indexFor(0) * viewport.clientWidth) > 2) pendingTurn += dir;
+        if (viewport && (turning || Math.abs(viewport.scrollLeft - indexFor(0) * viewport.clientWidth) > 2)) pendingTurn += dir;
         else turnMonth(dir);
         return;
       }
@@ -699,7 +709,10 @@ export function createTimestampPicker(): TimestampPicker {
      *  the runway from the last rest, and a monster fling that exhausts it
      *  settles at the wall — one clean adopt, never a fight. */
     let fingerDown = false;
-    viewport.addEventListener('touchstart', () => { fingerDown = true; }, { passive: true });
+    viewport.addEventListener('touchstart', () => {
+      fingerDown = true;
+      turning = false; // a finger on the track cancels any glide it had
+    }, { passive: true });
     const fingerUp = (): void => {
       fingerDown = false;
       if (settleTimer) { window.clearTimeout(settleTimer); settleTimer = window.setTimeout(normalize, 120); }
