@@ -22,7 +22,6 @@ import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
 import { closeTimestampPicker, normalizeMathIn, timestampPicker } from './commands';
-import { keyboardWatch } from './datePicker';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
@@ -2767,12 +2766,11 @@ function flash(el: HTMLElement): void {
  *  sheet was open, the code lands at the caret instead. */
 function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, found: { from: number; to: number } | null): void {
   // As with a fresh code: the note is let go so the keyboard comes down off
-  // the sheet, and the caret it had is remembered rather than relied upon.
-  // A chip tapped in the reading view never had the focus and does not get
-  // it back — the keyboard would be answering a tap that was not typing.
-  const hadFocus = editor.view.hasFocus;
+  // the sheet, the caret it had is remembered rather than relied upon, and
+  // the note is not taken back when the code lands — the keyboard would be
+  // answering a tap that was not typing.
   const caret = editor.view.state.selection.main;
-  if (hadFocus) editor.view.contentDOM.blur();
+  editor.view.contentDOM.blur();
   timestampPicker.open({
     initial,
     onInsert: (code) => {
@@ -2784,7 +2782,6 @@ function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, 
         const from = Math.min(caret.from, to);
         view.dispatch({ changes: { from, to, insert: code }, selection: { anchor: from + code.length }, userEvent: 'input' });
       }
-      if (hadFocus) view.focus();
     },
   });
 }
@@ -3007,9 +3004,6 @@ function layoutKeyboard(): void {
   layoutKeyboardInset();
   paintKeyboardDebug();
 }
-// The date sheet waits for the keyboard to go before it opens, and this is
-// how it knows: the same measurement the layout above runs on.
-keyboardWatch.height = keyboardHeight;
 window.visualViewport?.addEventListener('resize', layoutKeyboard);
 window.visualViewport?.addEventListener('scroll', layoutKeyboard);
 window.addEventListener('resize', layoutKeyboard);

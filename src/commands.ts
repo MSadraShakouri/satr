@@ -194,15 +194,20 @@ export const timestampPicker = createTimestampPicker();
  *  focus is handed back with the insert: whoever was typing is typing again,
  *  caret after the code. */
 export function insertTimestamp(view: EditorView): boolean {
-  const hadFocus = view.hasFocus;
+  // The note is let go — that is what puts the keyboard down — and where
+  // the caret stood is remembered rather than relied upon, because a blur
+  // is also the moment a selection is easiest to lose. The note is not
+  // taken back when the code lands: focusing it again raises the keyboard
+  // over the closing sheet, and the writer asked for a date, not a
+  // keyboard. The caret is left sitting after the code, so tapping back in
+  // carries on from there.
   const range = view.state.selection.main;
-  if (hadFocus) view.contentDOM.blur();
+  view.contentDOM.blur();
   timestampPicker.open({
     onInsert: (code) => {
       const to = Math.min(range.to, view.state.doc.length);
       const from = Math.min(range.from, to);
       view.dispatch({ changes: { from, to, insert: code }, selection: { anchor: from + code.length }, userEvent: 'input', scrollIntoView: true });
-      if (hadFocus) view.focus();
     },
   });
   return true;

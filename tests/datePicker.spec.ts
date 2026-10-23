@@ -966,9 +966,6 @@ test('a sheet opened while the keyboard is already up rides it at once', async (
   await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 844 / 620 });
   await page.waitForTimeout(400);
   await openPicker(page);
-  // The sheet waits for the keyboard to go before it shows itself, and this
-  // keyboard never does: it opens on its own cap, then slides in.
-  await expect(sheet(page)).toBeVisible({ timeout: 2000 });
   await page.waitForTimeout(450); // the sheet's slide-in
   const state = await page.evaluate(() => {
     const picker = document.querySelector('.timestamp-picker') as HTMLElement;
@@ -1408,7 +1405,9 @@ test('the date sheet lets the keyboard go, and the code still lands at the caret
   // The sheet is a tall one and half of it was behind the phone's keyboard.
   // Letting the editable go puts the keyboard down — but the caret has to
   // survive that, or the code lands at the top of the note instead of where
-  // the writer was.
+  // the writer was. The note is not taken back afterwards either: the date
+  // was the whole of the request, and a keyboard coming back up over a
+  // closing sheet is a flicker nobody asked for.
   await boot(page);
   const caret = await page.evaluate(async () => {
     const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
@@ -1425,13 +1424,13 @@ test('the date sheet lets the keyboard go, and the code still lands at the caret
   expect(await typing()).toBe(false); // on a phone, that is the keyboard going down
   await sheet(page).locator('[data-stamp-insert]').click();
   await expect(sheet(page)).toHaveCount(0);
-  // The code landed where the caret was, and the writer has the note back
-  // with the caret after it — typing carries on where it left off.
+  // The code landed where the caret was, and the caret sits after it: tap
+  // back into the note and typing carries on where it left off.
   const text = await noteText(page);
   const written = /^<t:\d{1,15}:?[a-zA-Z]?>/.exec(text.slice(caret));
   expect(written).toBeTruthy();
   expect(text).toBe(NOTE.slice(0, caret) + written![0] + NOTE.slice(caret));
-  expect(await typing()).toBe(true);
+  expect(await typing()).toBe(false); // the keyboard stays down
   const head = await page.evaluate(async () => {
     const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     return EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!.state.selection.main.head;
@@ -1466,29 +1465,6 @@ test('the arrow names its month before the track has moved', async ({ page }) =>
   const landed = (await title.textContent())!;
   expect(landed).not.toBe(home);
   await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-blank')).toHaveCount(42 - new Date(new Date().getFullYear(), new Date().getMonth() + 2, 0).getDate());
-});
-
-test('the keyboard is down before the sheet comes up', async ({ page }) => {
-  // A tall sheet opened into the short window a keyboard still holds lays
-  // itself out against that window, and jumps when the keyboard leaves. The
-  // sheet waits for it — and never waits longer than it has to.
-  await boot(page);
-  await page.evaluate(async () => {
-    const picker = await window.__satr.load('/src/datePicker.ts') as unknown as { keyboardWatch: { height: () => number } };
-    (window as unknown as { __kb: number }).__kb = 320;
-    picker.keyboardWatch.height = () => (window as unknown as { __kb: number }).__kb;
-  });
-  await openPicker(page);
-  await page.waitForTimeout(200);
-  await expect(sheet(page)).toHaveCount(0); // the keyboard is still down there
-  await page.evaluate(() => { (window as unknown as { __kb: number }).__kb = 0; });
-  await expect(sheet(page)).toBeVisible();
-  // A keyboard that never reports itself down may not swallow the tap.
-  await page.keyboard.press('Escape');
-  await expect(sheet(page)).toHaveCount(0);
-  await page.evaluate(() => { (window as unknown as { __kb: number }).__kb = 320; });
-  await openPicker(page);
-  await expect(sheet(page)).toBeVisible({ timeout: 2000 });
 });
 
 test('arrows pressed faster than one animation turn one month each', async ({ page }) => {
