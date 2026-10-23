@@ -12,8 +12,12 @@
 //   a computer it goes to the next match (Shift+Enter: previous). F3 /
 //   Shift+F3 next / previous, Mod+Alt+Enter replace all.
 //   Enter in the replace field replaces and goes to the next match.
-// - Closing with a field focused selects the current match in the note and
-//   puts the caret there (keyboard stays up); otherwise the note is left as is.
+// - Closing with a field focused puts the caret after the current match
+//   (keyboard stays up); otherwise the note is left as is. Obsidian selects
+//   the match; on a phone that raises the selection bar and lays handles over
+//   the line the reader only wanted to look at, which is why a result chosen
+//   in the sidebar is shown and not selected either (src/editor.ts,
+//   flashRange).
 // - Opening and closing the bar does not move the note under the reader, and
 //   a hit lands a third down the screen with the bar counted (revealThirdDown).
 import { RegExpCursor } from '@codemirror/search';
@@ -369,7 +373,7 @@ export function closeFind(view: EditorView): void {
   const hadFocus = Boolean(panel && panel.contains(document.activeElement));
   keepingPlace(view, () => view.dispatch({
     effects: setFind.of({ open: false }),
-    ...(hadFocus && s.current ? { selection: EditorSelection.single(s.current.from, s.current.to) } : {}),
+    ...(hadFocus && s.current ? { selection: EditorSelection.cursor(s.current.to) } : {}),
   }));
   // The keyboard was up (a field had focus): hand it to the note.
   if (hadFocus) view.focus();
