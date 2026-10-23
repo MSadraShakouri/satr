@@ -230,6 +230,42 @@ test.describe('the hand behind the scroll', () => {
     expect(await moves(page)).toEqual([]);
   });
 
+  test('a thumb wobbling on a slow drag up cannot hand over a reversal', async ({ page }) => {
+    await boot(page);
+    await swipe(page, 400);
+    await expect.poll(() => hidden(page)).toBe(true);
+    await page.waitForTimeout(SETTLE + 60);
+    // Slowly up, the way a thumb does it: a few pixels at a time, never
+    // quite straight, with the editor correcting a height now and then.
+    await page.evaluate(async () => {
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const scroller = document.querySelector<HTMLElement>('.cm-scroller')!;
+      let fingerY = 300;
+      const touch = (type: string): void => {
+        const point = new Touch({ identifier: 1, target: scroller, clientX: 195, clientY: fingerY });
+        scroller.dispatchEvent(new TouchEvent(type, { touches: type === 'touchend' ? [] : [point], bubbles: true }));
+      };
+      touch('touchstart');
+      for (let i = 0; i < 40; i += 1) {
+        const wobble = i % 7 === 6 ? -4 : 6; // the thumb's own jitter
+        fingerY += wobble;
+        scroller.scrollTop -= wobble;
+        touch('touchmove');
+        scroller.dispatchEvent(new Event('scroll'));
+        if (i === 20) { // a height correction lands mid-drag
+          scroller.scrollTop += 130;
+          scroller.dispatchEvent(new Event('scroll'));
+        }
+        await sleep(20);
+      }
+      touch('touchend');
+    });
+    await page.waitForTimeout(SETTLE + 120);
+    expect(await hidden(page)).toBe(false);
+    // One move for the whole drag: they came back, and they stayed.
+    expect((await moves(page)).map((m) => m.hidden)).toEqual([true, false]);
+  });
+
   test('a real swipe down still takes them away at once', async ({ page }) => {
     await boot(page);
     await swipe(page, 400);

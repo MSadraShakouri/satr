@@ -955,6 +955,7 @@ function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
   navMovedAt = performance.now();
+  trace(`BARS AWAY   hand:${hand()}`);
   document.body.classList.add('is-hidden-nav');
   void systemBars()?.hide().catch(() => undefined);
 }
@@ -962,6 +963,7 @@ function restoreNavigation(): void {
   if (!navHidden) return;
   navHidden = false;
   navMovedAt = performance.now();
+  trace(`BARS BACK   hand:${hand()}`);
   document.body.classList.remove('is-hidden-nav');
   void systemBars()?.show().catch(() => undefined);
 }
@@ -993,7 +995,7 @@ function flushNavigation(): void {
   if (pending.hide ? -moved < NAV_HELD : (moved < NAV_HELD && !backToTop)) return;
   // The hand may have changed its mind during the beat; the top of the note
   // is the reader's own doing whatever the hand is up to.
-  if (!backToTop && !readerWent(pending.hide)) return;
+  if (!backToTop && !readerWent(pending.hide)) { trace(`refused held ${pending.hide ? 'away' : 'back'} hand:${hand()}`); return; }
   scrollAnchors.set(pending.el, top);
   if (pending.hide) hideNavigation();
   else restoreNavigation();
@@ -1017,9 +1019,17 @@ function flushNavigation(): void {
 // keeps the old rule, so nothing that cannot have a hand behind it changes.
 const WAY_DOWN = 1;
 const WAY_UP = -1;
+// How far the finger has to travel the other way before that counts as
+// turning around. A thumb dragging the note slowly is never still: it
+// wobbles several pixels either side of the way it is going, and reading
+// the direction off the last couple of pixels let a wobble hand a
+// correction the reversal it needed. The distance is the finger's own
+// travel since the way was last settled, not since the last event.
+const HAND_TURN = 10;
 let gestureWay = 0;
 let gestureEver = false;
-let touchedY = 0;
+let fingerDown = false;
+let fingerMark = 0;
 function noteGesture(way: number): void {
   if (!way) return;
   gestureEver = true;
@@ -1035,15 +1045,22 @@ const SCROLL_KEYS: Record<string, number> = {
 };
 function watchGestures(el: HTMLElement): void {
   el.addEventListener('touchstart', (event: TouchEvent) => {
-    touchedY = event.touches[0]?.clientY ?? touchedY;
+    const y = event.touches[0]?.clientY;
+    if (y === undefined) return;
+    fingerDown = true;
+    fingerMark = y;
   }, { passive: true, capture: true });
+  el.addEventListener('touchend', () => { fingerDown = false; }, { passive: true, capture: true });
+  el.addEventListener('touchcancel', () => { fingerDown = false; }, { passive: true, capture: true });
   el.addEventListener('touchmove', (event: TouchEvent) => {
     const y = event.touches[0]?.clientY;
     if (y === undefined) return;
-    const dy = touchedY - y; // the finger going up the glass takes the note down
-    if (Math.abs(dy) < 2) return;
-    touchedY = y;
-    noteGesture(dy > 0 ? WAY_DOWN : WAY_UP);
+    if (!fingerDown) { fingerDown = true; fingerMark = y; return; }
+    // The finger sliding DOWN the glass takes the note up.
+    const travel = y - fingerMark;
+    if (Math.abs(travel) < HAND_TURN) return;
+    fingerMark = y; // the next turn is measured from here, not from the touch
+    noteGesture(travel > 0 ? WAY_UP : WAY_DOWN);
   }, { passive: true, capture: true });
   el.addEventListener('wheel', (event: WheelEvent) => {
     noteGesture(event.deltaY > 0 ? WAY_DOWN : WAY_UP);
@@ -1052,6 +1069,29 @@ function watchGestures(el: HTMLElement): void {
     noteGesture(SCROLL_KEYS[event.key] ?? 0);
   }, { passive: true, capture: true });
 }
+// ---- A trace, for the phone ----
+// The bars misbehave on a device with no console attached, so ?bars=1 puts
+// the last few decisions on the screen: what was asked for, how far the
+// note had moved, which way the hand was going, and whether anything was
+// refused. Nothing is created and nothing is recorded without the flag.
+let traceBox: HTMLElement | null = null;
+const traceLines: string[] = [];
+function trace(line: string): void {
+  if (!traceBox) return;
+  traceLines.push(`${(performance.now() / 1000).toFixed(1)}s ${line}`);
+  if (traceLines.length > 10) traceLines.shift();
+  traceBox.textContent = traceLines.join('\n');
+}
+function startBarTrace(): void {
+  if (!new URLSearchParams(location.search).has('bars')) return;
+  traceBox = document.createElement('pre');
+  traceBox.style.cssText = 'position:fixed;inset-inline-start:4px;bottom:100px;z-index:99999;margin:0;padding:6px 8px;'
+    + 'font:10px/1.4 ui-monospace,monospace;white-space:pre;color:#fff;background:rgba(0,0,0,0.75);'
+    + 'border-radius:6px;pointer-events:none;max-width:94vw;overflow:hidden;direction:ltr';
+  document.body.appendChild(traceBox);
+  trace('bar trace on');
+}
+const hand = (): string => `${gestureWay === WAY_DOWN ? 'down' : gestureWay === WAY_UP ? 'up' : 'none'}${fingerDown ? '+finger' : ''}`;
 const scrollAnchors = new WeakMap<Element, number>();
 let programmaticUntil = 0;
 /** Mark the next moment's scroll events as the app's own. */
@@ -1095,7 +1135,11 @@ function onNavScroll(el: HTMLElement): void {
   // ...and it has to be the reader's own. The anchor keeps up either way, so
   // a correction the editor made is not counted again later as distance the
   // reader has travelled.
-  if (!readerWent(hide)) { scrollAnchors.set(el, top); return; }
+  if (!readerWent(hide)) {
+    trace(`refused ${hide ? 'away' : 'back'} d${Math.round(delta)} hand:${hand()}`);
+    scrollAnchors.set(el, top);
+    return;
+  }
   if (navSettling()) { holdNavigation(el, hide); return; } // the anchor stays where the bars moved
   scrollAnchors.set(el, top);
   if (hide) hideNavigation();
@@ -1140,6 +1184,7 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
 previewPane.addEventListener('scroll', () => { onNavScroll(previewPane); rememberViewSoon(); releaseFoldSlack(previewPane, preview); }, { passive: true });
 watchGestures(editor.view.scrollDOM);
 watchGestures(previewPane);
+startBarTrace();
 new ResizeObserver(() => scheduleMathLayout(preview)).observe(previewPane);
 // A note rendered before the font arrived was measured in the fallback —
 // its formulas and the room its list markers keep (src/markdown.ts) are
