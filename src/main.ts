@@ -387,12 +387,29 @@ function applyLineGuess(): void {
 }
 function watchSections(): void {
   nearbySections.disconnect();
-  // The figure carries from note to note — it is a property of the font and
-  // the width of the screen, not of the note — but each note measures
-  // itself from scratch so one long table does not follow the reader about.
+  // Every note is measured in its own lines. The figure looked like a
+  // property of the font and the width of the screen, and it is not: a
+  // note of long list items costs 120px a source line, a note of short
+  // paragraphs 49px, and handing one note's figure to the next makes that
+  // note's length wrong by a factor. Measured on the note this was found
+  // in: opened with the last note's figure it stood 3990px tall against a
+  // real 9775px, and the reader — sent to a line two thirds down — was
+  // clamped to the end of a note that then grew under them.
   measuredLines = 0;
   measuredHeight = 0;
-  for (const section of preview.querySelectorAll<HTMLElement>(':scope > .md-section')) nearbySections.observe(section);
+  lineHeightGuess = 0;
+  guessApplied = 0;
+  preview.style.removeProperty('--md-line'); // style.css's 1.85em, until this note says otherwise
+  const sections = [...preview.querySelectorAll<HTMLElement>(':scope > .md-section')];
+  for (const section of sections) nearbySections.observe(section);
+  // Measure what the browser has laid out already, before anybody is
+  // placed in this note. The sections at the reader's end of it have real
+  // boxes; the rest answer with the estimate and are passed over for
+  // saying so. A section's own box costs nothing to read — it is the boxes
+  // inside it that the reading view is built not to lay out — and the
+  // placement that follows this render is computed against the length this
+  // gives, instead of a frame later, after the observer has said so.
+  for (const section of sections) measureSection(section);
 }
 function renderPreview(): void {
   window.clearTimeout(renderTimer);
