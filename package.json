@@ -14,6 +14,11 @@
     "android:sync": "npm run build && cap sync android",
     "android:icons": "node scripts/generate-android-icons.cjs"
   },
+  "allowScripts": {
+    "esbuild": true,
+    "core-js": false,
+    "es5-ext": false
+  },
   "dependencies": {
     "@capacitor/android": "^7.6.9",
     "@capacitor/app": "^7.1.2",
