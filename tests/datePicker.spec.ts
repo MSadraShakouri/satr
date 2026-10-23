@@ -1439,6 +1439,35 @@ test('the date sheet lets the keyboard go, and the code still lands at the caret
   expect(head).toBe(caret + written![0].length);
 });
 
+test('the arrow names its month before the track has moved', async ({ page }) => {
+  // The title used to wait for the glide to carry it: a press was answered
+  // about three-quarters of an animation later, which read as the press not
+  // having registered. While the sheet is taking itself somewhere, the title
+  // says where it is going — the same breath as the press.
+  await boot(page);
+  await openPicker(page);
+  await settled(page);
+  const picker = sheet(page);
+  const title = picker.locator('.timestamp-picker-month');
+  const home = (await title.textContent())!;
+  const pressed = await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
+    const heading = document.querySelector<HTMLElement>('.timestamp-picker-month')!;
+    const was = heading.textContent;
+    const at = scroller.scrollLeft;
+    document.querySelector<HTMLElement>('[data-stamp-step="1"]')!.click();
+    // Read back in the same task the press ran in: nothing has had a frame.
+    return { turned: heading.textContent !== was, moved: Math.abs(scroller.scrollLeft - at) };
+  });
+  expect(pressed.turned).toBe(true);
+  expect(pressed.moved).toBe(0);
+  // And it is the month the glide actually lands on.
+  await settled(page);
+  const landed = (await title.textContent())!;
+  expect(landed).not.toBe(home);
+  await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day.is-blank')).toHaveCount(42 - new Date(new Date().getFullYear(), new Date().getMonth() + 2, 0).getDate());
+});
+
 test('the keyboard is down before the sheet comes up', async ({ page }) => {
   // A tall sheet opened into the short window a keyboard still holds lays
   // itself out against that window, and jumps when the keyboard leaves. The
@@ -1460,4 +1489,42 @@ test('the keyboard is down before the sheet comes up', async ({ page }) => {
   await page.evaluate(() => { (window as unknown as { __kb: number }).__kb = 320; });
   await openPicker(page);
   await expect(sheet(page)).toBeVisible({ timeout: 2000 });
+});
+
+test('arrows pressed faster than one animation turn one month each', async ({ page }) => {
+  // The press that lands mid-glide used to count from the page the glide was
+  // passing, not from where it was bound: two quick presses turned three
+  // months. (Nothing caught it while the title waited for the settle, since
+  // waiting for the title meant waiting for the animation too.)
+  await boot(page, { timestampLocale: 'fa', timestampCalendar: 'persian', weekStart: 6 });
+  await openPicker(page);
+  await settled(page);
+  const picker = sheet(page);
+  const title = picker.locator('.timestamp-picker-month');
+  const start = await currentPage(page);
+
+  // Two presses in the same breath, before a single frame has been drawn.
+  await page.evaluate(() => {
+    const arrow = document.querySelector<HTMLElement>('[data-stamp-step="1"]')!;
+    arrow.click();
+    arrow.click();
+  });
+  const promised = (await title.textContent())!.trim(); // named before it arrives
+  await settled(page);
+  expect(Math.abs(await currentPage(page) - start)).toBe(2);
+  await expect(title).toHaveText(promised); // and the glide landed where the title said
+
+  // And a press that changes its mind while the glide is still running: the
+  // month back from the one being glided to is the one you started on. The
+  // press used to count from the page the glide was passing instead of from
+  // where it was bound, and landed a month too far.
+  const here = await currentPage(page);
+  const name = (await title.textContent())!.trim();
+  await picker.locator('[data-stamp-step="1"]').click();
+  await page.waitForTimeout(60); // mid-glide
+  await picker.locator('[data-stamp-step="-1"]').click();
+  await expect(title).toHaveText(name); // straight back to where it began
+  await settled(page);
+  expect(await currentPage(page)).toBe(here);
+  await expect(title).toHaveText(name);
 });

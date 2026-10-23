@@ -347,9 +347,23 @@ export function createTimestampPicker(): TimestampPicker {
     const step = monthDir() === 'rtl' ? -dir : dir;
     let want = clampIndex(toIndex + step);
     // The track already drifted onto the target by itself (a swipe still
-    // settling): then the press means the page after it, not this one.
-    if (want === here) want = clampIndex(here + step);
+    // settling): then the press means the page after it, not this one. A
+    // glide of the sheet's own is NOT drift, though — it is already bound
+    // for toIndex, and the page the scroll happens to be nearest on the way
+    // is no business of the next press. Counting it skipped a month
+    // whenever two arrow presses came faster than one animation.
+    if (want === here && !gliding) want = clampIndex(here + step);
     toIndex = want;
+    // The month the press asked for is named NOW, not when the glide gets
+    // there. A smooth scroll takes a couple of hundred milliseconds and the
+    // title used to wait until it was three-quarters over — the press felt
+    // like it had not registered. While the sheet is taking itself
+    // somewhere, the title says where it is going; the scroll may not argue
+    // with it on the way (titleLocked), and a finger on the track takes the
+    // title back at once.
+    gliding = true;
+    glideBy = performance.now() + 700;
+    followTitle(want);
     viewport.scrollTo({ left: want * width, behavior: Math.abs(want - here) > 1 ? 'auto' : 'smooth' });
   }
 
@@ -374,6 +388,15 @@ export function createTimestampPicker(): TimestampPicker {
   let anchor = -CENTRE;
   /** Which page the title is wearing. */
   let titleIndex = CENTRE;
+  /** A turn of the sheet's own is in flight: the glide is on its way to
+   *  toIndex. Bookkeeping only — it decides what the title says and what the
+   *  next press counts from, and never whether a gesture is allowed. (The
+   *  flag this is NOT is the old `turning`, which swallowed presses while it
+   *  stood.) A finger, or the settle, clears it. */
+  let gliding = false;
+  /** When to stop believing in a glide that has not arrived (a smooth scroll
+   *  of one page takes about a third of a second). */
+  let glideBy = 0;
 
   const clampIndex = (index: number): number => Math.max(0, Math.min(PAGES - 1, index));
   const pageAt = (index: number): HTMLElement | null =>
@@ -452,6 +475,7 @@ export function createTimestampPicker(): TimestampPicker {
     anchor = rtl ? CENTRE : -CENTRE;
     titleIndex = CENTRE;
     toIndex = CENTRE;
+    gliding = false;
     // The head reads the month's way too, so the step arrows sit where that
     // language expects them: in Persian the month before is to the right.
     const head = sheet.querySelector<HTMLElement>('.timestamp-picker-head');
@@ -479,6 +503,7 @@ export function createTimestampPicker(): TimestampPicker {
     }
     toIndex = index;
     titleIndex = index;
+    gliding = false;
     markCurrent(index);
     fillAround(index, 3);
     // A reader who swiped a century has reached the end of the ladder: lay
@@ -859,12 +884,20 @@ export function createTimestampPicker(): TimestampPicker {
     function settle(): void {
       settleTimer = 0;
       if (fingerDown) { defer(); return; } // nothing settles under the writer's hand
+      // Nor while a glide of the sheet's own is still on its way. The page
+      // it happens to be passing is not where it lives: adopting that page
+      // would hand the next arrow press the wrong number to count from, and
+      // that press would look like it had skipped a month — which is what
+      // two arrows pressed faster than one animation used to do. Never wait
+      // for a glide that has given up, though.
+      if (gliding && nearestIndex() !== toIndex && performance.now() < glideBy) { defer(); return; }
       gestured = false;
       adopt();
     }
     viewport.addEventListener('touchstart', () => {
       fingerDown = true;
       gestured = true;
+      gliding = false; // the finger takes the title and the step base over
       toIndex = nearestIndex(); // the finger takes the wheel from any glide
     }, { passive: true });
     const fingerUp = (): void => {
@@ -885,7 +918,10 @@ export function createTimestampPicker(): TimestampPicker {
       const index = nearestIndex();
       if (index !== titleIndex) {
         if (fingerDown) toIndex = index; // a swipe moves the target with it
-        followTitle(index);
+        // Under a finger the title follows the page nearest the snap point,
+        // which turns the month halfway through the drag — the same place
+        // the Persian Calendar app's pager turns its own title.
+        if (!gliding) followTitle(index);
         fillAround(index);
       }
       defer();
