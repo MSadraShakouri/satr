@@ -1796,7 +1796,7 @@ body[data-mode="preview"] .workspace > .preview-pane {
   flex-direction: column;
   scroll-snap-align: center;
   scroll-snap-stop: always;
-  overflow-anchor: none; /* prepends are compensated explicitly, in the finger's window */
+  overflow-anchor: none; /* the ladder is fixed; drawing a grid into a frame must never shift the scroll */
   user-select: none;
   -webkit-user-select: none;
 }

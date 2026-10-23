@@ -192,17 +192,17 @@ export function createTimestampPicker(): TimestampPicker {
     window.setTimeout(() => { el.remove(); cover?.remove(); }, 220);
   };
 
-  /** The current page sits two pages in (five on the track at rest): instant,
-   *  and a no-op when the track already rests there. */
+  /** Put the scroll on the page that carries the viewed month, instantly. */
   const centerTrack = (): void => {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (viewport) viewport.scrollLeft = indexFor(0) * viewport.clientWidth;
   };
 
-  /** One month as a page: the weekday row and a FIXED six-week grid — 42
-   *  cells whatever the month, so no page grows or shrinks and the sheet
-   *  never changes height under the finger. */
-  function pageHTML(monthDate: Date, isCurrent: boolean): string {
+  /** What goes INSIDE one page: the weekday row and a FIXED six-week grid —
+   *  42 cells whatever the month, so no page grows or shrinks and the sheet
+   *  never changes height under the finger. The page frames themselves are
+   *  laid out once, by buildTrack, and never move again. */
+  function pageInner(monthDate: Date): string {
     const localeTag = tag();
     const row = weekdayRow(localeTag, weekStart);
     const days = monthDays(monthDate, localeTag);
@@ -216,7 +216,7 @@ export function createTimestampPicker(): TimestampPicker {
         // up a grid with nothing lit on it until the track settled.
         const selected = chosenParts !== null
           && parts.year === chosenParts.year && parts.month === chosenParts.month && parts.day === chosenParts.day;
-        return `<button type="button" class="timestamp-picker-day${selected ? ' is-selected' : ''}" data-stamp-day="${index}" aria-label="${number(parts.day)}" aria-pressed="${selected}"${isCurrent ? '' : ' tabindex="-1"'}>${number(parts.day)}</button>`;
+        return `<button type="button" class="timestamp-picker-day${selected ? ' is-selected' : ''}" data-stamp-day="${index}" aria-label="${number(parts.day)}" aria-pressed="${selected}" tabindex="-1">${number(parts.day)}</button>`;
       }).join('')
       + Array.from({ length: 42 - lead - days.length }, () => '<span class="timestamp-picker-day is-blank"></span>').join('');
     const weekdays = `<div class="timestamp-picker-weekdays">${row.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</div>`;
@@ -228,8 +228,7 @@ export function createTimestampPicker(): TimestampPicker {
     // the row used to be dir="auto" (RTL for Persian) inside a grid that
     // followed the SHEET (LTR for an English app), which mirrored every
     // column against its own label.
-    const dirText = monthDir();
-    return `<div class="timestamp-picker-page${isCurrent ? ' is-current' : ''}"${isCurrent ? '' : ' aria-hidden="true"'} style="direction:${dirText}">${weekdays}<div class="timestamp-picker-grid">${cells}</div></div>`;
+    return `${weekdays}<div class="timestamp-picker-grid">${cells}</div>`;
   }
 
   /** The month's own reading direction, taken from the weekday names of the
@@ -244,9 +243,10 @@ export function createTimestampPicker(): TimestampPicker {
     return monthDirFor.dir;
   }
 
-  /** The month a page carries, from where it sits on the track. In Persian
-   *  the months run right to left like everything else on the page, so the
-   *  track is laid out latest-first and the index counts the other way. */
+  /** The month a page carries, from where it sits on the track — the whole
+   *  of the carousel's arithmetic. In Persian the months run right to left
+   *  like everything else on the page, so the track is laid out latest-first
+   *  and the index counts the other way. */
   const offsetAt = (index: number): number => anchor + (monthDir() === 'rtl' ? -index : index);
   /** Where a month sits: the inverse of offsetAt. */
   const indexFor = (offset: number): number => (monthDir() === 'rtl' ? anchor - offset : offset - anchor);
@@ -255,7 +255,6 @@ export function createTimestampPicker(): TimestampPicker {
     if (!sheet || !viewMonth || !chosen) return;
     const localeTag = tag();
     const first = monthStart(viewMonth, localeTag);
-    const row = weekdayRow(localeTag, weekStart);
     const heading = sheet.querySelector<HTMLElement>('.timestamp-picker-month')!;
     if (!jumping) {
       heading.textContent = dateFormat(localeTag, { year: 'numeric', month: 'long' }).format(first);
@@ -271,17 +270,11 @@ export function createTimestampPicker(): TimestampPicker {
         option.classList.toggle('is-active', option.dataset.stampCalOption === active);
       }
     }
-    const current = viewMonth;
-    const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
-    const rtl = monthDir() === 'rtl';
-    const order = rtl ? [2, 1, 0, -1, -2] : [-2, -1, 0, 1, 2];
-    track.innerHTML = order.map((offset) => pageHTML(addMonths(current, offset, localeTag), offset === 0)).join('');
-    anchor = order[0];
-    // The head reads the month's way too, so the step arrows sit where that
-    // language expects them: in Persian the month before is to the right.
-    const head = sheet.querySelector<HTMLElement>('.timestamp-picker-head');
-    if (head) head.dir = rtl ? 'rtl' : 'ltr';
-    centerTrack();
+    // The grids are NOT rebuilt here, and the scroll is not touched: the
+    // ladder is fixed and its pages are drawn once. Only the mark on the
+    // chosen day travels between them. rebase() is what re-lays the track,
+    // and only the sheet's own deliberate moves call it.
+    syncChosen();
     // The format chips and the Insert button say the same moment the grid does.
     const picked = chosen;
     const unix = unixOf(picked);
@@ -316,83 +309,168 @@ export function createTimestampPicker(): TimestampPicker {
   }
 
   // ---- The month turn ----
-  /** One page toward `dir` — the platform's own physics: a smooth scroll to
-   *  the neighbouring page. Nothing here measures the gesture; the settle
-   *  (normalize) hears where the scroll came to rest. */
+  /** One month toward `dir`, by the rule the Persian Calendar app uses for
+   *  its own arrows (CalendarPager.kt `arrowAction`, WeekScreen.kt:203):
+   *  the NEIGHBOURING page is animated, anything further is jumped to. A
+   *  press that lands while a turn still glides therefore overtakes it
+   *  instead of queueing behind it — nothing remembers presses any more,
+   *  the destination is one page number. The old sheet kept a backlog and
+   *  played it back one animation at a time, which is why holding the arrow
+   *  felt like waiting in a queue. */
   function turnMonth(dir: -1 | 1): void {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
     if (!viewport) return;
-    turning = true;
-    gestured = true;
-    viewport.scrollTo({ left: viewport.clientWidth * indexFor(dir), behavior: 'smooth' });
+    const width = viewport.clientWidth || 1;
+    const here = nearestIndex();
+    const step = monthDir() === 'rtl' ? -dir : dir;
+    let want = clampIndex(toIndex + step);
+    // The track already drifted onto the target by itself (a swipe still
+    // settling): then the press means the page after it, not this one.
+    if (want === here) want = clampIndex(here + step);
+    toIndex = want;
+    viewport.scrollTo({ left: want * width, behavior: Math.abs(want - here) > 1 ? 'auto' : 'smooth' });
   }
 
-  /** Arrow presses landing while a turn still glides chain through the
-   *  settle, one month each, instead of being swallowed mid-flight. */
-  let pendingTurn = 0;
-  /** A turn is gliding: its scroll has been asked for but has not arrived.
-   *  The position cannot stand in for this — a smooth scroll has not moved a
-   *  pixel in its first frames, so a second press read the track as resting
-   *  and asked for the SAME destination again: one month for two presses. */
-  let turning = false;
-  /** The scroll now under way was asked for by a finger or by an arrow.
-   *  Only those settle the moment they stop: a scroll nobody asked for —
-   *  the browser bringing a focused day into view, which mandatory snap
-   *  then rounds up to a whole page — has to be allowed to come back
-   *  before it is read as a month. */
-  let gestured = false;
-  /** The calendar-month offset of the track's FIRST page relative to
-   *  `viewMonth`: -2 after every render where the months read left to
-   *  right, +2 where they read the other way, and drifting as runway
-   *  grows. Read it through offsetAt/indexFor, never by hand. */
-  let anchor = -2;
-  /** Which absolute page index the title is wearing; render() resets it. */
-  let titleIndex = 2;
+  /** The track is a FIXED ladder of month pages — the model the Persian
+   *  Calendar app's carousel uses (CalendarPager.kt: a pager of 5000 pages
+   *  whose index IS the month, `applyOffset(page) = monthsLimit / 2 - page`).
+   *  Pages are never inserted, removed, re-ordered or re-centred while the
+   *  sheet lives, so the sheet's own bookkeeping can never disturb a
+   *  gesture: all that changes as the track moves is which frames have a
+   *  grid drawn inside them, and drawing inside a frame moves nothing.
+   *  A century of months is 1201 pages; the jump box reaches further. */
+  const PAGES = 1201;
+  const CENTRE = 600;
+  /** Which frames hold a grid. The far ones are emptied again — the frames
+   *  stay, so nothing moves, and only a handful of grids are ever alive. */
+  const filled = new Set<number>();
+  /** The page a turn is heading for: the pager's `targetPage`, not a queue. */
+  let toIndex = CENTRE;
+  /** The month offset of page 0 relative to `viewMonth`. Coming to rest on
+   *  another page moves this number and nothing else — no rebuild, no
+   *  re-centring. Read it through offsetAt/indexFor, never by hand. */
+  let anchor = -CENTRE;
+  /** Which page the title is wearing. */
+  let titleIndex = CENTRE;
 
-  /** The track came to rest: whichever page the scroll ended on IS the month
-   *  now — re-render with it centred (render() re-centres at once, so the
-   *  content swap is invisible). scrollsnapchange is the fast path; a short
-   *  scroll debounce covers engines without it. */
-  function normalize(): void {
+  const clampIndex = (index: number): number => Math.max(0, Math.min(PAGES - 1, index));
+  const pageAt = (index: number): HTMLElement | null =>
+    (sheet?.querySelector<HTMLElement>('.timestamp-picker-track')?.children[index] as HTMLElement | undefined) ?? null;
+  /** Where the scroll stands, in pages. */
+  function nearestIndex(): number {
     const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
+    if (!viewport) return CENTRE;
+    return clampIndex(Math.round(viewport.scrollLeft / (viewport.clientWidth || 1)));
+  }
+
+  /** Draw the grid of the month this frame carries. Nothing moves: the frame
+   *  already has its width (flex: 0 0 100%) and takes its height from the
+   *  row, so this is safe with a finger on the track — which is the whole
+   *  point of a fixed ladder. */
+  function fillPage(index: number): void {
+    if (!viewMonth || index < 0 || index >= PAGES || filled.has(index)) return;
+    const page = pageAt(index);
+    if (!page) return;
+    page.style.direction = monthDir();
+    page.innerHTML = pageInner(addMonths(viewMonth, offsetAt(index), tag()));
+    filled.add(index);
+  }
+  /** Grids exist near the reader and nowhere else. */
+  function fillAround(index: number, reach = 2): void {
+    for (let at = index - reach; at <= index + reach; at += 1) fillPage(at);
+    if (filled.size <= 12) return;
+    for (const at of [...filled]) {
+      if (Math.abs(at - index) > 6) { pageAt(at)?.replaceChildren(); filled.delete(at); }
+    }
+  }
+  /** The page the reader is on: the only one that takes taps (the rest are
+   *  pointer-events:none in the stylesheet) and the only one in the tab
+   *  order. */
+  function markCurrent(index: number): void {
     const track = sheet?.querySelector<HTMLElement>('.timestamp-picker-track');
-    if (!viewport || !track || !viewMonth) return;
-    const width = viewport.clientWidth;
-    gestured = false;
-    const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
+    const page = pageAt(index);
+    if (!track || !page) return;
+    for (const other of track.querySelectorAll<HTMLElement>('.timestamp-picker-page.is-current')) {
+      if (other === page) continue;
+      other.classList.remove('is-current');
+      other.setAttribute('aria-hidden', 'true');
+      for (const day of other.querySelectorAll<HTMLElement>('[data-stamp-day]')) day.tabIndex = -1;
+    }
+    page.classList.add('is-current');
+    page.removeAttribute('aria-hidden');
+    for (const day of page.querySelectorAll<HTMLElement>('[data-stamp-day]')) day.removeAttribute('tabindex');
+  }
+  /** The mark on the chosen day, moved between the grids that exist. The
+   *  grids are not redrawn for it: a tap never rebuilds what it landed on. */
+  function syncChosen(): void {
+    if (!viewMonth || !chosen) return;
+    const localeTag = tag();
+    const want = calParts(localeTag, chosen);
+    for (const index of filled) {
+      const page = pageAt(index);
+      if (!page) continue;
+      const here = calParts(localeTag, monthStart(addMonths(viewMonth, offsetAt(index), localeTag), localeTag));
+      const sameMonth = here.year === want.year && here.month === want.month;
+      for (const day of page.querySelectorAll<HTMLElement>('[data-stamp-day]')) {
+        const on = sameMonth && Number(day.dataset.stampDay) + 1 === want.day;
+        day.classList.toggle('is-selected', on);
+        day.setAttribute('aria-pressed', String(on));
+      }
+    }
+  }
+  /** Lay the ladder out around the viewed month. Only the sheet's own
+   *  deliberate moves do this — opening, Today, a jump, a calendar switch —
+   *  never a gesture, and never a settle. */
+  function buildTrack(): void {
+    if (!sheet || !viewMonth) return;
+    const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
+    const rtl = monthDir() === 'rtl';
+    track.innerHTML = Array.from({ length: PAGES }, (_unused, index) => `<div class="timestamp-picker-page" data-stamp-page="${index}" aria-hidden="true"></div>`).join('');
+    filled.clear();
+    anchor = rtl ? CENTRE : -CENTRE;
+    titleIndex = CENTRE;
+    toIndex = CENTRE;
+    // The head reads the month's way too, so the step arrows sit where that
+    // language expects them: in Persian the month before is to the right.
+    const head = sheet.querySelector<HTMLElement>('.timestamp-picker-head');
+    if (head) head.dir = rtl ? 'rtl' : 'ltr';
+    fillAround(CENTRE, 3);
+    markCurrent(CENTRE);
+    centerTrack();
+  }
+  /** The viewed month moved by something other than the reader's finger. */
+  function rebase(): void { buildTrack(); render(); }
+
+  /** The track came to rest. Whichever page it stopped on IS the viewed
+   *  month now — and saying so costs two numbers, because the ladder is
+   *  fixed: no rebuild, no re-centring, no scroll write, nothing for the
+   *  next swipe to trip over. (The old track was five pages that had to be
+   *  re-laid and re-centred around every settle. That rebuild is what made
+   *  a quick swipe stick for a moment before it moved on.) */
+  function adopt(): void {
+    if (!sheet || !viewMonth) return;
+    const index = nearestIndex();
     const offset = offsetAt(index);
     if (offset !== 0) {
-      turning = false; // a turn that was gliding has landed
       viewMonth = addMonths(viewMonth, offset, tag());
-      render(); // recentres at once: five pages around the new month, runway regrows on demand
-    } else if (track.children.length !== 5 || Math.abs(viewport.scrollLeft - indexFor(0) * width) > 1) {
-      render(); // the runway grew but the month did not change: put the five pages back
-    } else {
-      titleIndex = index;
+      anchor -= offset; // page `index` carries the viewed month from here on
     }
-    // A queued press waits for the one before it to land: starting another
-    // turn on top of one still gliding replaces it, and the press it came
-    // from is swallowed.
-    if (pendingTurn && !turning) {
-      const dir = (pendingTurn > 0 ? 1 : -1) as -1 | 1;
-      pendingTurn -= dir;
-      turnMonth(dir);
-    }
+    toIndex = index;
+    titleIndex = index;
+    markCurrent(index);
+    fillAround(index, 3);
+    // A reader who swiped a century has reached the end of the ladder: lay
+    // it out again around here, while nothing is moving.
+    if (index < 4 || index > PAGES - 5) buildTrack();
   }
 
   /** The title follows the finger: the page nearest the snap point names the
-   *  month *while* the track moves — not after it stops. The grid and the
+   *  month *while* the track moves — not after it stops. The grids and the
    *  chips stay until the settle; the title is cheap, it may anticipate. */
-  function followTitle(): void {
-    const viewport = sheet?.querySelector<HTMLElement>('.timestamp-picker-viewport');
-    const heading = sheet?.querySelector<HTMLElement>('.timestamp-picker-month');
-    const track = sheet?.querySelector<HTMLElement>('.timestamp-picker-track');
-    if (!viewport || !heading || !track || !viewMonth || jumping) return;
-    const width = viewport.clientWidth;
-    if (!width) return;
-    const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / width)));
-    if (index === titleIndex) return;
+  function followTitle(index: number): void {
     titleIndex = index;
+    const heading = sheet?.querySelector<HTMLElement>('.timestamp-picker-month');
+    if (!heading || !viewMonth || jumping) return;
     heading.textContent = dateFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, offsetAt(index), tag()), tag()));
   }
 
@@ -544,7 +622,7 @@ export function createTimestampPicker(): TimestampPicker {
       reentry = true;
       window.setTimeout(() => { reentry = false; }, 300); // a beat, then the guard rests
       if (delta) viewMonth = addMonths(viewMonth!, delta, tag());
-      render(); // the whole distance at once, centred instantly
+      rebase(); // the whole distance at once, the ladder re-laid around it
       sheet.querySelector<HTMLElement>('.timestamp-picker-month')!.focus();
     };
     // Some keyboards deliver the advance key as a next-action that moves the
@@ -632,10 +710,7 @@ export function createTimestampPicker(): TimestampPicker {
       const step = target.closest<HTMLElement>('[data-stamp-step]');
       if (step) {
         jumping = false;
-        const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
-        const dir = Number(step.dataset.stampStep) as -1 | 1;
-        if (viewport && (turning || Math.abs(viewport.scrollLeft - indexFor(0) * viewport.clientWidth) > 2)) pendingTurn += dir;
-        else turnMonth(dir);
+        turnMonth(Number(step.dataset.stampStep) as -1 | 1);
         return;
       }
       if (target.closest('[data-stamp-jump-month], [data-stamp-jump-year]')) return;
@@ -647,7 +722,7 @@ export function createTimestampPicker(): TimestampPicker {
         at.setHours(slotNum('hour'), slotNum('minute'), slotNum('second'), 0);
         chosen = at;
         viewMonth = monthStart(today, tag());
-        render();
+        rebase(); // a different month: the ladder is laid out around it
         return;
       }
       if (target.closest('[data-stamp-cal]')) {
@@ -662,12 +737,8 @@ export function createTimestampPicker(): TimestampPicker {
           // Whatever the track is showing IS the month being re-worded, even
           // if the scroll has not settled into it yet: reading the stale
           // viewMonth is how a switch mid-swipe landed a month or two away.
-          const viewport = sheet!.querySelector<HTMLElement>('.timestamp-picker-viewport');
-          const track = sheet!.querySelector<HTMLElement>('.timestamp-picker-track');
-          if (viewport && track && viewport.clientWidth) {
-            const index = Math.max(0, Math.min(track.children.length - 1, Math.round(viewport.scrollLeft / viewport.clientWidth)));
-            if (offsetAt(index) !== 0) viewMonth = addMonths(viewMonth, offsetAt(index), tag());
-          }
+          const offset = offsetAt(nearestIndex());
+          if (offset !== 0) viewMonth = addMonths(viewMonth, offset, tag());
           const was = tag();
           const first = monthStart(viewMonth, was);
           const here = calParts(was, first);
@@ -677,7 +748,7 @@ export function createTimestampPicker(): TimestampPicker {
           viewMonth = chosen && at && at.year === here.year && at.month === here.month ? new Date(chosen) : middle;
         }
         calendarOverride = active === 'persian' ? 'gregory' : 'persian';
-        render(); // the same Dates, re-worded — the grid answers in place
+        rebase(); // the same Dates, re-worded — and the months may now read the other way
         return;
       }
       if (target.closest('[data-stamp-now]')) {
@@ -702,10 +773,9 @@ export function createTimestampPicker(): TimestampPicker {
         // A day click with the jump box open cancels the jump: the grid under
         // the finger is the one that answers.
         if (jumping) { jumping = false; render(); }
-        // The page's month comes from where it sits on the track: the anchor
-        // knows, whatever the runway has grown to.
-        const track = sheet!.querySelector<HTMLElement>('.timestamp-picker-track')!;
-        const pageIndex = Array.from(track.children).indexOf(day.closest<HTMLElement>('.timestamp-picker-page')!);
+        // The page's month comes from where it sits on the ladder, which is
+        // fixed: the frame carries its own index and the anchor does the rest.
+        const pageIndex = Number(day.closest<HTMLElement>('.timestamp-picker-page')!.dataset.stampPage);
         const picked = monthDays(addMonths(viewMonth!, offsetAt(pageIndex), tag()), tag())[Number(day.dataset.stampDay)];
         if (picked) {
           const at = new Date(picked);
@@ -728,107 +798,59 @@ export function createTimestampPicker(): TimestampPicker {
       sheet!.classList.add('is-open');
     });
     // The scroll itself is the gesture: the browser owns the follow-finger,
-    // the fling and the snap (one page at a time); the sheet hears where it
-    // came to rest — scrollend is rest, and a debounced scroll covers
-    // engines without it. The title follows the finger on every scroll
-    // frame. The runway grows MID-SCROLL, in the direction of travel, long
-    // before a fling can reach an end: appending costs nothing; prepending
-    // is compensated in the same frame (scrollLeft += one page), with
-    // overflow-anchor off — this handler is the only anchor there is. A
-    // ten-page fling finds real months all the way.
+    // the fling and the snap (one page per flick, scroll-snap-stop: always).
+    // The sheet only listens — there is no runway to grow, nothing to
+    // compensate and nothing to re-centre, because the ladder is fixed.
+    // These handlers name the month under the finger, draw the grids coming
+    // up, and hear where the scroll came to rest.
     const viewport = sheet.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
-    const track = sheet.querySelector<HTMLElement>('.timestamp-picker-track')!;
     let settleTimer = 0;
-    /** Nothing is ever put at the START of the track while a finger is on
-     *  it. Doing so moves every page along by its width, so the scroll
-     *  offset has to move with it — and that write is refused once a touch
-     *  scroll is running, because the compositor owns the offset then and
-     *  keeps its own. Written anyway, the grid jumped a month; rolled back,
-     *  the mutation re-resolved the snap points and the fling it
-     *  interrupted died where it stood, which is a swipe that turns nothing
-     *  at all. The track grows at its END, where no page that exists has to
-     *  move, and the two pages the window always holds behind the reader
-     *  carry the gesture; a fling long enough to exhaust them settles at
-     *  the wall — one clean adopt, never a fight. */
     let fingerDown = false;
+    /** The scroll now under way was started by a finger or by an arrow. Only
+     *  those settle the moment they stop: a scroll nobody asked for — the
+     *  browser bringing a focused day into view, which mandatory snap then
+     *  rounds up to a whole page — is given the slow path, so it can come
+     *  back before the sheet reads it as a month. */
+    let gestured = false;
+    const defer = (): void => {
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(settle, 120);
+    };
+    function settle(): void {
+      settleTimer = 0;
+      if (fingerDown) { defer(); return; } // nothing settles under the writer's hand
+      gestured = false;
+      adopt();
+    }
     viewport.addEventListener('touchstart', () => {
       fingerDown = true;
-      turning = false; // a finger on the track cancels any glide it had
       gestured = true;
+      toIndex = nearestIndex(); // the finger takes the wheel from any glide
     }, { passive: true });
     const fingerUp = (): void => {
       fingerDown = false;
       // Every lift ends in a settle, scroll or no scroll: the scroll events
       // of a slow drag may have stopped arriving well before the finger
       // left, and nothing else would then ask the track to come to rest.
-      window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(rest, 120);
+      defer();
     };
     viewport.addEventListener('touchend', fingerUp, { passive: true });
     viewport.addEventListener('touchcancel', fingerUp, { passive: true });
-    const growRunway = (): void => {
-      if (!viewMonth) return;
-      const width = viewport.clientWidth || 1;
-      const pages = track.children.length;
-      if ((pages - 1) * width - viewport.scrollLeft < width) {
-        // Appending costs nothing: the track grows away from the finger and
-        // no existing page moves.
-        track.insertAdjacentHTML('beforeend', pageHTML(addMonths(viewMonth, offsetAt(pages), tag()), false));
-      }
-      // The far tail trims only with the finger up, far from the finger.
-      if (!fingerDown && track.children.length > 29 && viewport.scrollLeft < (track.children.length - 9) * width) {
-        track.lastElementChild?.remove();
-      }
-    };
-    // Rest is scrollend with the finger up: the scroll is over by
-    // definition, so the month is adopted and the five pages are rebuilt
-    // THERE, at once. It used to be deferred 120ms for warmth, and a reader
-    // paging quickly cancelled that timer with the next swipe every time —
-    // the track never re-centred, never regrew its runway, and slid into
-    // the end of its own pages, where a swipe turns nothing at all.
-    // A finger still down is not rest, whatever the scroll says: nothing
-    // rebuilds or recentres under the writer's hand — the mid-drag adopt
-    // was the second-swipe breakage. The debounce stays as the fallback for
-    // engines that do not fire scrollend.
-    let lastScrollT = 0;
-    let restAt = -1;
-    const rest = (): void => {
-      // A snap animation does not always end in a scrollend: a gentle drag
-      // leaves one crawling the last pixel or two into the page, firing
-      // scroll events all the way, and "the scroll is still warm" then
-      // defers the settle for as long as the crawl lasts — which is past
-      // the next swipe. So warmth alone does not postpone rest: the track
-      // must actually be MOVING, measured between two looks. A fling moves
-      // pages between them; a crawl moves nothing worth seeing.
-      const here = viewport.scrollLeft;
-      const moving = Math.abs(here - restAt) > 2;
-      restAt = here;
-      if (fingerDown || (moving && performance.now() - lastScrollT < 80)) {
-        window.clearTimeout(settleTimer);
-        settleTimer = window.setTimeout(rest, 120);
-      } else {
-        settleTimer = 0;
-        normalize();
-      }
-    };
+    // scrollend is rest, by definition; the debounce is the fallback for
+    // engines that do not fire it.
     viewport.addEventListener('scrollend', () => {
-      if (!fingerDown && gestured) {
-        window.clearTimeout(settleTimer);
-        settleTimer = 0;
-        normalize();
-      } else {
-        window.clearTimeout(settleTimer);
-        settleTimer = window.setTimeout(rest, 120);
-      }
+      if (!fingerDown && gestured) { window.clearTimeout(settleTimer); settle(); } else defer();
     });
     viewport.addEventListener('scroll', () => {
-      lastScrollT = performance.now();
-      growRunway();
-      followTitle();
-      window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(rest, 120);
-    });
-    render();
+      const index = nearestIndex();
+      if (index !== titleIndex) {
+        if (fingerDown) toIndex = index; // a swipe moves the target with it
+        followTitle(index);
+        fillAround(index);
+      }
+      defer();
+    }, { passive: true });
+        rebase();
   }
 
   document.addEventListener('keydown', function onKey(event) {

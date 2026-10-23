@@ -36,28 +36,55 @@ async function openPicker(page: Page): Promise<void> {
 }
 
 const sheet = (page: Page) => page.locator('.timestamp-picker');
-/** The settle: the track adopted where the scroll rested and re-centred. */
-const settled = (page: Page) => expect.poll(() => page.locator('.timestamp-picker-viewport').evaluate(
-  (el) => Math.abs(el.scrollLeft - 2 * el.clientWidth),
-), { timeout: 5000 }).toBeLessThanOrEqual(2);
+/** The settle. The track is a fixed ladder and is never re-centred, so rest
+ *  is not a particular place any more — it is: the scroll stands on a page,
+ *  it has not moved since the last look, and the sheet has adopted that page
+ *  (the current one is the one under the scroll). Resting ON a snap point is
+ *  not enough on its own: a glide has not left its starting page in the
+ *  first frames, and a test would read that as the settle it is waiting for. */
+const settled = async (page: Page): Promise<void> => {
+  let last = Number.NaN;
+  await expect.poll(async () => {
+    const now = await page.locator('.timestamp-picker-viewport').evaluate((el) => {
+      const at = el.scrollLeft;
+      const index = Math.round(at / el.clientWidth);
+      return {
+        at,
+        onPage: Math.abs(at - index * el.clientWidth) <= 2,
+        adopted: Number(el.querySelector<HTMLElement>('.timestamp-picker-page.is-current')?.dataset.stampPage) === index,
+      };
+    });
+    const stable = now.at === last;
+    last = now.at;
+    return now.onPage && now.adopted && stable;
+  }, { timeout: 5000, intervals: [60, 60, 100, 150, 250, 500] }).toBe(true);
+};
+/** Which page of the ladder the scroll stands on, and which one is current. */
+const atPage = (page: Page) => page.locator('.timestamp-picker-viewport').evaluate(
+  (el) => Math.round(el.scrollLeft / el.clientWidth),
+);
+const currentPage = (page: Page) => page.locator('.timestamp-picker-page.is-current').evaluate(
+  (el) => Number((el as HTMLElement).dataset.stampPage),
+);
 /** A finger drag: touch down, relative deltas (each lands wherever the track
  *  really is now, compensations included), finger up. `toPages` is the target
- *  in page widths. */
-const drag = async (page: Page, toPages: number): Promise<void> => {
+ *  in page widths, counted FROM WHERE THE TRACK IS: the ladder is fixed and
+ *  never re-centres, so there is no absolute page to aim at. */
+const drag = async (page: Page, byPages: number): Promise<void> => {
   await page.evaluate(() => {
     document.querySelector<HTMLElement>('.timestamp-picker-viewport')!
       .dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
   });
-  await viewport(page).evaluate(async (el, to) => {
+  await viewport(page).evaluate(async (el, by) => {
     const width = el.clientWidth;
-    const total = width * to - el.scrollLeft;
+    const total = width * by;
     el.style.scrollSnapType = 'none'; // a real finger bypasses snap while dragging
     for (let step = 1; step <= 12; step += 1) {
       el.scrollLeft += total / 12;
       el.dispatchEvent(new Event('scroll'));
       await new Promise((resolve) => window.setTimeout(resolve, 16));
     }
-  }, toPages);
+  }, byPages);
   await page.evaluate(() => {
     const el = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
     el.style.scrollSnapType = '';
@@ -330,14 +357,25 @@ test('the chips and the Insert code follow the typing live', async ({ page }) =>
 
 const viewport = (page: Page) => page.locator('.timestamp-picker-viewport');
 
-test('the calendar is a native snap scroller, current month centred', async ({ page }) => {
+test('the calendar is a fixed ladder of pages on a native snap scroller', async ({ page }) => {
   await boot(page);
   await openPicker(page);
   await expect(viewport(page)).toHaveCSS('scroll-snap-type', /x mandatory/);
-  expect(await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).toBe(5);
-  // The centre page sits two pages in: two of runway on either side.
-  const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
+  const shape = await viewport(page).evaluate((el) => ({
+    frames: el.querySelectorAll('.timestamp-picker-page').length,
+    grids: el.querySelectorAll('.timestamp-picker-grid').length,
+    current: Number(el.querySelector<HTMLElement>('.timestamp-picker-page.is-current')!.dataset.stampPage),
+    at: Math.round(el.scrollLeft / el.clientWidth),
+    off: Math.abs(el.scrollLeft - Math.round(el.scrollLeft / el.clientWidth) * el.clientWidth),
+  }));
+  // A century of months, laid once: the page index IS the month, so nothing
+  // is ever inserted, removed or re-centred under a gesture.
+  expect(shape.frames).toBeGreaterThan(1000);
+  // Only the months near the reader are drawn. The rest are empty frames,
+  // which is what makes a ladder this long cost nothing.
+  expect(shape.grids).toBeLessThanOrEqual(9);
+  expect(shape.current).toBe(shape.at);
+  expect(shape.off).toBeLessThanOrEqual(2);
 });
 
 test('a fling that settles on a neighbour page turns the month', async ({ page }) => {
@@ -348,7 +386,7 @@ test('a fling that settles on a neighbour page turns the month', async ({ page }
   // The gesture itself is the browser's; the sheet only hears the settle.
   // A fling to the previous page, then the quiet that settles it:
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = el.clientWidth;
+    el.scrollLeft -= el.clientWidth; // one page back from wherever it stands
     el.dispatchEvent(new Event('scroll'));
   });
   await settled(page);
@@ -369,16 +407,20 @@ test('the title follows the finger: the month names itself mid-drag', async ({ p
   const home = await picker.locator('.timestamp-picker-month').textContent();
   // A quarter of the way toward the previous page: the title already wears
   // that month — it does not wait for the track to stop.
+  const from = await atPage(page);
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = Math.round(el.clientWidth * 1.25); // three-quarters toward the previous page
+    el.scrollLeft -= Math.round(el.clientWidth * 0.75); // three-quarters toward the previous page
     el.dispatchEvent(new Event('scroll'));
   });
   await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
-  // And when the track settles there, it stays that month, re-centred.
+  // And when the track settles there, it stays that month — and stays where
+  // it stopped. Nothing is re-centred any more: the page it rested on is
+  // simply the month now, which is why a second swipe is never fought.
   await page.waitForTimeout(220); // past the settle debounce
   await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(home!);
-  const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
+  await settled(page);
+  expect(await atPage(page)).toBe(from - 1);
+  expect(await currentPage(page)).toBe(from - 1);
 });
 
 test('two quick swipes one way turn two months, no resting between', async ({ page }) => {
@@ -388,12 +430,12 @@ test('two quick swipes one way turn two months, no resting between', async ({ pa
   // The first fling lands a page over; the second starts before anything
   // has rested (the runway is why the track carries five months).
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = 3 * el.clientWidth;
+    el.scrollLeft += el.clientWidth;
     el.dispatchEvent(new Event('scroll'));
   });
-  await page.waitForTimeout(220); // settle: adopt +1, re-centre
+  await page.waitForTimeout(220); // settle: the page it stopped on is the month
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = 3 * el.clientWidth; // again, from the fresh centre
+    el.scrollLeft += el.clientWidth; // again, straight on from there
     el.dispatchEvent(new Event('scroll'));
   });
   await page.waitForTimeout(220);
@@ -413,15 +455,16 @@ test('a scroll that settles where it started keeps the month', async ({ page }) 
   await openPicker(page);
   const picker = sheet(page);
   const home = await picker.locator('.timestamp-picker-month').textContent();
+  const home_at = await atPage(page);
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = 2 * el.clientWidth + 40; // a nudge off the centre page
+    el.scrollLeft += 40; // a nudge off the page it rests on
     el.dispatchEvent(new Event('scroll'));
   });
   await page.waitForTimeout(220); // past the settle debounce
-  await viewport(page).evaluate((el) => {
-    el.scrollLeft = 2 * el.clientWidth; // back home (the snap's own decision)
+  await viewport(page).evaluate((el, at) => {
+    el.scrollLeft = at * el.clientWidth; // back home (the snap's own decision)
     el.dispatchEvent(new Event('scroll'));
-  });
+  }, home_at);
   await page.waitForTimeout(220);
   expect(await picker.locator('.timestamp-picker-month').textContent()).toBe(home);
 });
@@ -430,11 +473,13 @@ test('every month is a fixed six-week grid: the sheet never changes height', asy
   await boot(page);
   await openPicker(page);
   const picker = sheet(page);
-  const cells = await viewport(page).evaluate((el) => [...el.querySelectorAll('.timestamp-picker-page')].map((p) => p.querySelectorAll('.timestamp-picker-day').length));
-  expect(cells).toEqual([42, 42, 42, 42, 42]);
+  // Every month that is drawn is a six-week grid, whatever month it is.
+  const cells = await viewport(page).evaluate((el) => [...el.querySelectorAll('.timestamp-picker-grid')].map((grid) => grid.querySelectorAll('.timestamp-picker-day').length));
+  expect(cells.length).toBeGreaterThanOrEqual(5);
+  expect([...new Set(cells)]).toEqual([42]);
   const height = await picker.evaluate((el) => el.getBoundingClientRect().height);
   // Turn two months: the grid is the same shape, the sheet the same height.
-  await drag(page, 0);
+  await drag(page, -1);
   await settled(page);
   await page.waitForTimeout(250);
   // Sub-pixel: a layout pass may hand back 576.000061 for the same 576, so
@@ -445,13 +490,15 @@ test('every month is a fixed six-week grid: the sheet never changes height', asy
   await expect(picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)')).toHaveCount(31, { timeout: 5000 }).catch(() => {});
 });
 
-test('the runway grows mid-scroll: a six-page run finds real months all the way', async ({ page }) => {
+test('a six-page run finds real months all the way', async ({ page }) => {
   await boot(page);
   await openPicker(page);
   const picker = sheet(page);
   const now = new Date();
-  // Six pages in one continuous scroll, no rest between: the track must grow
-  // ahead of the finger and the title must follow it.
+  const frames = await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length);
+  // Six pages in one continuous scroll, no rest between: every frame the
+  // scroll passes already exists, and the grids are drawn into them as the
+  // reader comes near.
   await viewport(page).evaluate(async (el) => {
     const width = el.clientWidth;
     for (let step = 1; step <= 6; step += 1) {
@@ -460,28 +507,26 @@ test('the runway grows mid-scroll: a six-page run finds real months all the way'
       await new Promise((resolve) => window.setTimeout(resolve, 16));
     }
   });
-  // Each completed scroll is adopted where it stopped — the track does not
-  // hoard pages any more — so what matters is that six pages of travel land
-  // six months on, with a real grid under them.
-  // Rest: the month six on is adopted, re-centred, and its 1st is real.
+  // Six pages of travel land six months on, with a real grid under them —
+  // and the ladder is exactly as long as it was: pages are never added.
   await page.waitForTimeout(400); // past the settle debounce
+  expect(await viewport(page).evaluate((el) => el.querySelectorAll('.timestamp-picker-page').length)).toBe(frames);
   const expected = new Date(now.getFullYear(), now.getMonth() + 6, 1);
-  const [left, width] = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(left - 2 * width)).toBeLessThanOrEqual(2);
+  await settled(page);
   await picker.locator('.timestamp-picker-page.is-current .timestamp-picker-day:not(.is-blank)').first().click();
   await picker.locator('[data-stamp-insert]').click();
   const reached = new Date(Number(/<t:(\d{1,15})>/.exec(await noteText(page))![1]) * 1000);
   expect(reached.getFullYear()).toBe(expected.getFullYear());
   expect(reached.getMonth()).toBe(expected.getMonth());
   expect(reached.getDate()).toBe(1);
-  // A step the other way: a real drag prepends in the finger's window.
+  // And a step the other way, as a real drag.
   await openPicker(page);
   const before = await picker.locator('.timestamp-picker-month').textContent();
-  await drag(page, -1.2); // one page left, with a little intent
+  const at = await atPage(page);
+  await drag(page, -1.2); // one page back, with a little intent
   await settled(page);
   await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(before!);
-  const after = await viewport(page).evaluate((el) => [el.scrollLeft, el.clientWidth]);
-  expect(Math.abs(after[0] - 2 * after[1])).toBeLessThanOrEqual(2);
+  expect(await atPage(page)).toBe(at - 1);
 });
 
 test('two quick left drags stay within two months - no anchor divergence', async ({ page }) => {
@@ -490,7 +535,7 @@ test('two quick left drags stay within two months - no anchor divergence', async
   const picker = sheet(page);
   const now = new Date();
   for (let round = 0; round < 2; round += 1) {
-    await drag(page, 0.9); // one page left, fast, no rest between
+    await drag(page, -1.1); // one page back, fast, no rest between
     await settled(page);
   }
   // Whatever the snap did to the synthetic stream, the bookkeeping may not
@@ -512,8 +557,8 @@ test('nothing adopts under the finger: the drag owns the track until it lifts', 
   const picker = sheet(page);
   const before = await picker.locator('.timestamp-picker-month').textContent();
   const shape = () => viewport(page).evaluate((el) => ({
-    pages: el.querySelectorAll('.timestamp-picker-page').length,
-    first: el.querySelector('.timestamp-picker-page')!.textContent,
+    frames: el.querySelectorAll('.timestamp-picker-page').length,
+    current: el.querySelector<HTMLElement>('.timestamp-picker-page.is-current')!.dataset.stampPage,
     at: Math.round(el.scrollLeft),
   }));
   // Finger down, then the drag carries the track most of a page along.
@@ -522,16 +567,16 @@ test('nothing adopts under the finger: the drag owns the track until it lifts', 
       .dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
   });
   await viewport(page).evaluate((el) => {
-    el.scrollLeft = Math.round(el.clientWidth * 0.5);
+    el.scrollLeft -= Math.round(el.clientWidth * 0.5);
     el.dispatchEvent(new Event('scroll'));
   });
   const held = await shape();
   // The title follows the page under the finger at once — that is what it is
   // for — but the track itself is untouched.
   await expect(picker.locator('.timestamp-picker-month')).not.toHaveText(before!);
-  // Held past the settle window: the same pages, in the same order, at the
-  // same offset. Nothing is adopted, and nothing is inserted at the start of
-  // the track, which would move every page under the finger.
+  // Held past the settle window: the same ladder, the same page still
+  // current, the same offset. Nothing is adopted and nothing moves while the
+  // writer's hand is on the track.
   await page.waitForTimeout(300);
   expect(await shape()).toEqual(held);
   // The finger lifts: the quiet settle adopts the month before.
@@ -958,7 +1003,8 @@ test('the grid starts at 1 in whichever calendar the sheet wears', async ({ page
     const latin = (value: string): string => value
       .replace(/[\u06F0-\u06F9]/g, (digit) => String(digit.charCodeAt(0) - 0x06F0))
       .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660));
-    return [...document.querySelectorAll('.timestamp-picker-page')].map((sheetPage) => {
+    // Only the pages that are drawn: the ladder's far frames are empty.
+    return [...document.querySelectorAll('.timestamp-picker-page')].filter((sheetPage) => sheetPage.querySelector('.timestamp-picker-grid')).map((sheetPage) => {
       const days = [...sheetPage.querySelectorAll('.timestamp-picker-day:not(.is-blank)')]
         .map((day) => Number(latin(day.textContent ?? '')));
       return {
@@ -1296,9 +1342,9 @@ test('the chosen day stays lit on whichever page holds it', async ({ page }) => 
   await picker.locator('[data-stamp-step="-1"]').click(); // to the month before
   await settled(page);
   // Today's month is now the page to the right, and it is still lit.
-  const pages = picker.locator('.timestamp-picker-page');
-  await expect(pages.nth(3).locator('.timestamp-picker-day.is-selected')).toHaveText(today);
-  await expect(pages.nth(2).locator('.timestamp-picker-day.is-selected')).toHaveCount(0);
+  const here = await currentPage(page);
+  await expect(picker.locator(`[data-stamp-page="${here + 1}"] .timestamp-picker-day.is-selected`)).toHaveText(today);
+  await expect(picker.locator(`[data-stamp-page="${here}"] .timestamp-picker-day.is-selected`)).toHaveCount(0);
 });
 
 test('a calendar switch mid-swipe re-words the month on screen', async ({ page }) => {
@@ -1315,7 +1361,7 @@ test('a calendar switch mid-swipe re-words the month on screen', async ({ page }
   // between, so the sheet has only the scroll position to go by.
   await page.evaluate(() => {
     const viewport = document.querySelector<HTMLElement>('.timestamp-picker-viewport')!;
-    viewport.scrollLeft = 4 * viewport.clientWidth;
+    viewport.scrollLeft += 2 * viewport.clientWidth;
     document.querySelector<HTMLElement>('[data-stamp-cal]')!.click();
   });
   await expect(picker.locator('.timestamp-picker-month'))
@@ -1345,4 +1391,12 @@ test('a quick second press of an arrow is not swallowed', async ({ page }) => {
     await expect.poll(at, { timeout: 5000 }).toBe(start + want);
     await settled(page);
   }
+  // And nothing is still being played back. Presses used to be kept in a
+  // backlog and spent one animation at a time, so the months went on
+  // turning after the writer had stopped pressing; the press moves a
+  // destination now, and a destination cannot run on.
+  for (let press = 0; press < 5; press += 1) await picker.locator('[data-stamp-step="1"]').click();
+  await expect.poll(at, { timeout: 5000 }).toBe(start + 5);
+  await page.waitForTimeout(700);
+  expect(await at()).toBe(start + 5);
 });
