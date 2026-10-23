@@ -2765,6 +2765,13 @@ function flash(el: HTMLElement): void {
  *  reading view finds it by occurrence). If the range went away while the
  *  sheet was open, the code lands at the caret instead. */
 function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, found: { from: number; to: number } | null): void {
+  // As with a fresh code: the note is let go so the keyboard comes down off
+  // the sheet, and the caret it had is remembered rather than relied upon.
+  // A chip tapped in the reading view never had the focus and does not get
+  // it back — the keyboard would be answering a tap that was not typing.
+  const hadFocus = editor.view.hasFocus;
+  const caret = editor.view.state.selection.main;
+  if (hadFocus) editor.view.contentDOM.blur();
   timestampPicker.open({
     initial,
     onInsert: (code) => {
@@ -2772,9 +2779,11 @@ function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, 
       if (found && found.to <= view.state.doc.length && view.state.doc.sliceString(found.from, found.to).startsWith('<t:')) {
         view.dispatch({ changes: { from: found.from, to: found.to, insert: code }, userEvent: 'input' });
       } else {
-        const range = view.state.selection.main;
-        view.dispatch({ changes: { from: range.from, to: range.to, insert: code }, selection: { anchor: range.from + code.length }, userEvent: 'input' });
+        const to = Math.min(caret.to, view.state.doc.length);
+        const from = Math.min(caret.from, to);
+        view.dispatch({ changes: { from, to, insert: code }, selection: { anchor: from + code.length }, userEvent: 'input' });
       }
+      if (hadFocus) view.focus();
     },
   });
 }

@@ -184,12 +184,25 @@ export function selectWholeLines(view: EditorView): boolean {
 export const timestampPicker = createTimestampPicker();
 
 /** Opens the date sheet; the code it writes lands at the caret, selected after
- *  itself, as any inserted text would. */
+ *  itself, as any inserted text would.
+ *
+ *  The note is let go as the sheet opens, which is what puts a phone's
+ *  keyboard down: the sheet is a tall one, and half of it was behind the
+ *  keyboard. The caret is not lost with it — CodeMirror keeps the selection
+ *  in its state while the editable is blurred, and the range is taken here,
+ *  before the blur, so the code lands exactly where the writer left off. The
+ *  focus is handed back with the insert: whoever was typing is typing again,
+ *  caret after the code. */
 export function insertTimestamp(view: EditorView): boolean {
+  const hadFocus = view.hasFocus;
+  const range = view.state.selection.main;
+  if (hadFocus) view.contentDOM.blur();
   timestampPicker.open({
     onInsert: (code) => {
-      const range = view.state.selection.main;
-      view.dispatch({ changes: { from: range.from, to: range.to, insert: code }, selection: { anchor: range.from + code.length }, userEvent: 'input', scrollIntoView: true });
+      const to = Math.min(range.to, view.state.doc.length);
+      const from = Math.min(range.from, to);
+      view.dispatch({ changes: { from, to, insert: code }, selection: { anchor: from + code.length }, userEvent: 'input', scrollIntoView: true });
+      if (hadFocus) view.focus();
     },
   });
   return true;
