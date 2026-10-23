@@ -136,6 +136,27 @@ export interface TimestampPicker {
   close(): void;
 }
 
+/** How tall the on-screen keyboard is right now. main.ts measures it (the
+ *  VirtualKeyboard API where there is one, the visual viewport otherwise)
+ *  and installs the real reading here; 0 everywhere else, which is every
+ *  desktop and every test. */
+export const keyboardWatch = { height: (): number => 0 };
+
+/** Wait for the keyboard to have gone, then run. The caller has let the note
+ *  go already, but a keyboard takes a quarter-second to slide away: a tall
+ *  sheet opened into the short window it still holds lays itself out against
+ *  that window, and when the keyboard leaves, the sheet jumps. Waiting is
+ *  capped, so a keyboard that never reports itself down cannot swallow the
+ *  tap that opened the sheet. */
+function afterKeyboardDown(then: () => void): void {
+  const deadline = performance.now() + 450;
+  const look = (): void => {
+    if (keyboardWatch.height() <= 0 || performance.now() >= deadline) { then(); return; }
+    window.requestAnimationFrame(look);
+  };
+  window.requestAnimationFrame(look);
+}
+
 export function createTimestampPicker(): TimestampPicker {
   let sheet: HTMLElement | null = null;
   let backdrop: HTMLElement | null = null;
@@ -182,6 +203,7 @@ export function createTimestampPicker(): TimestampPicker {
   const number = (value: number): string => numberFormat(tag()).format(value);
 
   const close = (): void => {
+    waiting = null; // a sheet still waiting for the keyboard is called off
     if (!sheet) return;
     const el = sheet; const cover = backdrop;
     sheet = null; backdrop = null; onInsert = null;
@@ -474,7 +496,25 @@ export function createTimestampPicker(): TimestampPicker {
     heading.textContent = dateFormat(tag(), { year: 'numeric', month: 'long' }).format(monthStart(addMonths(viewMonth, offsetAt(index), tag()), tag()));
   }
 
+  /** The keyboard goes down BEFORE the sheet comes up — the writer sees one
+   *  movement instead of a sheet that flickers as the keyboard leaves under
+   *  it. Nothing waits when no keyboard is up, which is every desktop and
+   *  every test. A second tap while waiting replaces the first; a close
+   *  cancels it. */
+  let waiting: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void } | null = null;
   function open(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
+    if (keyboardWatch.height() <= 0) { buildSheet(options); return; }
+    const already = waiting !== null;
+    waiting = options;
+    if (already) return;
+    afterKeyboardDown(() => {
+      const next = waiting;
+      waiting = null;
+      if (next) buildSheet(next);
+    });
+  }
+
+  function buildSheet(options: { initial?: { seconds: number; format: TimestampFormat }; onInsert(code: string): void }): void {
     // A second open (a double-tap on the toolbar) replaces the sheet at once:
     // no fading copy may linger in the DOM to catch the next tap or locator.
     if (sheet) { sheet.remove(); backdrop?.remove(); sheet = null; backdrop = null; onInsert = null; }

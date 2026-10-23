@@ -22,6 +22,7 @@ import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
 import { closeTimestampPicker, normalizeMathIn, timestampPicker } from './commands';
+import { keyboardWatch } from './datePicker';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
@@ -3006,6 +3007,9 @@ function layoutKeyboard(): void {
   layoutKeyboardInset();
   paintKeyboardDebug();
 }
+// The date sheet waits for the keyboard to go before it opens, and this is
+// how it knows: the same measurement the layout above runs on.
+keyboardWatch.height = keyboardHeight;
 window.visualViewport?.addEventListener('resize', layoutKeyboard);
 window.visualViewport?.addEventListener('scroll', layoutKeyboard);
 window.addEventListener('resize', layoutKeyboard);

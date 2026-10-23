@@ -966,6 +966,9 @@ test('a sheet opened while the keyboard is already up rides it at once', async (
   await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 844 / 620 });
   await page.waitForTimeout(400);
   await openPicker(page);
+  // The sheet waits for the keyboard to go before it shows itself, and this
+  // keyboard never does: it opens on its own cap, then slides in.
+  await expect(sheet(page)).toBeVisible({ timeout: 2000 });
   await page.waitForTimeout(450); // the sheet's slide-in
   const state = await page.evaluate(() => {
     const picker = document.querySelector('.timestamp-picker') as HTMLElement;
@@ -1434,4 +1437,27 @@ test('the date sheet lets the keyboard go, and the code still lands at the caret
     return EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!.state.selection.main.head;
   });
   expect(head).toBe(caret + written![0].length);
+});
+
+test('the keyboard is down before the sheet comes up', async ({ page }) => {
+  // A tall sheet opened into the short window a keyboard still holds lays
+  // itself out against that window, and jumps when the keyboard leaves. The
+  // sheet waits for it — and never waits longer than it has to.
+  await boot(page);
+  await page.evaluate(async () => {
+    const picker = await window.__satr.load('/src/datePicker.ts') as unknown as { keyboardWatch: { height: () => number } };
+    (window as unknown as { __kb: number }).__kb = 320;
+    picker.keyboardWatch.height = () => (window as unknown as { __kb: number }).__kb;
+  });
+  await openPicker(page);
+  await page.waitForTimeout(200);
+  await expect(sheet(page)).toHaveCount(0); // the keyboard is still down there
+  await page.evaluate(() => { (window as unknown as { __kb: number }).__kb = 0; });
+  await expect(sheet(page)).toBeVisible();
+  // A keyboard that never reports itself down may not swallow the tap.
+  await page.keyboard.press('Escape');
+  await expect(sheet(page)).toHaveCount(0);
+  await page.evaluate(() => { (window as unknown as { __kb: number }).__kb = 320; });
+  await openPicker(page);
+  await expect(sheet(page)).toBeVisible({ timeout: 2000 });
 });
