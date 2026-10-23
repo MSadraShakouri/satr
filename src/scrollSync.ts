@@ -114,6 +114,11 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   // moving a single pixel of their own is the one thing that ends the
   // corrections: see keepPlaced below.
   let placed: number | null = null;
+  // Whether the pane could go where it was asked. A note whose sections are
+  // still estimates can be shorter than the place the reader asked for: the
+  // scroll is clamped to the end of the note as it stands, which is not
+  // where they were put — it is as far as the page would let them go.
+  let reached = false;
   const place = (): void => {
     if (!isCurrent()) return;
     if (!(position > 0)) { scrollInstantly(pane, 0); return; }
@@ -139,23 +144,35 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
     if (!last) return; // nothing on the page to measure against
     const paneTop = pane.getBoundingClientRect().top;
     const past = target === null;
-    // Past everything the reading view knows about: the blank line every
-    // note ends with, a fold at the tail, a section that renders to
-    // nothing. The end of a note is its last lines sitting at the foot of
-    // the screen — putting that last section's end at the typing band
-    // instead scrolls the note up into the 50vh the article keeps below
-    // itself, and one line of note above half a screen of nothing is what
-    // the reader reports as "it opened at the bottom". A position that is
-    // inside a section is left exactly where it maps, so a place near the
-    // tail still comes back to itself on the way to the source and back.
+    // A position that is inside a section, in a note long enough to hold
+    // it, is left exactly where it maps — so a place near the tail still
+    // comes back to itself on the way to the source and back.
     const end = last.bottom;
     if (target === null) target = end;
-    const wanted = pane.scrollTop + target - (paneTop + anchor);
-    if (!past) { scrollInstantly(pane, Math.max(0, wanted)); placed = pane.scrollTop; return; }
+    const wanted = Math.max(0, pane.scrollTop + target - (paneTop + anchor));
+    if (!past && wanted <= pane.scrollHeight - pane.clientHeight) {
+      scrollInstantly(pane, wanted);
+      placed = pane.scrollTop;
+      reached = Math.abs(placed - wanted) <= 1;
+      return;
+    }
+    // The note is too short for the place that was asked for — either the
+    // position is past everything the reading view knows about (the blank
+    // line a note ends with, a fold at the tail, a section that renders to
+    // nothing), or the page cannot scroll that far. Letting the browser
+    // clamp it leaves the last line of the note half a screen above the
+    // foot, with the 50vh the article keeps below itself filling the rest:
+    // that empty screen is what the reader reports as "it opened at the
+    // bottom". The end of a note is its last lines sitting at the foot of
+    // the screen, so that is where this goes instead.
     const tail = Math.max(end, (preview.lastElementChild ?? preview).getBoundingClientRect().bottom);
     const foot = pane.scrollTop + tail - paneTop - pane.clientHeight;
     scrollInstantly(pane, Math.max(0, Math.min(wanted, Math.max(0, foot))));
     placed = pane.scrollTop; // what it could actually do, not what was asked
+    // Not where it was asked to go: a note still arriving is short for a
+    // moment, and when the rest of it lands the place is there to be had.
+    // The hold below keeps asking until it is.
+    reached = false;
   };
   place();
   // The reading view is not finished when the jump lands. Formulas and
@@ -179,10 +196,20 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   // stops for good.
   let stopped = false;
   const stop = (): void => { stopped = true; ro?.disconnect(); };
+  // The page's own length, last time this looked. The browser moves the
+  // pane by itself when content above the reader changes size — scroll
+  // anchoring, keeping what they can see where it is — and that move is
+  // not the reader's. Telling the two apart is the difference between a
+  // hold that survives a note settling and one that lets go at the first
+  // section to arrive: the pane moving while the note is changing length
+  // is the page, the pane moving while nothing else changed is the reader.
+  let shape = pane.scrollHeight;
   const keepPlaced = (): void => {
     if (stopped) return;
     if (!isCurrent()) { stop(); return; }
-    if (placed !== null && Math.abs(pane.scrollTop - placed) > 2) { stop(); return; }
+    const moved = pane.scrollHeight !== shape;
+    shape = pane.scrollHeight;
+    if (!moved && placed !== null && Math.abs(pane.scrollTop - placed) > 2) { stop(); return; }
     place();
   };
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
@@ -198,8 +225,11 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   // A switch waits for the fonts too, and is covered for as long as a cold
   // note can take to settle on a slow phone. A plain placement is held for
   // a moment — long enough for the sections it landed among to be laid
-  // out. Either way a page that is not changing shape never calls back.
-  if (!settle) { window.setTimeout(stop, 1_000); return; }
-  void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(keepPlaced));
+  // out. A place the note was too short to reach is held for as long as
+  // either: the note has not finished arriving, and letting go now would
+  // leave the reader at the end of a note they were not sent to. Either
+  // way a page that is not changing shape never calls back.
+  if (settle) void (document.fonts?.ready ?? Promise.resolve()).then(() => window.requestAnimationFrame(keepPlaced));
+  if (!settle) window.setTimeout(() => { if (reached) stop(); }, 1_000);
   window.setTimeout(stop, 12_000);
 }
