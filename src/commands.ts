@@ -193,6 +193,19 @@ export const timestampPicker = createTimestampPicker();
  *  before the blur, so the code lands exactly where the writer left off. The
  *  focus is handed back with the insert: whoever was typing is typing again,
  *  caret after the code. */
+/** Let the note go. Blurring the editable is only half of it: the browser
+ *  keeps the selection that was in it, and a collapsed selection inside a
+ *  contenteditable is still a caret as far as the engine is concerned — it
+ *  goes on being painted, and a sheet laid over the note then has what
+ *  looks like a text cursor sitting in it, somewhere nothing can be typed.
+ *  The caret that matters is the one in the editor's own state, which this
+ *  does not touch: the code still lands where the writer was. */
+export function letNoteGo(view: EditorView): void {
+  view.contentDOM.blur();
+  const live = view.dom.ownerDocument.getSelection();
+  if (live && live.rangeCount > 0 && view.contentDOM.contains(live.anchorNode)) live.removeAllRanges();
+}
+
 export function insertTimestamp(view: EditorView): boolean {
   // The note is let go — that is what puts the keyboard down — and where
   // the caret stood is remembered rather than relied upon, because a blur
@@ -202,7 +215,7 @@ export function insertTimestamp(view: EditorView): boolean {
   // keyboard. The caret is left sitting after the code, so tapping back in
   // carries on from there.
   const range = view.state.selection.main;
-  view.contentDOM.blur();
+  letNoteGo(view);
   timestampPicker.open({
     onInsert: (code) => {
       const to = Math.min(range.to, view.state.doc.length);

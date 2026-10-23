@@ -1858,6 +1858,16 @@ body[data-mode="preview"] .workspace > .preview-pane {
 }
 .timestamp-picker {
   -webkit-tap-highlight-color: transparent;
+  /* Nothing in the sheet is text to be read or copied — it is a surface of
+     controls — except the fields digits are typed into. Without this, a tap
+     that lands between controls can drop a caret into the sheet, blinking
+     where nothing can be typed. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.timestamp-picker input {
+  user-select: text;
+  -webkit-user-select: text;
 }
 .timestamp-picker-month {
   padding: 4px 10px;

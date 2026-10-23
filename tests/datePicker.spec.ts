@@ -1574,3 +1574,48 @@ test('a page that is a fraction of a pixel wide turns at the middle either way',
   }
   await cdp.detach();
 });
+
+test('the sheet is left with no caret of its own', async ({ page }) => {
+  // Blurring the note does not take the selection with it: the browser
+  // keeps the collapsed selection that was inside the contenteditable, and
+  // as far as the engine is concerned that is still a caret — it goes on
+  // being painted, and with a sheet laid over the note it reads as a text
+  // cursor sitting on the sheet where nothing can be typed. The sheet's own
+  // face is not text to be selected either, only its fields are.
+  await boot(page);
+  await page.evaluate(async () => {
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
+    view.focus();
+    view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf('here.') } });
+  });
+  expect(await page.evaluate(() => {
+    const node = window.getSelection()?.anchorNode ?? null;
+    return !!node && document.querySelector('.cm-content')!.contains(node);
+  })).toBe(true); // the writer is typing: the caret is in the note
+  await openPicker(page);
+  await expect(sheet(page)).toBeVisible();
+  expect(await page.evaluate(() => {
+    const live = window.getSelection();
+    const node = live && live.rangeCount > 0 ? live.anchorNode : null;
+    const active = document.activeElement as HTMLElement | null;
+    return {
+      inNote: !!node && document.querySelector('.cm-content')!.contains(node),
+      editable: !!active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable),
+    };
+  })).toEqual({ inNote: false, editable: false });
+
+  // Dragging across the face of the sheet selects nothing, so no caret and
+  // no blue smear across the month names.
+  const face = (await sheet(page).boundingBox())!;
+  await page.mouse.move(face.x + 20, face.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(face.x + face.width - 20, face.y + face.height - 30, { steps: 12 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+  expect(await page.evaluate(() => {
+    const picker = document.querySelector<HTMLElement>('.timestamp-picker')!;
+    const field = picker.querySelector<HTMLInputElement>('[data-stamp-hour]')!;
+    return [getComputedStyle(picker).userSelect, getComputedStyle(field).userSelect];
+  })).toEqual(['none', 'text']); // except the fields digits go into
+});

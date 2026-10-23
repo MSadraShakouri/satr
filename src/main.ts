@@ -21,7 +21,7 @@ import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
-import { closeTimestampPicker, normalizeMathIn, timestampPicker } from './commands';
+import { closeTimestampPicker, letNoteGo, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
@@ -2770,7 +2770,7 @@ function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, 
   // the note is not taken back when the code lands — the keyboard would be
   // answering a tap that was not typing.
   const caret = editor.view.state.selection.main;
-  editor.view.contentDOM.blur();
+  letNoteGo(editor.view);
   timestampPicker.open({
     initial,
     onInsert: (code) => {
