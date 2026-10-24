@@ -994,16 +994,24 @@ export class SatrEditor {
         // grammar emits are listed: a markdown marker is a
         // processingInstruction and a heading is a heading, and neither may
         // be recoloured by this block.
+        //
+        // The reading view is the reference, because the same fence must not
+        // be two different pictures. highlight.js paints the kinds it knows —
+        // keywords, strings, numbers, function and class names, properties,
+        // comments, meta — and leaves the rest as text, so punctuation,
+        // brackets, operators and bare identifiers are left alone here too.
+        // Lezer would happily name all of them, and naming them is what made
+        // `const greeting = "hello";` read as five colours in the editor and
+        // two in the page. Fewer spans per line, so this is also the cheaper
+        // of the two; nothing about the parse changes.
         { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--code-comment)' },
         { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.operatorKeyword, tags.modifier, tags.self, tags.null, tags.typeName, tags.namespace], color: 'var(--code-keyword)' },
         { tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character, tags.inserted], color: 'var(--code-string)' },
         { tag: [tags.number, tags.bool, tags.atom, tags.literal, tags.unit], color: 'var(--code-value)' },
         { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.function(tags.definition(tags.variableName)), tags.className, tags.macroName], color: 'var(--code-function)' },
-        { tag: [tags.propertyName, tags.attributeName, tags.variableName, tags.labelName], color: 'var(--code-property)' },
+        { tag: [tags.propertyName, tags.attributeName, tags.labelName, tags.self], color: 'var(--code-property)' },
         { tag: [tags.tagName, tags.deleted], color: 'var(--code-tag)' },
-        { tag: [tags.operator, tags.derefOperator, tags.arithmeticOperator, tags.logicOperator, tags.compareOperator], color: 'var(--code-operator)' },
         { tag: [tags.meta, tags.annotation, tags.standard(tags.variableName)], color: 'var(--code-important)' },
-        { tag: [tags.punctuation, tags.separator, tags.bracket, tags.squareBracket, tags.paren, tags.brace, tags.angleBracket], color: 'var(--code-punctuation)' },
       ])),
       titleField,
       rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,

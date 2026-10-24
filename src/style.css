@@ -789,9 +789,19 @@ body {
   color: var(--code-comment);
 }
 .preview-pane .hljs-keyword,
-.preview-pane .hljs-selector-tag,
 .preview-pane .hljs-type {
   color: var(--code-keyword);
+}
+/* A selector, in the colours the editor's own grammar gives the same three
+   pieces: the class and the pseudo-element are named things, and the
+   element selector is the same red an HTML tag is — in both views, which is
+   the point. Without these, `.card::first-line` was plain text in the page
+   and yellow in the source. */
+.preview-pane .hljs-selector-class,
+.preview-pane .hljs-selector-id,
+.preview-pane .hljs-selector-pseudo,
+.preview-pane .hljs-selector-attr {
+  color: var(--code-function);
 }
 .preview-pane .hljs-string,
 .preview-pane .hljs-regexp,
@@ -816,6 +826,7 @@ body {
 }
 .preview-pane .hljs-tag,
 .preview-pane .hljs-name,
+.preview-pane .hljs-selector-tag,
 .preview-pane .hljs-operator,
 .preview-pane .hljs-deletion {
   color: var(--code-tag);
@@ -4334,18 +4345,6 @@ body.external-file-active .notice {
 }
 .pill-gray.is-done {
   color: var(--text-normal);
-}
-/* Saying what KaTeX thinks of the formula the caret is in, rather than
-   offering to convert anything: readable weight, and the same red the
-   formula itself is wearing on the sign, so the two read as one thing. It
-   is not a button in this state (src/main.ts), so it does not look like
-   one. Two lines before it clips — KaTeX's complaints can be long. */
-.pill-gray.is-saying {
-  color: var(--text-normal);
-  cursor: default;
-}
-.pill-gray.is-saying svg {
-  stroke: var(--text-error);
 }
 
 /* Discord-style timestamps (src/timestamps.ts): <t:UNIX:F> in the note, the

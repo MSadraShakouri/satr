@@ -27,7 +27,9 @@ const NOTE = [
   'A **bold** word and 42 in plain prose.',
   '',
   '```js',
+  '// a greeting',
   'const greeting = "hello";',
+  'let n = 42 + count;',
   '```',
   '',
   'Sound: $\\frac{1}{2} + \\alpha_1 x^2$ stands.',
@@ -94,14 +96,79 @@ const place = (page: Page, find: string, plus: number) => page.evaluate(async ({
   view.focus();
 }, { needle: find, offset: plus });
 
-test('a fenced block is coloured in the source, in the reading view\'s own code colours', async ({ page }) => {
+/** Every character of the fenced code, grouped into runs of one colour:
+ *  [['const', 'keyword'], [' greeting = ', 'plain'], …]. Two highlighters
+ *  will never agree on where a span starts, so the comparison is made per
+ *  character and the runs are rebuilt afterwards. */
+const fencePaint = (page: Page, root: string, lines: string[]) => page.evaluate(({ where, want }) => {
+  const probe = document.createElement('span');
+  document.body.appendChild(probe);
+  const paint: Record<string, string> = {};
+  for (const name of ['keyword', 'function', 'important', 'operator', 'value', 'string', 'tag', 'property', 'punctuation', 'comment']) {
+    probe.style.color = `var(--code-${name})`;
+    paint[getComputedStyle(probe).color] = name;
+  }
+  probe.style.color = 'var(--text-normal)';
+  paint[getComputedStyle(probe).color] = 'plain';
+  probe.remove();
+  const out: [string, string][][] = [];
+  for (const wanted of want) {
+    const host = [...document.querySelectorAll(where)]
+      .find((element) => (element.textContent ?? '').includes(wanted));
+    const runs: [string, string][] = [];
+    const walk = (node: Node, colour: string): void => {
+      if (node.nodeType === 3) {
+        for (const ch of node.textContent ?? '') {
+          if (!ch.trim()) continue; // the two lay their whitespace out differently
+          const last = runs[runs.length - 1];
+          if (last && last[1] === colour) last[0] += ch;
+          else runs.push([ch, colour]);
+        }
+        return;
+      }
+      const own = paint[getComputedStyle(node as HTMLElement).color] ?? 'other';
+      for (const child of node.childNodes) walk(child, own);
+    };
+    if (host) {
+      // Only the line that was asked for, out of the block it sits in.
+      const row = host.textContent ?? '';
+      const line = row.split('\n').find((piece) => piece.includes(wanted)) ?? '';
+      walk(host, 'plain');
+      const text = runs.map(([run]) => run).join('');
+      const only = line.replace(/\s+/g, '');
+      const at = text.indexOf(only);
+      let seen = 0;
+      const kept: [string, string][] = [];
+      for (const [run, colour] of runs) {
+        const from = Math.max(at - seen, 0);
+        const to = Math.min(at + only.length - seen, run.length);
+        if (to > from) kept.push([run.slice(from, to), colour]);
+        seen += run.length;
+      }
+      out.push(kept);
+    } else out.push([]);
+  }
+  return out;
+}, { where: root, want: lines });
+
+test('a fence is one picture: the source and the reading view paint it the same', async ({ page }) => {
   await boot(page);
   // The language is fetched when the fence asks for it, so the keyword is
   // not painted on the first frame.
   await expect.poll(async () => (await paint(page, 'const', 'const greeting')).colour)
     .toBe((await paint(page, 'const', 'const greeting')).palette.keyword);
-  const string = await paint(page, '"hello"', 'const greeting');
-  expect(string.colour).toBe(string.palette.string);
+  const rows = ['// a greeting', 'const greeting', 'let n = 42'];
+  const source = await fencePaint(page, '#app .cm-content .cm-line', rows);
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#app .preview-pane pre code')).toBeVisible();
+  const reading = await fencePaint(page, '#app .preview-pane pre code', rows);
+  // Two highlighters, one palette: Lezer here, highlight.js there. The
+  // reading view is the reference — it names keywords, strings, numbers,
+  // functions, properties and comments and leaves everything else as text,
+  // so the editor does not paint punctuation, operators or bare names
+  // either. The same fence cannot be two pictures.
+  expect(source).toEqual(reading);
+  expect(source[1]).toEqual([['const', 'keyword'], ['greeting=', 'plain'], ['"hello"', 'string'], [';', 'plain']]);
 });
 
 test('prose keeps its own colour: the code palette stops at the fence', async ({ page }) => {
@@ -209,7 +276,7 @@ test('a formula KaTeX cannot read says so in colour, and says where', async ({ p
   const broken = page.locator('#app .cm-content .cm-math-error');
   await expect(broken).toHaveCount(2);
   const typo = broken.filter({ hasText: 'fracc' });
-  await expect(typo).toHaveAttribute('title', /undefined control sequence/i);
+  await expect(typo).toHaveAttribute('title', '\\fracc is not a command');
   const look = await typo.evaluate((element) => {
     const probe = document.createElement('span');
     document.body.appendChild(probe);
@@ -258,25 +325,19 @@ test('a complaint with no width still points at something', async ({ page }) => 
   await expect(empty.locator('.cm-math-wrong')).toHaveText('\\frac');
 });
 
-test('the reason is readable without a mouse, in the gray above the pill', async ({ page }) => {
+test('the reason is readable without a mouse, at the top of the screen', async ({ page }) => {
   await boot(page);
-  // The colour says WHERE without being asked. What it cannot say is WHAT:
-  // KaTeX's complaint rides in a `title`, and a title is a hover, which the
-  // device this app is for does not have. The gray that already grows out
-  // of the bottom pill for the LaTeX offer says it instead, next to the
-  // formula rather than over the header, for as long as the caret is in it.
-  const gray = page.locator('.mobile-navbar [data-math-warning]');
+  // The colour says WHERE. KaTeX's reason rides in a `title`, and a title is
+  // a hover, which this device does not have — so it is said at the top, for
+  // as long as the caret is in the formula, and in as few words as it can be
+  // said in: one line, nowhere near the hands or the line being written.
+  const said = page.locator('.notice');
   await place(page, 'in plain prose', 2);
-  await expect(gray).toBeHidden();
+  await expect(said).toHaveCount(0);
   await place(page, '\\fracc{1}', 8);
-  await expect(gray).toBeVisible();
-  await expect(gray).toHaveText(/undefined control sequence/i);
-  // Saying something is not offering something: a tap must not convert the
-  // note while it is only talking.
-  await expect(gray).toHaveClass(/is-saying/);
-  // It goes when the caret does.
+  await expect(said).toHaveText('\\fracc is not a command');
   await place(page, 'in plain prose', 2);
-  await expect(gray).toBeHidden();
+  await expect(said).toHaveCount(0);
 });
 
 test('the verdict is instant, and no caret position hides it', async ({ page }) => {

@@ -396,6 +396,49 @@ function mapDigits(tex: string): string {
  *  (PLAN.md's lint criterion 7) — or null when the formula is sound. The
  *  preparation is render()'s own, digits, spaces and Persian runs included,
  *  so the editor can never disagree with what the reading view will draw. */
+// KaTeX writes for someone debugging TeX: "Unexpected end of input in a
+// macro argument, expected '}' at end of input: \frac". The gray above the
+// pill (src/main.ts) has one line to say it in, beside a formula the writer
+// is already looking at, and the colour has already said WHERE. So every
+// shape KaTeX actually produces is said in the fewest words that still name
+// the thing to go and fix. Anything not listed passes through in KaTeX's
+// own words rather than being guessed at.
+function plainly(message: string): string {
+  // "… at end of input: \frac{1}" is the text KaTeX had read when it ran
+  // out; the last command in it is the one still waiting for something.
+  const read = /\bat end of input:\s*(.*)$/.exec(message)?.[1] ?? '';
+  const names = read.match(/\\[A-Za-z]+/g);
+  const last = names ? names[names.length - 1] : null;
+  const said = message.replace(/\s*\bat end of input:.*$/, '').trim();
+  let m: RegExpExecArray | null;
+  if ((m = /^Undefined control sequence:\s*(\S+)/.exec(said))) return `${m[1]} is not a command`;
+  if ((m = /^No such environment:\s*(\S+)/.exec(said))) return `There is no ${m[1]} environment`;
+  if ((m = /^Unexpected end of input in a macro argument, expected '(.)'/.exec(said))) {
+    const want = m[1] === ']' ? '[…]' : '{…}';
+    return last ? `${last} is missing its ${want}` : `A ${want} is never closed`;
+  }
+  if (/^Expected & or/.test(said)) return 'This \\begin has no \\end';
+  if (/^Expected '\\right'/.test(said)) return '\\left has no \\right';
+  if ((m = /^Expected '(.+?)', got '(.+?)'/.exec(said))) {
+    const want = m[1];
+    const got = m[2];
+    if (got === 'EOF') return want === '}' ? 'A { is never closed' : `${want} is missing`;
+    if (got === '}') return 'One } too many';
+    if (got === '\\end') return '\\end without \\begin';
+    if (got === '\\right') return '\\right without \\left';
+    if (want === 'EOF') return `${got} does not belong here`;
+    return `${want} was expected, not ${got}`;
+  }
+  if ((m = /^Expected group after '(.)'/.exec(said))) return `Nothing after ${m[1]}`;
+  if (/^Double superscript/.test(said)) return 'Two ^ on one thing';
+  if (/^Double subscript/.test(said)) return 'Two _ on one thing';
+  if ((m = /^Mismatch: (\S+) matched by (\S+)/.exec(said))) return `${m[1]} ends with ${m[2]}`;
+  if ((m = /^Can't use function '(.+?)' in math mode/.exec(said))) return `${m[1]} does not belong in a formula`;
+  if ((m = /^Unexpected character: '(.+?)'/.exec(said))) return `${m[1]} does not belong here`;
+  if (/^Limit controls must follow/.test(said)) return '\\limits must follow an operator';
+  return said;
+}
+
 export function mathError(raw: string, display: boolean): string | null {
   if (!raw.trim()) return null;
   const tex = markMathSpaces(mapDigits(raw)).split(SPACE).join('\\ ');
@@ -407,7 +450,7 @@ export function mathError(raw: string, display: boolean): string | null {
     // KaTeX says "KaTeX parse error: Undefined control sequence: \fracc at
     // position 1: …" — the reader needs the complaint, not the prefix, and
     // not the caret diagram it draws with the source it was given.
-    return message.replace(/^KaTeX\s+(parse|auto-render)\s+error:\s*/i, '').split(' at position ')[0].trim();
+    return plainly(message.replace(/^KaTeX\s+(parse|auto-render)\s+error:\s*/i, '').split(' at position ')[0].trim());
   }
 }
 
