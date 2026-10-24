@@ -1,21 +1,26 @@
 // Math rendering: KaTeX, plus two things on top.
 //
-// 1. Spaces. TeX ignores spaces in math, which kills "$ hello world $". A run
-//    of spaces is kept visibly (as "\ ") only when it sits between two
-//    letters (Latin or Persian) that aren't the name of a command. Spaces
-//    next to symbols, digits or command arguments ("$ a = b $",
-//    "$ \frac13 b $") are dropped, and leading/trailing spaces are trimmed.
-//    A kept space outside braces is also a place the line may break
-//    ("hello" / "world"), and the space goes at the break; + and − never are.
-//    The same spaces inside a text command (\text, \textbf, …) are break
-//    points too — otherwise "\text{is continuous on the interval}" is one
-//    unbreakable unit and overflows the screen. The command is closed and
-//    reopened around each word, so the space between those words is an
-//    ordinary break. Spaces inside other braces still are not.
+// 1. Spaces. TeX ignores spaces in math, and so does this. A run of spaces
+//    between two letters used to be kept and written as "\ ", so that
+//    "$ hello world $" read as two words; that rule is gone. Words with gaps
+//    in them come from \text{…}, which is what they were being written as
+//    anyway, and a Persian run — its own spaces included — is wrapped in one
+//    automatically before KaTeX sees it (persianTextRuns, below), so a
+//    Persian phrase still reads as a phrase. What it cost: "$x y$" was set
+//    wider than TeX sets it, and every
+//    rule about where a line may break had to reason about an invisible
+//    marker in the middle of the formula.
+//    Spaces inside a text command (\text, \textbf, …) ARE break points —
+//    otherwise "\text{is continuous on the interval}" is one unbreakable
+//    unit and overflows the screen. The command is closed and reopened
+//    around each word, so the space between those words is an ordinary
+//    break, and the space goes at the break. Spaces inside other braces are
+//    not break points; + and − never are.
 //
 // 2. Line breaking. The formula is split at its top-level break points,
 //    preferred in this order: the writer's own line ends, then commas, then
-//    relations (=, ≡, ≈, ≤, arrows, ∴ ...), then the kept word spaces.
+//    relations (=, ≡, ≈, ≤, arrows, ∴ ...), then the word spaces lifted out
+//    of a text command.
 //    Commas stay at the end of the line they break; a line that ends at a
 //    relation repeats it on the next line ("a = b =" / "= c"), the usual
 //    convention for continued relations. Never at + or −, and never inside
@@ -26,32 +31,12 @@
 //    line widths); inline math wraps with the paragraph.
 import katex from 'katex';
 
-const LETTER = /[A-Za-z\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
 const LATIN = /[A-Za-z]/;
 
-// Kept spaces are marked with this character while the formula is split,
-// then written as "\ ".
+// The one space a formula still carries: the gap between two words lifted out
+// of a \text{…}, marked with this character while the formula is split and
+// written back as "\ " in the piece that keeps it.
 const SPACE = '\u0001';
-
-export function normalizeMathSpaces(tex: string): string {
-  return markMathSpaces(tex).split(SPACE).join('\\ ');
-}
-
-function markMathSpaces(tex: string): string {
-  const source = tex.trim();
-  return source.replace(/ +/g, (run: string, offset: number) => {
-    const before = source[offset - 1] ?? '';
-    const after = source[offset + run.length] ?? '';
-    if (!LETTER.test(before) || !LETTER.test(after)) return ' ';
-    // "\alpha b": the letters before are a command name; the space only ends it.
-    if (LATIN.test(before)) {
-      let k = offset - 1;
-      while (k >= 0 && LATIN.test(source[k])) k -= 1;
-      if (source[k] === '\\') return ' ';
-    }
-    return SPACE;
-  });
-}
 
 // Prose commands. Their braces would hide word spaces from the splitter, so
 // lift those spaces out: \text{hello world} → \text{hello} · \text{world}.
@@ -125,15 +110,31 @@ function liftTextCommand(name: string, inner: string): string {
     }
     if (c === '{') depth += 1;
     else if (c === '}') depth -= 1;
-    else if (c === SPACE && depth === 0) {
+    else if (c === ' ' && depth === 0 && i > start) {
+      // A run of spaces between two words. The space that opens or closes the
+      // command ("\text{If }") belongs to the word it is written against —
+      // it is the gap before the formula that follows, not a break point.
+      let end = i;
+      while (lifted[end] === ' ') end += 1;
+      if (end >= lifted.length) break;
       parts.push(lifted.slice(start, i));
-      start = i + 1;
+      start = end;
+      i = end - 1;
     }
   }
   parts.push(lifted.slice(start));
   if (parts.length < 2 || parts.some((part) => !part.length)) return `\\${name}{${inner}}`;
   return parts.map((part) => `\\${name}{${part}}`).join(SPACE);
 }
+
+// Operators a line may break after, once there is nothing better left. The
+// ones that are a single character (+ and -) are read in the loop below.
+const OPERATORS = new Set([
+  'pm', 'mp', 'cdot', 'cdotp', 'times', 'div', 'ast', 'star', 'circ', 'bullet',
+  'oplus', 'ominus', 'otimes', 'oslash', 'odot',
+  'cup', 'cap', 'sqcup', 'sqcap', 'uplus', 'setminus', 'smallsetminus',
+  'wedge', 'vee', 'land', 'lor', 'amalg', 'dotplus', 'boxplus', 'boxtimes',
+]);
 
 // Relations a line may break after. Vertical arrows are left out on purpose.
 const RELATIONS = new Set([
@@ -155,25 +156,35 @@ const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 
 // Break points, preferred in this order: the writer's own line ends, then
 // commas, then relations (which repeat on the next line), then the spaces
-// typed between words. The comma stays at the end of the line it breaks.
+// between words lifted out of a text command, and last the sum's own
+// operators — + − · × and the like. The comma stays at the end of the line it
+// breaks; so does the operator, which is how TeX itself breaks a long sum,
+// and unlike a relation it is not repeated on the next line (a repeated "+"
+// would read as a different sum). A sign that is not between two operands
+// (the minus of "= -p", the plus of "(+3)") is not an operator at all.
 //
 // A plain ( ) / [ ] group — and the visible braces \{ \} — is a step behind
 // all of those (BREAK_INSIDE is added to its break points' priority): a group
 // that fits is never broken, and a group too wide for the line can still
-// break inside itself at its own comma, relation or space instead of at
-// whatever atom the browser would otherwise split it at. Braces, \left…
+// break inside itself at its own comma, relation, space or operator instead
+// of at whatever atom the browser would otherwise split it at. Braces, \left…
 // \right and environments never break: their halves must render together.
-interface Cut { prio: number; rel: string; comma: boolean; prefix: string }
-const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', comma: false, prefix: '', ...fields });
+interface Cut { prio: number; rel: string; op: string; comma: boolean; prefix: string }
+const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', op: '', comma: false, prefix: '', ...fields });
 function mergeCuts(a: Cut, b: Cut): Cut {
   return newCut(Math.min(a.prio, b.prio), {
     rel: [a.rel, b.rel].filter(Boolean).join(' '),
+    op: a.op || b.op,
     comma: a.comma || b.comma,
     prefix: a.prefix || b.prefix,
   });
 }
 function cutAfter(cut: Cut | null): string {
-  return cut ? `${cut.rel ? ` ${cut.rel} {}` : ''}${cut.comma ? ',' : ''}` : '';
+  if (!cut) return '';
+  // The empty group keeps the sign binary: "a +" on its own would be set as
+  // a sign in front of nothing, with the space around it gone.
+  const tail = cut.rel ? ` ${cut.rel} {}` : cut.op ? ` ${cut.op} {}` : '';
+  return `${tail}${cut.comma ? ',' : ''}`;
 }
 function cutCont(cut: Cut | null): string {
   return cut?.rel ? `${cut.rel} ` : '';
@@ -225,7 +236,27 @@ function splitCuts(rawTex: string): Split | null {
     }
     termStart = to;
   };
-  const LAST = 4; // every top-level break point stays ahead of a break inside a group
+  const LAST = 5; // every top-level break point stays ahead of a break inside a group
+  // Is the sign at `at` between two operands, or in front of one? Only the
+  // first is an operator a line may break after.
+  const binary = (at: number): boolean => {
+    let k = at - 1;
+    while (k >= 0 && (tex[k] === ' ' || tex[k] === SPACE)) k -= 1;
+    const before = tex[k] ?? '';
+    if (!before) return false;
+    if (LATIN.test(before)) {
+      // The tail of a command name: an operand (\alpha, \pi) or not (\to, \pm).
+      let start = k;
+      while (start >= 0 && LATIN.test(tex[start])) start -= 1;
+      if (tex[start] === '\\') {
+        const name = tex.slice(start + 1, k + 1);
+        return !RELATIONS.has(name) && !OPERATORS.has(name) && !EXT_ARROWS.has(name) && name !== 'left';
+      }
+      return true;
+    }
+    // A digit, a closing bracket, a prime, a factorial: the end of an operand.
+    return /[0-9)\]}|!'’\u0660-\u0669\u06F0-\u06F9]/.test(before) || PERSIAN_LETTER.test(before);
+  };
   let depth = 0; // braces, \left…\right and environments: never a break inside
   let plain = 0; // plain ( ) [ ] (and \{ \}): a break inside is the last resort
   let i = 0;
@@ -270,6 +301,11 @@ function splitCuts(rawTex: string): Split | null {
         i = k;
         continue;
       }
+      if (level >= 0 && OPERATORS.has(name) && binary(i)) {
+        cut(i, k, newCut(prio(4), { op: tex.slice(i, k) }));
+        i = k;
+        continue;
+      }
       i = k;
       continue;
     }
@@ -286,13 +322,9 @@ function splitCuts(rawTex: string): Split | null {
       continue;
     }
     if (c === SPACE && level >= 0) {
-      // A space between two Persian letters is inside a phrase, not between
-      // terms: a break there would leave the words to be ordered left to
-      // right.
-      if (PERSIAN_LETTER.test(tex[i - 1] ?? '') && PERSIAN_LETTER.test(tex[i + 1] ?? '')) {
-        i += 1;
-        continue;
-      }
+      // Always a break: the only spaces left are the ones lifted out of a
+      // \text{…}, and a Persian phrase is never lifted in the first place
+      // (liftTextCommand — its words would be laid out left to right).
       cut(i, i + 1, newCut(prio(3), { prefix: '\\ ' }));
       i += 1;
       continue;
@@ -312,13 +344,18 @@ function splitCuts(rawTex: string): Split | null {
       i += 1;
       continue;
     }
+    if (level >= 0 && (c === '+' || c === '-') && binary(i)) {
+      cut(i, i + 1, newCut(prio(4), { op: c }));
+      i += 1;
+      continue;
+    }
     i += 1;
   }
   const last = tex.slice(termStart);
   if (!last.trim() && cuts.length) {
     // Trailing break point ("a = b ="): glue it back onto the last term.
     const trailing = cuts.pop()!;
-    const glued = (trailing.rel ? ` ${trailing.rel}` : '') + (trailing.comma ? ',' : '');
+    const glued = (trailing.rel ? ` ${trailing.rel}` : trailing.op ? ` ${trailing.op}` : '') + (trailing.comma ? ',' : '');
     terms[terms.length - 1] += glued;
     return terms.length > 1 ? { terms, cuts } : null;
   }
@@ -335,12 +372,14 @@ function splitCuts(rawTex: string): Split | null {
 // command) are left alone; `\ ` is the marker for a space the writer typed,
 // which is a plain space again inside text mode.
 const PERSIAN_CHAR = '[\\u0620-\\u065F\\u0670\\u0671-\\u06D3\\u06D5\\u06D6-\\u06ED\\u06EE-\\u06EF\\u06FA-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF\\u200C\\u200D]';
-// A run is a letter, more letters, and the `\ ` markers between them: it must
-// start and end with a letter, so a lone space marker — a break point of its
-// own — is never wrapped.
+// A run is a letter, more letters, and the spaces between them: it must start
+// and end with a letter, so the space that follows the phrase (the gap before
+// the formula goes on) is left outside it. The spaces inside the run survive
+// because the run becomes a \text{…}, where a space is a space — a Persian
+// phrase is prose, and prose is the one place a formula keeps its spaces.
 /** One Persian (or Arabic-script) character. */
 const PERSIAN_LETTER = new RegExp(PERSIAN_CHAR);
-const PERSIAN_RUN = new RegExp(`${PERSIAN_CHAR}(?:${PERSIAN_CHAR}|\\\\ )*${PERSIAN_CHAR}|${PERSIAN_CHAR}`, 'g');
+const PERSIAN_RUN = new RegExp(`${PERSIAN_CHAR}(?:${PERSIAN_CHAR}| |\\\\ )*${PERSIAN_CHAR}|${PERSIAN_CHAR}`, 'g');
 const TEXT_COMMAND = /\\(?:text|mbox|hbox|textnormal|textrm|textsf|texttt|operatorname|textsuperscript|textsubscript)\b\s*\{/g;
 
 /** [from, to) of every group argument of a text command in `tex`. */
@@ -441,7 +480,7 @@ function plainly(message: string): string {
 
 export function mathError(raw: string, display: boolean): string | null {
   if (!raw.trim()) return null;
-  const tex = markMathSpaces(mapDigits(raw)).split(SPACE).join('\\ ');
+  const tex = mapDigits(raw).trim();
   try {
     katex.renderToString(persianTextRuns(tex), { displayMode: display, throwOnError: true });
     return null;
@@ -490,8 +529,8 @@ export function mathFault(raw: string, display: boolean): MathFault | null {
 export function renderMath(raw: string, display: boolean): string {
   // Empty display math is still a blank display line, not zero-height KaTeX.
   if (display && !raw.trim()) return '<div class="math-display"><br></div>';
-  const marked = markMathSpaces(mapDigits(raw));
-  const tex = marked.split(SPACE).join('\\ ');
+  const tex = mapDigits(raw).trim();
+  const marked = tex;
   const styleMatch = STYLE_PREFIX.exec(tex);
   const style = (display ? '\\displaystyle ' : '') + (styleMatch ? styleMatch[0] : '');
   const body = styleMatch ? marked.slice(styleMatch[0].length) : marked;
@@ -521,7 +560,9 @@ export function renderMath(raw: string, display: boolean): string {
     const after = cutAfter(piece.after);
     const plain = render(`${style}${piece.before?.prefix ?? ''}${piece.tex}${after}`);
     if (index === 0) return `<span class="math-unit" data-first><span class="math-plain">${plain}</span></span>`;
-    const cont = render(`${style}${cutCont(piece.before)}${piece.tex}${after}`);
+    const lead = cutCont(piece.before);
+    // An operator break repeats nothing, so both forms are the same TeX.
+    const cont = lead || piece.before?.prefix ? render(`${style}${lead}${piece.tex}${after}`) : plain;
     return `<span class="math-unit" data-break="${piece.before!.prio}"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
   });
   const flow = `<span class="math-flow${display ? ' is-display' : ''}" data-units="${units.length}">${units.join('<wbr>')}</span>`;

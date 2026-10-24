@@ -45,7 +45,11 @@ test('word spaces inside text commands are break points', async ({ page }) => {
       lines: lines.map(inspect),
       fraction: inspect(String.raw`\frac{\text{hello world}}{2}`),
       delimited: inspect(String.raw`\left( \text{hello world} \right)`),
-      plus: inspect('a + b + c + d'),
+      plus: inspect('a+b'),
+      longPlus: inspect('a + b + c + d'),
+      minus: inspect('x = -y'),
+      signs: inspect(String.raw`n = (+1) + (-1)`),
+      dot: inspect(String.raw`u \cdot v \cdot w`),
       words: inspect('hello world'),
       bold: inspect(String.raw`\textbf{bold words}`),
       manual: renderMath(String.raw`\text{hello world} \\ \text{again}`, true).includes('newline'),
@@ -63,15 +67,37 @@ test('word spaces inside text commands are break points', async ({ page }) => {
   expect(result.lines[1].units).toBeGreaterThanOrEqual(5);
   expect(result.lines[1].texes.some((tex) => tex.includes('=') && tex.includes('f(x)'))).toBe(true);
   expect(result.lines[2].units).toBe(1);
-  expect(result.lines[3].units).toBe(2);
+  // G(b) - G(a): the relation and then the subtraction between the terms.
+  expect(result.lines[3].units).toBe(3);
   expect(result.lines[3].texes.some((tex) => tex.includes('=') && tex.includes('G(b)'))).toBe(true);
   expect(result.lines[3].texes.join(' ')).not.toContain('+');
 
-  // Still never inside math structure, and never at +.
+  // Still never inside math structure.
   expect(result.fraction.units).toBe(1);
   expect(result.delimited.units).toBe(1);
-  expect(result.plus.units).toBe(1);
-  expect(result.words.units).toBe(2);
+  // A sum may break at its own operators — last of all, but it may.
+  expect(result.plus.units).toBe(2);
+  expect(result.longPlus.units).toBe(4);
+  expect(result.dot.units).toBe(3);
+  // The operator ends the line it breaks and is not repeated on the next one.
+  expect(result.plus.texes).toContain('\\displaystyle a + {}');
+  expect(result.plus.texes).toContain('\\displaystyle b');
+  expect(result.plus.texes.every((tex) => !tex.startsWith('\\displaystyle +'))).toBe(true);
+  // A sign in front of a term is not an operator: nothing to break at.
+  expect(result.minus.units).toBe(2);
+  // The only break is the "=": the minus goes with the y it signs, and the
+  // line that starts there starts with the relation, not with the sign.
+  expect(result.minus.texes.some((tex) => /^\\displaystyle\s*=\s*-y$/.test(tex))).toBe(true);
+  // "n = (+1) + (-1)": the = and the + between the two groups are break
+  // points; the + and the − that sign the numbers inside them are not.
+  expect(result.signs.units).toBe(3);
+  const signPieces = result.signs.texes.map((tex) => tex.replace(/\s+/g, ' ').trim());
+  expect(signPieces.some((tex) => tex.endsWith('(+1) + {}'))).toBe(true);
+  expect(signPieces.some((tex) => tex.endsWith('(-1)'))).toBe(true);
+  // TeX ignores the spaces in a formula, and so do we: "hello world" is one
+  // run of letters, and the words of a sentence come from \\text{}.
+  expect(result.words.units).toBe(1);
+  expect(result.words.texes.join('')).not.toContain('\\ ');
   expect(result.bold.units).toBe(2);
   expect(result.manual).toBe(true);
 });
@@ -128,6 +154,46 @@ test('a phone-width theorem wraps between words and does not overflow', async ({
   expect(report[3].starts.every((text) => !text.trimStart().startsWith('−') && !text.trimStart().startsWith('-'))).toBe(true);
 });
 
+// Continuity, as it is written in the Navier–Stokes article. Nothing in it
+// is a relation except the final "= 0", so before the operators were break
+// points the line was cut into "everything" and "= 0", and "everything" —
+// still twice the width of the screen — was handed to the browser to break
+// at whatever atom it liked.
+test('a long sum breaks at its own + signs, into lines that fit', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
+    const host = document.createElement('article');
+    host.style.cssText = 'width: 342px; position: fixed; inset: 0 auto auto 0; background: white; z-index: 5; font-size: 18px;';
+    host.innerHTML = renderMath(String.raw`\partial_t \rho + \partial_x (\rho u_x) + \partial_y (\rho u_y) + \partial_z (\rho u_z) = 0.`, true);
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    layoutMath(host);
+    const box = host.querySelector<HTMLElement>('.math-display')!;
+    const flow = box.querySelector<HTMLElement>('.math-flow')!;
+    const units = [...flow.querySelectorAll<HTMLElement>(':scope > .math-unit')];
+    const brs = [...flow.querySelectorAll('br.math-br')];
+    const lineOf = (unit: Element): number => brs.filter((br) => br.compareDocumentPosition(unit) & Node.DOCUMENT_POSITION_FOLLOWING).length;
+    const widths = new Map<number, number>();
+    for (const unit of units) widths.set(lineOf(unit), (widths.get(lineOf(unit)) ?? 0) + unit.getBoundingClientRect().width);
+    const ends = units.filter((unit) => lineOf(unit) === 0).map((unit) => unit.textContent ?? '');
+    return {
+      lines: brs.length + 1,
+      overwide: units.filter((unit) => unit.classList.contains('is-overwide')).length,
+      widest: Math.round(Math.max(...widths.values())),
+      room: box.clientWidth,
+      firstLineEnds: ends[ends.length - 1]?.trim().slice(-1) ?? '',
+    };
+  });
+
+  expect(report.lines).toBe(2);
+  // Not one piece left for the browser to break where it pleased.
+  expect(report.overwide).toBe(0);
+  expect(report.widest).toBeLessThanOrEqual(report.room);
+  // The operator stays at the end of the line it breaks, as TeX sets it.
+  expect(report.firstLineEnds).toBe('+');
+});
+
 test('the theorem note keeps each display line and wraps the sentences', async ({ page }) => {
   const html = await page.evaluate(async (markdown) => {
     const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
@@ -140,7 +206,7 @@ test('the theorem note keeps each display line and wraps the sentences', async (
   expect(html).not.toContain('katex-error');
 });
 
-test('break points carry their preference: line ends, then commas, then relations, then spaces', async ({ page }) => {
+test('break points carry their preference: line ends, commas, relations, word spaces, operators', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const { renderMath } = await window.__satr.load('/src/math.ts');
     const breaks = (tex: string) => [...renderMath(tex, true).matchAll(/<span class="math-unit"(?: data-first)?(?: data-break="(\d)")?/g)]
@@ -150,13 +216,23 @@ test('break points carry their preference: line ends, then commas, then relation
       comma: breaks('a, b'),
       commaLine: breaks('x = y,\nz = w'),
       words: breaks('hello world'),
+      textWords: breaks(String.raw`\text{hello world}`),
+      sum: breaks('a + b'),
+      inGroup: breaks('(a + b)'),
     };
   });
   expect(result.lines).toEqual(['first', '2', '0', '2']);
   expect(result.comma).toEqual(['first', '1']);
   // A comma at the writer's line end breaks at the line end (0), comma stays.
   expect(result.commaLine).toEqual(['first', '2', '0', '2']);
-  expect(result.words).toEqual(['first', '3']);
+  // Spaces between bare letters are not break points — they are not spaces:
+  // one unit, which is not a flow of units at all.
+  expect(result.words).toEqual([]);
+  // The same words inside \text{} are a sentence, and they do break (3).
+  expect(result.textWords).toEqual(['first', '3']);
+  // An operator is the last resort (4), and inside a group later still (4+5).
+  expect(result.sum).toEqual(['first', '4']);
+  expect(result.inGroup).toEqual(['first', '9']);
 });
 
 test('a source line end wins over an equal sign when both can break', async ({ page }) => {
