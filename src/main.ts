@@ -885,13 +885,24 @@ function runNormalize(): void {
 }
 for (const warning of mathWarnings) warning.addEventListener('click', runNormalize);
 
+/** The line the source was left on, while the reading view is the one being
+ *  shown. A reading view can be far shorter than the source it came from — a
+ *  table is eight wrapped lines to write and one compact block to read — so
+ *  many source lines share one place in the page, and reading that place back
+ *  on the way home answers with the first of them: leave the source at line
+ *  27, come back to line 4. It is only an answer about the page while the
+ *  page is where the reader is, and the moment they scroll it themselves it
+ *  is theirs, not this. */
+let placeLeftInSource: number | null = null;
 function setMode(next: Mode, restoredLine?: number): void {
   if (restoredLine === undefined) releaseHold();
   const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
   // pane reports scrollTop 0, which is what used to send preview to the top.
   const y = scrollBand();
-  const position = restoredLine ?? (mode === 'preview' ? previewScroll(previewPane, preview, y) : editorScroll(editor.view, y));
+  const position = restoredLine ?? (mode === 'preview' ? (placeLeftInSource ?? previewScroll(previewPane, preview, y)) : editorScroll(editor.view, y));
+  // Kept on the way out of the source, spent on the way back into it.
+  placeLeftInSource = restoredLine === undefined && mode === 'edit' && typeof position === 'number' ? position : null;
   mode = next;
   document.body.dataset.mode = mode;
   // Nothing is said about the formula under the caret on a page that has no
@@ -1252,7 +1263,10 @@ const releaseHold = (): void => {
 };
 for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
   editor.view.dom.addEventListener(type, releaseHold, { passive: true, capture: true });
-  previewPane.addEventListener(type, releaseHold, { passive: true, capture: true });
+  // The same intent that releases a held place also gives up the line the
+  // source was left on: once the reader has moved the page themselves, the
+  // page is where they are and the source must follow it, not the other way.
+  previewPane.addEventListener(type, () => { placeLeftInSource = null; releaseHold(); }, { passive: true, capture: true });
 }
 editor.view.scrollDOM.addEventListener('scroll', () => {
   if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view, scrollBand()) - holdLine) > 0.5) {
@@ -1414,6 +1428,7 @@ async function leaveCurrent(): Promise<boolean> {
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
   if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
   ++viewGeneration;
+  placeLeftInSource = null; // another note: the line left in the last one is not about this one
   window.clearTimeout(viewTimer);
   window.clearTimeout(renderTimer);
   holdUntil = 0;
