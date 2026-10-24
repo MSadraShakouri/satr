@@ -160,7 +160,16 @@ public class SystemBarsPlugin extends Plugin {
      *  the bar's own animation, and a restart mid-flight is the flash the
      *  reader sees (the bar arrives, leaves, arrives). The page's own state
      *  can be a beat behind the window's — a swipe brings the bar back
-     *  without the page knowing — so the question is put to the window. */
+     *  without the page knowing — so the question is put to the window.
+     *
+     *  This guard is after the fact, not a race preventer. isVisible() reads
+     *  false for the whole of a hide animation, so a show() arriving while
+     *  the bar is still sliding away is NOT filtered here — it is let
+     *  through and restarts the animation. Nothing on this side can filter
+     *  it: the window does not report "mid-move". What keeps those two calls
+     *  apart is the beat in src/main.ts (NAV_SETTLE_MS), which is why that
+     *  number has to outlast the animation and must not be lowered to make
+     *  the bars feel quicker. */
     private boolean statusBarShowing() {
         WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(getActivity().getWindow().getDecorView());
         return insets == null || insets.isVisible(WindowInsetsCompat.Type.statusBars());

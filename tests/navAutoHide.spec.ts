@@ -32,7 +32,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const NOTE = 'a line of prose to scroll through\n'.repeat(200);
-const SETTLE = 200; // NAV_SETTLE_MS in src/main.ts
+const SETTLE = 340; // NAV_SETTLE_MS in src/main.ts
 
 declare global {
   interface Window {
@@ -122,6 +122,31 @@ test('a wobble inside the beat does not move the bars — that is the flash', as
   await page.waitForTimeout(SETTLE + 150);
   expect(await hidden(page)).toBe(true);
   expect(await moves(page)).toEqual([]);
+});
+
+test('a wobble that lands AFTER the beat does not flash either', async ({ page }) => {
+  await boot(page);
+  // The beat used to be 200ms and the bars animate `transform` over 300ms
+  // (src/style.css), so a reversal arriving in between found the beat over
+  // and restarted the slide half way through — the flash, with no gesture
+  // rule able to see it, because the question there is not which way the
+  // reader went but whether the bar has finished moving. And the gate it
+  // then had to clear was 12px, which a thumb resting on the glass wobbles
+  // through. Both: the beat outlasts the animation now, and a reversal
+  // takes a body line.
+  await scrollBy(page, 200);
+  await expect.poll(() => hidden(page)).toBe(true);
+  // Reading, not flicking: 40px up brings them back.
+  await scrollBy(page, -40);
+  await expect.poll(() => hidden(page)).toBe(false);
+  // Past the old beat, still inside the transform — then a thumb's wobble,
+  // bigger than the old 12px gate.
+  await page.waitForTimeout(220);
+  await clearMoves(page);
+  await scrollBy(page, 14);
+  await page.waitForTimeout(SETTLE + 200); // let anything held flush
+  expect((await moves(page)).filter((move) => move.hidden)).toEqual([]);
+  expect(await hidden(page)).toBe(false);
 });
 
 test('a flick up that stops inside the beat still brings the bars back', async ({ page }) => {

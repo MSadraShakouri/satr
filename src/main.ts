@@ -934,18 +934,32 @@ const NAV_THRESHOLD = 0.125 * LINE_PX;
 // bounce that comes straight back to the top of the note — are both a
 // reversal, so a beat of quiet after the bars move covers them.
 //
-// The move that was held is not lost, and nothing has to be scrolled twice
-// for it: the anchor is left where the bars last moved (so the distance keeps
-// accumulating), and a timer asks again the moment the beat is over. A flick
-// that stops inside the beat still brings the bars back.
-const NAV_SETTLE_MS = 200;
+// The beat has to outlast the animation it is protecting, and it did not.
+// `.topbar` and `.mobile-navbar` in src/style.css both animate `transform`
+// over 300ms (opacity over 200, which is where this number came from). A
+// reversal arriving between 200 and 300ms therefore found navSettling()
+// false and restarted the transform half way through its slide — the flash,
+// with nothing in the gesture rules able to see it, because by then the
+// question is not whether the reader turned around but whether the bar has
+// finished moving. 340 is the 300ms transform plus a frame or two. Raise
+// either of those transitions and this has to go up with them; the honest
+// version of this number is a `transitionend` listener on the two elements,
+// which is the next step if a slow phone still shows it.
+const NAV_SETTLE_MS = 340;
 // A move that turns the bars around has to be a real one: a thumb resting on
 // the glass wobbles more than the 3px anchor threshold, and a wobble must not
 // count — the bars would come back and go away again, which IS the flash.
-// Four times the threshold (about a line of text) is a move the reader made.
+// One body line (LINE_PX) is a move the reader made: a resting thumb does not
+// travel that far, Android's own fling cutoffs and Chrome's toolbar threshold
+// sit in the same 20-30px band, and any scroll meant by the reader crosses it
+// inside one gesture. It was four times the anchor threshold — 12px — which
+// is still inside wobble range. The cost is that a deliberate 20px nudge
+// upward no longer brings the bars back; if that is the wrong trade, the
+// hide and the show can take different distances (32 down, 24 up) rather
+// than this one.
 // This bar is applied to every reversal now, not only to one the beat held
 // back: a wobble that lands after the beat used to skip it (onNavScroll).
-const NAV_HELD = NAV_THRESHOLD * 4;
+const NAV_HELD = LINE_PX;
 let navHidden = false;
 let navMovedAt = -Infinity;
 let navPending: { el: HTMLElement; hide: boolean; at: number } | null = null;
@@ -970,10 +984,18 @@ function restoreNavigation(): void {
 /** The move a beat held back, remembered; applied when the beat is over if
  *  the note is still on the side it asked for. */
 function holdNavigation(el: HTMLElement, hide: boolean): void {
-  // Where the note was when the move was first asked for. Later events in the
-  // same direction must not move that mark — the distance that counts is the
-  // one the reader has made since deciding, not since the last frame.
-  if (!navPending || navPending.el !== el || navPending.hide !== hide) navPending = { el, hide, at: el.scrollTop };
+  // Where the bars last moved — the anchor, not the scroll position now.
+  // onNavScroll has ALREADY charged this gesture NAV_HELD before asking, so
+  // marking the note where it has got to charges it twice: with the gate at
+  // one body line, a 40px scroll up spent 24 getting here and had 16 left,
+  // flushNavigation read 16 < 24 and refused, and the bars stayed away for
+  // a gesture the reader certainly made. The anchor is left where the bars
+  // moved for exactly this reason, so the distance that counts is the whole
+  // of the reader's travel since then. Later events in the same direction
+  // must not move the mark either.
+  if (!navPending || navPending.el !== el || navPending.hide !== hide) {
+    navPending = { el, hide, at: scrollAnchors.get(el) ?? el.scrollTop };
+  }
   window.clearTimeout(navTimer);
   navTimer = window.setTimeout(flushNavigation, Math.max(0, NAV_SETTLE_MS - (performance.now() - navMovedAt)) + 16);
 }
