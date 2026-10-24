@@ -63,14 +63,6 @@ test('a space with nothing in it opens the new-tab page, not a note', async ({ p
   expect(await files(page)).toEqual([]);
 });
 
-test('the tour is one tap away on the new-tab page', async ({ page }) => {
-  await returningBrowser(page);
-  await page.locator('#empty-tab [data-act="demo"]').click();
-  await expect(page.locator('#app .cm-file-name')).toHaveText('demo');
-  await expect(page.locator('.cm-content')).toContainText('Satr demo');
-  expect(await files(page)).toEqual([]);
-});
-
 test('the tour stays put when you come back to its tab', async ({ page }) => {
   await freshBrowser(page);
   await expect(page.locator('#app .cm-file-name')).toHaveText('demo');
@@ -86,7 +78,7 @@ test('the tour stays put when you come back to its tab', async ({ page }) => {
   expect(await files(page)).toEqual(['Notes/Untitled.md']);
 });
 
-test('the tour row opens your own copy once you have one', async ({ page }) => {
+test('your own copy of the tour is a note like any other', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
     localStorage.setItem('satr:demoShown', '1');
@@ -98,10 +90,12 @@ test('the tour row opens your own copy once you have one', async ({ page }) => {
   await expect(page.locator('#app .cm-file-name')).toHaveText('demo');
   await expect(page.locator('.cm-content')).toContainText('My own notes on the demo');
   await expect(page.locator('.cm-content')).not.toContainText('Writing in two directions');
-  // And the row on the new-tab page comes back to their copy, not the tour.
-  await page.locator('#nav-tabs').click();
-  await page.locator('.close-button').first().click();
-  await page.keyboard.press('Escape'); // the switcher stays open over the page
-  await page.locator('#empty-tab [data-act="demo"]').click();
-  await expect(page.locator('.cm-content')).toContainText('My own notes on the demo');
+});
+
+test('the new-tab page does not offer the tour', async ({ page }) => {
+  await returningBrowser(page);
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  await expect(page.locator('#empty-tab [data-act="demo"]')).toHaveCount(0);
+  await expect(page.locator('#empty-tab [data-act="new"]')).toBeVisible();
+  await expect(page.locator('#empty-tab [data-act="files"]')).toBeVisible();
 });

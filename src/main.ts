@@ -44,7 +44,8 @@ import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote
 
 type Mode = 'edit' | 'preview';
 // The tour (demo.md, at the top of the repo): the first note in a fresh
-// browser, and the "Satr demo" row on the new-tab page everywhere else. It is
+// browser, and nowhere else — the new-tab page used to carry a row for it and
+// no longer does, so a reader who has seen it is never offered it again. It is
 // shown, never written — it becomes a note of yours the moment you write in it.
 const starter = demoNote;
 const DEMO_NAME = 'demo.md';
@@ -1677,21 +1678,6 @@ async function firstNote(): Promise<{ path: string; text: string }> {
   // decides whether to offer it (and it is written only once you type).
   return { path: joinPath(root, await freeName(root, 'Untitled', '.md')), text: '' };
 }
-/** The tour. Their own copy if they have written one, otherwise the note as
- *  it ships — on screen, with no file behind it. */
-async function openDemo(): Promise<void> {
-  const path = joinPath(notesHome(), DEMO_NAME);
-  if (await backend.stat(path)) { void openFile(path); return; }
-  if (!await leaveCurrent()) return;
-  if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
-  localStorage.setItem(DEMO_SHOWN_KEY, '1');
-  onlyOnScreen = { path, text: starter };
-  filePath = '';
-  showFile(path, starter);
-  setMode('edit');
-  toggleFiles(false);
-  renderNavButtons();
-}
 // Where a new note goes when nobody said where: the folder the writer is
 // already working in — the folder of the note in front of them. Notes are kept
 // in folders by subject, so a note written while reading "Physics/lecture 2"
@@ -2160,7 +2146,6 @@ async function renderEmptyTab(): Promise<void> {
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
         <button type="button" class="empty-state-action" data-act="files">Go to file</button>
-        <button type="button" class="empty-state-action" data-act="demo">Open the Satr demo</button>
         ${tabs.length > 1 ? '<button type="button" class="empty-state-action" data-act="close">Close</button>' : ''}
       </div>
       <div class="empty-state-results"${emptyQuery ? '' : ' hidden'}></div>
@@ -2194,7 +2179,6 @@ emptyTab.addEventListener('click', (event) => {
   if (recent) { void openFile(recent.dataset.path!); return; }
   const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (act === 'new') void newFile();
-  else if (act === 'demo') void openDemo();
   else if (act === 'files') toggleFiles(true);
   else if (act === 'search') emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field')?.focus();
   else if (act === 'close') closeTab(activeTab);
