@@ -4335,6 +4335,18 @@ body.external-file-active .notice {
 .pill-gray.is-done {
   color: var(--text-normal);
 }
+/* Saying what KaTeX thinks of the formula the caret is in, rather than
+   offering to convert anything: readable weight, and the same red the
+   formula itself is wearing on the sign, so the two read as one thing. It
+   is not a button in this state (src/main.ts), so it does not look like
+   one. Two lines before it clips — KaTeX's complaints can be long. */
+.pill-gray.is-saying {
+  color: var(--text-normal);
+  cursor: default;
+}
+.pill-gray.is-saying svg {
+  stroke: var(--text-error);
+}
 
 /* Discord-style timestamps (src/timestamps.ts): <t:UNIX:F> in the note, the
    reading view and the PDF. Shown as a quiet chip; the full date is the tooltip. */

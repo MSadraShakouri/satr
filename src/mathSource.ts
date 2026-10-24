@@ -14,7 +14,6 @@ import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type 
 import { StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
-import { showNotice } from './notice';
 
 /** Every math span of the document, cached until the text changes. The
  * preview's renderMarkdown() computes the same spans from the same source. */
@@ -281,16 +280,21 @@ function errorMark(message: string): Decoration {
   return deco;
 }
 
-/** Where the word under the caret starts. A backslash command is spelled out
- *  one letter at a time, and \a, \al, \alp are all undefined control
- *  sequences on the way to \alpha — so a complaint that begins inside the
- *  word being written waits for the word to end, and nothing else waits for
- *  anything. Typing the `{` after it is enough; so is a space, a digit, or
- *  moving the caret away. */
-function writingFrom(text: string, caret: number): number {
-  const word = /\\[A-Za-z]*$/.exec(text.slice(0, caret));
-  return word ? word.index : caret;
-}
+// Nothing waits for anything. There were two goes at a rule for "do not
+// call a formula wrong while it is being written" — a 0.7s pause after the
+// last keystroke, then a test for the backslash word the caret was in the
+// middle of — and both had the same failure, which is that the caret is
+// inside the bad word exactly when the writer has gone there to look at it.
+// The complaint vanished on the line being worked on and came back once the
+// writer left it, which is backwards. Measured, before this was removed: in
+// `$\fracc{1}{2}$` the mark was gone for every caret position from the `f`
+// of \fracc to the `{` after it.
+//
+// So: every formula is judged every time it changes, and what KaTeX says is
+// shown. The cost is honest and visible — a command is undefined for the
+// four keystrokes it takes to spell \alpha, and a block is red until its
+// \end arrives — and it is the cost of a verdict that is never wrong about
+// when it speaks.
 
 function build(view: EditorView): DecorationSet {
   const { state } = view;
@@ -310,24 +314,7 @@ function build(view: EditorView): DecorationSet {
         continue;
       }
       const fault = verdict(text, span.delim > 1);
-      // Where the caret is inside THIS formula, if it is.
-      let caret = -1;
-      for (const range of state.selection.ranges) {
-        if (range.head >= open && range.head <= close) caret = range.head - open;
-      }
-      // The one complaint that waits — and it is NOT "the caret is in this
-      // formula". That was the rule, and it was backwards: it also held
-      // every complaint positioned after the caret, which is most of them
-      // (an unclosed brace is reported at the end of the formula), so the
-      // colour appeared only once the writer had left the line. It is this
-      // instead: a complaint that begins inside the backslash word the
-      // caret is in the middle of, because \a, \al, \alp are all undefined
-      // control sequences on the way to \alpha. Everything else is said as
-      // it is typed, caret inside or not.
-      const word = caret >= 0 ? writingFrom(text, caret) : -1;
-      const spelling = fault !== null && word >= 0 && word < caret
-        && fault.from >= word && fault.from <= caret;
-      const wrong = fault !== null && !spelling;
+      const wrong = fault !== null;
       out.push((wrong ? mathDelimWrong : mathDelim).range(span.from, open));
       if (wrong) out.push(errorMark(fault.message).range(open, close));
       out.push(mathText.range(open, close));
@@ -373,30 +360,31 @@ const mathDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
   constructor(view: EditorView) { this.decorations = build(view); }
   update(update: ViewUpdate): void {
-    // A selection change counts: the caret leaving the word it was writing
-    // is what lets that word's complaint through, and it is the only thing
-    // the caret still decides.
-    const moved = update.selectionSet && update.state.field(mathSpans).length > 0;
-    if (update.docChanged || update.viewportChanged || moved) this.decorations = build(update.view);
+    // The caret decides nothing here any more, so it costs nothing to move.
+    if (update.docChanged || update.viewportChanged) this.decorations = build(update.view);
   }
 }, { decorations: (value) => value.decorations });
 
-// The reason, on a phone. KaTeX's complaint rides in a `title`, and a title
-// is a hover: on a touch screen it has never been readable at all. A tap on
-// a formula that is marked says it out loud, in the notice the app already
-// uses. A formula that is not marked has no title, so this is one `closest`
-// on a tap and nothing else — and the whole thing is these ten lines if it
-// turns out to be in the way.
-const tellWhy = EditorView.domEventHandlers({
-  mousedown(event: MouseEvent) {
-    const marked = (event.target as HTMLElement | null)?.closest?.('.cm-math-error');
-    const reason = marked?.getAttribute('title');
-    if (reason) showNotice(reason);
-    return false;
-  },
-});
+export const mathSource = [mathSpans, mathDecorations];
 
-export const mathSource = [mathSpans, mathDecorations, tellWhy];
+/** What KaTeX says about the formula at `pos`, or null if there is no
+ *  formula there or it reads fine. The colour says WHERE without being
+ *  asked; this is for saying WHAT, which the editor cannot do on its own —
+ *  the reason rides in a `title`, and a title is a hover, which a phone
+ *  does not have. src/main.ts puts it in the gray above the bottom pill
+ *  while the caret is standing in the formula. Costs nothing new: the
+ *  verdict is the cached one the colouring already asked for. */
+export function mathFaultAt(state: EditorState, pos: number): string | null {
+  for (const span of state.field(mathSpans, false) ?? []) {
+    if (pos < span.from || pos > span.to) continue;
+    const open = span.from + span.delim;
+    const close = span.to - span.delim;
+    const text = open < close ? state.sliceDoc(open, close) : '';
+    if (!text.trim()) return null;
+    return verdict(text, span.delim > 1)?.message ?? null;
+  }
+  return null;
+}
 
 export function closingMathDelimiter(state: EditorState, pos: number): number {
   return closingDelimiterEnd(state.field(mathSpans, false) ?? [], pos);

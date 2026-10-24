@@ -21,6 +21,7 @@ import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
+import { mathFaultAt } from './mathSource';
 import { closeTimestampPicker, letNoteGo, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -746,7 +747,11 @@ function update(): void {
 // typing — so whichever is on screen is the one that says it, and a tap means
 // the same thing in both. It cannot be dismissed: a note that needs converting
 // says so until it has been converted.
-let mathWarningCount = 0;
+// What the gray is currently saying, so an update that would say the same
+// thing again does not restart its fold animation. A count is no longer
+// enough: it can be saying a count, or KaTeX's complaint about the formula
+// the caret is standing in.
+let mathWarningSaid = '';
 let mathConfirmTimer: number | undefined;
 
 /** Unfolds upward from the pill the gray sits on: height of the clip shell
@@ -818,20 +823,37 @@ function holdPill(el: HTMLElement): void {
   el.hidden = false;
 }
 
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 function updateMathWarning(): void {
   // A receipt on screen outranks anything the note's text says: the editor
   // changes as the formulas convert, and that is not a reason to take the
   // "2 formulas converted" away from the reader before they have read it.
   if (mathConfirmTimer) return;
-  const count = hasNote() && !picture.url ? findLatexMath(editor.getValue()).length : 0;
-  if (count === mathWarningCount) return;
-  mathWarningCount = count;
-  const offer = count > 0
-    ? `<span class="pill-gray-inner">${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span></span>`
-    : '';
+  const live = hasNote() && !picture.url;
+  // The formula the caret is standing in outranks the note as a whole. The
+  // colouring says WHERE a formula is broken without being asked; what it
+  // cannot say is WHAT, because KaTeX's reason rides in a `title` and a
+  // title is a hover — on a phone it has never been readable at all. So the
+  // gray says it, next to the formula, for as long as the caret is in it.
+  // The LaTeX-convert offer is about the whole note and is still there when
+  // the caret moves away.
+  const reason = live && mode === 'edit'
+    ? mathFaultAt(editor.view.state, editor.view.state.selection.main.head) : null;
+  const count = live && !reason ? findLatexMath(editor.getValue()).length : 0;
+  const said = reason ? `!${reason}` : `#${count}`;
+  if (said === mathWarningSaid) return;
+  mathWarningSaid = said;
+  const offer = reason
+    ? `<span class="pill-gray-inner">${MENU_ICONS.alert}<span dir="auto">${escapeHtml(reason)}</span></span>`
+    : count > 0
+      ? `<span class="pill-gray-inner">${MENU_ICONS.normalize}<span dir="auto">${count} LaTeX-style formula${count === 1 ? '' : 's'} — tap to convert</span></span>`
+      : '';
   for (const warning of mathWarnings) {
     if (offer) warning.innerHTML = offer;
     warning.classList.remove('is-done');
+    // Only talking, not offering: a tap on it must not convert the note.
+    warning.classList.toggle('is-saying', reason !== null);
     warning.parentElement?.classList.toggle('has-math-warning', offer !== '');
     growFromPill(warning, offer !== '');
   }
@@ -847,10 +869,10 @@ function confirmMathWarning(converted: number): void {
     warning.classList.add('is-done');
     warning.parentElement?.classList.add('has-math-warning');
   }
-  // -1 so the timer below always recomputes: the receipt is showing, and the
-  // count it replaced is no longer what the bar should be saying.
+  // Cleared so the timer below always recomputes: the receipt is showing,
+  // and what it replaced is no longer what the bar should be saying.
   // 2500ms: the same stay as the "Normalized N formulas" notice (src/commands.ts).
-  mathWarningCount = -1;
+  mathWarningSaid = '';
   mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2500);
 }
 function runNormalize(): void {
@@ -859,7 +881,11 @@ function runNormalize(): void {
   if (converted > 0) confirmMathWarning(converted);
   else updateMathWarning();
 }
-for (const warning of mathWarnings) warning.addEventListener('click', runNormalize);
+for (const warning of mathWarnings) {
+  // While it is only saying what KaTeX thinks of the formula under the
+  // caret it is not a button, and a tap must not convert the note.
+  warning.addEventListener('click', () => { if (!warning.classList.contains('is-saying')) runNormalize(); });
+}
 
 function setMode(next: Mode, restoredLine?: number): void {
   if (restoredLine === undefined) releaseHold();
@@ -893,7 +919,7 @@ function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   autoSpace: loadSettings().spaceAfterPunctuation,
-  onSelection: () => { rememberViewSoon(); },
+  onSelection: () => { rememberViewSoon(); updateMathWarning(); },
   onFold: () => { applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
   linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
   openLink: (target, heading) => openLink(target, heading),
@@ -2316,6 +2342,7 @@ const MENU_ICONS = {
   rename: svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'), // pencil
   trash: svg('<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   settings: svg('<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>'),
+  alert: svg('<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>'), // triangle-alert
   normalize: svg('<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>'), // arrows-left-right
 };
 const FLAIR = '<span class="mobile-navbar-action-flair"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';

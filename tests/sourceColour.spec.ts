@@ -258,36 +258,62 @@ test('a complaint with no width still points at something', async ({ page }) => 
   await expect(empty.locator('.cm-math-wrong')).toHaveText('\\frac');
 });
 
-test('the reason is readable without a mouse', async ({ page }) => {
+test('the reason is readable without a mouse, in the gray above the pill', async ({ page }) => {
   await boot(page);
-  // `title` is a hover and a phone has no hover, so KaTeX's complaint was
-  // never readable on the device the app is for. A tap on a marked formula
-  // says it.
-  await page.locator('#app .cm-content .cm-math-error').filter({ hasText: 'fracc' }).click();
-  await expect(page.locator('.notice')).toHaveText(/undefined control sequence/i);
+  // The colour says WHERE without being asked. What it cannot say is WHAT:
+  // KaTeX's complaint rides in a `title`, and a title is a hover, which the
+  // device this app is for does not have. The gray that already grows out
+  // of the bottom pill for the LaTeX offer says it instead, next to the
+  // formula rather than over the header, for as long as the caret is in it.
+  const gray = page.locator('.mobile-navbar [data-math-warning]');
+  await place(page, 'in plain prose', 2);
+  await expect(gray).toBeHidden();
+  await place(page, '\\fracc{1}', 8);
+  await expect(gray).toBeVisible();
+  await expect(gray).toHaveText(/undefined control sequence/i);
+  // Saying something is not offering something: a tap must not convert the
+  // note while it is only talking.
+  await expect(gray).toHaveClass(/is-saying/);
+  // It goes when the caret does.
+  await place(page, 'in plain prose', 2);
+  await expect(gray).toBeHidden();
 });
 
-test('the verdict is instant, and does not wait for the caret to leave', async ({ page }) => {
+test('the verdict is instant, and no caret position hides it', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
   await expect(broken).toHaveCount(2);
-  // The caret inside a broken formula leaves it marked. The rule used to be
-  // "not while the caret is in here", which also swallowed every complaint
-  // positioned after the caret — an unclosed brace is reported at the end —
-  // so the colour only appeared once the writer had left the line.
-  await place(page, '\\fracc{1}', 8);
-  await page.waitForTimeout(250);
-  expect(await broken.count()).toBe(2);
-  // Break the good one by typing in it. \\fracqq is undefined the moment the
-  // second q lands, but the caret is still in the middle of the word, and
-  // \\a, \\al, \\alp are all undefined on the way to \\alpha.
+  // Typing a bad command name says so on the keystroke that makes it bad,
+  // with the caret still inside the word — which is exactly where the
+  // writer is standing when they want to be told.
   await place(page, '\\frac{1}', 5);
   await page.keyboard.type('qq');
-  await page.waitForTimeout(250);
-  expect(await broken.count()).toBe(2);
-  // The word ending is enough — no pause to wait through.
-  await page.keyboard.press('ArrowRight');
-  await expect(broken).toHaveCount(3, { timeout: 500 });
+  await expect(broken).toHaveCount(3, { timeout: 400 });
+  // And no caret position anywhere in a marked formula takes the mark away.
+  // Two goes at "do not nag while it is being written" — a pause after the
+  // last keystroke, then a test for the word the caret was in the middle of
+  // — both failed in the same place: the caret is inside the bad word
+  // exactly when the writer has gone there to look at it, so the complaint
+  // disappeared on the line being worked on and came back once they left.
+  const gone = await page.evaluate(async () => {
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
+    const doc = view.state.doc.toString();
+    const from = doc.indexOf('$\\fracc');
+    const to = doc.indexOf('$', from + 1) + 1;
+    const wait = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    const missing: string[] = [];
+    for (let at = from; at <= to; at += 1) {
+      view.dispatch({ selection: { anchor: at } });
+      await wait();
+      if (document.querySelectorAll('#app .cm-content .cm-math-error').length < 3) {
+        missing.push(`${at - from}${JSON.stringify(doc.slice(at, at + 1))}`);
+      }
+    }
+    view.dispatch({ selection: { anchor: 0 } });
+    return missing;
+  });
+  expect(gone).toEqual([]);
 });
 
 test('fixing the typo clears the colour', async ({ page }) => {
