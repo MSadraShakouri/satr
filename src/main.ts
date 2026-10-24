@@ -1347,7 +1347,7 @@ const flush = (): void => {
   if (saveTimer !== undefined) saveNow();
   rememberView();
 };
-window.addEventListener('pagehide', () => { flush(); markAway(); });
+window.addEventListener('pagehide', () => { flush(); markAway(); markSeen(); restSeen(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') onBackground();
   else if (document.visibilityState === 'visible') onForeground();
@@ -2922,25 +2922,63 @@ async function boot(): Promise<void> {
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
 const AWAY_KEY = 'satr:awayAt';
+/** When Satr was last known to be running, in front of the reader. */
+const SEEN_KEY = 'satr:seenAt';
+/** Often enough that the shortest away time (5 minutes) cannot be out by much,
+ *  rarely enough to be nothing: one small write a minute while reading. */
+const SEEN_EVERY_MS = 30_000;
+let seenTimer: number | undefined;
 function markAway(): void { localStorage.setItem(AWAY_KEY, String(Date.now())); }
+function markSeen(): void { localStorage.setItem(SEEN_KEY, String(Date.now())); }
+/** The heartbeat only beats while the app is actually in front of someone: a
+ *  hidden browser tab still runs timers (throttled to about one a minute),
+ *  and one beat from a tab nobody is looking at would say the app was never
+ *  away. Stopped outright on the way out, started again on the way back. */
+function watchSeen(): void {
+  markSeen();
+  if (seenTimer !== undefined) return;
+  seenTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') markSeen();
+  }, SEEN_EVERY_MS);
+}
+function restSeen(): void {
+  if (seenTimer === undefined) return;
+  window.clearInterval(seenTimer);
+  seenTimer = undefined;
+}
 /** A new empty tab is due: always-empty, or away long enough. Restore-last
- *  never. The away mark stays until we actually open the tab. */
+ *  never. The away mark stays until we actually open the tab.
+ *
+ *  How long away is measured from the **later** of two marks, because neither
+ *  can be trusted on its own. The away mark is written when the app is told it
+ *  is going to the background, and Android does not always say so — the
+ *  WebView frozen, the app killed, a lock screen that fires nothing — which
+ *  left no mark at all and a return that could never be late, however long it
+ *  really was. And the mark is only cleared when a tab is actually opened, so
+ *  a mark from an earlier trip away outlived real use and made the next return
+ *  look older than it was. The heartbeat answers both: it is the last moment
+ *  the app is known to have been running, so a missed pause costs nothing and
+ *  a stale away mark is overtaken by the reading that came after it. */
 function dueEmptyTab(): boolean {
   const settings = loadSettings();
   if (settings.launchTabs === 'empty') return true;
   if (settings.launchTabs !== 'away') return false;
-  const since = Number(localStorage.getItem(AWAY_KEY));
+  const since = Math.max(Number(localStorage.getItem(AWAY_KEY)) || 0, Number(localStorage.getItem(SEEN_KEY)) || 0);
   const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
 }
-function onBackground(): void { flush(); markAway(); }
+function onBackground(): void { flush(); markAway(); markSeen(); restSeen(); }
 /** Home / recents leave the WebView alive: boot does not run again. Android
  *  often skips visibilitychange; Capacitor appStateChange is the pause/resume
  *  we can trust. One in-flight switch so the two signals cannot open two tabs. */
 let launchTabInFlight = false;
 function onForeground(): void {
   void refreshOnResume();
-  if (!dueEmptyTab()) return;
+  // Asked before the heartbeat starts again: one beat from now would say the
+  // app had been running all along and no absence would ever be long enough.
+  const due = dueEmptyTab();
+  watchSeen();
+  if (!due) return;
   if (launchTabInFlight) return;
   if (!curTab().path) return;
   launchTabInFlight = true;
@@ -2954,6 +2992,8 @@ async function openFirstNote(): Promise<void> {
   // on screen behind a permission sheet.
   const openEmpty = dueEmptyTab();
   localStorage.removeItem(AWAY_KEY);
+  // From here the app is running and being looked at: the clock starts again.
+  watchSeen();
   if (openEmpty) {
     const empty = tabs.findIndex((t) => !t.path);
     if (empty >= 0) activeTab = empty;

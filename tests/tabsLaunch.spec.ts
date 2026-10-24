@@ -5,10 +5,11 @@ import { expect, test, type Page } from '@playwright/test';
 // chosen time. Both live in Settings → Tabs.
 
 const AWAY_KEY = 'satr:awayAt';
+const SEEN_KEY = 'satr:seenAt';
 
-async function boot(page: Page, settings: Record<string, unknown>, awayAt?: number) {
+async function boot(page: Page, settings: Record<string, unknown>, awayAt?: number, seenAt?: number) {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(({ settings, awayAt }) => {
+  await page.addInitScript(({ settings, awayAt, seenAt }) => {
     if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1, 'Notes/B.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
@@ -17,7 +18,8 @@ async function boot(page: Page, settings: Record<string, unknown>, awayAt?: numb
     localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
     localStorage.setItem('satr:settings', JSON.stringify({ version: 3, ...settings }));
     if (awayAt !== undefined) localStorage.setItem('satr:awayAt', String(awayAt));
-  }, { settings, awayAt });
+    if (seenAt !== undefined) localStorage.setItem('satr:seenAt', String(seenAt));
+  }, { settings, awayAt, seenAt });
   await page.goto('/');
   await expect(page.locator('#nav-tabs .mobile-navbar-tabs-number')).toBeVisible();
 }
@@ -63,10 +65,12 @@ test('coming back to the visible app after being away adds the empty tab too', a
   // The away time belongs to the empty-tab launch, so that is the choice in force.
   await page.evaluate(() => localStorage.setItem('satr:settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('satr:settings')!), launchTabs: 'away' })));
   // Away: the app goes to the background (the same event the app listens for).
-  await page.evaluate((key) => {
-    localStorage.setItem(key, String(Date.now() - 20 * 60_000));
+  // Twenty minutes in which the app did not run, so neither mark moved on.
+  await page.evaluate(([away, seen]) => {
+    localStorage.setItem(away, String(Date.now() - 20 * 60_000));
+    localStorage.setItem(seen, String(Date.now() - 20 * 60_000));
     document.dispatchEvent(new Event('visibilitychange'));
-  }, AWAY_KEY);
+  }, [AWAY_KEY, SEEN_KEY]);
   await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
   expect(await tabCount(page)).toBe(3);
 });
@@ -92,6 +96,37 @@ test('Restore last tabs: coming back never adds a tab', async ({ page }) => {
   await expect(page.locator('#app .cm-file-name')).toHaveText('B');
   await expect(page.locator('body')).not.toHaveClass(/is-empty-tab/);
   expect(await tabCount(page)).toBe(2);
+});
+
+test('a pause the phone never reports still counts as being away', async ({ page }) => {
+  // Android can freeze or kill the WebView without a word, which leaves no away
+  // mark at all. What it cannot fake is the app running: the last heartbeat is
+  // twenty minutes old, so the app has been away for twenty minutes.
+  await boot(page, { launchTabs: 'away', newTabAfterMinutes: 5 }, undefined, Date.now() - 20 * 60_000);
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(3);
+});
+
+test('an away mark left over from an earlier absence is overtaken by real use', async ({ page }) => {
+  // The mark is only cleared when a tab is actually opened, so an old one can
+  // still be lying there. Reading a minute ago is the later word on it.
+  await boot(page, { launchTabs: 'away', newTabAfterMinutes: 5 }, Date.now() - 20 * 60_000, Date.now() - 60_000);
+  await expect(page.locator('#app .cm-file-name')).toHaveText('B');
+  await expect(page.locator('body')).not.toHaveClass(/is-empty-tab/);
+  expect(await tabCount(page)).toBe(2);
+});
+
+test('the app marks itself alive while it is being read', async ({ page }) => {
+  await boot(page, { launchTabs: 'away', newTabAfterMinutes: 5 });
+  const booted = await page.evaluate((key) => Number(localStorage.getItem(key)), SEEN_KEY);
+  expect(Date.now() - booted).toBeLessThan(10_000);
+  // Coming back to the front marks it again, so the next absence is measured
+  // from this visit and not from the one before it.
+  await page.evaluate((key) => {
+    localStorage.setItem(key, String(Date.now() - 20 * 60_000));
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, SEEN_KEY);
+  await expect.poll(async () => await page.evaluate((key) => Date.now() - Number(localStorage.getItem(key)), SEEN_KEY)).toBeLessThan(10_000);
 });
 
 test('the Tabs settings save their choices', async ({ page }) => {
