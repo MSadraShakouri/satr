@@ -14,6 +14,7 @@ import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type 
 import { StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
+import { showNotice } from './notice';
 
 /** Every math span of the document, cached until the text changes. The
  * preview's renderMarkdown() computes the same spans from the same source. */
@@ -109,9 +110,19 @@ const COMMENT = 'cm-math-comment';
 const WRONG = 'cm-math-wrong';
 
 // Persian and Arabic-Indic digits count as digits: the formula may be
-// written in either (src/math.ts maps them for KaTeX).
+// written in either (src/math.ts maps them for KaTeX). And a letter is any
+// letter, not A-Z: a formula written in Persian, or with Greek characters
+// typed straight in rather than spelled \alpha, was left uncoloured
+// entirely by a Latin-only test.
+//
+// Arabic-script letters are told apart from the rest because they are not
+// variables: renderMath wraps every Persian run in \text{…} before KaTeX
+// sees it (persianTextRuns, src/math.ts), so they are words in this formula
+// and they read as the words inside \text{…} do. The ranges are src/math.ts's
+// own LETTER.
 const DIGIT = /[0-9\u06f0-\u06f9\u0660-\u0669]/;
-const LATIN = /[A-Za-z]/;
+const WORD = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
+const LETTER = /\p{L}/u;
 const OPERATORS = new Set(['+', '-', '=', '<', '>', '*', '/', '|', "'", '~', ':',
   '\u00b1', '\u00d7', '\u00f7', '\u2260', '\u2264', '\u2265', '\u2192', '\u2190']);
 const PUNCTUATION = new Set(['{', '}', '[', ']', '(', ')', ',', ';', '.', '!', '?']);
@@ -147,6 +158,8 @@ function latexTokens(text: string): Token[] {
       continue;
     }
     if (ch === '\\') {
+      // A control sequence is Latin letters, whatever the formula is written
+      // in: that is TeX's rule, not a limitation of this reader.
       const name = /^[A-Za-z]+/.exec(text.slice(i + 1))?.[0] ?? '';
       if (!name) {
         // \\ ends a row; \, \; \! \{ \% are one escaped character.
@@ -182,9 +195,16 @@ function latexTokens(text: string): Token[] {
       i = j;
       continue;
     }
-    if (LATIN.test(ch)) {
+    if (WORD.test(ch)) {
       let j = i;
-      while (j < text.length && LATIN.test(text[j])) j += 1;
+      while (j < text.length && WORD.test(text[j])) j += 1;
+      push(i, j, STRING);
+      i = j;
+      continue;
+    }
+    if (LETTER.test(ch)) {
+      let j = i;
+      while (j < text.length && LETTER.test(text[j]) && !WORD.test(text[j])) j += 1;
       push(i, j, NAME);
       i = j;
       continue;
@@ -290,24 +310,49 @@ function build(view: EditorView): DecorationSet {
         continue;
       }
       const fault = verdict(text, span.delim > 1);
-      // Where the caret is inside THIS formula, if it is: the only thing
-      // that holds a complaint back, and only for the word it is in.
+      // Where the caret is inside THIS formula, if it is.
       let caret = -1;
       for (const range of state.selection.ranges) {
         if (range.head >= open && range.head <= close) caret = range.head - open;
       }
-      const writing = caret >= 0 && (fault === null || fault.from < 0 || fault.from >= writingFrom(text, caret));
-      const wrong = fault !== null && !(caret >= 0 && writing);
+      // The one complaint that waits — and it is NOT "the caret is in this
+      // formula". That was the rule, and it was backwards: it also held
+      // every complaint positioned after the caret, which is most of them
+      // (an unclosed brace is reported at the end of the formula), so the
+      // colour appeared only once the writer had left the line. It is this
+      // instead: a complaint that begins inside the backslash word the
+      // caret is in the middle of, because \a, \al, \alp are all undefined
+      // control sequences on the way to \alpha. Everything else is said as
+      // it is typed, caret inside or not.
+      const word = caret >= 0 ? writingFrom(text, caret) : -1;
+      const spelling = fault !== null && word >= 0 && word < caret
+        && fault.from >= word && fault.from <= caret;
+      const wrong = fault !== null && !spelling;
       out.push((wrong ? mathDelimWrong : mathDelim).range(span.from, open));
       if (wrong) out.push(errorMark(fault.message).range(open, close));
       out.push(mathText.range(open, close));
-      // The blamed range in the formula's own coordinates, clamped: KaTeX
-      // points past the end for "unexpected end of input", and there is
-      // nothing there to paint.
-      const blameFrom = wrong && fault !== null && fault.from >= 0 ? Math.min(fault.from, text.length) : -1;
-      const blameTo = blameFrom < 0 || fault === null ? -1 : Math.min(Math.max(fault.to, blameFrom), text.length);
+      // Where to point, in the formula's own coordinates. KaTeX gives a
+      // position and a length, and the length is zero for everything that
+      // ran out of input: a bare "\\frac" is reported at the end of the
+      // formula, a point with nothing under it — so the formula went red
+      // with nothing in it marked, which is no better than "something here
+      // is wrong". A zero-width complaint is pinned on the last token that
+      // starts before it, which for "\\frac" is \\frac itself.
+      const tokens = mathTokens(text);
+      let blameFrom = -1;
+      let blameTo = -1;
+      if (wrong && fault !== null && fault.from >= 0) {
+        blameFrom = Math.min(fault.from, text.length);
+        blameTo = Math.min(Math.max(fault.to, blameFrom), text.length);
+        if (blameTo <= blameFrom) {
+          let last: Token | null = null;
+          for (const token of tokens) if (token[0] < blameFrom && (!last || token[1] > last[1])) last = token;
+          blameFrom = last ? last[0] : -1;
+          blameTo = last ? last[1] : -1;
+        }
+      }
       let blamed = false;
-      for (const [tokenFrom, tokenTo, cls] of mathTokens(text)) {
+      for (const [tokenFrom, tokenTo, cls] of tokens) {
         const hit = blameFrom >= 0 && tokenFrom < blameTo && tokenTo > blameFrom;
         blamed = blamed || hit;
         out.push(tokenMark(hit ? WRONG : cls).range(open + tokenFrom, open + tokenTo));
@@ -336,7 +381,22 @@ const mathDecorations = ViewPlugin.fromClass(class {
   }
 }, { decorations: (value) => value.decorations });
 
-export const mathSource = [mathSpans, mathDecorations];
+// The reason, on a phone. KaTeX's complaint rides in a `title`, and a title
+// is a hover: on a touch screen it has never been readable at all. A tap on
+// a formula that is marked says it out loud, in the notice the app already
+// uses. A formula that is not marked has no title, so this is one `closest`
+// on a tap and nothing else — and the whole thing is these ten lines if it
+// turns out to be in the way.
+const tellWhy = EditorView.domEventHandlers({
+  mousedown(event: MouseEvent) {
+    const marked = (event.target as HTMLElement | null)?.closest?.('.cm-math-error');
+    const reason = marked?.getAttribute('title');
+    if (reason) showNotice(reason);
+    return false;
+  },
+});
+
+export const mathSource = [mathSpans, mathDecorations, tellWhy];
 
 export function closingMathDelimiter(state: EditorState, pos: number): number {
   return closingDelimiterEnd(state.field(mathSpans, false) ?? [], pos);

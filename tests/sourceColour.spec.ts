@@ -34,7 +34,11 @@ const NOTE = [
   '',
   'Words: $\\begin{cases} y \\end{cases} \\text{so}$ too.',
   '',
+  'Others: $\u0645\u062a\u0646 + \u03b1 + 2$ as well.',
+  '',
   'Typo: $\\fracc{1}{2}$ does not.',
+  '',
+  'Empty: $\\frac$ has no parts at all.',
   '',
 ].join('\n');
 
@@ -183,13 +187,30 @@ test('an environment is named, and the words inside \\text are words', async ({ 
   expect(words.colour).toBe(words.palette.string);
 });
 
+test('a formula is written in more than Latin, and is coloured in more than Latin', async ({ page }) => {
+  await boot(page);
+  // A Latin-only test for "is this a letter" left a Persian formula — and a
+  // Greek character typed straight in rather than spelled \\alpha — with no
+  // colour at all. Arabic-script runs are not variables: renderMath wraps
+  // them in \\text{…} before KaTeX sees them, so they are words in the
+  // formula and they are coloured as words.
+  const persian = await paint(page, '\u0645\u062a\u0646', 'Others:');
+  expect(persian.cls).toContain('cm-math-string');
+  expect(persian.colour).toBe(persian.palette.string);
+  const greek = await paint(page, '\u03b1', 'Others:');
+  expect(greek.cls).toContain('cm-math-name');
+  expect(greek.colour).toBe(greek.palette.property);
+  const digit = await paint(page, '2', 'Others:');
+  expect(digit.colour).toBe(digit.palette.value);
+});
+
 test('a formula KaTeX cannot read says so in colour, and says where', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
-  await expect(broken).toHaveCount(1);
-  await expect(broken).toHaveText('\\fracc{1}{2}');
-  await expect(broken).toHaveAttribute('title', /undefined control sequence/i);
-  const look = await broken.evaluate((element) => {
+  await expect(broken).toHaveCount(2);
+  const typo = broken.filter({ hasText: 'fracc' });
+  await expect(typo).toHaveAttribute('title', /undefined control sequence/i);
+  const look = await typo.evaluate((element) => {
     const probe = document.createElement('span');
     document.body.appendChild(probe);
     probe.style.color = 'var(--text-error)';
@@ -225,31 +246,53 @@ test('a formula KaTeX cannot read says so in colour, and says where', async ({ p
   expect(look.decoration).toBe('none');
 });
 
-test('the verdict is instant, except on the word being spelled out', async ({ page }) => {
+test('a complaint with no width still points at something', async ({ page }) => {
+  await boot(page);
+  // "\\frac" with no arguments is reported by KaTeX at the END of the
+  // formula, with a length of zero — a point with nothing under it. The
+  // formula went red with nothing in it marked, which says no more than
+  // "something here is wrong". It is pinned on the last token before the
+  // point instead, which here is \\frac itself.
+  const empty = page.locator('#app .cm-content .cm-math-error').filter({ hasText: 'frac' }).last();
+  await expect(empty).toHaveText('\\frac');
+  await expect(empty.locator('.cm-math-wrong')).toHaveText('\\frac');
+});
+
+test('the reason is readable without a mouse', async ({ page }) => {
+  await boot(page);
+  // `title` is a hover and a phone has no hover, so KaTeX's complaint was
+  // never readable on the device the app is for. A tap on a marked formula
+  // says it.
+  await page.locator('#app .cm-content .cm-math-error').filter({ hasText: 'fracc' }).click();
+  await expect(page.locator('.notice')).toHaveText(/undefined control sequence/i);
+});
+
+test('the verdict is instant, and does not wait for the caret to leave', async ({ page }) => {
   await boot(page);
   const broken = page.locator('#app .cm-content .cm-math-error');
-  await expect(broken).toHaveCount(1);
-  // Break the good one by typing in it. \\fracqq is an undefined control
-  // sequence the moment the second q lands — but the caret is still inside
-  // the word, and \\a, \\al, \\alp are all undefined on the way to \\alpha.
+  await expect(broken).toHaveCount(2);
+  // The caret inside a broken formula leaves it marked. The rule used to be
+  // "not while the caret is in here", which also swallowed every complaint
+  // positioned after the caret — an unclosed brace is reported at the end —
+  // so the colour only appeared once the writer had left the line.
+  await place(page, '\\fracc{1}', 8);
+  await page.waitForTimeout(250);
+  expect(await broken.count()).toBe(2);
+  // Break the good one by typing in it. \\fracqq is undefined the moment the
+  // second q lands, but the caret is still in the middle of the word, and
+  // \\a, \\al, \\alp are all undefined on the way to \\alpha.
   await place(page, '\\frac{1}', 5);
   await page.keyboard.type('qq');
-  await page.waitForTimeout(300);
-  expect(await broken.count()).toBe(1);
-  // The caret leaving the word is enough — no pause to wait through.
+  await page.waitForTimeout(250);
+  expect(await broken.count()).toBe(2);
+  // The word ending is enough — no pause to wait through.
   await page.keyboard.press('ArrowRight');
-  await expect(broken).toHaveCount(2, { timeout: 500 });
-  // And taking the typo out clears it just as fast.
-  await place(page, '\\fracqq{1}', 7);
-  await page.keyboard.press('Backspace');
-  await page.keyboard.press('Backspace');
-  await page.keyboard.press('ArrowRight');
-  await expect(broken).toHaveCount(1, { timeout: 500 });
+  await expect(broken).toHaveCount(3, { timeout: 500 });
 });
 
 test('fixing the typo clears the colour', async ({ page }) => {
   await boot(page);
-  await expect(page.locator('#app .cm-content .cm-math-error')).toHaveCount(1);
+  await expect(page.locator('#app .cm-content .cm-math-error')).toHaveCount(2);
   await page.evaluate(async () => {
     const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
     const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
@@ -257,5 +300,5 @@ test('fixing the typo clears the colour', async ({ page }) => {
     view.dispatch({ changes: { from: at, to: at + 1 } });
     view.dispatch({ selection: { anchor: 2 } });
   });
-  await expect(page.locator('#app .cm-content .cm-math-error')).toHaveCount(0);
+  await expect(page.locator('#app .cm-content .cm-math-error')).toHaveCount(1);
 });
