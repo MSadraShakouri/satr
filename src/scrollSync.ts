@@ -172,23 +172,16 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
     // reader higher up the page than the line before it.
     const tail = Math.max(end, (preview.lastElementChild ?? preview).getBoundingClientRect().bottom);
     const foot = Math.max(0, pane.scrollTop + tail - paneTop - pane.clientHeight);
-    // The whole note is on the screen. There is no reading place to restore —
-    // every line of it is already in front of the reader — and no move that
-    // could be right, so the pane is left exactly where it is rather than
-    // being sent to the top. A note shorter than the screen is how `foot`
-    // went negative, and a negative clamped to zero is the jump to the top
-    // that a short note with a table in it shows on every switch.
-    if (foot === 0) {
-      // Never downwards: there is nothing below the note to show. Upwards
-      // only if the line asked for is above the top edge, which is the one
-      // way a line can be off the screen in a note this short.
-      const keep = Math.min(pane.scrollTop, wanted);
-      if (keep !== pane.scrollTop) scrollInstantly(pane, keep);
-      placed = pane.scrollTop;
-      reached = true;
-      return;
-    }
-    scrollInstantly(pane, Math.min(wanted, foot));
+    // A note shorter than the screen has no foot to stop at: stopping there
+    // would be the top of the note for every line in it, which is the jump a
+    // reader sees as "it went back to the beginning". The place is kept
+    // instead, as far as the pane can honestly go, and the empty screen it
+    // leaves below a short note is the price of still being where you were.
+    // Still one limit for the whole note, decided by the note and not by the
+    // line asked for: two limits is how a line further down the page came to
+    // land higher up the screen than the line before it.
+    const limit = foot > 0 ? foot : pane.scrollHeight - pane.clientHeight;
+    scrollInstantly(pane, Math.min(wanted, limit));
     placed = pane.scrollTop; // what it could actually do, not what was asked
     // Not where it was asked to go: a note still arriving is short for a
     // moment, and when the rest of it lands the place is there to be had.
