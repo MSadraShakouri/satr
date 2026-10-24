@@ -209,7 +209,7 @@ test('the theorem note keeps each display line and wraps the sentences', async (
 test('break points carry their preference: line ends, commas, relations, word spaces, operators', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const { renderMath } = await window.__satr.load('/src/math.ts');
-    const breaks = (tex: string) => [...renderMath(tex, true).matchAll(/<span class="math-unit"(?: data-first)?(?: data-break="(\d)")?/g)]
+    const breaks = (tex: string) => [...renderMath(tex, true).matchAll(/<span class="math-unit"(?: data-first)?(?: data-break="(\d+)")?/g)]
       .map((m) => m[1] ?? 'first');
     return {
       lines: breaks('a = b\nc = d'),

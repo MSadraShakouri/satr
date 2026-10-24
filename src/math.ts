@@ -32,6 +32,10 @@
 import katex from 'katex';
 
 const LATIN = /[A-Za-z]/;
+// A digit in any of the three sets a note may be written in.
+const DIGIT = /[0-9\u0660-\u0669\u06F0-\u06F9]/;
+// A letter in any script — a variable the writer typed as α or с, not \alpha.
+const LETTERISH = /\p{L}/u;
 
 // The one space a formula still carries: the gap between two words lifted out
 // of a \text{…}, marked with this character while the formula is split and
@@ -167,16 +171,33 @@ const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 // all of those (BREAK_INSIDE is added to its break points' priority): a group
 // that fits is never broken, and a group too wide for the line can still
 // break inside itself at its own comma, relation, space or operator instead
-// of at whatever atom the browser would otherwise split it at. Braces, \left…
-// \right and environments never break: their halves must render together.
-interface Cut { prio: number; rel: string; op: string; comma: boolean; prefix: string }
-const newCut = (prio: number, fields: Partial<Cut> = {}): Cut => ({ prio, rel: '', op: '', comma: false, prefix: '', ...fields });
+// of at whatever atom the browser would otherwise split it at.
+//
+// A \left … \right group is a step behind that again, and it is the last
+// place a line is ever cut. Each piece has to be TeX that renders on its
+// own, so the halves of the delimiter cannot simply be parted: the line is
+// closed with \right. and the next one opened with \left. — TeX's own way of
+// writing half a delimited group, invisible on both sides. One pair per
+// delimiter still open, so a cut two deep closes and reopens twice. A vector
+// written as \left( x, y, z \right) is the shape this exists for: without it
+// the whole tuple is one atom, and a tuple that does not fit is handed to the
+// browser to break wherever it likes.
+//
+// Braces and environments never break: \frac{a}{b} has no halves, and the
+// alignment of \begin{align} is the writer's own layout.
+interface Cut { prio: number; rel: string; op: string; comma: string; prefix: string; close: string; open: string }
+const newCut = (prio: number, fields: Partial<Cut> = {}): Cut =>
+  ({ prio, rel: '', op: '', comma: '', prefix: '', close: '', open: '', ...fields });
 function mergeCuts(a: Cut, b: Cut): Cut {
   return newCut(Math.min(a.prio, b.prio), {
     rel: [a.rel, b.rel].filter(Boolean).join(' '),
     op: a.op || b.op,
-    comma: a.comma || b.comma,
+    comma: a.comma + b.comma, // "x,,y" is two commas, and stays two
     prefix: a.prefix || b.prefix,
+    // Both cuts are at the same place, so the delimiters open at that place
+    // are the same for both.
+    close: a.close || b.close,
+    open: a.open || b.open,
   });
 }
 function cutAfter(cut: Cut | null): string {
@@ -184,7 +205,7 @@ function cutAfter(cut: Cut | null): string {
   // The empty group keeps the sign binary: "a +" on its own would be set as
   // a sign in front of nothing, with the space around it gone.
   const tail = cut.rel ? ` ${cut.rel} {}` : cut.op ? ` ${cut.op} {}` : '';
-  return `${tail}${cut.comma ? ',' : ''}`;
+  return `${tail}${cut.comma}`;
 }
 function cutCont(cut: Cut | null): string {
   return cut?.rel ? `${cut.rel} ` : '';
@@ -237,6 +258,7 @@ function splitCuts(rawTex: string): Split | null {
     termStart = to;
   };
   const LAST = 5; // every top-level break point stays ahead of a break inside a group
+  let delims = 0; // \left … \right still open here
   // Is the sign at `at` between two operands, or in front of one? Only the
   // first is an operator a line may break after.
   const binary = (at: number): boolean => {
@@ -254,17 +276,26 @@ function splitCuts(rawTex: string): Split | null {
       }
       return true;
     }
-    // A digit, a closing bracket, a prime, a factorial: the end of an operand.
-    return /[0-9)\]}|!'’\u0660-\u0669\u06F0-\u06F9]/.test(before) || PERSIAN_LETTER.test(before);
+    // A sign that is a script of its own: R^+ \times R^- is a product.
+    if ((before === '+' || before === '-') && (tex[k - 1] === '^' || tex[k - 1] === '_')) return true;
+    // Any letter (α, с, س), a digit in any script, a closing bracket, a
+    // prime, a factorial: the end of an operand.
+    return LETTERISH.test(before) || DIGIT.test(before) || /[)\]}|!'’]/.test(before);
   };
   let depth = 0; // braces, \left…\right and environments: never a break inside
   let plain = 0; // plain ( ) [ ] (and \{ \}): a break inside is the last resort
   let i = 0;
   while (i < tex.length) {
     const c = tex[i];
-    // 0 = top level, 1 = inside a plain group (shifted by LAST), -1 = no break.
-    const level = depth > 0 ? -1 : plain > 0 ? 1 : 0;
-    const prio = (value: number): number => value + (level === 1 ? LAST : 0);
+    // 0 = top level, 1 = inside a plain group, 2 = inside \left … \right
+    // (each shifted a whole class of break points behind), -1 = no break.
+    const level = depth > 0 ? -1 : delims > 0 ? 2 : plain > 0 ? 1 : 0;
+    const prio = (value: number): number => value + level * LAST;
+    // A cut inside \left … \right closes every delimiter still open and the
+    // next line reopens them, so that both halves are TeX in their own right.
+    const parted = (): Partial<Cut> => (delims > 0
+      ? { close: '\\right.'.repeat(delims), open: '\\left.'.repeat(delims) }
+      : {});
     if (c === '\\') {
       if (!LATIN.test(tex[i + 1] ?? '')) {
         if (tex[i + 1] === '\\' && depth === 0) return null; // manual line breaks: leave alone
@@ -277,32 +308,40 @@ function splitCuts(rawTex: string): Split | null {
       let k = i + 1;
       while (LATIN.test(tex[k] ?? '')) k += 1;
       const name = tex.slice(i + 1, k);
-      if (name === 'left') { depth += 1; i = skipDelimiter(tex, k); continue; }
-      if (name === 'right') { depth -= 1; i = skipDelimiter(tex, k); continue; }
+      if (name === 'left') { delims += 1; i = skipDelimiter(tex, k); continue; }
+      if (name === 'right') { if (delims > 0) delims -= 1; i = skipDelimiter(tex, k); continue; }
       if (name === 'begin') { depth += 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
       if (name === 'end') { depth -= 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
       if (level >= 0 && name === 'not') {
         // \not= , \not\equiv ...
         let end = skipSpaces(tex, k);
         if (tex[end] === '\\') { end += 1; while (LATIN.test(tex[end] ?? '')) end += 1; } else end += 1;
-        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end), ...parted() }));
         i = end;
         continue;
       }
       if (level >= 0 && EXT_ARROWS.has(name)) {
         let end = skipGroup(tex, skipSpaces(tex, k), '[', ']');
         end = skipGroup(tex, skipSpaces(tex, end), '{', '}');
-        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end) }));
+        cut(i, end, newCut(prio(2), { rel: tex.slice(i, end), ...parted() }));
         i = end;
         continue;
       }
       if (level >= 0 && RELATIONS.has(name)) {
-        cut(i, k, newCut(prio(2), { rel: tex.slice(i, k) }));
+        cut(i, k, newCut(prio(2), { rel: tex.slice(i, k), ...parted() }));
+        i = k;
+        continue;
+      }
+      if (level >= 0 && (name === 'quad' || name === 'qquad')) {
+        // A written gap is the writer separating two things on one line —
+        // the best place to put the line end they did not have room for.
+        // It stays at the end of its line and is not repeated on the next.
+        cut(i, k, newCut(prio(3), { op: tex.slice(i, k), ...parted() }));
         i = k;
         continue;
       }
       if (level >= 0 && OPERATORS.has(name) && binary(i)) {
-        cut(i, k, newCut(prio(4), { op: tex.slice(i, k) }));
+        cut(i, k, newCut(prio(4), { op: tex.slice(i, k), ...parted() }));
         i = k;
         continue;
       }
@@ -317,7 +356,7 @@ function splitCuts(rawTex: string): Split | null {
     if (c === ']') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
     if (c === '&' && level >= 0) return null; // alignment: leave alone
     if (c === '\n' && level >= 0) {
-      cut(i, i + 1, newCut(prio(0))); // the writer's own line end, preferred
+      cut(i, i + 1, newCut(prio(0), parted())); // the writer's own line end, preferred
       i += 1;
       continue;
     }
@@ -325,27 +364,32 @@ function splitCuts(rawTex: string): Split | null {
       // Always a break: the only spaces left are the ones lifted out of a
       // \text{…}, and a Persian phrase is never lifted in the first place
       // (liftTextCommand — its words would be laid out left to right).
-      cut(i, i + 1, newCut(prio(3), { prefix: '\\ ' }));
+      cut(i, i + 1, newCut(prio(3), { prefix: '\\ ', ...parted() }));
       i += 1;
       continue;
     }
-    if (c === ',' && level >= 0) {
-      cut(i, i + 1, newCut(prio(1), { comma: true }));
+    if ((c === ',' || c === '\u060C') && level >= 0) {
+      // Between two digits a comma is a decimal mark or a thousands
+      // separator — half the world writes 1,5 for one and a half — and a
+      // number is never cut in two. (The Persian marks ٫ and ٬ are not
+      // commas at all and are not break points anywhere.)
+      if (DIGIT.test(tex[i - 1] ?? '') && DIGIT.test(tex[i + 1] ?? '')) { i += 1; continue; }
+      cut(i, i + 1, newCut(prio(1), { comma: c, ...parted() })); // written back as typed
       i += 1;
       continue;
     }
     if (level >= 0 && c === ':' && tex[i + 1] === '=') {
-      cut(i, i + 2, newCut(prio(2), { rel: ':=' }));
+      cut(i, i + 2, newCut(prio(2), { rel: ':=', ...parted() }));
       i += 2;
       continue;
     }
     if (level >= 0 && (c === '=' || c === '<' || c === '>')) {
-      cut(i, i + 1, newCut(prio(2), { rel: c }));
+      cut(i, i + 1, newCut(prio(2), { rel: c, ...parted() }));
       i += 1;
       continue;
     }
     if (level >= 0 && (c === '+' || c === '-') && binary(i)) {
-      cut(i, i + 1, newCut(prio(4), { op: c }));
+      cut(i, i + 1, newCut(prio(4), { op: c, ...parted() }));
       i += 1;
       continue;
     }
@@ -355,7 +399,7 @@ function splitCuts(rawTex: string): Split | null {
   if (!last.trim() && cuts.length) {
     // Trailing break point ("a = b ="): glue it back onto the last term.
     const trailing = cuts.pop()!;
-    const glued = (trailing.rel ? ` ${trailing.rel}` : trailing.op ? ` ${trailing.op}` : '') + (trailing.comma ? ',' : '');
+    const glued = (trailing.rel ? ` ${trailing.rel}` : trailing.op ? ` ${trailing.op}` : '') + trailing.comma;
     terms[terms.length - 1] += glued;
     return terms.length > 1 ? { terms, cuts } : null;
   }
@@ -534,9 +578,12 @@ export function renderMath(raw: string, display: boolean): string {
   const styleMatch = STYLE_PREFIX.exec(tex);
   const style = (display ? '\\displaystyle ' : '') + (styleMatch ? styleMatch[0] : '');
   const body = styleMatch ? marked.slice(styleMatch[0].length) : marked;
-  // Manual line breaks and alignment are the writer's own layout: left alone.
-  const manual = /\\\\|&/.test(body);
-  const split = manual ? null : splitCuts(body);
+  // Manual line breaks and alignment are the writer's own layout, and
+  // splitCuts leaves such a formula alone — but only when the \\ or the & is
+  // the formula's own. One inside \begin{vmatrix} … \end{vmatrix} belongs to
+  // that matrix, and used to freeze the whole line around it: "\det A =
+  // \begin{vmatrix}…\end{vmatrix} = 12" could not break at either = sign.
+  const split = splitCuts(body);
   if (!split) {
     if (display) return `<div class="math-display">${render(tex, true)}</div>`;
     return `<span class="math-flow"><span class="math-unit">${render(tex)}</span></span>`;
@@ -557,12 +604,17 @@ export function renderMath(raw: string, display: boolean): string {
   // looks at the start of a line. data-break is the cut before the unit,
   // in the order layoutMath() should prefer to break at.
   const units = pieces.map((piece, index) => {
-    const after = cutAfter(piece.after);
-    const plain = render(`${style}${piece.before?.prefix ?? ''}${piece.tex}${after}`);
+    // A piece reopens what the cut before it closed, and closes what the cut
+    // after it will reopen: \left. … \right. is a whole formula to KaTeX.
+    const after = `${cutAfter(piece.after)}${piece.after?.close ?? ''}`;
+    const reopen = piece.before?.open ?? '';
+    const plain = render(`${style}${reopen}${piece.before?.prefix ?? ''}${piece.tex}${after}`);
     if (index === 0) return `<span class="math-unit" data-first><span class="math-plain">${plain}</span></span>`;
     const lead = cutCont(piece.before);
     // An operator break repeats nothing, so both forms are the same TeX.
-    const cont = lead || piece.before?.prefix ? render(`${style}${lead}${piece.tex}${after}`) : plain;
+    const cont = lead || piece.before?.prefix
+      ? render(`${style}${reopen}${lead}${piece.tex}${after}`)
+      : plain;
     return `<span class="math-unit" data-break="${piece.before!.prio}"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
   });
   const flow = `<span class="math-flow${display ? ' is-display' : ''}" data-units="${units.length}">${units.join('<wbr>')}</span>`;
