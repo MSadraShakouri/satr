@@ -953,48 +953,87 @@ window.addEventListener('satr:font-scale-change', () => {
 // Nothing hides while the keyboard is up.
 const LINE_PX = 16 * 1.5;
 const NAV_THRESHOLD = 0.125 * LINE_PX;
-// One move per beat. A bar's own hide/show animation runs for about this
-// long, and a second request inside that beat restarts it mid-flight: the bar
+// One move per slide. A bar's own hide/show animation runs for about a third
+// of a second, and a second request inside it restarts it mid-flight: the bar
 // slides in, is told to go again, and what the reader sees is a flash. The two
 // ways that happened — a finger's jitter over the 3px threshold, and the
 // bounce that comes straight back to the top of the note — are both a
-// reversal, so a beat of quiet after the bars move covers them.
+// reversal, so nothing moves the bars again until the slide they are in has
+// finished.
 //
-// The beat has to outlast the animation it is protecting, and it did not.
-// `.topbar` and `.mobile-navbar` in src/style.css both animate `transform`
-// over 300ms (opacity over 200, which is where this number came from). A
-// reversal arriving between 200 and 300ms therefore found navSettling()
-// false and restarted the transform half way through its slide — the flash,
-// with nothing in the gesture rules able to see it, because by then the
-// question is not whether the reader turned around but whether the bar has
-// finished moving. 340 is the 300ms transform plus a frame or two. Raise
-// either of those transitions and this has to go up with them; the honest
-// version of this number is a `transitionend` listener on the two elements,
-// which is the next step if a slow phone still shows it.
-const NAV_SETTLE_MS = 340;
+// This was a number: 340ms, the 300ms `transform` on `.topbar` and
+// `.mobile-navbar` in src/style.css plus a frame, with a comment admitting
+// that raising either transition meant raising it too and that the honest
+// version was a `transitionend` listener. This is that listener: the bars
+// say when they have stopped moving, so the stylesheet and this file cannot
+// drift apart again. The timer left is a backstop for the cases where no
+// transitionend will ever come — a bar that is display:none while the
+// keyboard is up, or a phone set to reduce motion, where the transition is
+// zero and there is nothing to protect — and even that is measured from the
+// elements' own computed duration rather than copied here by hand.
+const navBars = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.topbar, .mobile-navbar')];
+function navSlideMs(): number {
+  let longest = 0;
+  for (const bar of navBars()) {
+    for (const piece of getComputedStyle(bar).transitionDuration.split(',')) {
+      longest = Math.max(longest, (parseFloat(piece) || 0) * 1000);
+    }
+  }
+  return longest;
+}
 // A move that turns the bars around has to be a real one: a thumb resting on
 // the glass wobbles more than the 3px anchor threshold, and a wobble must not
 // count — the bars would come back and go away again, which IS the flash.
-// One body line (LINE_PX) is a move the reader made: a resting thumb does not
-// travel that far, Android's own fling cutoffs and Chrome's toolbar threshold
-// sit in the same 20-30px band, and any scroll meant by the reader crosses it
-// inside one gesture. It was four times the anchor threshold — 12px — which
-// is still inside wobble range. The cost is that a deliberate 20px nudge
-// upward no longer brings the bars back; if that is the wrong trade, the
-// hide and the show can take different distances (32 down, 24 up) rather
-// than this one.
-// This bar is applied to every reversal now, not only to one the beat held
-// back: a wobble that lands after the beat used to skip it (onNavScroll).
-const NAV_HELD = LINE_PX;
+// A resting thumb does not travel a body line (LINE_PX); Android's own fling
+// cutoffs and Chrome's toolbar threshold sit in the same 20-30px band.
+//
+// But the two directions are not the same stake, and one distance for both
+// was the wrong trade. Taking the bars away is the move the reader cannot
+// undo without another gesture, so it asks for a generous one: 32px, a third
+// more than a body line. Bringing them back costs nothing — one scroll down
+// puts them away again — so it asks for 16, two thirds of a line and still
+// three times the 4-6px a thumb wobbles while it rests. In between is where
+// "a deliberate 20px nudge upward no longer brings the bars back" lived.
+// This is applied to every reversal, not only to one a slide held back: a
+// wobble that lands after the slide used to skip it (onNavScroll).
+const NAV_HELD_AWAY = 32;
+const NAV_HELD_BACK = 16;
+const navHeld = (hide: boolean): number => (hide ? NAV_HELD_AWAY : NAV_HELD_BACK);
 let navHidden = false;
-let navMovedAt = -Infinity;
 let navPending: { el: HTMLElement; hide: boolean; at: number } | null = null;
-let navTimer = 0;
-const navSettling = (): boolean => performance.now() - navMovedAt < NAV_SETTLE_MS;
+let navSliding = false;
+let navSlideAt = 0;
+let navSlideTimer = 0;
+const navSettling = (): boolean => navSliding;
+/** The bars have been told to move. */
+function navMoving(): void {
+  navSliding = true;
+  navSlideAt = performance.now();
+  window.clearTimeout(navSlideTimer);
+  navSlideTimer = window.setTimeout(navStopped, navSlideMs() + 60);
+}
+/** ...and they have stopped. Anything the slide held back goes now. */
+function navStopped(): void {
+  window.clearTimeout(navSlideTimer);
+  if (!navSliding) return;
+  navSliding = false;
+  if (navPending) flushNavigation();
+}
+for (const bar of navBars()) {
+  bar.addEventListener('transitionend', (event: TransitionEvent) => {
+    if (event.target !== bar || event.propertyName !== 'transform') return;
+    // The two bars slide together, so the second one's transitionend lands a
+    // moment after the first — by which time the first may already have let a
+    // held move start the next slide. An event from the slide before cannot
+    // be allowed to end the one that has just begun.
+    if (performance.now() - navSlideAt < 16) return;
+    navStopped();
+  });
+}
 function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
-  navMovedAt = performance.now();
+  navMoving();
   trace(`BARS AWAY   hand:${hand()}`);
   document.body.classList.add('is-hidden-nav');
   void systemBars()?.hide().catch(() => undefined);
@@ -1002,28 +1041,26 @@ function hideNavigation(): void {
 function restoreNavigation(): void {
   if (!navHidden) return;
   navHidden = false;
-  navMovedAt = performance.now();
+  navMoving();
   trace(`BARS BACK   hand:${hand()}`);
   document.body.classList.remove('is-hidden-nav');
   void systemBars()?.show().catch(() => undefined);
 }
-/** The move a beat held back, remembered; applied when the beat is over if
- *  the note is still on the side it asked for. */
+/** The move a slide held back, remembered; applied when the slide is over if
+ *  the note is still on the side it asked for (navStopped). */
 function holdNavigation(el: HTMLElement, hide: boolean): void {
   // Where the bars last moved — the anchor, not the scroll position now.
-  // onNavScroll has ALREADY charged this gesture NAV_HELD before asking, so
-  // marking the note where it has got to charges it twice: with the gate at
-  // one body line, a 40px scroll up spent 24 getting here and had 16 left,
-  // flushNavigation read 16 < 24 and refused, and the bars stayed away for
-  // a gesture the reader certainly made. The anchor is left where the bars
+  // onNavScroll has ALREADY charged this gesture the gate before asking, so
+  // marking the note where it has got to charges it twice: with the gate for
+  // coming back at 16, a 30px scroll up spent 16 getting here and had 14
+  // left, flushNavigation read 14 < 16 and refused, and the bars stayed away
+  // for a gesture the reader certainly made. The anchor is left where the bars
   // moved for exactly this reason, so the distance that counts is the whole
   // of the reader's travel since then. Later events in the same direction
   // must not move the mark either.
   if (!navPending || navPending.el !== el || navPending.hide !== hide) {
     navPending = { el, hide, at: scrollAnchors.get(el) ?? el.scrollTop };
   }
-  window.clearTimeout(navTimer);
-  navTimer = window.setTimeout(flushNavigation, Math.max(0, NAV_SETTLE_MS - (performance.now() - navMovedAt)) + 16);
 }
 function flushNavigation(): void {
   const pending = navPending;
@@ -1040,8 +1077,8 @@ function flushNavigation(): void {
   // is then taken at 0, the distance reads as zero, and the bars would stay
   // away for good.
   const backToTop = !pending.hide && top <= 0;
-  if (pending.hide ? -moved < NAV_HELD : (moved < NAV_HELD && !backToTop)) return;
-  // The hand may have changed its mind during the beat; the top of the note
+  if (pending.hide ? -moved < NAV_HELD_AWAY : (moved < NAV_HELD_BACK && !backToTop)) return;
+  // The hand may have changed its mind during the slide; the top of the note
   // is the reader's own doing whatever the hand is up to.
   if (!backToTop && !readerWent(pending.hide)) { trace(`refused held ${pending.hide ? 'away' : 'back'} hand:${hand()}`); return; }
   scrollAnchors.set(pending.el, top);
@@ -1156,7 +1193,7 @@ function onNavScroll(el: HTMLElement): void {
   if (document.body.classList.contains('keyboard-open') || keyboardOverlap() > 120) { scrollAnchors.set(el, top); return; }
   if (top <= 0) {
     // The top of the note always has the bars — but not while they are still
-    // moving: a bounce that comes straight back is the same gesture as the
+    // sliding: a bounce that comes straight back is the same gesture as the
     // scroll that took them away, not a second one.
     scrollAnchors.set(el, 0);
     if (navSettling()) holdNavigation(el, false);
@@ -1176,10 +1213,10 @@ function onNavScroll(el: HTMLElement): void {
   // doing. The small threshold above is right for setting the anchor, but it
   // is the wrong bar for turning the bars around: a 4-6px wobble of a thumb
   // resting on the glass clears it, and the old rule only caught that wobble
-  // when it happened to land INSIDE the beat (holdNavigation → flushNavigation
-  // re-checks NAV_HELD). One that landed after the beat walked straight into
+  // when it happened to land INSIDE the slide (holdNavigation → flushNavigation
+  // re-checks the gate). One that landed after it walked straight into
   // restoreNavigation() — a flash with no gesture behind it.
-  if (Math.abs(delta) < NAV_HELD) return;
+  if (Math.abs(delta) < navHeld(hide)) return;
   // ...and it has to be the reader's own. The anchor keeps up either way, so
   // a correction the editor made is not counted again later as distance the
   // reader has travelled.
@@ -1195,8 +1232,8 @@ function onNavScroll(el: HTMLElement): void {
 }
 // mousedown, not pointerdown: on touch screens it only fires for taps, not
 // for the start of a scroll (same event Obsidian listens to). A tap is a
-// deliberate gesture, so it restores the bars at once — the beat is for the
-// scroll that is still in progress, not for a finger that has stopped.
+// deliberate gesture, so it restores the bars at once — the slide rule is for
+// the scroll that is still in progress, not for a finger that has stopped.
 window.addEventListener('mousedown', restoreNavigation);
 // For a moment after a note or the editing view is shown, its place is held:
 // a scroll nobody asked for (the caret being pulled into view while the

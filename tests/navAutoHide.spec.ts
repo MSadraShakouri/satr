@@ -10,10 +10,11 @@
 // the bars, unconditionally, in the old code).
 //
 // What is pinned here is the page's half of the rule: after the bars move,
-// nothing moves them again for a beat (NAV_SETTLE_MS in src/main.ts) — and a
-// move held back by that beat is not lost, it is made as soon as the beat is
-// over if the note is still where it asked for it (a flick that stops, a
-// bounce to the top). The Android half is in SystemBarsPlugin.java: never ask
+// nothing moves them again until they have stopped moving — the bars say so
+// themselves now, with transitionend, rather than the app holding a copy of
+// the stylesheet's duration (src/main.ts) — and a move held back that way is
+// not lost, it is made as soon as the slide is over if the note is still
+// where it asked for it (a flick that stops, a bounce to the top). The Android half is in SystemBarsPlugin.java: never ask
 // a bar that is already showing to show, because the asking is what restarts
 // the animation.
 //
@@ -32,7 +33,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const NOTE = 'a line of prose to scroll through\n'.repeat(200);
-const SETTLE = 340; // NAV_SETTLE_MS in src/main.ts
+// `transform 0.3s` on .topbar and .mobile-navbar (src/style.css). The app
+// does not hold this number any more; it reads it off the elements. The
+// tests still need to know how long to wait.
+const SLIDE = 300;
 
 declare global {
   interface Window {
@@ -67,12 +71,12 @@ const moves = (page: Page): Promise<{ at: number; hidden: boolean }[]> => page.e
 const hidden = (page: Page): Promise<boolean> => page.evaluate(() => window.navHiddenNow());
 const clearMoves = (page: Page): Promise<void> => page.evaluate(() => { window.navMoves = []; });
 
-/** No two moves closer together than the beat: that is the whole rule, and a
- *  pair inside one beat is what the reader sees as a flash. */
+/** No two moves closer together than one slide: that is the whole rule, and
+ *  a pair inside one slide is what the reader sees as a flash. */
 async function expectOneMovePerBeat(page: Page) {
   const all = await moves(page);
   for (let i = 1; i < all.length; i += 1) {
-    expect(all[i].at - all[i - 1].at, `moves ${JSON.stringify(all)}`).toBeGreaterThanOrEqual(SETTLE - 40);
+    expect(all[i].at - all[i - 1].at, `moves ${JSON.stringify(all)}`).toBeGreaterThanOrEqual(SLIDE - 40);
   }
 }
 
@@ -94,6 +98,28 @@ async function scrollBy(page: Page, by: number, ms = 50) {
       tick();
     });
   }, { by, ms });
+}
+
+/** Down, then straight back up, with no trip out to the test runner in
+ *  between: the whole point is what happens inside one slide. */
+async function scrollDownThenUp(page: Page, down: number, up: number, ms = 30) {
+  await page.evaluate(async ({ down, up, ms }) => {
+    const scroller = document.querySelector<HTMLElement>('.cm-scroller')!;
+    const ramp = (by: number): Promise<void> => new Promise<void>((resolve) => {
+      const start = scroller.scrollTop;
+      const t0 = performance.now();
+      const tick = (): void => {
+        const done = performance.now() - t0;
+        scroller.scrollTop = start + by * Math.min(1, done / ms);
+        scroller.dispatchEvent(new Event('scroll'));
+        if (done < ms) requestAnimationFrame(tick);
+        else resolve();
+      };
+      tick();
+    });
+    await ramp(down);
+    await ramp(up);
+  }, { down, up, ms });
 }
 
 test('scrolling down takes the bars away, and scrolling up brings them back', async ({ page }) => {
@@ -119,7 +145,7 @@ test('a wobble inside the beat does not move the bars — that is the flash', as
   await scrollBy(page, 10, 30);
   expect(await moves(page)).toEqual([]); // nothing moved, so nothing flashed
   // And it stays that way: the wobble is not where the note ended up.
-  await page.waitForTimeout(SETTLE + 150);
+  await page.waitForTimeout(SLIDE + 150);
   expect(await hidden(page)).toBe(true);
   expect(await moves(page)).toEqual([]);
 });
@@ -132,8 +158,8 @@ test('a wobble that lands AFTER the beat does not flash either', async ({ page }
   // rule able to see it, because the question there is not which way the
   // reader went but whether the bar has finished moving. And the gate it
   // then had to clear was 12px, which a thumb resting on the glass wobbles
-  // through. Both: the beat outlasts the animation now, and a reversal
-  // takes a body line.
+  // through. Both: the slide itself is the beat now, and taking the bars
+  // away takes 32px.
   await scrollBy(page, 200);
   await expect.poll(() => hidden(page)).toBe(true);
   // Reading, not flicking: 40px up brings them back.
@@ -144,7 +170,7 @@ test('a wobble that lands AFTER the beat does not flash either', async ({ page }
   await page.waitForTimeout(220);
   await clearMoves(page);
   await scrollBy(page, 14);
-  await page.waitForTimeout(SETTLE + 200); // let anything held flush
+  await page.waitForTimeout(SLIDE + 200); // let anything held flush
   expect((await moves(page)).filter((move) => move.hidden)).toEqual([]);
   expect(await hidden(page)).toBe(false);
 });
@@ -157,7 +183,7 @@ test('a flick up that stops inside the beat still brings the bars back', async (
   // One flick up, and the finger stops: no further scroll event will come, so
   // the move the beat held back has to ask again by itself.
   await scrollBy(page, -60, 30);
-  await expect.poll(() => hidden(page), { timeout: SETTLE + 600 }).toBe(false);
+  await expect.poll(() => hidden(page), { timeout: SLIDE + 600 }).toBe(false);
 });
 
 test('a bounce back to the top is one gesture, not two — and the bars come back', async ({ page }) => {
@@ -171,7 +197,39 @@ test('a bounce back to the top is one gesture, not two — and the bars come bac
   await scrollBy(page, -40, 30);
   expect((await moves(page)).filter((m) => !m.hidden)).toEqual([]);
   // A beat later the bars are back on their own.
-  await expect.poll(() => hidden(page), { timeout: SETTLE + 600 }).toBe(false);
+  await expect.poll(() => hidden(page), { timeout: SLIDE + 600 }).toBe(false);
+});
+
+test('a small nudge up is still a reader: 20px brings them back', async ({ page }) => {
+  await boot(page);
+  await scrollBy(page, 200);
+  await expect.poll(() => hidden(page)).toBe(true);
+  await page.waitForTimeout(SLIDE + 120); // nothing held back; this is a new gesture
+  // One gate for both directions was 24px, and this nudge — a deliberate one,
+  // the way a reader asks for the bars without losing their place — fell
+  // under it. Taking them away is the expensive move and still takes 32;
+  // bringing them back takes 16.
+  await clearMoves(page);
+  await scrollBy(page, -20);
+  await expect.poll(() => hidden(page)).toBe(false);
+});
+
+test('the beat is the animation, not a number: a quicker slide frees them sooner', async ({ page }) => {
+  await boot(page);
+  // The app reads the duration off the bars themselves, so make them slide in
+  // a fifth of the time: a move held back by the slide must then land a fifth
+  // of the time later. Under the number this replaced it was 340ms whatever
+  // the stylesheet said, and this gesture is the one that proves it — the
+  // reversal arrives while the bars are still sliding away, so it IS held.
+  await page.addStyleTag({ content: '.topbar, .mobile-navbar { transition-duration: 60ms !important; }' });
+  await clearMoves(page);
+  await scrollDownThenUp(page, 200, -60);
+  await expect.poll(() => hidden(page), { timeout: 2000 }).toBe(false);
+  const [away, back] = await moves(page);
+  expect([away.hidden, back.hidden]).toEqual([true, false]);
+  // 60ms of slide plus a frame or two. The old fixed beat could not be under
+  // 340 by construction.
+  expect(back.at - away.at, `moves ${JSON.stringify(await moves(page))}`).toBeLessThan(200);
 });
 
 test('a tap brings the bars back at once, beat or no beat', async ({ page }) => {
@@ -188,7 +246,7 @@ test('a note kept down does not flash: the bars move once per gesture', async ({
   // Scroll down, wobble, keep down, wobble: the way a thumb actually moves.
   for (const by of [120, -6, 90, -4, 90, -5, 60]) await scrollBy(page, by, 30);
   await expect.poll(() => hidden(page)).toBe(true);
-  await page.waitForTimeout(SETTLE + 150);
+  await page.waitForTimeout(SLIDE + 150);
   expect((await moves(page)).map((m) => m.hidden)).toEqual([true]);
   await expectOneMovePerBeat(page);
 });
@@ -240,17 +298,17 @@ test.describe('the hand behind the scroll', () => {
     await boot(page);
     await swipe(page, 400);
     await expect.poll(() => hidden(page)).toBe(true);
-    await page.waitForTimeout(SETTLE + 60);
+    await page.waitForTimeout(SLIDE + 60);
     await swipe(page, -400);
     await expect.poll(() => hidden(page)).toBe(false);
     clearMoves(page);
     // Ten times the threshold, and twice over, with the beat well past: the
     // old rule took the bars away on the first one.
-    await page.waitForTimeout(SETTLE + 60);
+    await page.waitForTimeout(SLIDE + 60);
     await correction(page, 130);
     await page.waitForTimeout(80);
     await correction(page, 130);
-    await page.waitForTimeout(SETTLE + 120);
+    await page.waitForTimeout(SLIDE + 120);
     expect(await hidden(page)).toBe(false);
     expect(await moves(page)).toEqual([]);
   });
@@ -259,7 +317,7 @@ test.describe('the hand behind the scroll', () => {
     await boot(page);
     await swipe(page, 400);
     await expect.poll(() => hidden(page)).toBe(true);
-    await page.waitForTimeout(SETTLE + 60);
+    await page.waitForTimeout(SLIDE + 60);
     // Slowly up, the way a thumb does it: a few pixels at a time, never
     // quite straight, with the editor correcting a height now and then.
     await page.evaluate(async () => {
@@ -285,7 +343,7 @@ test.describe('the hand behind the scroll', () => {
       }
       touch('touchend');
     });
-    await page.waitForTimeout(SETTLE + 120);
+    await page.waitForTimeout(SLIDE + 120);
     expect(await hidden(page)).toBe(false);
     // One move for the whole drag: they came back, and they stayed.
     expect((await moves(page)).map((m) => m.hidden)).toEqual([true, false]);
@@ -295,10 +353,10 @@ test.describe('the hand behind the scroll', () => {
     await boot(page);
     await swipe(page, 400);
     await expect.poll(() => hidden(page)).toBe(true);
-    await page.waitForTimeout(SETTLE + 60);
+    await page.waitForTimeout(SLIDE + 60);
     await swipe(page, -400);
     await expect.poll(() => hidden(page)).toBe(false);
-    await page.waitForTimeout(SETTLE + 60);
+    await page.waitForTimeout(SLIDE + 60);
     await correction(page, 130); // ignored, as above
     await swipe(page, 400);
     await expect.poll(() => hidden(page)).toBe(true);
