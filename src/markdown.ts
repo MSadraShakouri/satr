@@ -445,6 +445,66 @@ export function renderMarkdown(source: string): string {
     const match = new RegExp(`^[ \\t]*(${MARKER})([.)])[ \\t]+`).exec(sourceLines[line] ?? '');
     return match ? { token: match[1], delimiter: match[2] } : null;
   };
+  // Two lists that follow one another are two lists, not one. The parser cannot
+  // see that: every marker was written over in Latin digits above for its sake,
+  // so `۱.` under `1.`, or `الف.` under `۲.`, or `1.` under `b.`, all read to it
+  // as more of the same list. The markers themselves came back right — they are
+  // read off the source line here — so what the reader got was one list wearing
+  // two alphabets, with no gap between the halves, one direction over both and
+  // one marker strip sized for the widest marker in either. The alphabet each
+  // item was really written in is known at this point, so a list is cut wherever
+  // it changes, exactly as the parser already cuts one where `1.` turns into
+  // `1)`. A list written in one alphabet is untouched, and so is an item that
+  // carries no marker of its own: it stays with the run it was in.
+  const kindOf = (line: number): string | null => {
+    const mark = markerOn(line);
+    const parsed = mark ? parseMarker(mark.token) : null;
+    if (!mark || !parsed) return null;
+    // The two Persian orders are one kind: a `ب` is the second letter of both,
+    // so no single marker can say which order it is in — orderOf settles that
+    // per list, from all the letters the list holds. Upper and lower case are
+    // two kinds; `a.` and `A.` are not the same list.
+    const letters = parsed.alphabet === 'abjad' || parsed.alphabet === 'abpats';
+    return `${letters ? 'persian-letters' : parsed.alphabet}${mark.delimiter}`;
+  };
+  // A list that was cut keeps the shape it was written in: halves that were
+  // written one line under the next are tight again, rather than keeping the
+  // paragraph spacing the blank line between the two lists put on every item.
+  const tighten = (items: HTMLElement[]): void => {
+    // Asked of the source lines themselves, not of the room an item takes up:
+    // the last item of a half spans the blank line that ended it, so measuring
+    // the gap between two items would call every cut list loose.
+    const loose = items.some((item, index) => index > 0 && sourceLines
+      .slice(Number(items[index - 1].dataset.line), Number(item.dataset.line)).some((line) => !line.trim()));
+    const wrapped = items.every((item) => item.children.length === 1 && item.firstElementChild?.tagName === 'P');
+    if (loose || !wrapped) return;
+    for (const item of items) item.firstElementChild?.replaceWith(...item.firstElementChild.childNodes);
+  };
+  document.querySelectorAll('ol').forEach((list) => {
+    const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
+    if (items.length < 2) return;
+    const runs: HTMLElement[][] = [[]];
+    let kind: string | null = null;
+    for (const item of items) {
+      const own = kindOf(Number(item.dataset.line));
+      if (own && kind && own !== kind) runs.push([]);
+      if (own) kind = own;
+      runs[runs.length - 1].push(item);
+    }
+    if (runs.length < 2) return;
+    let previous: Element = list;
+    for (const run of runs.slice(1)) {
+      // The attributes only: the items are moved over, and the new list counts
+      // from the number its own first marker says.
+      const next = list.cloneNode(false) as HTMLElement;
+      const number = parseMarker(markerOn(Number(run[0].dataset.line))?.token ?? '')?.number;
+      if (number) next.setAttribute('start', String(number));
+      next.append(...run);
+      previous.after(next);
+      previous = next;
+    }
+    for (const run of runs) tighten(run);
+  });
   document.querySelectorAll('ol').forEach((list) => {
     const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
     const marks = items.map((item) => markerOn(Number(item.dataset.line)));
