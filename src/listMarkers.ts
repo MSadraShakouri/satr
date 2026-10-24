@@ -32,8 +32,10 @@ export const isMarkerToken = (token: string): boolean => parseMarker(token) !== 
 
 /** An English letter written as a marker at the head of a line: `a.` or `a)`.
  *  A letter is only a list marker where it reads as one — see lineIsLettered. */
+/*  The quote marks count as indent: `> a.` and `> b.` are a list of their own,
+ *  and neither is a sibling of an `a.` written outside the quote. */
 export function latinItem(line: string): { indent: number; letter: string } | null {
-  const match = new RegExp(`^([ \\t]*)([${LOWER}${UPPER}])[.)][ \\t]+`).exec(line);
+  const match = new RegExp(`^([ \\t]*(?:>[ \\t]*)*)([${LOWER}${UPPER}])[.)][ \\t]+`).exec(line);
   return match ? { indent: match[1].length, letter: match[2] } : null;
 }
 

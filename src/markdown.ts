@@ -305,7 +305,12 @@ export function renderMarkdown(source: string): string {
   // sets never look like prose, and are always read as markers.)
   const listLines = markPageBreaks(withMathPlaceholders).split('\n');
   const lettered = listLines.map((_line, index) => lineIsLettered((at) => listLines[at], index));
-  const grow = new RegExp(`^([ \\t]*)(${MARKER})([.)])[ \\t]+`);
+  // The quote marks travel with the indent, both here and in markerOn below:
+  // a marker is at the start of what it marks, and inside a blockquote that is
+  // after the `>`. Without this a quoted `۱.` was never rewritten for the
+  // parser, so it came out as a line of prose rather than a list — English
+  // markers worked only because the parser can read those itself.
+  const grow = new RegExp(`^([ \\t]*(?:>[ \\t]*)*)(${MARKER})([.)])[ \\t]+`);
   const normalizedLists = listLines.map((line, index) => line.replace(grow, (whole, indent: string, marker: string, punctuation: string) => {
     if (latinItem(line) && !lettered[index]) return whole;
     const parsed = parseMarker(marker);
@@ -411,9 +416,29 @@ export function renderMarkdown(source: string): string {
       });
       return true;
     };
+    // A quote holds blocks of its own, and a list inside one is a list of the
+    // note: its items each need the line their marker was written on, or the
+    // marker cannot be read back off the source and the list is drawn in the
+    // browser's own digits. The quote keeps its own tag as well — it is still
+    // one block as far as the scroll is concerned, and these sit inside it.
+    const walkQuote = (token: Token, quote: Element, start: number): void => {
+      const parts = ((token as Token & { tokens?: Token[] }).tokens ?? []).filter((one) => one.type !== 'space');
+      const kids = [...quote.children];
+      if (parts.length !== kids.length) return; // shapes disagree: leave it alone
+      let line = start;
+      parts.forEach((part, index) => {
+        const kid = kids[index];
+        const next = line + newlines(part.raw ?? '');
+        if (part.type === 'list' && (kid.tagName === 'OL' || kid.tagName === 'UL')) tagList(part as ListToken, kid, line, next);
+        else if (part.type === 'blockquote' && kid.tagName === 'BLOCKQUOTE') walkQuote(part, kid, line);
+        line = next;
+      });
+    };
     const list = section.token.type === 'list' ? element.querySelector(':scope > ul, :scope > ol') : null;
     if (!list || !tagList(section.token as ListToken, list, section.start, section.end)) {
       tag(element, section.start, section.end);
+      const quote = section.token.type === 'blockquote' ? element.querySelector(':scope > blockquote') : null;
+      if (quote) walkQuote(section.token, quote, section.start);
     }
     // A first height for the reading view before it has been laid out, in
     // source lines of its own — not in what was tagged onto it. A list tags
@@ -442,7 +467,7 @@ export function renderMarkdown(source: string): string {
   // The marker a line was written with, and the punctuation after it: `۱.`
   // and `۱)` are two different markers to the reader, so both halves travel.
   const markerOn = (line: number): { token: string; delimiter: string } | null => {
-    const match = new RegExp(`^[ \\t]*(${MARKER})([.)])[ \\t]+`).exec(sourceLines[line] ?? '');
+    const match = new RegExp(`^[ \\t]*(?:>[ \\t]*)*(${MARKER})([.)])[ \\t]+`).exec(sourceLines[line] ?? '');
     return match ? { token: match[1], delimiter: match[2] } : null;
   };
   // Two lists that follow one another are two lists, not one. The parser cannot
