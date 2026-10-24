@@ -160,29 +160,40 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
     const end = last.bottom;
     if (target === null) target = end;
     const wanted = Math.max(0, pane.scrollTop + target - (paneTop + anchor));
-    if (!past && wanted <= pane.scrollHeight - pane.clientHeight) {
-      scrollInstantly(pane, wanted);
+    // How far this note can honestly be scrolled: its last line sitting at the
+    // foot of the screen. The article keeps 50vh of padding below itself, so
+    // the pane can always scroll further than the note goes; letting the
+    // browser clamp to that leaves the last line half a screen up with the
+    // padding filling the rest, which is the empty screen a reader reports as
+    // "it opened at the bottom". One limit, asked before anything moves, so
+    // that two places in the same note cannot be measured against two
+    // different ends of it: asking for a line further down the note used to
+    // fall off the end of the first rule and onto the second, and land the
+    // reader higher up the page than the line before it.
+    const tail = Math.max(end, (preview.lastElementChild ?? preview).getBoundingClientRect().bottom);
+    const foot = Math.max(0, pane.scrollTop + tail - paneTop - pane.clientHeight);
+    // The whole note is on the screen. There is no reading place to restore —
+    // every line of it is already in front of the reader — and no move that
+    // could be right, so the pane is left exactly where it is rather than
+    // being sent to the top. A note shorter than the screen is how `foot`
+    // went negative, and a negative clamped to zero is the jump to the top
+    // that a short note with a table in it shows on every switch.
+    if (foot === 0) {
+      // Never downwards: there is nothing below the note to show. Upwards
+      // only if the line asked for is above the top edge, which is the one
+      // way a line can be off the screen in a note this short.
+      const keep = Math.min(pane.scrollTop, wanted);
+      if (keep !== pane.scrollTop) scrollInstantly(pane, keep);
       placed = pane.scrollTop;
-      reached = Math.abs(placed - wanted) <= 1;
+      reached = true;
       return;
     }
-    // The note is too short for the place that was asked for — either the
-    // position is past everything the reading view knows about (the blank
-    // line a note ends with, a fold at the tail, a section that renders to
-    // nothing), or the page cannot scroll that far. Letting the browser
-    // clamp it leaves the last line of the note half a screen above the
-    // foot, with the 50vh the article keeps below itself filling the rest:
-    // that empty screen is what the reader reports as "it opened at the
-    // bottom". The end of a note is its last lines sitting at the foot of
-    // the screen, so that is where this goes instead.
-    const tail = Math.max(end, (preview.lastElementChild ?? preview).getBoundingClientRect().bottom);
-    const foot = pane.scrollTop + tail - paneTop - pane.clientHeight;
-    scrollInstantly(pane, Math.max(0, Math.min(wanted, Math.max(0, foot))));
+    scrollInstantly(pane, Math.min(wanted, foot));
     placed = pane.scrollTop; // what it could actually do, not what was asked
     // Not where it was asked to go: a note still arriving is short for a
     // moment, and when the rest of it lands the place is there to be had.
     // The hold below keeps asking until it is.
-    reached = false;
+    reached = !past && Math.abs(placed - wanted) <= 1;
   };
   place();
   // The reading view is not finished when the jump lands. Formulas and
