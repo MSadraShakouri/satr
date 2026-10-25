@@ -170,6 +170,23 @@ test('the mirrored marker is where the ink actually lands', async ({ page }) => 
   expect(Math.abs(ink[1]!.before - ink[1]!.after)).toBeLessThan(2); // centre
 });
 
+// The whole app, for the tests that need the page rather than a rendered
+// fragment: the print pages below and the drawer gestures at the foot.
+const NOTE = 'Before the table.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter the table.\n';
+
+async function bootApp(page: Page, markdown: string, width = 390) {
+  await page.setViewportSize({ width, height: 844 });
+  await page.addInitScript((note) => {
+    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/A.md', note);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
+    localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+  }, markdown);
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+}
+
 // ---- Print ----
 
 async function printHtml(page: Page, markdown: string, options = { columns: 1 as const, direction: 'auto' as const, mathAlign: 'center' as const }, pdfCss = ''): Promise<string> {
