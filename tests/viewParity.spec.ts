@@ -328,3 +328,56 @@ test('the bullet stands the same distance from the text in both views', async ({
   // a task draws its box instead, and no dot with it
   expect(reading.onATask).toBe('none');
 });
+
+/** A checklist's box stands in the same column in both views, at any text
+ *  size. Reported after 0.15.0: "the checkbox moves a bit to the side when
+ *  switching from source to preview... in the APK it's a lot more visible".
+ *
+ *  It was two numbers for one column. Source mode draws the box from the
+ *  list gutter (3ch, src/livePreview.ts); the reading view had it pulled
+ *  back by a hard-coded -25.5px, which is 3ch of the font the spec was
+ *  written at and nothing in particular at any other size. On a phone with
+ *  its font scale turned up the two drifted a dozen pixels apart — hence
+ *  the APK. One gutter now, shared by both (--list-gutter in src/style.css),
+ *  and the box is set into it by the same inset in both views. */
+test('a checklist box stands in the same column in both views, at any text size', async ({ page }) => {
+  await boot(page, '- [ ] کار یکم\n- [x] کار دوم\n\n- [ ] first task\n- [x] second task\n');
+  const boxes = () => page.evaluate(() => {
+    const pane = document.querySelector<HTMLElement>('#preview-pane');
+    const showing = pane && pane.offsetParent !== null ? pane : document.querySelector<HTMLElement>('#editor-pane .cm-content')!;
+    return [...showing.querySelectorAll('.cm-lp-task, input[type=checkbox]')].map((box) => {
+      const rect = box.getBoundingClientRect();
+      const row = box.closest('li, .cm-line');
+      const rtl = getComputedStyle(row ?? box).direction === 'rtl';
+      // The square the reader sees. In the reading view that is the input
+      // itself; in source mode the marker is a zero-width span and the
+      // square is the ::before it draws, a margin in from the span's edge.
+      const drawn = box.matches('input') ? null : getComputedStyle(box, '::before');
+      const inset = drawn ? parseFloat(drawn.marginInlineStart) || 0 : 0;
+      const width = drawn ? parseFloat(drawn.width) || 0 : rect.width;
+      return {
+        text: (row?.textContent ?? '').trim().slice(0, 10),
+        // The edge the row starts from, so the two scripts are read the same way.
+        edge: Math.round((rtl ? -(rect.right - inset) : rect.left + inset) * 10) / 10,
+        width: Math.round(width * 10) / 10,
+      };
+    });
+  });
+  for (const rem of [16, 24]) {
+    // Android hands the WebView its own root rem when the reader turns the
+    // phone's font scale up, and the note is sized in rem.
+    await page.evaluate((px) => { document.documentElement.style.fontSize = `${px}px`; }, rem);
+    await page.waitForTimeout(400);
+    const source = await boxes();
+    await page.evaluate(() => (document.querySelector('#preview-toggle') as HTMLElement).click());
+    await page.waitForTimeout(500);
+    const reading = await boxes();
+    expect(reading.length, `four boxes at ${rem}px`).toBe(source.length);
+    for (const [i, box] of source.entries()) {
+      expect(Math.abs(reading[i].edge - box.edge), `"${box.text}" at ${rem}px: source ${box.edge}, reading ${reading[i].edge}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(reading[i].width - box.width), `"${box.text}" box width at ${rem}px`).toBeLessThanOrEqual(1);
+    }
+    await page.evaluate(() => (document.querySelector('#preview-toggle') as HTMLElement).click());
+    await page.waitForTimeout(400);
+  }
+});

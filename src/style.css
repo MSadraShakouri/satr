@@ -194,6 +194,11 @@
   --blockquote-border: 2px solid var(--interactive-accent);
   --list-marker-color: var(--text-faint);
   --checkbox-border-color: var(--text-faint);
+  /* A list's strip and the box that hangs in it: one set of numbers for both
+     views (LIST_GUTTER_CH in src/livePreview.ts is the same 3). */
+  --list-gutter: 3ch;
+  --task-box: 17px;
+  --task-inset: 2px;
   --checklist-done-color: var(--text-muted);
   --footnote-size: 0.875em;
   --hr-color: var(--background-modifier-border);
@@ -774,14 +779,20 @@ body {
   appearance: none;
   position: relative;
   top: 0.2em;
-  width: 17px;
-  height: 17px;
+  font: inherit; /* `ch` below is the note's, not the UA's 13.333px Arial */
+  box-sizing: border-box;
+  width: var(--task-box);
+  height: var(--task-box);
   margin: 0;
-  /* hung in the strip before the text and costing it nothing: -25.5 + 17 +
-     8.5 = 0, so a task's text starts where a bullet's does (the parser's
-     space after the box is dropped in src/markdown.ts) */
-  margin-inline-start: -25.5px;
-  margin-inline-end: 8.5px;
+  /* Hung in the list's own strip and costing the text nothing: the two
+     margins sum to zero, so a task's text starts where a bullet's does (the
+     parser's space after the box is dropped in src/markdown.ts). The strip
+     is the one source mode hangs its own box in — 3ch, the list gutter — and
+     not a pixel count: at the phone's larger text sizes a constant 25.5px
+     left the box standing somewhere else than it stands in source mode, far
+     enough to see the switch move it. */
+  margin-inline-start: calc(var(--task-inset) - var(--list-gutter));
+  margin-inline-end: calc(var(--list-gutter) - var(--task-inset) - var(--task-box));
   border: 1px solid var(--checkbox-border-color);
   border-radius: 4px;
   background: transparent center / 12px no-repeat;
@@ -1319,13 +1330,17 @@ body {
    rect is the one measurement that is always right, and it is the one the
    handler uses. */
 .cm-lp-task::before {
-  /* Obsidian mobile checkbox: 17px, 4px radius, 1px faint border */
+  /* Obsidian mobile checkbox: 17px, 4px radius, 1px faint border.
+     --task-box and --task-inset are the reading view's numbers too: the box
+     is drawn 2px into the list's own strip in both views, so the two keep
+     step at every text size instead of only at 16px (src/style.css, the
+     input rule under .preview-pane li). */
   content: "";
   display: inline-block;
   box-sizing: border-box;
-  width: 17px;
-  height: 17px;
-  margin-inline: 2px 0; /* hung as the reading view hangs its checkbox */
+  width: var(--task-box);
+  height: var(--task-box);
+  margin-inline: var(--task-inset) 0;
   vertical-align: -3px;
   border: 1px solid var(--checkbox-border-color);
   border-radius: 4px;
