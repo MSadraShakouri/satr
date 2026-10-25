@@ -251,6 +251,49 @@ test('a lettered list is laid out as a list in both views, in both scripts', asy
   expect(reading[0].row1 - reading[1].row1, 'and the same more in both views').toBe(editor[0].row1 - editor[1].row1);
 });
 
+/** A list that reaches ten: the markers are no longer all the same width. */
+const WIDE = `plain paragraph to measure from
+
+8. eight
+9. nine
+10. ten
+11. eleven
+
+متن ساده برای اندازه‌گیری
+
+۸. هشت
+۹. نه
+۱۰. ده
+۱۱. یازده
+`;
+
+const WIDE_ROWS = [['plain paragraph', 'eight'], ['plain paragraph', 'eleven'], ['متن ساده', 'هشت'], ['متن ساده', 'یازده']];
+
+test('every item of a list begins in one column, however wide its marker', async ({ page }) => {
+  // Reported: "I wanted the text after the x. or x) to be aligned like how
+  // it is in preview, it seems like even English numbers aren't."
+  // The strip was a floor under each line's own marker, so `10.` carried its
+  // own text in by the width it overran — 1px for `10.`, 2px for `10)` —
+  // while the reading view hangs every marker in one strip, the list's. The
+  // strip is the run's now, measured where the reading view measures its
+  // own, and a marker too wide for the platform's 3ch hangs out of it in
+  // both views rather than moving the text.
+  await boot(page, WIDE);
+  const editor = await indentOf(page, '#editor-pane .cm-content', WIDE_ROWS);
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane')).toBeVisible();
+  await page.waitForTimeout(600);
+  const reading = await indentOf(page, '#preview-pane', WIDE_ROWS);
+
+  for (const [view, rows] of [['source mode', editor], ['the reading view', reading]] as const) {
+    expect(rows[1].row1, `English: 8. at ${rows[0].row1}, 11. at ${rows[1].row1} in ${view}`).toBe(rows[0].row1);
+    expect(rows[3].row1, `Persian: ۸. at ${rows[2].row1}, ۱۱. at ${rows[3].row1} in ${view}`).toBe(rows[2].row1);
+  }
+  for (const [i, what] of ['English 8.', 'English 11.', 'Persian ۸.', 'Persian ۱۱.'].entries()) {
+    expect(Math.abs(editor[i].row1 - reading[i].row1), `${what}: ${editor[i].row1} in source mode, ${reading[i].row1} in the reading view`).toBeLessThanOrEqual(1);
+  }
+});
+
 test('the bullet stands the same distance from the text in both views', async ({ page }) => {
   // Reported: "for bullet lists, source mode is preferred because it has
   // more space between the text and bullet". The reading view asked the

@@ -1257,16 +1257,27 @@ body {
      font, so this leaves it no width and leaves the line its height. */
   letter-spacing: -0.25em;
 }
-/* A number is drawn from its own end, as the reading view's markers are, with
-   the 6px between it and the text standing in front of the space rather than
-   after it — so 9. and 10. still end in one place and the caret still comes
-   to rest where the text starts. */
+/* A number is drawn from its own end, as the reading view's markers are,
+   with the hair of space between it and the text standing in front of the
+   space rather than after it — so `9.` and `10.` end in one place and the
+   caret still comes to rest where the text starts.
+
+   The strip is the list's, not the line's: its width is fixed here rather
+   than a floor, so a marker wider than the strip hangs out of it instead of
+   carrying its own line's text in and leaving the list ragged — `10. ten`
+   used to start 1px further in than `9. nine`, and `10) ten` 2px. Where the
+   reading view widens the strip for a list (Persian numbers, letters), the
+   editor widens it by the same measurement (--lp-strip); where the reading
+   view leaves the list to the platform (ASCII numbers), the marker hangs out
+   of a 3ch strip in both views. The space itself is 0.4em, the reading
+   view's own, so the two keep step at every font size. */
 .cm-lp-marker.is-number .cm-lp-marker-text {
-  min-width: calc(var(--lp-strip, 3ch) - 6px);
+  min-width: 0; /* the strip's width is the width, not a floor */
+  width: calc(var(--lp-strip, 3ch) - 0.4em);
   text-align: end;
 }
 .cm-lp-marker.is-number .cm-lp-marker-gap {
-  padding-inline-start: 6px;
+  padding-inline-start: 0.4em;
 }
 /* One ">" = one step of quote indent (QUOTE_STEP_PX in src/livePreview.ts),
    whether the mark is showing or transparent, so nothing moves when the

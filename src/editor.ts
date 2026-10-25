@@ -10,7 +10,7 @@ import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin,
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
-import { indentBox, listLine, livePreview, markerGap, markerText, numberMarker } from './livePreview';
+import { indentBox, listLine, livePreview, markerGap, markerText, numberMarker, remeasured } from './livePreview';
 import { markerStrip } from './markerWidth';
 import { autoSpace } from './autoSpace';
 import { Highlight, highlightTag } from './highlightSyntax';
@@ -141,24 +141,13 @@ function stripFor(lineAt: (index: number) => string | undefined, index: number, 
   return markerStrip(tokens, font);
 }
 
-/** The marker strip was measured in whatever font was loaded at the time; a
- *  note laid out before the webfont arrived was measured in the fallback.
- *  The reading view asks again when the font lands (src/main.ts) and so does
- *  this. */
-const markersMeasured = StateEffect.define<null>();
-
 const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   decorations: any;
-  private readonly refresh: () => void;
-  constructor(view: EditorView) {
-    this.decorations = this.build(view);
-    this.refresh = () => view.dispatch({ effects: markersMeasured.of(null) });
-    document.fonts?.addEventListener?.('loadingdone', this.refresh);
-  }
-  destroy(): void { document.fonts?.removeEventListener?.('loadingdone', this.refresh); }
-  update(update: { docChanged: boolean; viewportChanged: boolean; view: EditorView; transactions: readonly Transaction[] }): void {
-    const measured = update.transactions.some((tr) => tr.effects.some((effect) => effect.is(markersMeasured)));
-    if (update.docChanged || update.viewportChanged || measured) this.decorations = this.build(update.view);
+  constructor(view: EditorView) { this.decorations = this.build(view); }
+  update(update: ViewUpdate): void {
+    // remeasured: the webfont arrived and the strip was measured in the
+    // fallback (src/livePreview.ts)
+    if (update.docChanged || update.viewportChanged || remeasured(update)) this.decorations = this.build(update.view);
   }
   build(view: EditorView) {
     const ranges = [];

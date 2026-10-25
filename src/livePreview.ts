@@ -7,7 +7,9 @@
 // preview) everything stays rendered. Tables, math and mermaid are left as
 // source for now.
 import { syntaxTree } from '@codemirror/language';
-import type { Range } from '@codemirror/state';
+import { StateEffect, type Range } from '@codemirror/state';
+import { parseMarker } from './listMarkers';
+import { markerStrip } from './markerWidth';
 import { inMath, mathSpans, overlapsMath } from './mathSource';
 import { spansHold } from './mathScan';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
@@ -212,8 +214,62 @@ const FOOTNOTE_DEF = /^\[\^([^\]\s]+)\]:/;
 const FOOTNOTE_REF = /\[\^([^\]\s]+)\]|\^\[([^\]]+)\]/g;
 const inCode = (name: string): boolean => /Code|CodeMark|CodeText|CodeInfo/.test(name);
 
+/** The strip each of an ordered list's runs hangs its markers in, by the
+ *  position of the marker that opens the item.
+ *
+ *  The strip is the widest marker in the run and the hair of space before
+ *  the text, never less than the platform's 3ch. Written this way the text
+ *  of every item begins in one column — `9.` and `10.` end in one place
+ *  instead of each pushing its own line in — which is how the reading view
+ *  has always drawn a list, and the measurement is the reading view's own
+ *  (src/markerWidth.ts).
+ *
+ *  A run, not the list: CommonMark reads `۱.` through `۴.` followed by `1.`
+ *  through `4.` as one list, and the reading view cuts it where the alphabet
+ *  or the punctuation changes (src/markdown.ts). The strip is cut with it,
+ *  or an English list would be given room for a Persian one's markers.
+ *
+ *  A run the reading view leaves to the platform — ASCII numbers — keeps the
+ *  platform's strip, and a marker too wide for it hangs out of it there
+ *  exactly as it does in the reading view. Matching means matching that too.
+ */
+function orderedStrips(view: EditorView, list: SyntaxNode, cache: Map<number, Map<number, string | undefined>>): Map<number, string | undefined> {
+  const known = cache.get(list.from);
+  if (known) return known;
+  const items: Array<{ at: number; token: string; kind: string | null }> = [];
+  for (let item = list.firstChild; item; item = item.nextSibling) {
+    const mark = item.name === 'ListItem' ? item.firstChild : null;
+    if (mark?.name !== 'ListMark') continue;
+    const token = view.state.sliceDoc(mark.from, mark.to);
+    const parsed = parseMarker(token.replace(/[.)]$/, ''));
+    const letters = parsed?.alphabet === 'abjad' || parsed?.alphabet === 'abpats';
+    items.push({
+      at: mark.from,
+      token,
+      kind: parsed ? `${letters ? 'persian-letters' : parsed.alphabet}${token.slice(-1)}` : null,
+    });
+  }
+  const face = getComputedStyle(view.contentDOM).fontFamily || 'sans-serif';
+  const runs = new Map<number, string | undefined>();
+  for (let from = 0; from < items.length;) {
+    let to = from + 1;
+    while (to < items.length && items[to].kind === items[from].kind) to += 1;
+    const run = items.slice(from, to);
+    // The platform draws an ASCII list's markers, in both views; every other
+    // list the reading view draws itself, in a strip it measures.
+    const strip = items[from].kind?.startsWith('latin')
+      ? undefined
+      : markerStrip(run.map((item) => item.token), face) ?? undefined;
+    for (const item of run) runs.set(item.at, strip);
+    from = to;
+  }
+  cache.set(list.from, runs);
+  return runs;
+}
+
 function build(view: EditorView): DecorationSet {
   const { state } = view;
+  const strips = new Map<number, Map<number, string | undefined>>();
   const focused = view.hasFocus;
   const ranges = state.selection.ranges;
   // Does the selection touch [from, to]? (inclusive, so a caret right at an
@@ -360,11 +416,12 @@ function build(view: EditorView): DecorationSet {
                 // has to be one: `-` alone is a dash, not an item.
                 const after = /^[ \t]*/.exec(line.text.slice(markEnd - line.from))?.[0].length ?? 0;
                 if (after > 0) {
+                  const strip = ordered && !drawnTask && list ? orderedStrips(view, list, strips).get(node.from) : undefined;
                   if (node.from > ownIndent) out.push(indentBox(level).range(ownIndent, node.from));
-                  out.push((ordered && !drawnTask ? numberMarker() : markerPlain).range(node.from, markEnd + after));
+                  out.push((ordered && !drawnTask ? numberMarker(strip) : markerPlain).range(node.from, markEnd + after));
                   out.push(markerText.range(node.from, markEnd));
                   out.push(markerGap.range(markEnd, markEnd + after));
-                  out.push(listLine(level, drawnTask, quotes).range(line.from));
+                  out.push(listLine(level, drawnTask, quotes, strip).range(line.from));
                 }
               }
             }
@@ -599,12 +656,26 @@ function toggleTaskAt(view: EditorView, target: HTMLElement): void {
 
 let lastTapHead = -1; // caret before the tap, to tell a first tap from a second
 
+/** The marker strip is measured in the font that is loaded at the time, and
+ *  a note laid out before the webfont arrives is measured in the fallback.
+ *  The reading view asks again when the font lands (src/main.ts); this is
+ *  how both editor plugins hear about it. */
+export const markersMeasured = StateEffect.define<null>();
+export const remeasured = (update: ViewUpdate): boolean =>
+  update.transactions.some((tr) => tr.effects.some((effect) => effect.is(markersMeasured)));
+
 const livePreviewPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
-  constructor(view: EditorView) { this.decorations = build(view); }
+  private readonly refresh: () => void;
+  constructor(view: EditorView) {
+    this.decorations = build(view);
+    this.refresh = () => view.dispatch({ effects: markersMeasured.of(null) });
+    document.fonts?.addEventListener?.('loadingdone', this.refresh);
+  }
+  destroy(): void { document.fonts?.removeEventListener?.('loadingdone', this.refresh); }
   update(update: ViewUpdate): void {
     if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged
-      || syntaxTree(update.startState) !== syntaxTree(update.state)) {
+      || remeasured(update) || syntaxTree(update.startState) !== syntaxTree(update.state)) {
       this.decorations = build(update.view);
     }
   }
