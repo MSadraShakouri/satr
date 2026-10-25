@@ -730,3 +730,60 @@ test('a list keeps room for its widest marker', async ({ page }) => {
     expect(new Set(list.map((item) => item.gutter)).size).toBe(1);
   }
 });
+
+// A blank line between items is air, not a new list.
+//
+// Asked for: "I want loose lists" — the blank line the writer put between two
+// items is theirs, and the reader should see it. The parser already says so
+// by giving every item of such a list a paragraph of its own; the spacing was
+// then taken straight back off by the stylesheet, so a list with a gap in the
+// middle arrived as one unbroken block of numbers. Obsidian draws a loose
+// list exactly like a tight one — its own CSS zeroes those paragraphs'
+// margins — which is where the rule came from in the first place.
+test('a list written with blank lines keeps the air, in either script', async ({ page }) => {
+  const space = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;left:0;top:0;width:380px;background:white;z-index:9999';
+    document.body.appendChild(host);
+    /** The room between one item's text and the next item's text: the air a
+     *  loose list is given is the items' own padding, which sits inside
+     *  their boxes, so the boxes themselves still touch. */
+    const gaps = async (text: string) => {
+      host.innerHTML = renderMarkdown(text);
+      await document.fonts.ready;
+      const boxes = [...host.querySelectorAll('li')].map((item) => {
+        const range = document.createRange();
+        range.selectNodeContents(item);
+        return range.getBoundingClientRect();
+      });
+      return boxes.slice(1).map((box, index) => Math.round(box.top - boxes[index].bottom));
+    };
+    const out = {
+      tightPersian: await gaps('۱. یک\n۲. دو\n۳. سه'),
+      loosePersian: await gaps('۱. یک\n\n۲. دو\n\n۳. سه'),
+      tightLatin: await gaps('1. one\n2. two\n3. three'),
+      looseLatin: await gaps('1. one\n\n2. two\n\n3. three'),
+      quotedGap: await gaps('> ۱. یک\n> ۲. دو\n> \n> ۵. پنج'),
+      tightBullets: await gaps('- یک\n- دو\n- سه'),
+      looseBullets: await gaps('- یک\n\n- دو\n\n- سه'),
+      looseTasks: await gaps('- [ ] یک\n\n- [x] دو'),
+    };
+    host.remove();
+    return out;
+  });
+  // Written one line under the next: the hair of space a list has always
+  // had between its items, and nothing more.
+  for (const tight of [space.tightPersian, space.tightLatin, space.tightBullets]) {
+    expect(tight.every((gap) => gap < 6)).toBe(true);
+  }
+  // Written with a blank line: the blank line is there to see — a paragraph's
+  // worth — and it is the same room in either script, under any marker.
+  expect(space.loosePersian.every((gap) => gap >= 12)).toBe(true);
+  expect(space.looseLatin).toEqual(space.loosePersian);
+  expect(space.looseBullets).toEqual(space.loosePersian);
+  expect(space.looseTasks).toEqual(space.loosePersian.slice(0, 1));
+  // The quoted list he wrote: one list, with the gap he typed in it.
+  expect(space.quotedGap.every((gap) => gap >= 12)).toBe(true);
+});

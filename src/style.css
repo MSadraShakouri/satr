@@ -581,6 +581,16 @@ body {
 .preview-pane li > p {
   margin-block: 0;
 }
+/* A list written with a blank line between its items — a loose list — keeps
+   that air (src/markdown.ts, loose-list). Half the paragraph spacing above
+   and below each item adds up to one paragraph's worth between any two of
+   them, which is the room the writer left. Obsidian draws a loose list like
+   a tight one; a list with a gap written into the middle of it then arrives
+   as one unbroken block, and the numbers read as though they came from
+   nowhere. */
+.preview-pane .loose-list > li {
+  padding-block: calc(var(--p-spacing) / 2);
+}
 .preview-pane ul {
   list-style-type: disc;
 }

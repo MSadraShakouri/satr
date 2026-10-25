@@ -492,6 +492,20 @@ export function renderMarkdown(source: string): string {
     const letters = parsed.alphabet === 'abjad' || parsed.alphabet === 'abpats';
     return `${letters ? 'persian-letters' : parsed.alphabet}${mark.delimiter}`;
   };
+  /** A list written with a blank line between its items is a loose list: the
+   *  parser says so by giving every item a paragraph of its own, and the
+   *  reader should see the air the writer typed. Obsidian draws a loose list
+   *  exactly like a tight one — its own CSS zeroes the first and last
+   *  paragraph's margins inside an item — which is why a list with a gap in
+   *  the middle of it arrived as one unbroken block of numbers. The gap is
+   *  the writer's; it stays. */
+  const markLoose = (): void => {
+    document.querySelectorAll('ol, ul').forEach((list) => {
+      const items = [...list.children].filter((child) => child.tagName === 'LI');
+      const loose = items.some((item) => [...item.children].some((child) => child.tagName === 'P'));
+      list.classList.toggle('loose-list', loose);
+    });
+  };
   // A list that was cut keeps the shape it was written in: halves that were
   // written one line under the next are tight again, rather than keeping the
   // paragraph spacing the blank line between the two lists put on every item.
@@ -530,6 +544,7 @@ export function renderMarkdown(source: string): string {
     }
     for (const run of runs) tighten(run);
   });
+  markLoose();
   document.querySelectorAll('ol').forEach((list) => {
     const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
     const marks = items.map((item) => markerOn(Number(item.dataset.line)));
