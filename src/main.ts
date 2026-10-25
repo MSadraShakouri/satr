@@ -405,6 +405,35 @@ function applyLineGuess(): void {
   preview.style.setProperty('--md-line', `${guess.toFixed(1)}px`);
   if (hold !== null) applyPreviewScroll(previewPane, preview, hold, () => true, false, y);
 }
+/** Every section the reading view has not drawn yet is standing on a guess —
+ *  1.85em a source line until enough of the note has been measured to learn
+ *  better (applyLineGuess above) — and a note of Persian prose that wraps is
+ *  nearly twice that, a code block two thirds of it. The error is small per
+ *  section and adds up over a long note, so the first placement lands short
+ *  and the correction drags the page across the screen a moment later: on a
+ *  note of thirty formulas, switching three quarters of the way down landed
+ *  2550px above where it belonged and then slid there in front of the reader.
+ *
+ *  The editor has just measured those very lines. CodeMirror's block heights
+ *  are exact for everything it has drawn and wrap-aware for the rest, which
+ *  is a far better guess than one number for every line in the note. Hand
+ *  them to the sections before the reading view is placed. A section the
+ *  reader has already seen keeps the height it was measured at — this is the
+ *  fallback the browser uses until it draws one, not an override. */
+function seedSectionHeights(): void {
+  const { doc } = editor.view.state;
+  for (const section of preview.querySelectorAll<HTMLElement>('.md-section')) {
+    const line = Number(section.dataset.line);
+    const span = Number(section.dataset.span) || 1;
+    if (!Number.isFinite(line) || !(span > 0)) continue;
+    const first = Math.min(doc.lines, Math.max(1, line + 1));
+    const last = Math.min(doc.lines, Math.max(1, line + span));
+    const top = editor.view.lineBlockAt(doc.line(first).from).top;
+    const bottom = editor.view.lineBlockAt(doc.line(last).from).bottom;
+    if (bottom > top) section.style.setProperty('contain-intrinsic-block-size', `auto ${Math.round(bottom - top)}px`);
+  }
+}
+
 function watchSections(): void {
   nearbySections.disconnect();
   // Every note is measured in its own lines. The figure looked like a
@@ -914,6 +943,10 @@ function setMode(next: Mode, restoredLine?: number): void {
   syncingScroll = true;
   if (mode === 'preview') {
     if (previewDirty) renderPreview();
+    // The editor's own measurements, handed to the sections that have none:
+    // the placement below reads these, so it lands where it belongs instead
+    // of being dragged there afterwards.
+    seedSectionHeights();
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
