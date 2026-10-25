@@ -136,7 +136,7 @@ test('the caret on an item with nothing on it yet stands where its text will', a
   // bullet and the first letter landed somewhere else.
   const places = await page.evaluate(async () => {
     const ed = window.testEditor;
-    const out: Record<string, { caret: number; typed: number }> = {};
+    const out: Record<string, { caret: number; typed: number; height: number }> = {};
     for (const [name, text, at] of [
       ['bullet', '- ', 2], ['task', '- [ ] ', 6], ['number', '1. ', 3], ['persian', '۱. ', 3],
     ] as Array<[string, string, number]>) {
@@ -145,14 +145,24 @@ test('the caret on an item with nothing on it yet stands where its text will', a
       ed.setSelection(at);
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
       const line = ed.view.coordsAtPos(0)!;
-      const caret = ed.view.coordsAtPos(at)!.left - line.left;
+      const place = ed.view.coordsAtPos(at)!;
       ed.view.dispatch({ changes: { from: at, insert: 'W' }, selection: { anchor: at } });
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-      out[name] = { caret: Math.round(caret), typed: Math.round(ed.view.coordsAtPos(at)!.left - line.left) };
+      out[name] = {
+        caret: Math.round(place.left - line.left),
+        typed: Math.round(ed.view.coordsAtPos(at)!.left - line.left),
+        // A caret is drawn to the height of the text it stands in. On an item
+        // with nothing on it, that text is the space after the marker, so a
+        // trick that gives the space no height gives the caret none either
+        // and it cannot be seen at all ("I can't see caret in 1. or - or ۱.
+        // when there's nothing in front of it").
+        height: Math.round(place.bottom - place.top),
+      };
     }
     return out;
   });
   for (const [name, place] of Object.entries(places)) {
     expect(place.caret, `${name}: the caret stands where the next letter lands`).toBe(place.typed);
+    expect(place.height, `${name}: and it is tall enough to see`).toBeGreaterThan(8);
   }
 });

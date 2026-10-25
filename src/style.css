@@ -1208,7 +1208,13 @@ body {
   min-width: 3ch; /* --list-marker-gutter */
 }
 .cm-lp-marker-gap {
-  font-size: 0;
+  /* The space is pulled back by its own width rather than set to font-size:
+     0, which took the caret's height with it — a caret drawn from a run of
+     no height is a caret 0px tall, and on an empty item there is nothing
+     else on the line to draw it from ("I can't see caret in 1. or - or ۱.
+     when there's nothing in front of it"). A space is 0.25em in the note's
+     font, so this leaves it no width and leaves the line its height. */
+  letter-spacing: -0.25em;
 }
 /* A number is drawn from its own end, as the reading view's markers are, with
    the 6px between it and the text standing in front of the space rather than
