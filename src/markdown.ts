@@ -481,6 +481,14 @@ export function renderMarkdown(source: string): string {
   // it changes, exactly as the parser already cuts one where `1.` turns into
   // `1)`. A list written in one alphabet is untouched, and so is an item that
   // carries no marker of its own: it stays with the run it was in.
+  /** A `- [ ]` is not a `-`. CommonMark has no opinion — a task is a bullet
+   *  with a box drawn in it — so a run of each read as one list, the boxes
+   *  simply starting partway down: "- and - [ ] lists merge if there's
+   *  nothing between them (even empty lines)". Source mode has always drawn
+   *  them apart. The two are cut from one another here, the way a list is
+   *  cut where its alphabet changes. */
+  const taskAt = (line: number): boolean =>
+    /^[ \t]*(?:>[ \t]*)*[-*+][ \t]+\[[ xX]\][ \t]/.test(sourceLines[line] ?? '');
   const kindOf = (line: number): string | null => {
     const mark = markerOn(line);
     const parsed = mark ? parseMarker(mark.token) : null;
@@ -530,13 +538,16 @@ export function renderMarkdown(source: string): string {
   // item above it is still its sibling, and it keeps that mark into whatever
   // list it ends up in.
   markGaps();
-  document.querySelectorAll('ol').forEach((list) => {
+  document.querySelectorAll('ol, ul').forEach((list) => {
     const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
     if (items.length < 2) return;
+    const bullets = list.tagName === 'UL';
     const runs: HTMLElement[][] = [[]];
     let kind: string | null = null;
     for (const item of items) {
-      const own = kindOf(Number(item.dataset.line));
+      // A bullet list is cut by what its items are — a task or a bullet —
+      // and an ordered list by the alphabet and punctuation of its markers.
+      const own = bullets ? (taskAt(Number(item.dataset.line)) ? 'task' : 'bullet') : kindOf(Number(item.dataset.line));
       if (own && kind && own !== kind) runs.push([]);
       if (own) kind = own;
       runs[runs.length - 1].push(item);

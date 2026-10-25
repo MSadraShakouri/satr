@@ -102,3 +102,45 @@ test('the two lists are drawn with a gap between them', async ({ page }) => {
   expect(gap.between).toBeGreaterThan(8);
   expect(gap.between).toBeGreaterThan(gap.inside + 4);
 });
+
+// A bullet list and a checklist are two lists.
+//
+// Reported: "- and - [ ] lists merge if there's nothing between them (even
+// empty lines)".
+//
+// CommonMark has no opinion here — a task is a bullet with a box drawn in it
+// — so a run of each read as one list, the boxes simply starting partway
+// down, and a blank line between them changed nothing because a blank line
+// does not end a list. Source mode has always drawn them apart. They are cut
+// from one another now, the way a list is cut where its alphabet changes.
+test('a bullet list and a checklist are two lists', async ({ page }) => {
+  const shape = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const doc = (text: string) => {
+      const parsed = new DOMParser().parseFromString(renderMarkdown(text), 'text/html');
+      return [...parsed.querySelectorAll('ul, ol')].map((list) => {
+        const items = [...list.querySelectorAll(':scope > li')];
+        const tasks = items.filter((item) => item.querySelector(':scope > input[type=checkbox]')).length;
+        return `${list.tagName}: ${items.length - tasks} bullet, ${tasks} task`;
+      });
+    };
+    return {
+      bulletThenTask: doc('- یک\n- دو\n- [ ] سه\n- [x] چهار'),
+      taskThenBullet: doc('- [ ] یک\n- [x] دو\n- سه'),
+      acrossABlankLine: doc('- یک\n- دو\n\n- [ ] سه\n- [ ] چهار'),
+      quoted: doc('> - یک\n> - [ ] دو'),
+      allTasks: doc('- [ ] یک\n- [x] دو'),
+      allBullets: doc('- یک\n- دو'),
+      backAndForth: doc('- یک\n- [ ] دو\n- سه'),
+    };
+  });
+  expect(shape.bulletThenTask).toEqual(['UL: 2 bullet, 0 task', 'UL: 0 bullet, 2 task']);
+  expect(shape.taskThenBullet).toEqual(['UL: 0 bullet, 2 task', 'UL: 1 bullet, 0 task']);
+  // A blank line does not join them either.
+  expect(shape.acrossABlankLine).toEqual(['UL: 2 bullet, 0 task', 'UL: 0 bullet, 2 task']);
+  expect(shape.quoted).toEqual(['UL: 1 bullet, 0 task', 'UL: 0 bullet, 1 task']);
+  // A list of one kind is still one list.
+  expect(shape.allTasks).toEqual(['UL: 0 bullet, 2 task']);
+  expect(shape.allBullets).toEqual(['UL: 2 bullet, 0 task']);
+  expect(shape.backAndForth).toEqual(['UL: 1 bullet, 0 task', 'UL: 0 bullet, 1 task', 'UL: 1 bullet, 0 task']);
+});
