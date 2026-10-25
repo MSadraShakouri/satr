@@ -13,7 +13,9 @@ import { formatMarker, MARKER, parseMarker, type Alphabet } from './listMarkers'
 
 const PERSIAN_TEXT = /[\u0600-\u06FF]/;
 // indent, marker (bullet, or number/letter + punct), optional task box
-const LIST = new RegExp(`^(\\s*)(?:([-*+])|(${MARKER})([.)]))(\\s+)(\\[[ xX]\\]\\s+)?`);
+// The lead a marker sits behind: the line's indent and the quote marks of
+// however many blockquotes it is in — a quoted item is an item.
+const LIST = new RegExp(`^([ \\t]*(?:>[ \\t]*)*)(?:([-*+])|(${MARKER})([.)]))([ \\t]+)(\\[[ xX]\\][ \\t]+)?`);
 const HEADING = /^(#{1,6})(\s+|$)/;
 
 function touchedLines(view: EditorView): Line[] {

@@ -526,32 +526,45 @@ test('a marker keeps the punctuation it was typed with', async ({ page }) => {
   expect(read.mixed.prose).toBe(false);
 });
 
-// An English letter is dimmed where the reading view reads it as a marker —
-// in a run of neighbouring letters — and not on a line that is prose: `A.
-// Smith` stays at full strength, exactly as the reading view keeps it.
-test('English letters are dimmed only where they are list markers', async ({ page }) => {
+// Every list marker is drawn the same, whoever draws it. A number is the
+// parser's in both scripts (src/markerParse.ts), so `۱.` is dimmed by the
+// same style as `1.`; a letter is nobody's — CommonMark has no lettered
+// lists — so those keep the editor's own dim, and only where the reading
+// view reads them as markers: `A. Smith` is a sentence and stays at full
+// strength, exactly as the reading view keeps it.
+test('a marker is dimmed wherever it is written, in either script', async ({ page }) => {
   const marks = await page.evaluate(async () => {
     const ed = window.testEditor;
-    ed.setValue('a. one\nb. two\n\nA. Smith\n\n۱. یک\n\n- dash\n\n1. one');
+    ed.setValue('a. one\nb. two\n\nA. Smith\n\n۱. یک\n\n> ۱. یک\n\n- dash\n\n1. one');
     ed.focus();
     await new Promise((r) => setTimeout(r, 40));
     return [...ed.view.contentDOM.querySelectorAll('.cm-line')].map((line) => ({
       text: line.textContent,
+      // The editor's own fallback, for the markers no parser knows.
       marks: [...line.querySelectorAll<HTMLElement>('.cm-live-marker')].map((mark) => ({
         text: mark.textContent,
         opacity: getComputedStyle(mark).opacity,
       })),
+      // What the marker itself is drawn at, whichever hand drew it.
+      drawn: [...line.querySelectorAll<HTMLElement>('span')]
+        .filter((span) => /^[-0-9۰-۹a-zA-Zالفب]+[.)]?$/.test(span.textContent ?? '') && !span.className.includes('cm-lp-marker'))
+        .map((span) => `${span.textContent} ${getComputedStyle(span).opacity}`),
     }));
   });
-  const on = (text: string) => marks.find((line) => line.text === text)?.marks ?? [];
+  const line = (text: string) => marks.find((one) => one.text === text);
+  const on = (text: string) => line(text)?.marks ?? [];
   expect(on('a. one')).toEqual([{ text: 'a.', opacity: '0.42' }]);
   expect(on('b. two')).toEqual([{ text: 'b.', opacity: '0.42' }]);
   // A sentence, not a list.
   expect(on('A. Smith')).toEqual([]);
-  // What the platform draws, and what the parser knows, is left to them.
+  // What the parser knows is the parser's: no second dim on top of its own.
   expect(on('1. one')).toEqual([]);
   expect(on('- dash')).toEqual([]);
-  expect(on('۱. یک')).toEqual([{ text: '۱.', opacity: '0.42' }]);
+  expect(on('۱. یک')).toEqual([]);
+  // And it draws both scripts the same, in a quote as on its own line.
+  expect(line('1. one')?.drawn).toEqual(['1. 0.42']);
+  expect(line('۱. یک')?.drawn).toEqual(['۱. 0.42']);
+  expect(line('> ۱. یک')?.drawn).toEqual(['۱. 0.42']);
 });
 
 // A formula that opens an item stands on the marker's line: `الف. $$x$$` is

@@ -125,13 +125,18 @@ const listLines = new Map<string, Decoration>();
  *  written in the reading view's own units rather than measured: a webfont
  *  that arrives late re-lays the line out by itself, where a measurement
  *  taken before it loaded would have stood 5px wrong for good. */
-function listLine(level: number, task = false): Decoration {
-  const key = `${level}${task ? ':task' : ''}`;
+function listLine(level: number, task = false, quotes = 0): Decoration {
+  const key = `${level}${task ? ':task' : ''}${quotes > 0 ? `:q${quotes}` : ''}`;
   let deco = listLines.get(key);
   if (!deco) {
-    const indent = level > 1
-      ? `calc(${LIST_GUTTER_CH}ch + ${LIST_INDENT_EM}em * ${level - 1})`
-      : `${LIST_GUTTER_CH}ch`;
+    // A list inside a quote keeps both indents: the quote's steps carry the
+    // text past the rules, the list's gutter carries a wrapped row under the
+    // text — as the reading view does it.
+    const indent = `calc(${[
+      quotes > 0 ? `${quotes * QUOTE_STEP_PX}px` : '',
+      `${LIST_GUTTER_CH}ch`,
+      level > 1 ? `${LIST_INDENT_EM}em * ${level - 1}` : '',
+    ].filter(Boolean).join(' + ')})`;
     deco = Decoration.line({
       class: task ? 'cm-lp-list-line cm-lp-task-line' : 'cm-lp-list-line',
       attributes: { style: `padding-inline-start:${indent};text-indent:calc(-1 * ${indent})` },
@@ -313,7 +318,16 @@ function build(view: EditorView): DecorationSet {
             {
               const line = state.doc.lineAt(node.from);
               const before = line.text.slice(0, node.from - line.from);
-              if (!before.includes('>')) {
+              // A list in a quote is a list, and takes the same strip and
+              // hanging indent — stacked on the quote's steps, which are
+              // drawn by the QuoteMark case and are not the list's to
+              // redraw: the line's own indent starts after the last `>`.
+              const quotes = (before.match(/>/g) ?? []).length;
+              const lastMark = before.lastIndexOf('>');
+              const ownIndent = line.from + (quotes > 0
+                ? lastMark + 1 + (/^[ \t]/.test(before.slice(lastMark + 1)) ? 1 : 0)
+                : 0);
+              {
                 const isTask = task?.name === 'TaskMarker' && spaced(task.to);
                 const drawnTask = isTask && !inside(list?.name === 'BulletList' ? node.from : task!.from, task!.to);
                 const ordered = list?.name === 'OrderedList';
@@ -323,9 +337,9 @@ function build(view: EditorView): DecorationSet {
                 // has to be one: `-` alone is a dash, not an item.
                 const after = /^[ \t]*/.exec(line.text.slice(markEnd - line.from))?.[0].length ?? 0;
                 if (after > 0) {
-                  if (node.from > line.from) out.push(indentBox(level).range(line.from, node.from));
+                  if (node.from > ownIndent) out.push(indentBox(level).range(ownIndent, node.from));
                   out.push((ordered && !drawnTask ? markerNumber : markerPlain).range(node.from, markEnd + after));
-                  out.push(listLine(level, drawnTask).range(line.from));
+                  out.push(listLine(level, drawnTask, quotes).range(line.from));
                 }
               }
             }

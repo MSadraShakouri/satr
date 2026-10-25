@@ -22,6 +22,7 @@ import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFold
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 import { typingTop } from './scrollSync';
 import { ABJAD, ABPATS, formatDigits, formatMarker, latinItem, lineIsLettered, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
+import { readsEveryNumber } from './markerParse';
 
 const rtlLineDirection = EditorView.theme({
   '&': { height: '100%', fontSize: 'var(--note-font-size)' },
@@ -98,6 +99,18 @@ const headingLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+// What is in front of a marker: the line's own indent, and the quote marks of
+// however many blockquotes it sits in. A marker is at the head of what it
+// marks, and inside a quote that is after the `>`.
+const LEAD = '[ \\t]*(?:>[ \\t]*)*';
+// A letter marker — `الف.`, `ب)` — is the one kind the parser still cannot
+// read: an ASCII number can stand in for a Persian one character for
+// character (src/markerParse.ts), a letter cannot, and CommonMark has no
+// lettered lists to stand in at all. So these keep the dim the parser would
+// have given them. Numbers are the parser's now, in both scripts.
+const LETTER_ITEM = new RegExp(`^(${LEAD})((?:الف|[${ABJAD}${ABPATS}])[.)])(?=\\s)`);
+const liveMarker = Decoration.mark({ class: 'cm-live-marker' });
+
 const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   decorations: any;
   constructor(view: EditorView) { this.decorations = this.build(view); }
@@ -117,14 +130,14 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
     for (const visible of view.visibleRanges) {
       let line = view.state.doc.lineAt(visible.from);
       while (true) {
-        const match = new RegExp(`^(\\s*(?:[۰-۹٠-٩]+|الف|[${ABJAD}${ABPATS}])[.)])(?=\\s)`).exec(line.text);
+        // Only the marker is dimmed, never the indent or the quote marks in
+        // front of it: a `>` is the quote's, and is drawn by the live
+        // preview as its own step.
+        const match = LETTER_ITEM.exec(line.text);
         const latin = latinItem(line.text);
-        const mark = match
-          ? match[1]
-          : latin && lineIsLettered(lineAt, line.number)
-            ? line.text.slice(0, latin.indent + 2)
-            : null;
-        if (mark) ranges.push(Decoration.mark({ class: 'cm-live-marker' }).range(line.from, line.from + mark.length));
+        const at = match ? match[1].length : latin && lineIsLettered(lineAt, line.number) ? latin.indent : -1;
+        const width = match ? match[2].length : 2;
+        if (at >= 0) ranges.push(liveMarker.range(line.from + at, line.from + at + width));
         if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
         line = view.state.doc.line(line.number + 1);
       }
@@ -191,12 +204,27 @@ const directionPlugin = ViewPlugin.fromClass(class {
 // coming back, a reload) and a paste or a drop, which is the writer's own
 // material.
 const listRenumber = Annotation.define<boolean>();
-const ITEM_LINE = new RegExp(`^([ \\t]*)(${MARKER})([.)])([ \\t])`);
+const ITEM_LINE = new RegExp(`^(${LEAD})(${MARKER})([.)])([ \\t])`);
 // A line the writer is taking apart: the whole item, "2." with its text gone,
 // or "2" with the marker half-deleted. Only a line that holds nothing else.
-const STRUCK_ITEM = new RegExp(`^([ \\t]*)(${MARKER})([.)])?([ \\t]*)$`);
+const STRUCK_ITEM = new RegExp(`^(${LEAD})(${MARKER})([.)])?([ \\t]*)$`);
 
 interface Marker { indent: string; delimiter: string }
+
+/** Deeper than any indent a writer would type, so one more quote always wins
+ *  over any number of spaces. */
+const QUOTE_DEEPER = 1000;
+/** How deep an item sits: the quotes it is inside first, then how far it is
+ *  indented within them. Two items are of one list only where both agree, so
+ *  a quoted item is never read as a sibling of an indented one that happens
+ *  to be as many characters along. */
+function leadWidth(lead: string): number {
+  const last = lead.lastIndexOf('>');
+  if (last < 0) return lead.length;
+  const quotes = (lead.match(/>/g) as string[]).length;
+  // The space after a `>` belongs to the quote mark, not to the indent.
+  return quotes * QUOTE_DEEPER + lead.slice(last + 1).replace(/^[ \t]/, '').length;
+}
 
 /** The item lines one change took out of the list, and the marker to match the
  *  run after them against. A line goes when the whole line went, when the
@@ -247,11 +275,11 @@ function removedItems(tr: { changes: { mapPos: (pos: number, assoc: number) => n
 function runAround(doc: EditorState['doc'], number: number, inMathAt: (pos: number) => boolean): { first: number; last: number } {
   const marker = ITEM_LINE.exec(doc.line(number).text);
   if (!marker) return { first: number, last: number };
-  const indent = marker[1].length;
+  const indent = leadWidth(marker[1]);
   const delimiter = marker[3];
   const same = (n: number): boolean => {
     const match = ITEM_LINE.exec(doc.line(n).text);
-    return Boolean(match) && match![1].length === indent && match![3] === delimiter;
+    return Boolean(match) && leadWidth(match![1]) === indent && match![3] === delimiter;
   };
   /** A line the run cannot cross: air, a formula, prose, or another list. An
    *  indented line belongs to the item above it; a deeper item is nested. */
@@ -259,8 +287,10 @@ function runAround(doc: EditorState['doc'], number: number, inMathAt: (pos: numb
     const line = doc.line(n);
     if (!line.text.trim() || inMathAt(line.from)) return true;
     const match = ITEM_LINE.exec(line.text);
-    if (!match) return !/^[ \t]/.test(line.text);
-    return match[1].length < indent || (match[1].length === indent && match[3] !== delimiter);
+    // A line that is not an item ends the run unless it hangs under the item
+    // above — and inside a quote that is judged after the quote marks.
+    if (!match) return !/^[ \t]/.test(line.text.replace(/^[ \t]*(?:>[ \t]?)*/, ''));
+    return leadWidth(match[1]) < indent || (leadWidth(match[1]) === indent && match[3] !== delimiter);
   };
   let first = number;
   while (first > 1 && !ends(first - 1)) first -= 1;
@@ -280,11 +310,11 @@ function normalizeRun(doc: EditorState['doc'], number: number, inMathAt: (pos: n
   const head = ITEM_LINE.exec(doc.line(first).text)!;
   const start = parseMarker(head[2]);
   if (!start) return [];
-  const markers: Array<{ line: number; token: string }> = [];
+  const markers: Array<{ line: number; token: string; at: number }> = [];
   for (let n = first; n <= last; n += 1) {
     const match = ITEM_LINE.exec(doc.line(n).text);
-    if (!match || match[1].length !== head[1].length || match[3] !== head[3]) continue;
-    markers.push({ line: n, token: match[2] });
+    if (!match || leadWidth(match[1]) !== leadWidth(head[1]) || match[3] !== head[3]) continue;
+    markers.push({ line: n, token: match[2], at: match[1].length });
   }
   // Which of the two letter orders: whatever the letters typed in the run say.
   const letters = start.alphabet === 'abjad' || start.alphabet === 'abpats'
@@ -300,8 +330,9 @@ function normalizeRun(doc: EditorState['doc'], number: number, inMathAt: (pos: n
     if (index === 0) return;
     const wanted = formatMarker(start.number + index, alphabet);
     if (wanted === marker.token) return;
-    const indent = head[1].length;
-    changes.push({ from: doc.line(marker.line).from + indent, to: doc.line(marker.line).from + indent + marker.token.length, insert: wanted });
+    // Where that line's own marker starts — its lead is its own: `>1.` and
+    // `> 1.` are the same item of the same list, written two ways.
+    changes.push({ from: doc.line(marker.line).from + marker.at, to: doc.line(marker.line).from + marker.at + marker.token.length, insert: wanted });
   });
   return changes;
 }
@@ -310,7 +341,7 @@ function normalizeRun(doc: EditorState['doc'], number: number, inMathAt: (pos: n
  *  comes down by that many, never past 1. */
 function shiftBelow(doc: EditorState['doc'], from: number, gone: { count: number; marker: Marker }): { from: number; to: number; insert: string }[] {
   const changes: { from: number; to: number; insert: string }[] = [];
-  const indent = gone.marker.indent.length;
+  const indent = leadWidth(gone.marker.indent);
   const delimiter = gone.marker.delimiter;
   // The run below is read before it is moved: English letters are shifted only
   // when they already read as a list, so no sentence is rewritten.
@@ -319,7 +350,7 @@ function shiftBelow(doc: EditorState['doc'], from: number, gone: { count: number
     const text = doc.line(n).text;
     if (!text.trim()) continue;
     const match = ITEM_LINE.exec(text);
-    if (!match || match[1].length !== indent || match[3] !== delimiter) {
+    if (!match || leadWidth(match[1]) !== indent || match[3] !== delimiter) {
       if (match || /^[ \t]/.test(text)) continue;
       break;
     }
@@ -332,7 +363,7 @@ function shiftBelow(doc: EditorState['doc'], from: number, gone: { count: number
     const text = doc.line(n).text;
     if (!text.trim()) continue;
     const match = ITEM_LINE.exec(text);
-    if (!match || match[1].length !== indent || match[3] !== delimiter) {
+    if (!match || leadWidth(match[1]) !== indent || match[3] !== delimiter) {
       if (match || /^[ \t]/.test(text)) continue; // nested or hanging: stepped over
       break;
     }
@@ -342,7 +373,8 @@ function shiftBelow(doc: EditorState['doc'], from: number, gone: { count: number
     if (wanted < 1) break;
     previous = wanted;
     if (wanted !== parsed.number) {
-      changes.push({ from: doc.line(n).from + indent, to: doc.line(n).from + indent + match[2].length, insert: formatMarker(wanted, parsed.alphabet) });
+      const at = match[1].length;
+      changes.push({ from: doc.line(n).from + at, to: doc.line(n).from + at + match[2].length, insert: formatMarker(wanted, parsed.alphabet) });
     }
   }
   return changes;
@@ -381,12 +413,12 @@ const listNumbering = EditorState.transactionFilter.of((tr) => {
   // renumbered too, all the way up.
   const enclosing = (number: number): number[] => {
     const out: number[] = [];
-    let indent = (ITEM_LINE.exec(doc.line(number).text)?.[1] ?? '').length;
+    let indent = leadWidth(ITEM_LINE.exec(doc.line(number).text)?.[1] ?? '');
     for (let n = number - 1; n >= 1 && indent > 0; n -= 1) {
       if (!doc.line(n).text.trim()) break;
       const match = ITEM_LINE.exec(doc.line(n).text);
-      if (!match || match[1].length >= indent) continue;
-      indent = match[1].length;
+      if (!match || leadWidth(match[1]) >= indent) continue;
+      indent = leadWidth(match[1]);
       out.push(n);
     }
     return out;
@@ -401,7 +433,7 @@ const listNumbering = EditorState.transactionFilter.of((tr) => {
 
 /** An item with nothing written on it yet: its marker (a to-do box counts)
  *  and nothing else. */
-const EMPTY_ITEM_LINE = new RegExp(`^([ \\t]*)([-*+]|${MARKER}[.)])([ \\t]+(\\[[ xX]\\])?)?[ \\t]*$`);
+const EMPTY_ITEM_LINE = new RegExp(`^(${LEAD})([-*+]|${MARKER}[.)])([ \\t]+(\\[[ xX]\\])?)?[ \\t]*$`);
 
 /** Are these two markers the same list continuing? Numbers may differ — the
  *  writer's own spacing is theirs — but the kind and the delimiter must hold. */
@@ -419,11 +451,15 @@ function continueOnEnter(view: EditorView): boolean {
   if (!selection.empty) return false;
   const line = state.doc.lineAt(selection.head);
   const before = state.sliceDoc(line.from, selection.head);
-  const match = new RegExp(`^(\\s*)([-*+]|${MARKER}[.)])\\s+(\\[[ xX]\\]\\s+)?`).exec(before);
+  const match = new RegExp(`^(${LEAD})([-*+]|${MARKER}[.)])[ \\t]+(\\[[ xX]\\][ \\t]+)?`).exec(before);
   if (!match) return false;
   const [whole, indent, marker, task] = match;
   if (!before.slice(whole.length).trim()) {
-    view.dispatch({ changes: { from: line.from, to: selection.head, insert: '' }, selection: { anchor: line.from }, userEvent: 'input.enter' });
+    // The item goes; the quote it was written in stays, as the reading view
+    // and Obsidian both keep it. `> - ` comes back to `> `, not to nothing.
+    const quoted = /^[ \t]*(?:>[ \t]*)*>[ \t]?/.exec(indent)?.[0] ?? '';
+    const start = line.from + quoted.length;
+    view.dispatch({ changes: { from: start, to: selection.head, insert: '' }, selection: { anchor: start }, userEvent: 'input.enter' });
     return true;
   }
   const ordered = new RegExp(`^(${MARKER})([.)])$`).exec(marker);
@@ -467,11 +503,11 @@ function spaced(text: string): string {
 
 /** An item line holding nothing but its box: the line a pasted to-do item is
  *  about to land on. */
-const EMPTY_TASK_LINE = new RegExp(`^([ \\t]*)([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\][ \\t]*$`);
+const EMPTY_TASK_LINE = new RegExp(`^(${LEAD})([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\][ \\t]*$`);
 /** A line that is a to-do item: a marker, a box, and whatever the writer wrote
  *  — `[ ]` or `[x]`, the space after the box optional (they type what they
  *  type; the clip is theirs either way). */
-const TASK_ITEM_LINE = new RegExp(`^[ \\t]*([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\]([ \\t]|$)`);
+const TASK_ITEM_LINE = new RegExp(`^${LEAD}([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\]([ \\t]|$)`);
 
 /**
  * Copying a to-do item onto an empty to-do line: the item goes where the
@@ -506,7 +542,7 @@ export function pastedOverEmptyTask(lineText: string, clip: string): string | nu
  *  paste brought in beside it. What the writer sees when a paste lands and
  *  nothing steps aside — the shape to put right, whatever the change looked
  *  like on the way in. The item's own box and text are kept as they came. */
-const TWO_TASKS_ON_A_LINE = new RegExp(`^([ \\t]*)([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\][ \\t]*([-*+]|${MARKER}[.)])[ \\t]+(\\[[ xX]\\])([ \\t]*)(.*)$`);
+const TWO_TASKS_ON_A_LINE = new RegExp(`^(${LEAD})([-*+]|${MARKER}[.)])[ \\t]+\\[[ xX]\\][ \\t]*([-*+]|${MARKER}[.)])[ \\t]+(\\[[ xX]\\])([ \\t]*)(.*)$`);
 
 /**
  * The same rule, run on the transaction rather than on the paste event, and
@@ -979,7 +1015,7 @@ export class SatrEditor {
       // of lib/codemirror/modes.min.js on demand, while its reading view runs
       // Prism. Two highlighters, one set of colours — ours are hljs in the
       // reading view and Lezer here, both painted from the --code-* palette.
-      markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages }),
+      readsEveryNumber(markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages })),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
         { tag: tags.strong, fontWeight: '700' },
