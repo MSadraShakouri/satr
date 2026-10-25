@@ -57,6 +57,19 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
   // Off-screen line heights are estimates until CodeMirror measures them:
   // jump, let it measure, then correct. With settle, keep correcting as math
   // and tables cause height changes.
+  //
+  // The jump is CodeMirror's own, first, because the arithmetic below cannot
+  // see what it has not measured: lineBlockAt answers for an off-screen line
+  // with an estimate made from the average line on screen, and on a note of
+  // long wrapped items that estimate is half the truth — the author's plan
+  // note stands 22 749px tall by estimate and 47 831px measured. Landing on
+  // the estimate draws new lines, which changes every height below them, so
+  // the correction chases a line that has already moved: a reader switching
+  // from halfway down the reading view came back to the editor two screens
+  // past where they were. scrollIntoView is CodeMirror measuring its way
+  // there instead, over as many cycles as it takes, and the places below
+  // then only have the fraction of a line to add.
+  view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: anchor }) });
   place();
   view.requestMeasure({ read: () => null, write: () => place() });
   window.requestAnimationFrame(() => window.requestAnimationFrame(place));
@@ -71,6 +84,53 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
 
 function anchors(preview: HTMLElement): HTMLElement[] {
   return [...preview.querySelectorAll<HTMLElement>('[data-line]')];
+}
+
+/** Measure the whole note, once, before a place is worked out from it.
+ *
+ *  Every section the reader has not seen yet stands on an estimate
+ *  (content-visibility: auto, src/style.css) and the estimates are poor on
+ *  a note whose items run to a paragraph apiece: the author's plan note
+ *  measured 7 225px at the moment a switch landed in it, and 23 574px once
+ *  drawn. A place worked out from the short note is wrong twice over — the
+ *  line it is looking for is not where the page says it is, and the foot it
+ *  is clamped to is three screens above the real one, so a reader switching
+ *  from halfway down a long note arrives at the end of it.
+ *
+ *  So the note is drawn before it is measured. Every section is laid out in
+ *  one pass — 8ms for a note of 35 sections — each one's real height is
+ *  written back as its intrinsic size, and the sections go straight back to
+ *  content-visibility: auto. Nothing is painted that was not painted
+ *  before, no formula off-screen is laid out, and the page keeps the length
+ *  it was measured at: the browser does not remember a size it was told to
+ *  draw, only one it drew for itself, so being told is the whole job here.
+ */
+function layOutNote(preview: HTMLElement): void {
+  const sections = [...preview.querySelectorAll<HTMLElement>(':scope > .md-section')];
+  if (!sections.length) return;
+  for (const section of sections) {
+    section.style.contentVisibility = 'visible';
+    // Drawn the way it is drawn on screen. content-visibility carries
+    // containment with it, and a section measured without it is a section
+    // whose children's margins have collapsed out through its edges: the
+    // first three sections of a homework note measure 31, 28 and 30px that
+    // way and 47, 84 and 62px — their real heights — with it.
+    section.style.contain = 'layout style paint';
+  }
+  // One layout for all of them, read before anything is written back.
+  const heights = sections.map((section) => section.getBoundingClientRect().height);
+  for (const [index, section] of sections.entries()) {
+    section.style.removeProperty('content-visibility');
+    section.style.removeProperty('contain');
+    const height = heights[index];
+    if (!(height > 0)) continue;
+    // Only what this pass can honestly answer for. A picture that has not
+    // loaded has no height yet, and writing down the nothing it measures
+    // now would hand the note a length it loses the moment the picture
+    // arrives. Those sections keep the estimate they had.
+    if (section.querySelector('img, svg, iframe, video')) continue;
+    section.style.setProperty('contain-intrinsic-block-size', `auto ${Math.round(height)}px`);
+  }
 }
 
 /** A folded-away section is display:none, and so is every section while the
@@ -114,6 +174,8 @@ export function previewScroll(pane: HTMLElement, preview: HTMLElement, anchor = 
  *  it is mid-answer, and halfway through a cold note it can be sitting at
  *  the end of a note that is still growing. */
 let holding: { pane: HTMLElement; position: number; token: object } | null = null;
+/** Ends the hold that is currently running, whatever note it belongs to. */
+let endHolding: (() => void) | null = null;
 export function heldPreviewPlace(pane: HTMLElement): number | null {
   return holding && holding.pane === pane ? holding.position : null;
 }
@@ -124,6 +186,8 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   // moving a single pixel of their own is the one thing that ends the
   // corrections: see keepPlaced below.
   let placed: number | null = null;
+  // The note is drawn once, on the first place, and measured after that.
+  let unmeasured = true;
   // Whether the pane could go where it was asked. A note whose sections are
   // still estimates can be shorter than the place the reader asked for: the
   // scroll is clamped to the end of the note as it stands, which is not
@@ -131,7 +195,18 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
   let reached = false;
   const place = (): void => {
     if (!isCurrent()) return;
-    if (!(position > 0)) { scrollInstantly(pane, 0); return; }
+    // Before anything is read off the page, including the top of it: a note
+    // placed at its first line still has to be as long as it really is, or
+    // it shortens under the reader as they read on and the browser clamps
+    // them to the end of what is left.
+    if (unmeasured) { unmeasured = false; layOutNote(preview); }
+    // The top of the note is a place like any other, and the hold has to be
+    // able to tell the reader leaving it from the page changing shape
+    // underneath: without this, placed stayed null for a note opened at its
+    // first line, nothing could end the hold, and a reader scrolling down
+    // through a note that was still resolving its sections was carried back
+    // to the top by the next correction.
+    if (!(position > 0)) { scrollInstantly(pane, 0); placed = pane.scrollTop; reached = true; return; }
     const list = anchors(preview);
     if (!list.length) return;
     let target: number | null = null;
@@ -216,6 +291,17 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
     ro?.disconnect();
     if (holding?.token === token) holding = null;
   };
+  // One hold at a time. A note the reader has left keeps its own
+  // corrections alive — its timers, and a ResizeObserver on the preview
+  // element, which is the same element every note is drawn into. Coming
+  // back to another note used to wake that old hold the moment the new
+  // note changed the page's shape, and it answered the new note's page
+  // with the line the old one was left on: the reader, sent two thirds
+  // down a note, arrived at the foot of it instead. The hold being
+  // replaced here is ended first, and it cannot clear the new one — it
+  // only lets go of a hold still carrying its own token.
+  endHolding?.();
+  endHolding = stop;
   // The page's own length, last time this looked. The browser moves the
   // pane by itself when content above the reader changes size — scroll
   // anchoring, keeping what they can see where it is — and that move is
