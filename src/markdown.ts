@@ -7,6 +7,7 @@ import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamp
 import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
 import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
+import { widestMarkerEm } from './markerWidth';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
@@ -128,11 +129,6 @@ marked.use({
 // `<!-- table: auto -->` on the line just above the table.
 export const TABLE_DIRECTIVE = /^\s*<!--\s*table:\s*(rtl|ltr|auto)\s*-->\s*$/i;
 
-// Measured big and reported small: a marker's width is kept as a multiple of
-// the text size, so one measurement holds at every size the note is read at
-// and at the 15px the page prints at.
-const MARKER_MEASURE_PX = 1000;
-let markerPaint: CanvasRenderingContext2D | null | undefined;
 
 /**
  * How much room each drawn list keeps for its marker: the widest marker the
@@ -156,18 +152,15 @@ export function sizeListMarkers(root: ParentNode): void {
   const host = globalThis.document as Document | undefined;
   const lists = root.querySelectorAll<HTMLElement>('ol.persian-ordered');
   if (!host || !lists.length) return;
-  if (markerPaint === undefined) markerPaint = host.createElement('canvas').getContext('2d');
-  if (!markerPaint) return;
   const face = getComputedStyle(host.body ?? host.documentElement).fontFamily || 'sans-serif';
-  markerPaint.font = `${MARKER_MEASURE_PX}px ${face}`;
   lists.forEach((list) => {
-    let widest = 0;
+    const markers: string[] = [];
     for (const item of list.children) {
       const marker = item.getAttribute('data-persian-number');
       if (marker === null) continue;
-      const text = marker + (item.getAttribute('data-persian-delimiter') ?? '');
-      widest = Math.max(widest, markerPaint!.measureText(text).width / MARKER_MEASURE_PX);
+      markers.push(marker + (item.getAttribute('data-persian-delimiter') ?? ''));
     }
+    const widest = widestMarkerEm(markers, face);
     if (widest > 0) list.style.setProperty('--list-marker-width', `${widest.toFixed(3)}em`);
   });
 }

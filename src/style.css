@@ -1232,7 +1232,10 @@ body {
   text-indent: 0;
 }
 .cm-lp-marker {
-  min-width: 3ch; /* --list-marker-gutter */
+  /* 3ch, or wider where the list's markers need it: --lp-strip is written on
+     the marker by src/editor.ts from the same measurement the reading view's
+     strip comes from (src/markerWidth.ts). */
+  min-width: var(--lp-strip, 3ch); /* --list-marker-gutter */
 }
 /* The width belongs to the marker, and the space after it is given none: a
    caret at the end of an item with nothing written on it yet then stands at
@@ -1243,7 +1246,7 @@ body {
    before a checkbox is. */
 .cm-lp-marker-text {
   display: inline-block;
-  min-width: 3ch; /* --list-marker-gutter */
+  min-width: var(--lp-strip, 3ch); /* --list-marker-gutter */
 }
 .cm-lp-marker-gap {
   /* The space is pulled back by its own width rather than set to font-size:
@@ -1259,7 +1262,7 @@ body {
    after it — so 9. and 10. still end in one place and the caret still comes
    to rest where the text starts. */
 .cm-lp-marker.is-number .cm-lp-marker-text {
-  min-width: calc(3ch - 6px);
+  min-width: calc(var(--lp-strip, 3ch) - 6px);
   text-align: end;
 }
 .cm-lp-marker.is-number .cm-lp-marker-gap {

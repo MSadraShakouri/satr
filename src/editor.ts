@@ -10,7 +10,8 @@ import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin,
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
-import { livePreview } from './livePreview';
+import { indentBox, listLine, livePreview, markerGap, markerText, numberMarker } from './livePreview';
+import { markerStrip } from './markerWidth';
 import { autoSpace } from './autoSpace';
 import { Highlight, highlightTag } from './highlightSyntax';
 import { languages } from '@codemirror/language-data';
@@ -21,7 +22,7 @@ import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 import { typingTop } from './scrollSync';
-import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
+import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, nextLetter, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
 import { readsEveryNumber } from './markerParse';
 
 const rtlLineDirection = EditorView.theme({
@@ -109,12 +110,55 @@ const LEAD = '[ \\t]*(?:>[ \\t]*)*';
 // lettered lists to stand in at all. So these keep the dim the parser would
 // have given them. Numbers are the parser's now, in both scripts.
 const liveMarker = Decoration.mark({ class: 'cm-live-marker' });
+/** One step of indentation, the way the live preview reads it: two columns,
+ *  four, or a tab all draw one step. */
+const LETTER_STEP = 2;
+
+/** The note's own font, for measuring a marker in. */
+const face = (view: EditorView): string => getComputedStyle(view.contentDOM).fontFamily || 'sans-serif';
+
+/** The strip a lettered list's markers hang in: the widest marker in the run
+ *  this line belongs to, so `الف.` and `ب.` end in one place and the text
+ *  starts where the reading view starts it. A run is the neighbouring
+ *  letters themselves — the same reading lineIsLettered does. */
+function stripFor(lineAt: (index: number) => string | undefined, index: number, font: string): string | null {
+  const here = letterItem(lineAt(index) ?? '');
+  if (!here) return null;
+  const delimiter = (text: string, item: { indent: number; letter: string }): string =>
+    text.slice(item.indent + item.letter.length, item.indent + item.letter.length + 1);
+  const tokens = [here.letter + delimiter(lineAt(index) ?? '', here)];
+  for (const step of [-1, 1]) {
+    let last = here;
+    for (let at = index + step; ; at += step) {
+      const text = lineAt(at);
+      if (text === undefined) break;
+      const other = letterItem(text);
+      if (!other || other.indent !== here.indent || !nextLetter(last.letter, other.letter)) break;
+      tokens.push(other.letter + delimiter(text, other));
+      last = other;
+    }
+  }
+  return markerStrip(tokens, font);
+}
+
+/** The marker strip was measured in whatever font was loaded at the time; a
+ *  note laid out before the webfont arrived was measured in the fallback.
+ *  The reading view asks again when the font lands (src/main.ts) and so does
+ *  this. */
+const markersMeasured = StateEffect.define<null>();
 
 const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   decorations: any;
-  constructor(view: EditorView) { this.decorations = this.build(view); }
-  update(update: { docChanged: boolean; viewportChanged: boolean; view: EditorView }): void {
-    if (update.docChanged || update.viewportChanged) this.decorations = this.build(update.view);
+  private readonly refresh: () => void;
+  constructor(view: EditorView) {
+    this.decorations = this.build(view);
+    this.refresh = () => view.dispatch({ effects: markersMeasured.of(null) });
+    document.fonts?.addEventListener?.('loadingdone', this.refresh);
+  }
+  destroy(): void { document.fonts?.removeEventListener?.('loadingdone', this.refresh); }
+  update(update: { docChanged: boolean; viewportChanged: boolean; view: EditorView; transactions: readonly Transaction[] }): void {
+    const measured = update.transactions.some((tr) => tr.effects.some((effect) => effect.is(markersMeasured)));
+    if (update.docChanged || update.viewportChanged || measured) this.decorations = this.build(update.view);
   }
   build(view: EditorView) {
     const ranges = [];
@@ -135,7 +179,28 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
         const item = letterItem(line.text);
         if (item && lineIsLettered(lineAt, line.number)) {
           const at = line.from + item.indent;
-          ranges.push(liveMarker.range(at, at + item.letter.length + 1));
+          const markEnd = at + item.letter.length + 1;
+          // The layout a list has, for the one kind of list the parser
+          // cannot read. The strip the marker hangs in, the hanging indent
+          // that brings a wrapped row under the text, and one step per
+          // level of indent are the live preview's own (src/livePreview.ts),
+          // measured the way the reading view measures them
+          // (src/markerWidth.ts) — so `الف. یک` sits in the same place in
+          // both views, as `۱. یک` and `- یک` already do.
+          const lead = item.indent === 0 ? '' : line.text.slice(0, item.indent);
+          const quotes = (lead.match(/>/g) ?? []).length;
+          const spaces = lead.slice(lead.lastIndexOf('>') + 1).replace(/\t/g, '    ').length;
+          const level = 1 + Math.floor(spaces / LETTER_STEP);
+          const strip = stripFor(lineAt, line.number, face(view)) ?? undefined;
+          const after = /^[ \t]+/.exec(line.text.slice(markEnd - line.from))?.[0].length ?? 0;
+          ranges.push(listLine(level, false, quotes, strip).range(line.from));
+          if (level > 1) ranges.push(indentBox(level).range(line.from + item.indent - spaces, at));
+          // Outer mark first: the strip holds the marker and the space after
+          // it, and the dim sits inside it on the marker alone.
+          ranges.push(numberMarker(strip).range(at, markEnd + after));
+          ranges.push(liveMarker.range(at, markEnd));
+          ranges.push(markerText.range(at, markEnd));
+          ranges.push(markerGap.range(markEnd, markEnd + after));
         }
         if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
         line = view.state.doc.line(line.number + 1);
@@ -1049,7 +1114,12 @@ export class SatrEditor {
         { tag: [tags.meta, tags.annotation, tags.standard(tags.variableName)], color: 'var(--code-important)' },
       ])),
       titleField,
-      rtlLineDirection, directionsField, directionPlugin, persianListMarkerPlugin, lineGutterField, headingLineField, livePreview, mathSource,
+      rtlLineDirection, directionsField, directionPlugin, lineGutterField, headingLineField, livePreview,
+      // After the live preview: a lettered line is given a list's indent
+      // here, and a quoted line is given the quote's by the live preview —
+      // the one that comes last writes the line's style, and the lettered
+      // list's has the quote's step already in it.
+      persianListMarkerPlugin, mathSource,
       searchFlashField, searchFlashDecorations,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when

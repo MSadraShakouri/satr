@@ -86,6 +86,35 @@ test('a list in a quote is a list, and keeps both indents', async ({ page }) => 
   expect(deeper.indent).toBe('79px');
 });
 
+test('a lettered list gets the layout of a list, in both scripts', async ({ page }) => {
+  // Reported: "for letter lists both systems, it would be so much better."
+  // A letter is the one marker the parser cannot be taught — an ASCII number
+  // can stand in for a Persian one character for character, a letter cannot,
+  // and CommonMark has no lettered list to stand in at all. The editor draws
+  // the strip and the hanging indent for these itself, from the one reading
+  // of a lettered line both views already share (lineIsLettered).
+  for (const [script, text] of [['English', 'a. one\nb. two'], ['Persian', 'الف. یک\nب. دو']] as const) {
+    const item = await look(page, text, 1);
+    expect(item.classes, script).toBe('cm-lp-list-line');
+    expect(item.strip, script).toBe(true);
+    // a wrapped row comes back to the text, so the indent is hung
+    expect(item.hanging, script).toBe(`-${item.indent}`);
+    expect(parseFloat(item.indent), script).toBeGreaterThan(20);
+  }
+  // `الف.` is a word, and keeps more room than `a.` does
+  const latin = await look(page, 'a. one\nb. two', 1);
+  const farsi = await look(page, 'الف. یک\nب. دو', 1);
+  expect(parseFloat(farsi.indent)).toBeGreaterThan(parseFloat(latin.indent) + 2);
+  // A letter is a marker only where it reads as one: the neighbour rule is
+  // unchanged, and a name is still a name in either script.
+  expect((await look(page, 'A. Smith wrote this one', 1)).strip, 'A. Smith').toBe(false);
+  expect((await look(page, 'م. شاکوری این را نوشت', 1)).strip, 'م. شاکوری').toBe(false);
+  // In a quote, both indents: the quote's step and the list's own strip.
+  const quoted = await look(page, '> a. one\n> b. two', 1);
+  expect(quoted.classes).toBe('cm-lp-list-line cm-lp-quote');
+  expect(parseFloat(quoted.indent)).toBe(parseFloat(latin.indent) + 26);
+});
+
 test('a table cell is prose in both scripts — the same prose', async ({ page }) => {
   const latin = await look(page, '| x | y |\n| --- | --- |\n| 1. one | z |', 3);
   expect(latin.strip).toBe(false);

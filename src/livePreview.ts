@@ -125,16 +125,19 @@ const listLines = new Map<string, Decoration>();
  *  written in the reading view's own units rather than measured: a webfont
  *  that arrives late re-lays the line out by itself, where a measurement
  *  taken before it loaded would have stood 5px wrong for good. */
-function listLine(level: number, task = false, quotes = 0): Decoration {
-  const key = `${level}${task ? ':task' : ''}${quotes > 0 ? `:q${quotes}` : ''}`;
+export function listLine(level: number, task = false, quotes = 0, strip = `${LIST_GUTTER_CH}ch`): Decoration {
+  const key = `${level}${task ? ':task' : ''}${quotes > 0 ? `:q${quotes}` : ''}|${strip}`;
   let deco = listLines.get(key);
   if (!deco) {
     // A list inside a quote keeps both indents: the quote's steps carry the
     // text past the rules, the list's gutter carries a wrapped row under the
-    // text — as the reading view does it.
+    // text — as the reading view does it. `strip` is the room the marker
+    // hangs in: the platform's 3ch, or wider for a list whose markers need
+    // it (a lettered list — `الف.` — measured in src/markerWidth.ts, which
+    // is where the reading view's own strip comes from too).
     const indent = `calc(${[
       quotes > 0 ? `${quotes * QUOTE_STEP_PX}px` : '',
-      `${LIST_GUTTER_CH}ch`,
+      strip,
       level > 1 ? `${LIST_INDENT_EM}em * ${level - 1}` : '',
     ].filter(Boolean).join(' + ')})`;
     deco = Decoration.line({
@@ -148,7 +151,7 @@ function listLine(level: number, task = false, quotes = 0): Decoration {
 /** The line's own indentation, drawn to one step per level however its writer
  *  spelled it — two spaces, four, a tab. */
 const indentBoxes = new Map<number, Decoration>();
-function indentBox(level: number): Decoration {
+export function indentBox(level: number): Decoration {
   let deco = indentBoxes.get(level);
   if (!deco) {
     deco = Decoration.mark({ class: 'cm-lp-indent', attributes: { style: `width:calc(${LIST_INDENT_EM}em * ${level - 1})` } });
@@ -162,14 +165,27 @@ function indentBox(level: number): Decoration {
 // reading view puts it — and the hanging indent above brings a wrapped row to
 // the same place. A number is drawn from its own end, as a list marker is.
 const markerPlain = Decoration.mark({ class: 'cm-lp-marker' });
-const markerNumber = Decoration.mark({ class: 'cm-lp-marker is-number' });
+const markerNumbers = new Map<string, Decoration>();
+/** A marker drawn from its own end, in a strip as wide as the list needs:
+ *  `9.` and `10.` end in one place, and so do `الف.` and `ب.`. */
+export function numberMarker(strip?: string): Decoration {
+  const key = strip ?? '';
+  let deco = markerNumbers.get(key);
+  if (!deco) {
+    deco = Decoration.mark(strip
+      ? { class: 'cm-lp-marker is-number', attributes: { style: `--lp-strip:${strip}` } }
+      : { class: 'cm-lp-marker is-number' });
+    markerNumbers.set(key, deco);
+  }
+  return deco;
+}
 /** The strip is drawn in two parts: the marker itself, which is given the
  *  strip's width, and the space after it, which is given none. The caret on
  *  an item with nothing written on it yet then stands at the end of the
  *  strip — where the first letter will be — rather than back against the
  *  bullet with the strip's width stretching out in front of it. */
-const markerText = Decoration.mark({ class: 'cm-lp-marker-text' });
-const markerGap = Decoration.mark({ class: 'cm-lp-marker-gap' });
+export const markerText = Decoration.mark({ class: 'cm-lp-marker-text' });
+export const markerGap = Decoration.mark({ class: 'cm-lp-marker-gap' });
 /** Every ">" is drawn one step wide, so the rules stand where the reading
  *  view's borders do and the text starts past the last of them. */
 const quoteStep = Decoration.mark({ class: 'cm-lp-quote-step' });
@@ -345,7 +361,7 @@ function build(view: EditorView): DecorationSet {
                 const after = /^[ \t]*/.exec(line.text.slice(markEnd - line.from))?.[0].length ?? 0;
                 if (after > 0) {
                   if (node.from > ownIndent) out.push(indentBox(level).range(ownIndent, node.from));
-                  out.push((ordered && !drawnTask ? markerNumber : markerPlain).range(node.from, markEnd + after));
+                  out.push((ordered && !drawnTask ? numberMarker() : markerPlain).range(node.from, markEnd + after));
                   out.push(markerText.range(node.from, markEnd));
                   out.push(markerGap.range(markEnd, markEnd + after));
                   out.push(listLine(level, drawnTask, quotes).range(line.from));
