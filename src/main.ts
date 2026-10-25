@@ -6,7 +6,7 @@ import 'katex/dist/katex.min.css';
 import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
-import { renderMarkdown, sizeListMarkers, TABLE_DIRECTIVE } from './markdown';
+import { renderMarkdown, sizeListMarkers } from './markdown';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
@@ -3166,59 +3166,6 @@ setTimestampChipTap((chip) => {
   editTimestampAt({ seconds, format }, { from: at, to: at + match[0].length });
 });
 
-// A table tapped in the reading view asks for its whole direction: a menu
-// writes (or clears) the `<!-- table: rtl -->` comment on the line just
-// above it — the same directive the renderer reads (src/markdown.ts). The
-// edit is an ordinary editor transaction, so undo takes it back.
-function openTableDirectionMenu(table: HTMLElement): void {
-  const section = table.closest<HTMLElement>('.md-section[data-line]');
-  if (!section) return;
-  // The table's first source line, 0-based.
-  const tableLine = Number(section.dataset.line);
-  if (!Number.isFinite(tableLine) || tableLine < 0 || tableLine > editor.view.state.doc.lines) return;
-  // The directive the renderer honours: the nearest line above the table that
-  // is a `<!-- table: … -->` comment, over blank lines. The first line that
-  // is neither settles it.
-  const findDirective = (): { at: number; word: 'rtl' | 'ltr' | 'auto' } | null => {
-    const doc = editor.view.state.doc;
-    for (let above = tableLine - 1; above >= 0 && tableLine - above <= 3; above -= 1) {
-      const text = doc.line(above + 1).text;
-      if (!text.trim()) continue;
-      const match = TABLE_DIRECTIVE.exec(text);
-      return match ? { at: above + 1, word: match[1].toLowerCase() as 'rtl' | 'ltr' | 'auto' } : null;
-    }
-    return null;
-  };
-  const current = findDirective()?.word ?? 'auto';
-  const apply = (next: 'rtl' | 'ltr' | null): void => {
-    const view = editor.view;
-    const doc = view.state.doc;
-    const found = findDirective();
-    const changes = [];
-    if (found) {
-      const line = doc.line(found.at);
-      if (next === null) {
-        // Gone, and the blank that separated it from the table goes too, so
-        // no double blank is left behind.
-        let to = Math.min(line.to + 1, doc.length);
-        if (found.at < doc.lines && !doc.line(found.at + 1).text.trim()) to = Math.min(doc.line(found.at + 1).to + 1, doc.length);
-        changes.push({ from: line.from, to });
-      } else {
-        changes.push({ from: line.from, to: line.to, insert: `<!-- table: ${next} -->` });
-      }
-    } else if (next !== null) {
-      const line = doc.line(Math.min(tableLine + 1, doc.lines));
-      changes.push({ from: line.from, insert: `<!-- table: ${next} -->\n` });
-    }
-    if (changes.length) view.dispatch({ changes, userEvent: 'input' });
-  };
-  openMenu([
-    { title: 'Automatic — follows the note', checked: current === 'auto', action: () => apply(null) },
-    { title: 'Left to right', checked: current === 'ltr', action: () => apply('ltr') },
-    { title: 'Right to left', checked: current === 'rtl', action: () => apply('rtl') },
-  ], { title: 'Table direction' });
-}
-
 preview.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const wiki = target.closest<HTMLElement>('a.internal-link');
@@ -3227,11 +3174,6 @@ preview.addEventListener('click', (event) => {
   // own moment and format; Insert rewrites the very code that made it.
   const stamp = target.closest<HTMLElement>('time.discord-timestamp');
   if (stamp && previewVisible()) { editTimestampFromChip(stamp); return; }
-  // A tap on a table asks for its whole direction: a menu writes (or clears)
-  // a `<!-- table: rtl -->` comment on the line just above it — the same
-  // directive the renderer reads (src/markdown.ts). One undo step apiece.
-  const table = target.closest<HTMLElement>('.table-wrapper > table');
-  if (table && previewVisible()) { openTableDirectionMenu(table); return; }
   const copy = target.closest<HTMLButtonElement>('.copy-code-button');
   if (copy) {
     event.preventDefault();
