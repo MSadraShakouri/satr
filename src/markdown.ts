@@ -492,18 +492,25 @@ export function renderMarkdown(source: string): string {
     const letters = parsed.alphabet === 'abjad' || parsed.alphabet === 'abpats';
     return `${letters ? 'persian-letters' : parsed.alphabet}${mark.delimiter}`;
   };
-  /** A list written with a blank line between its items is a loose list: the
-   *  parser says so by giving every item a paragraph of its own, and the
-   *  reader should see the air the writer typed. Obsidian draws a loose list
-   *  exactly like a tight one — its own CSS zeroes the first and last
-   *  paragraph's margins inside an item — which is why a list with a gap in
-   *  the middle of it arrived as one unbroken block of numbers. The gap is
-   *  the writer's; it stays. */
-  const markLoose = (): void => {
-    document.querySelectorAll('ol, ul').forEach((list) => {
-      const items = [...list.children].filter((child) => child.tagName === 'LI');
-      const loose = items.some((item) => [...item.children].some((child) => child.tagName === 'P'));
-      list.classList.toggle('loose-list', loose);
+  /** A line with nothing on it — inside a quote, the quote marks are nothing:
+   *  `>` and `> ` are the blank line of a quoted list. */
+  const blankAt = (line: number): boolean => {
+    const text = sourceLines[line];
+    return text !== undefined && !text.replace(/^[ \t]*(?:>[ \t]*)*/, '').trim();
+  };
+  /** The blank line a writer leaves between two items is worth one line of
+   *  air, where they left it — which is what source mode shows them, and all
+   *  it shows them. Marking the list loose instead, the way CommonMark reads
+   *  it, spread every item of the list apart: two items written one under the
+   *  next moved away from each other because a third, further down, had a
+   *  blank line above it. The gap belongs to the pair it was typed between.
+   *  Only between two items: the room above a list's first item is the list's
+   *  own margin, and a blank line there is the ordinary end of a paragraph. */
+  const markGaps = (): void => {
+    document.querySelectorAll('li[data-line]').forEach((item) => {
+      const line = Number((item as HTMLElement).dataset.line);
+      const after = item.previousElementSibling?.tagName === 'LI';
+      item.classList.toggle('gap-above', after && Number.isFinite(line) && line > 0 && blankAt(line - 1));
     });
   };
   // A list that was cut keeps the shape it was written in: halves that were
@@ -519,6 +526,10 @@ export function renderMarkdown(source: string): string {
     if (loose || !wrapped) return;
     for (const item of items) item.firstElementChild?.replaceWith(...item.firstElementChild.childNodes);
   };
+  // Before anything is cut: an item that follows a gap is marked while the
+  // item above it is still its sibling, and it keeps that mark into whatever
+  // list it ends up in.
+  markGaps();
   document.querySelectorAll('ol').forEach((list) => {
     const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
     if (items.length < 2) return;
@@ -544,7 +555,6 @@ export function renderMarkdown(source: string): string {
     }
     for (const run of runs) tighten(run);
   });
-  markLoose();
   document.querySelectorAll('ol').forEach((list) => {
     const items = [...list.children].filter((child) => child.tagName === 'LI') as HTMLElement[];
     const marks = items.map((item) => markerOn(Number(item.dataset.line)));

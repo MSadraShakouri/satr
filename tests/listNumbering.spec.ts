@@ -795,16 +795,18 @@ test('a list counts from its head, in either script', async ({ page }) => {
   expect(drawn.alefLetter).toEqual(['ا ب']);
 });
 
-// A blank line between items is air, not a new list.
+// A blank line between items is air, where it was typed.
 //
 // Asked for: "I want loose lists" — the blank line the writer put between two
-// items is theirs, and the reader should see it. The parser already says so
-// by giving every item of such a list a paragraph of its own; the spacing was
-// then taken straight back off by the stylesheet, so a list with a gap in the
-// middle arrived as one unbroken block of numbers. Obsidian draws a loose
-// list exactly like a tight one — its own CSS zeroes those paragraphs'
-// margins — which is where the rule came from in the first place.
-test('a list written with blank lines keeps the air, in either script', async ({ page }) => {
+// items is theirs, and the reader should see it. Then: "you added space
+// between list items, the bullet ones, which is undesired… make it match
+// source mode". Both are the same rule. CommonMark calls the whole list
+// loose and spaces every item in it, so one gap further down the list pushed
+// apart two items that were written one line under the next; source mode
+// only ever shows the blank line where it stands. The air is drawn on the
+// item under the gap, and it is one line of the reader's own text — the room
+// source mode gives it.
+test('a blank line between two items is one line of air, in either script', async ({ page }) => {
   const space = await page.evaluate(async () => {
     const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
     const host = document.createElement('article');
@@ -830,6 +832,8 @@ test('a list written with blank lines keeps the air, in either script', async ({
       tightLatin: await gaps('1. one\n2. two\n3. three'),
       looseLatin: await gaps('1. one\n\n2. two\n\n3. three'),
       quotedGap: await gaps('> ۱. یک\n> ۲. دو\n> \n> ۵. پنج'),
+      oneGapPersian: await gaps('۱. یک\n۲. دو\n\n۵. پنج\n۶. شش'),
+      oneGapBullets: await gaps('- یک\n- دو\n\n- سه\n- چهار'),
       tightBullets: await gaps('- یک\n- دو\n- سه'),
       looseBullets: await gaps('- یک\n\n- دو\n\n- سه'),
       looseTasks: await gaps('- [ ] یک\n\n- [x] دو'),
@@ -842,12 +846,18 @@ test('a list written with blank lines keeps the air, in either script', async ({
   for (const tight of [space.tightPersian, space.tightLatin, space.tightBullets]) {
     expect(tight.every((gap) => gap < 6)).toBe(true);
   }
-  // Written with a blank line: the blank line is there to see — a paragraph's
-  // worth — and it is the same room in either script, under any marker.
-  expect(space.loosePersian.every((gap) => gap >= 12)).toBe(true);
+  // Written with a blank line between every item: a line of air at each.
+  expect(space.loosePersian.every((gap) => gap >= 24)).toBe(true);
   expect(space.looseLatin).toEqual(space.loosePersian);
   expect(space.looseBullets).toEqual(space.loosePersian);
   expect(space.looseTasks).toEqual(space.loosePersian.slice(0, 1));
-  // The quoted list he wrote: one list, with the gap he typed in it.
-  expect(space.quotedGap.every((gap) => gap >= 12)).toBe(true);
+  // One gap in the middle of a list is one gap: the pair it was typed
+  // between moves apart and no other pair does.
+  expect(space.oneGapPersian[0]).toBeLessThan(6);
+  expect(space.oneGapPersian[1]).toBeGreaterThanOrEqual(24);
+  expect(space.oneGapPersian[2]).toBeLessThan(6);
+  expect(space.oneGapBullets).toEqual(space.oneGapPersian);
+  // The quoted list he wrote, which is the same shape.
+  expect(space.quotedGap[0]).toBeLessThan(6);
+  expect(space.quotedGap[1]).toBeGreaterThanOrEqual(24);
 });

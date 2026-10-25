@@ -581,15 +581,14 @@ body {
 .preview-pane li > p {
   margin-block: 0;
 }
-/* A list written with a blank line between its items — a loose list — keeps
-   that air (src/markdown.ts, loose-list). Half the paragraph spacing above
-   and below each item adds up to one paragraph's worth between any two of
-   them, which is the room the writer left. Obsidian draws a loose list like
-   a tight one; a list with a gap written into the middle of it then arrives
-   as one unbroken block, and the numbers read as though they came from
-   nowhere. */
-.preview-pane .loose-list > li {
-  padding-block: calc(var(--p-spacing) / 2);
+/* The blank line a writer leaves between two items (src/markdown.ts,
+   gap-above) is worth one line of their text, drawn where they left it —
+   the same room source mode gives it, so the two views break a list in the
+   same places. Spacing every item of the list instead, which is how
+   CommonMark reads a blank line, pushed apart pairs that were written one
+   line under the next. */
+.preview-pane li.gap-above {
+  padding-block-start: calc(1em * var(--note-line-height));
 }
 .preview-pane ul {
   list-style-type: disc;
