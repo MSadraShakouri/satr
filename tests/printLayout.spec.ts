@@ -126,8 +126,10 @@ test('the printed list keeps the writer’s number', async ({ page }) => {
 // The paper keeps the punctuation the writer typed, and a formula that opens
 // an item stands on the marker's line here too: `۱)` prints `۱)`, and
 // `الف. $$x$$` prints the formula beside its marker rather than a line below.
+// (`ب. دوم` is under it because a letter is a marker only in a run of
+// letters — src/listMarkers.ts — in either script.)
 test('the printed list keeps the writer’s punctuation', async ({ page }) => {
-  const markdown = '۱) یک\n۲) دو\n\nprose\n\n1) one\n2) two\n\nprose\n\nالف. $$x$$';
+  const markdown = '۱) یک\n۲) دو\n\nprose\n\n1) one\n2) two\n\nprose\n\nالف. $$x$$\nب. دوم';
   await print(page, markdown, { columns: 1, direction: 'rtl', mathAlign: 'center' });
   const drawn = await page.evaluate(() => {
     const lists = [...document.querySelectorAll<HTMLElement>('.pagedjs_page_content ol')].map((list) => ({

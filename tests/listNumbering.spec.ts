@@ -569,7 +569,8 @@ test('a marker is dimmed wherever it is written, in either script', async ({ pag
 
 // A formula that opens an item stands on the marker's line: `الف. $$x$$` is
 // one line, not the marker with a blank line under it. A formula after prose
-// keeps the room a display formula takes.
+// keeps the room a display formula takes. (The second item is there because a
+// letter is a marker only in a run of letters — src/listMarkers.ts.)
 test('a formula that opens an item stands on the marker’s line', async ({ page }) => {
   const geometry = await page.evaluate(async () => {
     const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
@@ -590,8 +591,8 @@ test('a formula that opens an item stands on the marker’s line', async ({ page
       };
     };
     return {
-      opens: measure('الف. $$x$$'),
-      afterProse: measure('الف. یک $$x$$ دو'),
+      opens: measure('الف. $$x$$\nب. دوم'),
+      afterProse: measure('الف. یک $$x$$ دو\nب. دوم'),
     };
   });
   // The formula's own top margin is the blank line: gone, and the formula

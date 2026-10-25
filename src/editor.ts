@@ -21,7 +21,7 @@ import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
 import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language';
 import { typingTop } from './scrollSync';
-import { ABJAD, ABPATS, formatDigits, formatMarker, latinItem, lineIsLettered, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
+import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, parseMarker, orderOf, sequential, type Alphabet } from './listMarkers';
 import { readsEveryNumber } from './markerParse';
 
 const rtlLineDirection = EditorView.theme({
@@ -103,12 +103,11 @@ const headingLineField = StateField.define<DecorationSet>({
 // however many blockquotes it sits in. A marker is at the head of what it
 // marks, and inside a quote that is after the `>`.
 const LEAD = '[ \\t]*(?:>[ \\t]*)*';
-// A letter marker — `الف.`, `ب)` — is the one kind the parser still cannot
-// read: an ASCII number can stand in for a Persian one character for
+// A letter marker — `a.`, `الف.`, `ب)` — is the one kind the parser still
+// cannot read: an ASCII number can stand in for a Persian one character for
 // character (src/markerParse.ts), a letter cannot, and CommonMark has no
 // lettered lists to stand in at all. So these keep the dim the parser would
 // have given them. Numbers are the parser's now, in both scripts.
-const LETTER_ITEM = new RegExp(`^(${LEAD})((?:الف|[${ABJAD}${ABPATS}])[.)])(?=\\s)`);
 const liveMarker = Decoration.mark({ class: 'cm-live-marker' });
 
 const persianListMarkerPlugin = ViewPlugin.fromClass(class {
@@ -119,11 +118,11 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
   }
   build(view: EditorView) {
     const ranges = [];
-    // An English letter (`a.`, `A)`) is dimmed only where the reading view
-    // reads it as a list marker — a run of neighbouring letters — so `A.
-    // Smith` on its own stays at full strength, as it does in the preview.
-    // The rule is shared with src/markdown.ts, the neighbours read from the
-    // document, not the viewport.
+    // A letter (`a.`, `A)`, `الف.`, `ب)`) is dimmed only where the reading
+    // view reads it as a list marker — a run of neighbouring letters — so
+    // `A. Smith` and `م. شاکوری` stay at full strength, as they do in the
+    // preview. One rule for both scripts, shared with src/markdown.ts; the
+    // neighbours are read from the document, not the viewport.
     const lineAt = (index: number): string | undefined => (index >= 1 && index <= view.state.doc.lines
       ? view.state.doc.line(index).text
       : undefined);
@@ -133,11 +132,11 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
         // Only the marker is dimmed, never the indent or the quote marks in
         // front of it: a `>` is the quote's, and is drawn by the live
         // preview as its own step.
-        const match = LETTER_ITEM.exec(line.text);
-        const latin = latinItem(line.text);
-        const at = match ? match[1].length : latin && lineIsLettered(lineAt, line.number) ? latin.indent : -1;
-        const width = match ? match[2].length : 2;
-        if (at >= 0) ranges.push(liveMarker.range(line.from + at, line.from + at + width));
+        const item = letterItem(line.text);
+        if (item && lineIsLettered(lineAt, line.number)) {
+          const at = line.from + item.indent;
+          ranges.push(liveMarker.range(at, at + item.letter.length + 1));
+        }
         if (line.to >= visible.to || line.number >= view.state.doc.lines) break;
         line = view.state.doc.line(line.number + 1);
       }

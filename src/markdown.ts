@@ -6,7 +6,7 @@ import { renderMath } from './math';
 import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamps';
 import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
-import { formatDigits, formatMarker, latinItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
+import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
@@ -312,7 +312,7 @@ export function renderMarkdown(source: string): string {
   // markers worked only because the parser can read those itself.
   const grow = new RegExp(`^([ \\t]*(?:>[ \\t]*)*)(${MARKER})([.)])[ \\t]+`);
   const normalizedLists = listLines.map((line, index) => line.replace(grow, (whole, indent: string, marker: string, punctuation: string) => {
-    if (latinItem(line) && !lettered[index]) return whole;
+    if (letterItem(line) && !lettered[index]) return whole;
     const parsed = parseMarker(marker);
     // A letter marker becomes its place in the run for the parser's sake, and
     // is drawn back as the letter: `الف.` is `1.` to marked and `الف` to the

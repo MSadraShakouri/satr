@@ -166,3 +166,59 @@ test('the caret on an item with nothing on it yet stands where its text will', a
     expect(place.height, `${name}: and it is tall enough to see`).toBeGreaterThan(8);
   }
 });
+
+// A letter is held to one rule, whichever script it is written in.
+//
+// Reported: "الف. and الف) gets dimmed even if there isn't anything but a
+// mere space in front of it, but a) a. doesn't until there's b. — which is a
+// double standard."
+//
+// It was: an English letter counted as a marker only inside a run of
+// neighbouring letters, because `A. Smith` is a sentence, while a Persian
+// letter counted always — so `م. شاکوری` was a list and `A. Smith` was not.
+// The run rule is the right one, and it is now asked of both.
+test('a letter is a list marker under the same rule in either script', async ({ page }) => {
+  const read = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const ed = window.testEditor;
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    document.body.appendChild(host);
+    const both = async (text: string) => {
+      ed.setValue(text);
+      ed.focus();
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      host.innerHTML = renderMarkdown(text);
+      return {
+        dimmed: ed.view.contentDOM.querySelectorAll('.cm-live-marker').length,
+        listed: host.querySelectorAll('li').length,
+      };
+    };
+    const out: Record<string, { dimmed: number; listed: number }> = {
+      loneEnglish: await both('a. one'),
+      lonePersian: await both('الف. اول'),
+      runEnglish: await both('a. one\nb. two'),
+      runPersian: await both('الف. اول\nب. دوم'),
+      emptyEnglish: await both('a. '),
+      emptyPersian: await both('الف. '),
+      parenPersian: await both('الف) اول\nب) دوم'),
+      initials: await both('A. Smith'),
+      persianInitials: await both('م. شاکوری'),
+    };
+    host.remove();
+    return out;
+  });
+  // On its own, a letter is a sentence — in both scripts.
+  expect(read.lonePersian).toEqual(read.loneEnglish);
+  expect(read.lonePersian).toEqual({ dimmed: 0, listed: 0 });
+  // In a run of neighbours it is a marker — in both scripts, and the editor
+  // dims exactly what the reading view lists.
+  expect(read.runPersian).toEqual(read.runEnglish);
+  expect(read.runPersian).toEqual({ dimmed: 2, listed: 2 });
+  expect(read.parenPersian).toEqual({ dimmed: 2, listed: 2 });
+  // An item with nothing written on it is held to the same rule as any other.
+  expect(read.emptyPersian).toEqual(read.emptyEnglish);
+  // And a name keeps its initial, in either script.
+  expect(read.initials).toEqual({ dimmed: 0, listed: 0 });
+  expect(read.persianInitials).toEqual({ dimmed: 0, listed: 0 });
+});
