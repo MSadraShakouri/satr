@@ -1,0 +1,17 @@
+# Who wrote this note-taking app. Both of us, on every commit from here on:
+# the one who finds the fault, reports it and decides what the app should do,
+# and the one who writes the change. Git has seen each of us under several
+# names and addresses over the life of the repository — early default configs,
+# a GitHub noreply address, an agent that was renamed more than once — so this
+# folds them into one name apiece. `git shortlog -sne`, `git log --use-mailmap`
+# and GitHub itself all read this file.
+Sadra Shakouri <sadra.shakouri@gmail.com> <264101737+MSadraShakouri@users.noreply.github.com>
+Sadra Shakouri <sadra.shakouri@gmail.com> <msadra@users.noreply.github.com>
+Sadra Shakouri <sadra.shakouri@gmail.com> Sadra <sadra.shakouri@gmail.com>
+Sadra Shakouri <sadra.shakouri@gmail.com> MSadraShakouri <sadra.shakouri@gmail.com>
+Arena Agent <agent@arena.ai> <agent@arena.local>
+Arena Agent <agent@arena.ai> <agent@local>
+Arena Agent <agent@arena.ai> <arena@local>
+Arena Agent <agent@arena.ai> <satr@example.com>
+Arena Agent <agent@arena.ai> <batch@local>
+Arena Agent <agent@arena.ai> arena-agent <agent@arena.ai>
