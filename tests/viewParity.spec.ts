@@ -29,13 +29,13 @@ const WORDS = ['BULLETONE', 'NESTEDBULLET', 'NUMBERONE', 'TASKUNDONE', 'TASKDONE
 type Word = (typeof WORDS)[number];
 type Spot = { row1: number; row2: number | null; rows: number };
 
-async function boot(page: Page): Promise<void> {
+async function boot(page: Page, note: string = NOTE): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript((text) => {
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/parity.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/parity.md', text);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/parity.md' }], active: 0 }));
-  }, NOTE);
+  }, note);
   await page.goto('/');
   await expect(page.locator('#app .cm-file-name')).toHaveText('parity');
   // The start-up cover is a styled copy of the note: measuring while it is up
@@ -163,4 +163,125 @@ test('a row breaks at the same word in both views', async ({ page }) => {
   for (const word of WORDS) {
     expect(editor[word], `${word} breaks at the same word`).toBe(reading[word]);
   }
+});
+
+/** A lettered list, in both scripts, written so each list's first item has to
+ *  wrap, with a paragraph above each to measure the text's own column from.
+ *  `a.` fits the platform's strip; `الف.` is a word and needs a wider one —
+ *  the reading view has always widened it, and source mode now widens it to
+ *  the same measurement (src/markerWidth.ts). */
+const LETTERED = `متن ساده برای اندازه‌گیری
+
+الف. یک آیتم با متن به اندازه کافی بلند که حتماً به سطر دوم می‌رود و باید زیر متن بیفتد
+ب. دو
+
+plain paragraph to measure from
+
+a. one item written long enough that it has to wrap onto a second row of the pane
+b. two
+`;
+
+/** How far a word's row begins from the note's own margin — the paragraph
+ *  above it, read from the side its script starts on. The two panes keep
+ *  their own padding, so each view is measured against its own text column.
+ */
+function indentOf(page: Page, pane: string, pairs: string[][]): Promise<Array<{ row1: number; row2: number | null }>> {
+  return page.evaluate(({ pane, pairs }) => {
+    const root = document.querySelector(pane) as HTMLElement;
+    const starts = (word: string): number[] => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node.textContent ?? '';
+        const at = text.indexOf(word);
+        if (at < 0) continue;
+        const rtl = getComputedStyle(node.parentElement as HTMLElement).direction === 'rtl';
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, text.length);
+        const byRow = new Map<number, number>();
+        for (const rect of range.getClientRects()) {
+          if (rect.width <= 1) continue;
+          const top = Math.round(rect.top);
+          const edge = rtl ? -rect.right : rect.left;
+          byRow.set(top, Math.min(byRow.get(top) ?? Infinity, edge));
+        }
+        return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, edge]) => edge);
+      }
+      return [];
+    };
+    return pairs.map(([margin, item]) => {
+      const from = starts(margin)[0];
+      const rows = starts(item);
+      return {
+        row1: Math.round(rows[0] - from),
+        row2: rows[1] === undefined ? null : Math.round(rows[1] - from),
+      };
+    });
+  }, { pane, pairs });
+}
+
+const LETTER_ROWS = [['متن ساده', 'یک آیتم'], ['plain paragraph', 'one item']];
+
+test('a lettered list is laid out as a list in both views, in both scripts', async ({ page }) => {
+  // Reported: "for letter lists both systems, it would be so much better".
+  // CommonMark has no lettered list for the parser to read, so source mode
+  // drew these as prose — the text started right after the marker and a
+  // wrapped row went back to the margin — while the reading view drew them
+  // as the lists they are. The editor draws the strip and the hanging indent
+  // itself now, from the same measurement the reading view uses.
+  await boot(page, LETTERED);
+  const editor = await indentOf(page, '#editor-pane .cm-content', LETTER_ROWS);
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane')).toBeVisible();
+  await page.waitForTimeout(600);
+  const reading = await indentOf(page, '#preview-pane', LETTER_ROWS);
+
+  for (const [i, script] of ['Persian', 'English'].entries()) {
+    // the text is carried in past the marker — a list, not prose
+    expect(editor[i].row1, `${script}: a lettered item is indented in source mode`).toBeGreaterThan(20);
+    // ...by the same step as in the reading view
+    expect(Math.abs(editor[i].row1 - reading[i].row1), `${script}: indent ${editor[i].row1} in source mode, ${reading[i].row1} in the reading view`).toBeLessThanOrEqual(1);
+    // ...and the row it wraps onto comes back under the text, not to the margin
+    expect(editor[i].row2, `${script} wraps in source mode`).not.toBeNull();
+    expect(Math.abs((editor[i].row2 ?? 0) - editor[i].row1), `${script}: wrapped row at ${editor[i].row2}, text at ${editor[i].row1}`).toBeLessThanOrEqual(1);
+    expect(Math.abs((editor[i].row2 ?? -1) - (reading[i].row2 ?? -2)), `${script}: wrapped row in both views`).toBeLessThanOrEqual(1);
+  }
+  // `الف.` is a word: its list keeps a wider strip than `a.` does, in both views
+  expect(editor[0].row1, 'الف. needs more room than a.').toBeGreaterThan(editor[1].row1 + 2);
+  expect(reading[0].row1 - reading[1].row1, 'and the same more in both views').toBe(editor[0].row1 - editor[1].row1);
+});
+
+test('the bullet stands the same distance from the text in both views', async ({ page }) => {
+  // Reported: "for bullet lists, source mode is preferred because it has
+  // more space between the text and bullet". The reading view asked the
+  // platform for its disc, which each engine places by its own marker box;
+  // it draws the editor's own dot now — 0.3em across, its centre 0.75em into
+  // the strip — so the two cannot drift apart.
+  await boot(page);
+  const editor = await page.evaluate(() => {
+    const bullet = document.querySelector('.cm-lp-bullet') as HTMLElement;
+    const strip = bullet.closest('.cm-lp-marker') as HTMLElement;
+    const dot = getComputedStyle(bullet, '::after');
+    // from the dot's centre to where the text starts: the strip, less how
+    // far into it the dot stands
+    const into = parseFloat(dot.insetInlineStart) + parseFloat(dot.marginInlineStart) + parseFloat(dot.width) / 2;
+    return { gap: strip.getBoundingClientRect().width - into, size: parseFloat(dot.width) };
+  });
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane')).toBeVisible();
+  await page.waitForTimeout(600);
+  const reading = await page.evaluate(() => {
+    const item = document.querySelector('#preview-pane ul > li') as HTMLElement;
+    const dot = getComputedStyle(item, '::before');
+    const task = document.querySelector('#preview-pane li:has(> input[type="checkbox"])') as HTMLElement;
+    return {
+      gap: parseFloat(dot.marginInlineEnd) + parseFloat(dot.width) / 2,
+      size: parseFloat(dot.width),
+      onATask: getComputedStyle(task, '::before').content,
+    };
+  });
+  expect(reading.size, 'the same dot').toBeCloseTo(editor.size, 1);
+  expect(reading.gap, `dot to text: ${editor.gap} in source mode, ${reading.gap} in the reading view`).toBeCloseTo(editor.gap, 1);
+  // a task draws its box instead, and no dot with it
+  expect(reading.onATask).toBe('none');
 });

@@ -590,11 +590,40 @@ body {
 .preview-pane li.gap-above {
   padding-block-start: calc(1em * var(--note-line-height));
 }
+/* The bullet is drawn, not asked for: the platform's own disc sits wherever
+   the engine's marker box puts it — a different hair of space from the text
+   in each browser, and closer than the one source mode leaves ("source mode
+   is preferred because it has more space between the text and bullet"). This
+   is the dot the editor draws (.cm-lp-bullet::after): 0.3em across, its
+   centre 0.75em into the strip the marker hangs in. The two views now agree
+   by construction, wherever the note is read. */
 .preview-pane ul {
-  list-style-type: disc;
+  list-style: none;
 }
-.preview-pane ul > li::marker {
-  color: var(--list-marker-color, var(--text-faint));
+.preview-pane ul > li {
+  position: relative;
+}
+.preview-pane ul > li::before {
+  content: "";
+  position: absolute;
+  /* against the text, then back out into the strip: the dot's own end lands
+     0.9em from the list's edge, which puts its centre at 0.75em */
+  inset-inline-end: 100%;
+  margin-inline-end: calc(var(--list-marker-gutter) - 0.9em);
+  width: 0.3em; /* --list-bullet-size */
+  height: 0.3em;
+  border-radius: 50%;
+  background: var(--list-marker-color, var(--text-faint));
+  /* on the middle of the item's first line, wherever that line begins: the
+     box takes the place it would have had in the text (the marker of a
+     .persian-ordered list is placed the same way), and is nudged from the
+     text's top to its middle. */
+  transform: translateY(calc(0.5em * var(--note-line-height) - 0.15em));
+}
+/* A task draws its own box instead (below). */
+.preview-pane ul > li:has(> input[type="checkbox"])::before,
+.preview-pane ul > li:has(> p > input[type="checkbox"])::before {
+  content: none;
 }
 /* Obsidian's indentation guide beside a nested list */
 .preview-pane li > :is(ul, ol) {
