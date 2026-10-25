@@ -436,10 +436,11 @@ test('the line numbers are drawn in the script of the caret’s line', async ({ 
   expect(gutter.mixedPersian).toBe('۱,۲');
 });
 
-// The reading view draws the markers the writer wrote, item by item: `الف`
-// stays `الف`, `٣` stays `٣`, and a nested list keeps its own numbers. Every
-// item is read from its own source line, so one note's lists cannot take
-// another's place.
+// The reading view draws a list's own alphabet, item by item: `الف` stays
+// `الف`, `٣` stays `٣`, and a nested list keeps its own numbers. Every item
+// is read from its own source line, so one note's lists cannot take another's
+// place. The head is the writer's and the rest count from it — see the test
+// below.
 test('the reading view draws each item’s own marker', async ({ page }) => {
   const read = await page.evaluate(async () => {
     const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
@@ -729,6 +730,69 @@ test('a list keeps room for its widest marker', async ({ page }) => {
     expect(list[0].gutter).toBeLessThan(widest + list[0].gap + 1.5);
     expect(new Set(list.map((item) => item.gutter)).size).toBe(1);
   }
+});
+
+// A list counts, in every alphabet.
+//
+// Reported, of a quoted Persian list with a gap written into the middle of
+// it: "such a thing becomes one really weirdly, random numbers truly".
+//
+// It was two rules. An English list is drawn by the browser's own counter,
+// which counts — 1, 2, 3 — whatever numbers stand on the lines. A list in any
+// other script was drawn here, item by item, from the marker each line was
+// written with, so the numbers the writer typed stood as they were: a list
+// written ۱ ۲ ۳ ۵ ۶ came out ۱ ۲ ۳ ۵ ۶ in Persian and 1 2 3 4 5 in English,
+// from the same note. Both count now, from a head that is still the writer's
+// own — `الف` spelled out is kept, as the editor keeps it when it renumbers a
+// run (normalizeRun in src/editor.ts).
+test('a list counts from its head, in either script', async ({ page }) => {
+  const drawn = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    host.style.cssText = 'position:fixed;left:0;top:0;width:380px;background:white;z-index:9999';
+    document.body.appendChild(host);
+    // A list this view draws carries its numbers on the items; an English
+    // list is the platform's own, and the browser counts it from the list's
+    // start — so what it will draw is start, start + 1, and on.
+    const marks = (text: string) => {
+      host.innerHTML = renderMarkdown(text);
+      return [...host.querySelectorAll('ol')].map((list) => {
+        const items = [...list.querySelectorAll(':scope > li')];
+        const own = items.map((item) => item.getAttribute('data-persian-number'));
+        if (own.every((mark) => mark !== null)) return own.join(' ');
+        const from = Number(list.getAttribute('start') ?? '1') || 1;
+        return items.map((_item, index) => String(from + index)).join(' ');
+      });
+    };
+    const out = {
+      // The gap he wrote, in both scripts: one list, counted.
+      quotedPersian: marks('> ۱. ست\n> ۲. تست\n> ۳. تست\n> \n> ۵. تست\n> ۶. تست'),
+      quotedLatin: marks('> 1. one\n> 2. two\n> 3. three\n> \n> 5. five\n> 6. six'),
+      // Numbers that jump with nothing between them.
+      persianJump: marks('۱. یک\n۵. پنج\n۹. نه'),
+      latinJump: marks('1. one\n5. five\n9. nine'),
+      // A list that starts somewhere else starts there and counts on.
+      persianStart: marks('۵. پنج\n۶. شش\n۹. نه'),
+      arabicStart: marks('٣. ثلاثة\n٧. سبعة'),
+      // The head is the writer's, spelling and all.
+      alefWord: marks('الف. اول\nب. دوم\nج. سوم'),
+      alefLetter: marks('ا. اول\nب. دوم'),
+    };
+    host.remove();
+    return out;
+  });
+  // One note, one rule: the two scripts draw the same shape.
+  expect(drawn.quotedPersian).toEqual(['۱ ۲ ۳ ۴ ۵']);
+  expect(drawn.quotedLatin).toEqual(['1 2 3 4 5']);
+  expect(drawn.persianJump).toEqual(['۱ ۲ ۳']);
+  expect(drawn.latinJump).toEqual(['1 2 3']);
+  expect(drawn.persianStart).toEqual(['۵ ۶ ۷']);
+  expect(drawn.arabicStart).toEqual(['٣ ٤']);
+  // `الف` is the first letter written as a word; it is kept as it was typed
+  // and the letters after it follow in the order the list is in.
+  expect(drawn.alefWord).toEqual(['الف ب ج']);
+  expect(drawn.alefLetter).toEqual(['ا ب']);
 });
 
 // A blank line between items is air, not a new list.

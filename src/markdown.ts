@@ -566,12 +566,18 @@ export function renderMarkdown(source: string): string {
     const alphabet: Alphabet = order ?? parsed.alphabet;
     list.classList.add('persian-ordered');
     if (alphabet !== 'persian' && alphabet !== 'arabic') list.classList.add('lettered-ordered');
-    // Only an item whose own line has no marker falls back to counting.
+    // A list counts: its head is the writer's own, exactly as they wrote it —
+    // `الف` spelled out stays `الف` — and every item under it follows from
+    // there: ۱ ۲ ۳ ۴, الف ب ج د, ٣ ٤ ٥, whatever numbers were typed on the
+    // lines between. This is what the browser's own counter does for an
+    // English list, and it is the rule the editor already renumbers a run by
+    // (normalizeRun in src/editor.ts), so the source, the reading view and
+    // the paper all say the same thing in both scripts.
     const start = Number(list.getAttribute('start') ?? '1') || 1;
     // An item that wrote no marker of its own takes the list's punctuation.
     const fallback = marks.find((one) => one)?.delimiter ?? '.';
     items.forEach((item, index) => {
-      item.setAttribute('data-persian-number', tokens[index] ?? formatMarker(start + index, alphabet));
+      item.setAttribute('data-persian-number', index === 0 ? tokens[0] ?? formatMarker(start, alphabet) : formatMarker(start + index, alphabet));
       item.setAttribute('data-persian-delimiter', marks[index]?.delimiter ?? fallback);
     });
   });
