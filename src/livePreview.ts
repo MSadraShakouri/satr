@@ -163,6 +163,13 @@ function indentBox(level: number): Decoration {
 // the same place. A number is drawn from its own end, as a list marker is.
 const markerPlain = Decoration.mark({ class: 'cm-lp-marker' });
 const markerNumber = Decoration.mark({ class: 'cm-lp-marker is-number' });
+/** The strip is drawn in two parts: the marker itself, which is given the
+ *  strip's width, and the space after it, which is given none. The caret on
+ *  an item with nothing written on it yet then stands at the end of the
+ *  strip — where the first letter will be — rather than back against the
+ *  bullet with the strip's width stretching out in front of it. */
+const markerText = Decoration.mark({ class: 'cm-lp-marker-text' });
+const markerGap = Decoration.mark({ class: 'cm-lp-marker-gap' });
 /** Every ">" is drawn one step wide, so the rules stand where the reading
  *  view's borders do and the text starts past the last of them. */
 const quoteStep = Decoration.mark({ class: 'cm-lp-quote-step' });
@@ -339,6 +346,8 @@ function build(view: EditorView): DecorationSet {
                 if (after > 0) {
                   if (node.from > ownIndent) out.push(indentBox(level).range(ownIndent, node.from));
                   out.push((ordered && !drawnTask ? markerNumber : markerPlain).range(node.from, markEnd + after));
+                  out.push(markerText.range(node.from, markEnd));
+                  out.push(markerGap.range(markEnd, markEnd + after));
                   out.push(listLine(level, drawnTask, quotes).range(line.from));
                 }
               }

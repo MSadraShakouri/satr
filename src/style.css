@@ -1196,10 +1196,30 @@ body {
 .cm-lp-marker {
   min-width: 3ch; /* --list-marker-gutter */
 }
-/* A number is drawn from its own end, as the reading view's markers are. */
-.cm-lp-marker.is-number {
+/* The width belongs to the marker, and the space after it is given none: a
+   caret at the end of an item with nothing written on it yet then stands at
+   the end of the strip — where the first letter will land — instead of back
+   against the bullet with the strip's width in front of it ("the caret rests
+   behind on an empty `- ` line"). The space is still there, and still comes
+   along when the line is copied; it is only drawn at no width, as the `- `
+   before a checkbox is. */
+.cm-lp-marker-text {
+  display: inline-block;
+  min-width: 3ch; /* --list-marker-gutter */
+}
+.cm-lp-marker-gap {
+  font-size: 0;
+}
+/* A number is drawn from its own end, as the reading view's markers are, with
+   the 6px between it and the text standing in front of the space rather than
+   after it — so 9. and 10. still end in one place and the caret still comes
+   to rest where the text starts. */
+.cm-lp-marker.is-number .cm-lp-marker-text {
+  min-width: calc(3ch - 6px);
   text-align: end;
-  padding-inline-end: 6px;
+}
+.cm-lp-marker.is-number .cm-lp-marker-gap {
+  padding-inline-start: 6px;
 }
 /* One ">" = one step of quote indent (QUOTE_STEP_PX in src/livePreview.ts),
    whether the mark is showing or transparent, so nothing moves when the

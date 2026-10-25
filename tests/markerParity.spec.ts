@@ -128,3 +128,31 @@ test('a quoted list numbers itself', async ({ page }) => {
   // And a list outside a quote is not the quoted one's business.
   expect(await enterAt(page, '> 1. one\n2. two', 8)).toBe('> 1. one\n> 2. \n2. two');
 });
+
+test('the caret on an item with nothing on it yet stands where its text will', async ({ page }) => {
+  // Reported: the caret "rests behind" on an empty `- ` or `- [ ] ` line. The
+  // marker strip is wider than the marker written in it, and the room left
+  // over used to sit after the text, so the caret was drawn against the
+  // bullet and the first letter landed somewhere else.
+  const places = await page.evaluate(async () => {
+    const ed = window.testEditor;
+    const out: Record<string, { caret: number; typed: number }> = {};
+    for (const [name, text, at] of [
+      ['bullet', '- ', 2], ['task', '- [ ] ', 6], ['number', '1. ', 3], ['persian', '۱. ', 3],
+    ] as Array<[string, string, number]>) {
+      ed.setValue(text);
+      ed.focus();
+      ed.setSelection(at);
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const line = ed.view.coordsAtPos(0)!;
+      const caret = ed.view.coordsAtPos(at)!.left - line.left;
+      ed.view.dispatch({ changes: { from: at, insert: 'W' }, selection: { anchor: at } });
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      out[name] = { caret: Math.round(caret), typed: Math.round(ed.view.coordsAtPos(at)!.left - line.left) };
+    }
+    return out;
+  });
+  for (const [name, place] of Object.entries(places)) {
+    expect(place.caret, `${name}: the caret stands where the next letter lands`).toBe(place.typed);
+  }
+});
