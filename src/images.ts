@@ -36,7 +36,8 @@ async function locate(src: string, notePath: string, wiki: boolean): Promise<str
   return null;
 }
 
-function dataUrl(src: string, notePath: string, wiki: boolean): Promise<string | null> {
+/** A picture beside a note, as a data: URL, or null. */
+export function dataUrl(src: string, notePath: string, wiki: boolean): Promise<string | null> {
   const key = `${wiki ? 'w' : 'm'}\n${notePath}\n${src}`;
   let pending = cache.get(key);
   if (!pending) {

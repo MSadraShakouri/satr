@@ -7,6 +7,7 @@ import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown, sizeListMarkers } from './markdown';
+import { isHtmlFile, showHtmlFile } from './htmlFiles';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
@@ -469,12 +470,27 @@ function renderPreview(): void {
   lastRender = Date.now();
   releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
   const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
+  if (!isHtmlFile(filePath)) {
+    preview.classList.remove('is-page');
+    previewPane.classList.remove('is-page');
+  }
   // A picture Satr can't edit (a photo opened from the file manager, say):
   // the reading view shows it as it is; the editor keeps the raw bytes.
   if (picture.url && picture.path === filePath) {
     preview.innerHTML = `${title}<p class="md-image-preview"><img class="md-image" src="${escapeText(picture.url)}" alt="${escapeText(fileName(filePath))}"></p>`;
     applyPreviewFolds();
     watchSections();
+    return;
+  }
+  // An .html file is a page, not a note: it is shown as the page it is,
+  // edge to edge, with its own styling and none of Satr's. Nothing else in
+  // the reading view applies to it — no sections, no folds, no title of
+  // ours over the top of the one it wrote itself.
+  if (isHtmlFile(filePath)) {
+    const page = filePath;
+    preview.classList.add('is-page');
+    previewPane.classList.add('is-page'); // the pane gives up its padding and width limit
+    previewReady = showHtmlFile(preview, editor.getValue(), page, () => filePath === page);
     return;
   }
   preview.innerHTML = `${title}${renderMarkdown(editor.getValue())}`;
