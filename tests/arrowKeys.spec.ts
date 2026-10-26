@@ -31,12 +31,16 @@ async function boot(page: Page, text: string) {
   await expect(page.locator('#app .cm-file-name')).toHaveText('A');
 }
 
-/** The caret: its head, the side it took, and where it is drawn. */
+/** The caret: its head, the side it took, and where it is drawn. A caret that
+ *  was not pinned to a side is drawn on its +1 side — the side of the
+ *  character after it, which is where the next typed character lands and where
+ *  the browser paints it (src/caretMotion.ts, sideAt). Measuring -1 there
+ *  reports a place the reader never sees the caret. */
 const caret = (page: Page) => page.evaluate(async () => {
   const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
   const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
   const main = view.state.selection.main;
-  const at = view.coordsAtPos(main.head, main.assoc || -1);
+  const at = view.coordsAtPos(main.head, main.assoc || 1);
   const line = view.state.doc.lineAt(main.head);
   return {
     head: main.head, assoc: main.assoc, from: main.from, to: main.to,
@@ -64,12 +68,13 @@ for (const line of LINES) {
       const before = await caret(page);
       await page.keyboard.press(key);
       const after = await caret(page);
-      const step = line.rtl ? -dir : dir;
-      expect(after.head, `${key} steps one position`).toBe(before.head + step);
-      // Which of a boundary position's two homes the caret is painted at is
-      // the line's own script's business, measured in tests/caretMotion.spec.ts:
-      // two of these lines put their middle at the start of a formula, where
-      // the caret belongs to the Persian before it, not to the formula.
+      // An arrow is a visual direction: the caret goes the way the key points,
+      // one drawn position, whatever script or formula it lands in. Mirrored
+      // in RTL comes out of that by itself — the visual right in a Persian
+      // line is the previous character. Which position a shared slot means is
+      // measured in tests/caretMotion.spec.ts.
+      expect(after.head, `${key} moves the caret`).not.toBe(before.head);
+      expect(Math.sign(after.x - before.x), `${key} moves the caret the way it points`).toBe(dir);
     }
   });
 }
@@ -109,14 +114,17 @@ test('a plain walk visits every position of a formula, one a press', async ({ pa
     await page.keyboard.press('ArrowRight');
     seen.push((await caret(page)).head);
   }
-  // The visual right in an RTL line is the previous position: 25, 24 … 17, 16.
-  expect(seen).toEqual([25, 24, 23, 22, 21, 20, 19, 18, 17, 16]);
+  // Right is right: out of the Persian after the formula, across the closing
+  // `$` to 25, then the formula left to right — it is drawn left to right —
+  // and out again past the opening `$`. Every position of the formula, one a
+  // press: 802, 809, 816, 823, 830, 837, 844, 851, 860, 864.
+  expect(seen).toEqual([25, 19, 20, 21, 22, 23, 24, 18, 17, 16]);
   const back: number[] = [];
   for (let i = 0; i < 10; i += 1) {
     await page.keyboard.press('ArrowLeft');
     back.push((await caret(page)).head);
   }
-  expect(back).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
+  expect(back).toEqual([17, 18, 24, 23, 22, 21, 20, 19, 25, 26]); // the same path, back
 });
 
 test('the arrows answer while the IME is composing', async ({ page }) => {

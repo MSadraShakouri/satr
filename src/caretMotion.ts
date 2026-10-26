@@ -1,23 +1,25 @@
-// Caret motion: one position a press, the way the platform's own fields do it.
+// Caret motion: the caret goes where the key points, and a selection grows by
+// characters.
 //
-// Read off the reference first. In a Persian line, Chrome's own ← / → step one
-// *logical* position a press and paint the caret at the paragraph's own side —
-// an arrow is a visual direction, and the visual right in an RTL paragraph is
-// the *previous* position, so the key mirrors exactly as it does in the
-// phone's text fields. Stepping by *drawing* position instead (the walk this
-// file used to do) is where the formula went wrong: the two faces of an inline
-// formula share slots, so a shift+→ from just after `$a^2 + b$` grew the
-// selection by the whole formula in one press — the skip the writer reported.
-// One position a press also keeps the `$` signs stoppable and the formula's
-// edges on the line's side; and it needs no special case for math at all. Math
-// and code never vote for a line's direction anywhere else in the app
-// (src/direction.ts), and a line that is nothing but math or code is LTR
-// there — so display math reads left to right whatever the note around it
-// says, and an inline formula is simply characters of its paragraph.
+// Measured against the platform's own fields first. An arrow is a visual
+// direction, so the caret follows what is drawn: in `سلام test تست` the press
+// after `سلام` steps 4px into the space, not 30px across the English word, and
+// a walk down the line falls 988, 975, 970, 965, 955, 951, 946, 938, 930, 925
+// without a single reversal. That is CodeMirror's own motion and it is better
+// than anything written here: through `این یک فرمول است $a^2 + b$ و ادامه دارد`
+// it reaches every one of the formula's positions — 17, 18, then the formula
+// right to left, then 25, 26 — each a glyph from the last. Stepping by
+// *document order* instead, as this file used to, is what put the keys back to
+// front inside an inline formula or a code span: those read left to right
+// whatever the Persian around them says, so a → there walked the caret left.
 //
-// The side is +1, "forward along the paragraph's own flow" — the same side the
-// edit filter below keeps — so a moved caret paints exactly where a typed one
-// does.
+// A selection is the exception, and keeps the step this file has always made:
+// one character a press, in the line's own order. Visually a formula's two
+// faces share slots, so a shift+→ from just after `$a^2 + b$` grew by the
+// whole formula in one press — the skip the writer reported — and a selection
+// is counted in characters, not in drawn positions. Math and code need no
+// other special case: they never vote for a line's direction (src/direction.ts)
+// and a line that is nothing but math or code is LTR there.
 //
 // The keys are read from a capture listener on the editor element rather than
 // from a keymap, because CodeMirror drops *every* key event while an IME
@@ -27,29 +29,56 @@
 // composition goes nowhere, and no keymap is even reached. Owning the two keys
 // here means the note answers them the same way whether or not a word is still
 // with the keyboard.
+
 import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction, type Text } from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { cursorCharLeft, cursorCharRight } from '@codemirror/commands';
 import { directionsField, type TextDirection } from './direction';
 import { inMath } from './mathSource';
 
+/** The other edge of the run `head` bounds — the position drawn in the same
+ *  place as it. A run embedded against the line is reversed as a block, so its
+ *  two edges share their two homes: in `اب ABC د` the caret before `A` and the
+ *  caret after `C` are both drawn at 966 and at 936. */
+function mateOf(view: EditorView, head: number): number | null {
+  const line = view.state.doc.lineAt(head);
+  const at = head - line.from;
+  const base = view.textDirectionAt(line.from);
+  for (const span of view.bidiSpans(line)) {
+    if (span.dir === base) continue;
+    if (at === span.from) return line.from + span.to;
+    if (at === span.to) return line.from + span.from;
+  }
+  return null;
+}
+
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
+  if (!extend) {
+    const from = view.state.selection.main.head;
+    if (!(dir === -1 ? cursorCharLeft(view) : cursorCharRight(view))) return false;
+    // CodeMirror picks a shared slot's meaning from the way the caret came.
+    // Pinned instead to the one this note gives it (the rule below), so the
+    // place the caret is drawn means the same thing however it was reached —
+    // and so a walk back visits every position a walk out did. Without this,
+    // going right through `اب ABC د` lands on the caret *after* `ABC` drawn
+    // between `اب` and `ABC`, and the caret before `A` is never reached.
+    const sel = view.state.selection.main;
+    const want = sideAt(view.state.doc, view.state.field(directionsField, false)?.dirs, sel.head);
+    if (sel.assoc === want) return true;
+    const mate = mateOf(view, sel.head);
+    if (mate === null || mate === from) return true;
+    const side = sideAt(view.state.doc, view.state.field(directionsField, false)?.dirs, mate);
+    view.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(mate, side)]) });
+    return true;
+  }
   const sel = view.state.selection.main;
   const line = view.state.doc.lineAt(sel.head);
-  // The line's direction is the app's own policy, worn as the line's `dir`
-  // attribute: the first strong letter with math and code masked out, and a
-  // line that is nothing but math or code is LTR (src/direction.ts).
   const rtl = view.textDirectionAt(line.from) === Direction.RTL;
-  // The keys are visual: the visual right is the next position in an LTR
-  // paragraph and the previous one in an RTL paragraph. Flat document offsets,
-  // so a step across a line break lands on the previous line's end or the next
-  // line's start — the paragraph's own order, as the platform has it.
-  const step = rtl ? -dir : dir;
-  const target = sel.head + step;
+  // Flat document offsets, so a step across a line break lands on the previous
+  // line's end or the next line's start — the paragraph's own order.
+  const target = sel.head + (rtl ? -dir : dir);
   if (target < 0 || target > view.state.doc.length) return false;
-  // assoc 1: the paragraph's own side, as the filter below keeps it. The range
-  // has to be wrapped in an EditorSelection, or the transaction drops its side.
-  const range = extend ? sel.extend(sel.anchor, target, 1) : EditorSelection.cursor(target, 1);
-  view.dispatch({ selection: EditorSelection.create([range]) });
+  view.dispatch({ selection: EditorSelection.create([EditorSelection.range(sel.anchor, target)]) });
   return true;
 }
 
@@ -113,12 +142,11 @@ const arrowKeys = ViewPlugin.fromClass(class {
 // place and the side changes nothing — so this only ever speaks where a
 // reader would otherwise have to guess.
 //
-// Applied in the same transaction as whatever moved the caret (a filter, not
-// a follow-up dispatch), so it never paints one frame on the wrong side, and
-// the one rule covers every way of getting there: typing, the arrow keys, a
-// tap. Only a single collapsed caret is touched — a selection keeps its own
-// ends. Composing text is left alone entirely: the keyboard owns the caret
-// while a word is still being composed.
+// Applied in the same transaction as the edit (a filter, not a follow-up
+// dispatch), so a typed character never paints one frame on the wrong side.
+// Only a single collapsed caret is touched — a selection keeps its own ends.
+// Composing text is left alone entirely: the keyboard owns the caret while a
+// word is still being composed.
 
 /** A character the line reads against its own flow: a letter of the other
  *  script, and in a Persian line a digit too — digits are their own little
@@ -142,7 +170,10 @@ function sideAt(doc: Text, dirs: readonly TextDirection[] | undefined, head: num
 }
 
 const lineSide = EditorState.transactionFilter.of((tr) => {
-  if (tr.newSelection.ranges.length !== 1) return tr;
+  // Only an edit: the arrow keys are CodeMirror's own now, and it already
+  // paints a moved caret on the side the reader is following — the same side
+  // this rule picks, measured at both edges of `$a^2 + b$` in a Persian line.
+  if (!tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
   const main = tr.newSelection.main;
   if (!main.empty) return tr;
   if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
