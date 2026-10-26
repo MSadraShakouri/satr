@@ -1,6 +1,6 @@
 # The plan
 
-The author's list, as it stands after 0.15.1, plus the findings he asked be
+The author's list, as it stands after 0.16.0, plus the findings he asked be
 added from this side (marked *(found here)*) — do not invent any others. Web
 first, then APK. Lint and GitHub stay deferred. Italic notes are the state of
 play, not new work.
