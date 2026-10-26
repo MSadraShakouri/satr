@@ -19,6 +19,7 @@ import printCss from './print.css?raw';
 import { loadImages } from './images';
 import { renderMarkdown } from './markdown';
 import { NOTE_ROOT } from './noteStyles';
+import { embeddedFonts } from './embedFonts';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
 import { keepHeadingWithContent } from './printHeadings';
@@ -462,44 +463,3 @@ function numberFootnotes(doc: Document): void {
 // Satr's fonts, embedded as data URIs so the PDF looks the same anywhere
 // (the native print WebView loads the HTML without the app's files). Read
 // from the app's own @font-face rules, so it works in dev and in builds.
-async function embeddedFonts(withMath: boolean): Promise<string> {
-  const rules: CSSFontFaceRule[] = [];
-  const bases = new Map<CSSFontFaceRule, string>();
-  for (const sheet of [...document.styleSheets]) {
-    let list: CSSRuleList;
-    try { list = sheet.cssRules; } catch { continue; }
-    for (const rule of [...list]) {
-      if (!(rule instanceof CSSFontFaceRule)) continue;
-      const family = rule.style.getPropertyValue('font-family').replace(/["']/g, '').trim();
-      if (family === 'Vazirmatn' || family === 'VazirCode' || (withMath && (family === 'XB Zar' || family.startsWith('KaTeX')))) {
-        rules.push(rule);
-        bases.set(rule, sheet.href ?? document.baseURI);
-      }
-    }
-  }
-  const faces = await Promise.all(rules.map(async (rule) => {
-    const src = rule.style.getPropertyValue('src');
-    const match = /url\((["']?)([^"')]+\.woff2[^"')]*)\1\)\s*(format\([^)]*\))?/.exec(src);
-    if (!match) return '';
-    try {
-      const response = await fetch(new URL(match[2], bases.get(rule)).href);
-      if (!response.ok) return '';
-      const data = await blobToDataUrl(await response.blob(), 'font/woff2');
-      const keep = ['font-family', 'font-weight', 'font-style', 'font-stretch', 'unicode-range']
-        .map((prop) => [prop, rule.style.getPropertyValue(prop)] as const)
-        .filter(([, value]) => value)
-        .map(([prop, value]) => `${prop}: ${value};`).join(' ');
-      return `@font-face { ${keep} src: url("${data}") ${match[3] ?? ''}; }`;
-    } catch { return ''; }
-  }));
-  return faces.join('\n');
-}
-
-function blobToDataUrl(blob: Blob, type: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).replace(/^data:[^;,]*/, `data:${type}`));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
