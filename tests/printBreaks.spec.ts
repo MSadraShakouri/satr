@@ -40,3 +40,56 @@ for (const kind of ['paragraph', 'list', 'quote'] as const) {
     });
   }
 }
+
+// A page break is a zero-height marker carrying break-after. When the text
+// before it fills a page, the marker itself is what flows onto the next one,
+// and breaks again there: a sheet with nothing on it but its page number. A
+// 52-page set of lecture notes printed one in the middle. Paged.js keeps
+// honouring a forced break at the top of a page, so the pages are read after
+// they are laid out and an unasked-for empty one is dropped.
+for (const [label, fill, pages, blank] of [
+  ['the marker fits', 280, 2, 0],
+  ['the marker is pushed onto a page of its own', 292, 2, 0],
+] as const) {
+  test(`a break that lands on a fresh page makes no empty page (${label})`, async ({ page }) => {
+    await page.addInitScript(() => {
+      window.print = () => { window.parent.__printedHtml = document.documentElement.outerHTML; };
+    });
+    await page.goto('/');
+    const html = await page.evaluate(async (height) => {
+      localStorage.setItem('satr:settings', JSON.stringify({ version: 3, pdfPageNumbers: 'latin', pdfCss:
+        `@page { size: 400px 400px; margin: 40px; } p { height: ${height}px; margin: 0; }` }));
+      const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
+      await exportPdf('Blank page', 'Filler\n\n<!-- pagebreak -->\n\nAfter the break\n');
+      return window.__printedHtml;
+    }, fill);
+    await page.setContent(html!);
+    const sheets = await page.locator('.pagedjs_page').count();
+    const empty = await page.evaluate(() => [...document.querySelectorAll('.pagedjs_area')]
+      .filter((area) => !(area.textContent ?? '').trim()).length);
+    expect(sheets).toBe(pages);
+    expect(empty, 'no page may be empty').toBe(blank);
+    expect(await page.locator('.pagedjs_page').last().textContent()).toContain('After the break');
+  });
+}
+
+test('two breaks in a row still print the empty page between them', async ({ page }) => {
+  // Asking for a blank sheet — one to write on after each lecture, or a
+  // chapter made to start further on — is what a second break means. Only a
+  // page nobody asked for is dropped.
+  await page.addInitScript(() => {
+    window.print = () => { window.parent.__printedHtml = document.documentElement.outerHTML; };
+  });
+  await page.goto('/');
+  const html = await page.evaluate(async () => {
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 3, pdfPageNumbers: 'latin', pdfCss: '@page { size: 400px 400px; margin: 40px; }' }));
+    const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
+    await exportPdf('Blank page', 'One\n\n<!-- pagebreak -->\n\n<!-- pagebreak -->\n\nTwo\n');
+    return window.__printedHtml;
+  });
+  await page.setContent(html!);
+  expect(await page.locator('.pagedjs_page').count()).toBe(3);
+  const empty = await page.evaluate(() => [...document.querySelectorAll('.pagedjs_area')]
+    .map((area) => (area.textContent ?? '').trim()));
+  expect(empty).toEqual(['One', '', 'Two']);
+});

@@ -237,6 +237,7 @@ async function exportDocuments(documents: ExportDocument[], name: string, collec
     win.PagedPolyfill.chunker.hooks.onOverflow.register(keepHeadingWithContent);
     win.PagedPolyfill.chunker.hooks.onOverflow.register(keepTableRows);
     await win.PagedPolyfill.preview();
+    dropBlankPages(doc);
     if (columns === 2) assembleColumns(doc, dir, numbering);
     numberFootnotes(doc);
     script.remove();
@@ -348,6 +349,37 @@ function pageViewportUnits(css: string): string {
   });
 }
 
+/** A page with nothing on it is not a page.
+ *
+ *  A page break is a zero-height element carrying break-after, and when the
+ *  text before it happens to fill a page exactly, the marker itself is what
+ *  flows onto the next one — where it breaks again, leaving a sheet holding
+ *  nothing but its own page number. A 52-page set of lecture notes, each
+ *  lecture starting on a fresh page, printed one such sheet in the middle of
+ *  it. Two markers in a row, or one at the end of a note, do the same.
+ *
+ *  Paged.js cannot help here: a forced break at the top of a page is ignored
+ *  by the fragmentation spec, but not by Paged.js — moving the break onto the
+ *  following element leaves the same empty sheet. So the pages are read after
+ *  they are laid out, and one that carries no ink is dropped; the page
+ *  numbers are CSS counters over the pages that remain, so they close up by
+ *  themselves. A document made only of breaks still prints one page.
+ *
+ *  An empty page that was asked for stays. Two breaks in a row mean one
+ *  blank sheet, three mean two, and printableBody marks those markers; only
+ *  a page whose emptiness nobody asked for is dropped. */
+function dropBlankPages(doc: Document): void {
+  const pages = [...doc.querySelectorAll('.pagedjs_page')];
+  for (const page of pages) {
+    if (doc.querySelectorAll('.pagedjs_page').length < 2) break;
+    const area = page.querySelector('.pagedjs_area');
+    if (!area) continue;
+    const inked = (area.textContent ?? '').trim().length > 0
+      || area.querySelector('img, svg, iframe, canvas, video, audio, hr, table, input');
+    if (!inked && !area.querySelector('.page-break-wanted')) page.remove();
+  }
+}
+
 function printableBody(html: string): HTMLElement {
   const root = document.createElement('div');
   root.innerHTML = html;
@@ -374,6 +406,15 @@ function printableBody(html: string): HTMLElement {
     span.appendChild(node);
   }
   root.querySelectorAll('input[type="checkbox"]').forEach((box) => box.setAttribute('disabled', ''));
+  // Two page breaks in a row ask for a page with nothing on it — a sheet to
+  // write on after each lecture, a chapter made to start on a fresh right
+  // hand page. The second marker of a run, and any after it, is that
+  // request; a lone marker is not, and dropBlankPages tells them apart.
+  for (const marker of root.querySelectorAll('.page-break')) {
+    let previous = marker.previousSibling;
+    while (previous && previous.nodeType === Node.TEXT_NODE && !previous.textContent?.trim()) previous = previous.previousSibling;
+    if (previous instanceof Element && previous.classList.contains('page-break')) marker.classList.add('page-break-wanted');
+  }
 
   const notes = new Map<string, { html: string; dir: string }>();
   root.querySelectorAll<HTMLElement>('section.footnotes li[data-footnote-id]').forEach((item) => {
