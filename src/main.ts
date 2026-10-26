@@ -27,6 +27,7 @@ import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
+import { installLiveBlocks, stripLiveBlocks } from './liveBlocks';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
@@ -111,6 +112,8 @@ app.innerHTML = `
   </div>`;
 
 const preview = document.querySelector<HTMLElement>('#preview')!;
+// A live block's frame measures itself and asks for its height (src/liveBlocks.ts).
+installLiveBlocks();
 const mathWarnings = [...document.querySelectorAll<HTMLElement>('[data-math-warning]')];
 const editorPane = document.querySelector<HTMLElement>('#editor-pane')!;
 const externalFileScreen = document.querySelector<HTMLElement>('#external-file-screen')!;
@@ -2358,7 +2361,7 @@ function showTabs(): void {
           return `<div class="inline-title" dir="auto">${escapeText(file?.name ?? 'Incoming file')}</div><p>${escapeText(file?.mimeType ?? 'External file')}</p>`;
         }
         const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
-        return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${renderMarkdown(text.slice(0, 1500))}`;
+        return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${stripLiveBlocks(renderMarkdown(text.slice(0, 1500)))}`;
       },
       select: (i) => void switchTab(i),
       close: closeTab,

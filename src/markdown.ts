@@ -9,13 +9,21 @@ import hljs from 'highlight.js/lib/common';
 import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
 import { widestMarkerEm } from './markerWidth';
 import { NOTE_ROOT, scopeNoteCss } from './noteStyles';
+import { isLive, liveFrame } from './liveBlocks';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
 const COPY_BUTTON = '<button class="copy-code-button" type="button" aria-label="Copy code"></button>';
+// A live block's code, in the order the blocks were met. The frames are put
+// in after the sweep below, the way formulas are: what a frame holds is the
+// writer's own document, sealed away from this one, so it is not this
+// document's markup and must not be scrubbed as if it were.
+let liveBlocks: Array<{ source: string; info: string }> = [];
 marked.use({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }): string {
+      const info = (lang ?? '').trim();
+      if (isLive(info)) return `<div data-satr-live="${liveBlocks.push({ source: text, info }) - 1}"></div>`;
       if (lang && hljs.getLanguage(lang)) {
         const highlighted = hljs.highlight(text, { language: lang }).value;
         return `<pre><code class="hljs language-${escapeHtml(lang)}">${highlighted}</code>${COPY_BUTTON}</pre>`;
@@ -342,6 +350,7 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
   const tableAlignments = extractTableAlignments(normalizedTables);
 
   footnotes = { defs: collectFootnotes(normalizedTables), order: [], uses: new Map(), inline: 0 };
+  liveBlocks = [];
   const tokens = marked.lexer(normalizedTables);
   const sections: Array<{ html: string; token: Token; start: number; end: number }> = [];
   let line = 0;
@@ -407,7 +416,7 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
   let safe = DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true, svg: true, svgFilters: true },
     ADD_TAGS: ['style'],
-    ADD_ATTR: ['style', 'data-satr-math', 'data-sec', 'data-href', 'data-heading', 'data-src', 'data-table-dir'],
+    ADD_ATTR: ['style', 'data-satr-math', 'data-satr-live', 'data-sec', 'data-href', 'data-heading', 'data-src', 'data-table-dir'],
     FORBID_TAGS: ['script', 'iframe', 'math'],
     FORBID_ATTR: ['onerror', 'onclick', 'onload'],
   });
@@ -417,6 +426,11 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
   // opening such a note. A function replacement also keeps the formula
   // literal: a string replacement would read $& and $1 inside KaTeX's output.
   safe = safe.replace(/<(span|div|pre) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
+  // The live blocks' frames, put in the same way and for the same reason.
+  safe = safe.replace(/<div data-satr-live="(\d+)"><\/div>/g, (whole, index: string) => {
+    const block = liveBlocks[Number(index)];
+    return block ? liveFrame(block.source, block.info) : whole;
+  });
   const document = new DOMParser().parseFromString(safe, 'text/html');
   // The note's own stylesheet, rewritten so that it reaches this note and
   // stops there (src/noteStyles.ts). It happens here, in the markup, before

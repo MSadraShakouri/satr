@@ -391,3 +391,14 @@ tr {
   font-size: 12pt;
   color: #222;
 }
+
+/* A live block prints at the height its fence asked for: the page has nobody
+   listening for the frame's own measurement, and a frame cannot be split
+   across two pages. */
+.md-live {
+  display: block;
+  width: 100%;
+  border: 0;
+  margin: 1em 0;
+  break-inside: avoid;
+}

@@ -4459,3 +4459,15 @@ body.external-file-active .notice {
      stays LTR inside a Persian line; Persian relative stays RTL. */
   unicode-bidi: isolate;
 }
+
+/* A live block: the writer's own document, in a frame of its own. It is as
+   wide as the text and as tall as it says it is (src/liveBlocks.ts), with no
+   border of its own — what it looks like is entirely its author's business. */
+.md-live {
+  display: block;
+  width: 100%;
+  border: 0;
+  margin: 1em 0;
+  background: transparent;
+  color-scheme: light dark;
+}
