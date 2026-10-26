@@ -244,3 +244,31 @@ test('a list marker keeps its full stop on the line’s side', async ({ page }) 
   const dot = chars.find((p) => p.c === '.')!;
   expect(digit.x, JSON.stringify(chars.map((p) => `${p.c}@${p.x}`))).toBeGreaterThan(dot.x);
 });
+
+// An isolate is a neutral to the text around it, so one standing beside a word
+// of the other script is handed to the paragraph (UAX #9, N2) and carried over
+// that word: the version number of `از Satr 2.0 استفاده کن` drew to the left of
+// `Satr`, where the reading view and every browser draw it to the right. Beside
+// a word of the other script nothing needs isolating — Unicode keeps the digits
+// with the word on its own (W7) — so the isolates stay away from there.
+test('a version number stays with the English word beside it', async ({ page }) => {
+  await draft(page, 'از Satr 2.0 استفاده کن\n');
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const painted = await paintedLine(page, 'Satr');
+  expect(painted.dir, JSON.stringify(painted)).toBe('rtl');
+  const chars = painted.chars!;
+  const word = chars.find((p) => p.c === 'S')!;
+  const number = chars.find((p) => p.c === '2')!;
+  expect(word.x, JSON.stringify(chars.map((p) => `${p.c}@${p.x}`))).toBeLessThan(number.x);
+});
+
+test('a link stays beside the English word before it', async ({ page }) => {
+  await draft(page, 'در Satr [Wikipedia](https://x.org) ببین\n');
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const painted = await paintedLine(page, 'Wikipedia');
+  expect(painted.dir, JSON.stringify(painted)).toBe('rtl');
+  const chars = painted.chars!;
+  const word = chars.find((p) => p.c === 'S')!;
+  const link = chars.find((p) => p.c === 'W')!;
+  expect(word.x, JSON.stringify(chars.map((p) => `${p.c}@${p.x}`))).toBeLessThan(link.x);
+});

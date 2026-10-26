@@ -143,6 +143,17 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
 // a press is one position either way (this file), and a hyphenated date
 // traces the same x as a slashed one.
 // Read off LowTypes in @codemirror/view (charType).
+//
+// An isolate is itself a neutral to the text around it, and Unicode hands a
+// neutral standing between two opposite directions to the *paragraph* (UAX #9,
+// N2). So an isolate with a word of the other script beside it is carried
+// across that word: `از Satr 2.0 استفاده کن` drew `2.0 Satr`, and the mirror
+// of it moved a number off a Persian word in an English line. The isolates
+// below therefore go only where they cannot do that — where the nearest letter
+// on each side is the line's own direction. Beside a word of the other script
+// nothing needs isolating anyway: Unicode already keeps the digits with that
+// word (W7 after a Latin letter, W2 after a Persian one) and the brackets of a
+// link inside the Latin run around them (N1).
 const CS_SEP = ',.:/';
 const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩]+(?:[${CS_SEP}][0-9۰-۹٠-٩]+)+`, 'g');
 const ltrIsolate = Decoration.mark({
@@ -171,6 +182,33 @@ const numberIsolate = ltrIsolate;
 const LINK_RUN = /!?\[[^\]\n]*\]\([^)\n]*\)|!?\[\[[^\]\n]+\]\]/g;
 const RTL_LETTER = /[\u200f\u061c\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u;
 
+/** The nearest letter beyond one edge of a run, or null when the line has
+ *  none on that side. Digits and punctuation are not letters and do not
+ *  answer: they are the neutrals the question is about. */
+function nearestLetter(text: string, start: number, step: -1 | 1): 'rtl' | 'ltr' | null {
+  for (let at = start; at >= 0 && at < text.length; at += step) {
+    if (!/\p{L}/u.test(text[at])) continue;
+    return RTL_LETTER.test(text[at]) ? 'rtl' : 'ltr';
+  }
+  return null;
+}
+
+/** True when a Latin word stands beside the run. These isolates are LTR
+ *  islands and only ever help inside Persian text; against a Latin word the
+ *  island is the thing that gets carried away, and Unicode holds the run in
+ *  place on its own. Nothing on a side (the line's edge) is no objection.
+ *
+ *  Read from the document, never from the layout: `textDirectionAt` and the
+ *  rest of the measuring API throw inside a plugin update, and a plugin that
+ *  throws is switched off for the rest of the session — with it went every
+ *  isolate in the note. */
+function carriedAway(view: EditorView, from: number, to: number): boolean {
+  const line = view.state.doc.lineAt(from);
+  const before = nearestLetter(line.text, from - line.from - 1, -1);
+  const after = nearestLetter(line.text, to - line.from, 1);
+  return before === 'ltr' || after === 'ltr';
+}
+
 /** The isolate for one markdown construct, or null when it needs none. */
 function linkIsolate(match: string): { from: number; to: number } | null {
   const url = /\]\([^)]*\)$/.exec(match);
@@ -195,6 +233,7 @@ function numberIsolates(view: EditorView): DecorationSet {
       if (!isolate) continue;
       const start = from + match.index + isolate.from;
       const end = from + match.index + isolate.to;
+      if (carriedAway(view, start, end)) continue;
       links.push([start, end]);
       ranges.push({ from: start, to: end, deco: ltrIsolate });
     }
@@ -203,6 +242,7 @@ function numberIsolates(view: EditorView): DecorationSet {
       const start = from + match.index;
       if (inMath(view.state, start)) continue;
       if (links.some(([a, b]) => start >= a && start < b)) continue; // inside a link's run
+      if (carriedAway(view, start, start + match[0].length)) continue;
       ranges.push({ from: start, to: start + match[0].length, deco: numberIsolate });
     }
   }
