@@ -21,7 +21,7 @@ being watched for its return.
 
 - [ ] in preview mode, tapping anywhere of a header make it collapse (idea, might be a bad one, but the current hitbox is still a bit small) (bad idea, forgo it, I'm not doing it but we might need a redesign like how Obsidian does it, at the side not in front of it)
 - [ ] would be great if in source mode there was a background process that converted the math and tables and stuff (didn't display, just prepare) so the edit to preview mode would switch faster, doesn't need a full page rebuild probably, should definitely be a background process (it got faster in the batches but I think this would make it instantaneous)
-- [ ] html in preview would be epic, at minimum in export
+- [x] html in preview would be epic, at minimum in export — *done: HTML a note brings is rendered in the reading view and in the export, with the styling that came with it — a `<style>` block or a `style` attribute — rewritten to reach that note and stop there (src/noteStyles.ts). Inline SVG too. Scripts, frames and `on*` attributes stay out; a note that wants to run code says `live` on a fence and gets a sealed frame (src/liveBlocks.ts).*
 
 ## math
 
@@ -34,7 +34,7 @@ being watched for its return.
 ## sidebar, tabs and files
 
 - [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me
-- [ ] tab number digits aren't vertically centered, in two digits it's touching and in single digits it's not centered, maybe it needs to be smaller though (needs a lot of work)
+- [x] tab number digits aren't vertically centered, in two digits it's touching and in single digits it's not centered, maybe it needs to be smaller though (needs a lot of work) — *done: the digits are trimmed to their own box (`text-box-trim: trim-both`, cap height to baseline) and set in tabular figures, so one digit and two sit in the same place, centred, at 0.55 of the icon's size.*
 
 ## images
 
@@ -52,13 +52,13 @@ being watched for its return.
 
 ## direction
 
-- [ ] text runs LTR RTL clinging needs thought, in lines with Persian digits RTL for example it's very visible, before and after the digit are both on the left side of it
+- [x] text runs LTR RTL clinging needs thought, in lines with Persian digits RTL for example it's very visible, before and after the digit are both on the left side of it — *done: a run of digits is an isolate of its own (`numberIsolates`, src/caretMotion.ts). Measured in both views on `قیمت ۱۲۳۴ تومان`, `تاریخ ۱۴۰۲/۰۳/۰۵ است`, `قیمت 1234 تومان`, `نسخه 2.0 منتشر شد` and `Satr 2.0 منتشر شد`: in every one, what comes before the number stands on one side of it and what comes after on the other. If you have a line that still clings, paste it and this reopens.*
 
 ## launch and scrolling
 
 - [ ] some times after being gone, it doesn't open a new tab, I don't know why (happens rarely, it has been a while since it last happened) (happened again, sometimes it stays even after 15 min unless I'm hallucinating)
 - [ ] also sometimes I think it happens under my set 15 mins, not too sure — *both halves have one cause, and it is in the code rather than in your memory of it. The away clock is a single mark written the moment the app is told it is going to the background (`satr:awayAt`), and the gap is measured from that mark on the way back. Nothing else keeps time. So a background Android never delivered — the WebView frozen, the app killed, a lock that fired nothing — leaves **no mark**, and the return cannot be late however long it was: that is "it stays even after 15 min". And a mark is only cleared when a tab is actually opened, so a **stale** one from an earlier trip away can outlive a few minutes of real use and make the next return look older than it was: that is "it happens under my set 15 mins". The fix is to stop trusting one event: write the time every so often while the app is being used, and measure the gap from the last time it was **seen alive** rather than from the last time it was told to leave. A missed pause then costs nothing.* (claimed fix, waiting for it to happen again)
-- [ ] empty tab remove the demo button
+- [x] empty tab remove the demo button — *done: the new-tab page carries no demo row. The tour opens by itself on a fresh browser's first run and is never offered again (src/main.ts).*
 
 ## seen once, waiting for it to happen again
 
