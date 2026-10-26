@@ -65,7 +65,7 @@ export const extension = (name: string): string => {
 };
 /** File name without the .md extension (the note's title). */
 export const stem = (path: string): string => basename(path).replace(/\.(md|markdown)$/i, '');
-const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
+const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'html', 'htm']);
 export const isNote = (name: string): boolean => TEXT_EXTENSIONS.has(extension(name));
 /** Inside `dir` (or `dir` itself). */
 export const within = (path: string, dir: string): boolean => !dir || path === dir || path.startsWith(`${dir}/`);
