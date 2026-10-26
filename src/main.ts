@@ -2377,7 +2377,9 @@ function showTabs(): void {
           return `<div class="inline-title" dir="auto">${escapeText(file?.name ?? 'Incoming file')}</div><p>${escapeText(file?.mimeType ?? 'External file')}</p>`;
         }
         const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
-        return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${stripLiveBlocks(renderMarkdown(text.slice(0, 1500)))}`;
+        const card = isHtmlFile(path) ? `<pre class="card-source">${escapeText(text.slice(0, 1500))}</pre>`
+          : stripLiveBlocks(renderMarkdown(text.slice(0, 1500)));
+        return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${card}`;
       },
       select: (i) => void switchTab(i),
       close: closeTab,

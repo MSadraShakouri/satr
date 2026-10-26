@@ -4500,3 +4500,10 @@ iframe.html-file {
   background: #fff;
   color-scheme: light dark;
 }
+.tab-card pre.card-source {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8em;
+  opacity: 0.85;
+}
