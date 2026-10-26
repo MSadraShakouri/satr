@@ -52,9 +52,14 @@ test('a press is one position through a mixed Persian/English line, with no boun
   // RTL base: the visual left is forward, so ← walks 1, 2, 3 … one a press.
   const left = await walk(page, 'ArrowLeft', 8);
   expect(left.map((s) => s.pos), JSON.stringify(left)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-  // Every step is painted on the line's own side — the whole line's, not the
-  // run it happens to sit next to.
-  for (const step of left) expect(step.assoc, JSON.stringify(left)).toBe(1);
+  // The caret takes the side of the line's own script. Stepping off the
+  // Persian onto `ABC`, at position 3, it belongs to the Persian behind it: it
+  // is painted against that word (966) rather than at the far edge of the
+  // English (936), where a reader would read it as "after ABC". At the run's
+  // other end, position 6, the Persian is ahead of it and it paints there.
+  for (const step of left) expect(step.assoc, JSON.stringify(left)).toBe(step.pos === 3 ? -1 : 1);
+  const x = (pos: number) => left.find((s) => s.pos === pos)!.x;
+  expect(Math.abs(x(3) - x(2)), JSON.stringify(left)).toBeLessThan(Math.abs(x(3) - x(4)));
   // Nothing is visited twice, and the way back retraces it exactly.
   const right = await walk(page, 'ArrowRight', 8);
   expect(right.map((s) => s.pos), JSON.stringify(right)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
@@ -64,7 +69,11 @@ test('an RTL run inside English text is walked one position a press', async ({ p
   await draft(page, 'abc אבג', 0);
   const right = await walk(page, 'ArrowRight', 6);
   expect(right.map((s) => s.pos), JSON.stringify(right)).toEqual([1, 2, 3, 4, 5, 6]);
-  for (const step of right) expect(step.assoc, JSON.stringify(right)).toBe(1);
+  // Mirrored, with no double standard: in an English line the caret at the
+  // start of the Hebrew word belongs to the English behind it.
+  for (const step of right) expect(step.assoc, JSON.stringify(right)).toBe(step.pos === 4 ? -1 : 1);
+  const x = (pos: number) => right.find((s) => s.pos === pos)!.x;
+  expect(Math.abs(x(4) - x(3)), JSON.stringify(right)).toBeLessThan(Math.abs(x(4) - x(5)));
   const left = await walk(page, 'ArrowLeft', 6);
   expect(left.map((s) => s.pos), JSON.stringify(left)).toEqual([5, 4, 3, 2, 1, 0]);
 });

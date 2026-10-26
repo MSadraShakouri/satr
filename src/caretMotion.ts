@@ -27,8 +27,9 @@
 // composition goes nowhere, and no keymap is even reached. Owning the two keys
 // here means the note answers them the same way whether or not a word is still
 // with the keyboard.
-import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction } from '@codemirror/state';
+import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction, type Text } from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { directionsField, type TextDirection } from './direction';
 import { inMath } from './mathSource';
 
 function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
@@ -85,36 +86,72 @@ const arrowKeys = ViewPlugin.fromClass(class {
 
 // The caret follows the line, never the run it happens to sit next to.
 //
-// A bidi position on a run boundary has two visual homes — one on each side of
-// the run — and which one is picked is the "side" (assoc) of the selection.
-// When that side is re-derived from what was just typed, a digit or an English
-// word inside Persian text throws the caret over to the other side of what is
-// being written: within one line it goes right, then left, then right again
-// (3, 17). The writer asked for the one rule the phone's own text fields
-// follow: take the side from the LINE — from its first letter — and keep it,
-// whatever is being typed.
+// A position where two runs meet has TWO homes — one at each end of the
+// embedded run — and the caret's side (assoc) is what picks between them.
+// −1 means "I belong to the character before me", +1 "to the one after me".
 //
-// Side `+1` is that side. It means "forward along the paragraph's own flow",
-// and the line's direction is what sets the paragraph's direction here, so in
-// a Persian line it paints at the left of the text the line just grew and in
-// an English line at its right — the same place every keystroke, whether the
-// key was a Persian letter, a digit, a space or a Latin letter.
+// The rule is the line's own: the caret belongs to the text written in the
+// line's direction, never to the run embedded in it. In a Persian line that
+// means the side of the Persian on one side or the other of an English word:
 //
-// Applied in the same transaction as the edit (a filter, not a follow-up
-// dispatch), so the caret never paints one frame on the wrong side. Only a
-// single collapsed caret is touched: a selection keeps its own ends, and the
-// filter leaves deliberate movement alone, because it only looks at
-// transactions that changed the document. Composing text is left alone
-// entirely: the keyboard owns the caret while a word is still being composed.
+//     سلام |test تست     the caret is before `test`, so it belongs to the
+//                        Persian BEFORE it (−1) and is painted between سلام
+//                        and the word — where a reader reads "before test"
+//     سلام test| تست     the caret is after `test`, so it belongs to the
+//                        Persian AFTER it (+1) and is painted on the far
+//                        side of the word — where a reader reads "after test"
+//
+// Pinning the side to +1 everywhere, as this file used to, only answers the
+// second of those. At the start of the word +1 attaches the caret to the
+// word, and it was painted at the word's far left: the writer put the caret
+// after سلام and the note showed it after `test`, so a keystroke there read
+// as if it were going to the wrong side of the English. Measured on
+// `سلام test تست`: offset 5 painted at x=925, with سلام at 955 and the word
+// from 925 to 951. It now paints at 951.
+//
+// Inside a word, and at the two ends of the line, the two homes are the same
+// place and the side changes nothing — so this only ever speaks where a
+// reader would otherwise have to guess.
+//
+// Applied in the same transaction as whatever moved the caret (a filter, not
+// a follow-up dispatch), so it never paints one frame on the wrong side, and
+// the one rule covers every way of getting there: typing, the arrow keys, a
+// tap. Only a single collapsed caret is touched — a selection keeps its own
+// ends. Composing text is left alone entirely: the keyboard owns the caret
+// while a word is still being composed.
+
+/** A character the line reads against its own flow: a letter of the other
+ *  script, and in a Persian line a digit too — digits are their own little
+ *  left-to-right run inside Persian text. */
+function embedded(ch: string, rtl: boolean): boolean {
+  if (/\p{L}/u.test(ch)) return RTL_LETTER.test(ch) !== rtl;
+  return rtl && /[0-9\u06f0-\u06f9\u0660-\u0669]/.test(ch);
+}
+
+/** Which neighbour the caret at `head` belongs to: −1 the character before
+ *  it, +1 the one after. The line's directions are read from the document
+ *  (src/direction.ts), never from the layout. */
+function sideAt(doc: Text, dirs: readonly TextDirection[] | undefined, head: number): 1 | -1 {
+  const line = doc.lineAt(head);
+  const at = head - line.from;
+  if (at === 0 || at === line.text.length) return 1; // one home at either end of a line
+  const rtl = (dirs?.[line.number - 1] ?? 'ltr') === 'rtl';
+  const before = line.text[at - 1];
+  const after = line.text[at];
+  return !embedded(before, rtl) && embedded(after, rtl) ? -1 : 1;
+}
+
 const lineSide = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
+  if (tr.newSelection.ranges.length !== 1) return tr;
   const main = tr.newSelection.main;
-  if (!main.empty || main.assoc === 1) return tr;
+  if (!main.empty) return tr;
   if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
+  const want = sideAt(tr.newDoc, tr.startState.field(directionsField, false)?.dirs, main.head);
+  if (main.assoc === want) return tr;
   // `sequential` so the head is read in the coordinates of the edit, not of
   // the document before it. Wrapped in EditorSelection.create, because a bare
   // SelectionRange in a spec is flattened to a plain cursor and loses its side.
-  const side = EditorSelection.create([EditorSelection.cursor(main.head, 1)]);
+  const side = EditorSelection.create([EditorSelection.cursor(main.head, want)]);
   return [tr, { selection: side, sequential: true }];
 });
 

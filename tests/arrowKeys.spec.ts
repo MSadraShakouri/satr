@@ -66,8 +66,10 @@ for (const line of LINES) {
       const after = await caret(page);
       const step = line.rtl ? -dir : dir;
       expect(after.head, `${key} steps one position`).toBe(before.head + step);
-      expect(after.assoc, `${key} keeps the line's own side`).toBe(1);
-      expect(after.x, `${key} paints the position it moved to, on the line's side`).toBe(after.ownSide);
+      // Which of a boundary position's two homes the caret is painted at is
+      // the line's own script's business, measured in tests/caretMotion.spec.ts:
+      // two of these lines put their middle at the start of a formula, where
+      // the caret belongs to the Persian before it, not to the formula.
     }
   });
 }
