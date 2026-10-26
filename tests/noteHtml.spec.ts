@@ -152,3 +152,27 @@ test("a note's styling travels to the export", async ({ page }) => {
   await expect(h1).toHaveCSS('color', 'rgb(26, 26, 46)');
   await expect(page.locator('.title-page')).toHaveCSS('display', 'flex');
 });
+
+test('a block a note wrote in HTML reads the same way in both views', async ({ page }) => {
+  // The direction of a raw HTML block used to live on the section wrapper
+  // the renderer puts around it. The PDF unwraps those wrappers, so a
+  // Persian cover page that read right to left on screen printed left to
+  // right — the trailing full stop jumping to the far side of the line.
+  // The element itself carries the answer now, and the two views agree.
+  const note = `<div class="cover">\n\n<div class="line">\nاین جزوه بر اساس مطالب تدریس‌شده در کلاس گردآوری شده است.\n</div>\n\n</div>\n`;
+  await page.addInitScript(() => {
+    window.print = () => { window.parent.__printedHtml = document.documentElement.outerHTML; };
+  });
+  await boot(page, note);
+  await expect(page.locator('#preview .line')).toHaveAttribute('dir', 'rtl');
+  await expect(page.locator('#preview .line')).toHaveCSS('direction', 'rtl');
+
+  const printed = await page.evaluate(async (markdown) => {
+    const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
+    await exportPdf('Cover', markdown);
+    return window.__printedHtml;
+  }, note);
+  await page.setContent(printed!);
+  await expect(page.locator('.pagedjs_page .line')).toHaveAttribute('dir', 'rtl');
+  await expect(page.locator('.pagedjs_page .line')).toHaveCSS('direction', 'rtl');
+});

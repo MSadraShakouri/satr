@@ -440,6 +440,16 @@ export function directionsAfter(
 
 
 const BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dt,dd,summary,caption,.md-prose-fragment';
+/** Boxes the renderer makes: a list, a quote, a table, a section wrapper. */
+const MARKDOWN_BOXES = 'li,blockquote,ul,ol,table,.md-section';
+/** Those, and the block containers a note can write in HTML. A container
+ *  carries the direction of its first directional child, because the PDF
+ *  unwraps the section wrappers (printableBody) and anything that leant on a
+ *  wrapper for its direction would be left reading left to right on the page
+ *  while the reading view, where the wrapper survives, shows it right to
+ *  left. The two views have to agree, so the element itself holds the
+ *  answer. */
+const CONTAINERS = `${MARKDOWN_BOXES},div,section,article,aside,header,footer,main,nav,figure,details,address,fieldset,hgroup`;
 const EXCLUDED = '.math-display,.math-flow,.katex,pre,code,.footnote-ref,.footnote-backref,.copy-code-button';
 function proseText(element: Element): string {
   const clone = element.cloneNode(true) as Element;
@@ -478,9 +488,14 @@ export function applyReadingDirections(root: HTMLElement): void {
   });
   const directions = resolveDirections(withCarried(units));
   leaves.forEach((el, index) => el.setAttribute('dir', ownDirections[index] ?? directions[starts[index]]));
-  for (const el of [...root.querySelectorAll<HTMLElement>('li,blockquote,ul,ol,table,.md-section')].reverse()) {
+  for (const el of [...root.querySelectorAll<HTMLElement>(CONTAINERS)].reverse()) {
     if (el.getAttribute('dir') === 'ltr' || el.getAttribute('dir') === 'rtl') continue;
-    el.setAttribute('dir', el.querySelector('[dir]')?.getAttribute('dir') ?? strongDirection(proseText(el)) ?? 'ltr');
+    const direction = el.querySelector('[dir]')?.getAttribute('dir') ?? strongDirection(proseText(el));
+    // A box Markdown itself builds is always given a direction, as it always
+    // was. A box the note wrote is only given one when it holds prose to read
+    // it from, so an empty decorative <div> keeps inheriting.
+    if (direction) el.setAttribute('dir', direction);
+    else if (el.matches(MARKDOWN_BOXES)) el.setAttribute('dir', 'ltr');
   }
   root.querySelectorAll<HTMLElement>('.math-display,.math-flow,.katex,pre,code').forEach((el) => el.setAttribute('dir', 'ltr'));
 }
