@@ -269,6 +269,30 @@ function splitMath(source: string, spans: readonly MathSpan[]): string {
   return out + source.slice(cursor);
 }
 
+// Tags that never hold anything, so an unclosed one of them is not unclosed.
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+const TAG = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)\b[^>]*?(\/?)>/g;
+
+/** Does this block of HTML leave a tag open? A writer's container — the
+ *  title page that is a <div> wrapped around seven other blocks — is written
+ *  with air between its parts, and a blank line ends an HTML block in
+ *  markdown, so the container arrives as one token and its contents as the
+ *  next ones. Knowing the first token is still open is what lets them be put
+ *  back together (see renderMarkdown). */
+function leavesTagsOpen(html: string): boolean {
+  const open: string[] = [];
+  for (const match of html.matchAll(TAG)) {
+    if (match[0].startsWith('<!--')) continue;
+    const name = match[2].toLowerCase();
+    if (match[3] === '/' || VOID_TAGS.has(name)) continue;
+    if (match[1]) {
+      const at = open.lastIndexOf(name);
+      if (at >= 0) open.length = at;
+    } else open.push(name);
+  }
+  return open.length > 0;
+}
+
 // The preview is rendered in sections, one per top-level markdown block, each
 // tagged with the source lines it came from (data-line / data-lines) — the
 // same model as Obsidian's reading view. Lists are tagged per item. Editor and
@@ -325,7 +349,20 @@ export function renderMarkdown(source: string): string {
     line += newlines(token.raw);
     if (token.type === 'space') continue;
     const single = Object.assign([token], { links: tokens.links }) as TokensList;
-    sections.push({ html: marked.parser(single), token, start, end: line });
+    const html = marked.parser(single);
+    // One section per block, except where a block has not finished. A section
+    // is a <div> of its own in the markup below, so wrapping the blocks of an
+    // unclosed container separately would make the parser close that
+    // container before its children reached it: an empty box, with its
+    // contents strewn after it as siblings. While tags are still open, what
+    // follows belongs inside, and joins the same section.
+    const unfinished = sections[sections.length - 1];
+    if (unfinished && leavesTagsOpen(unfinished.html)) {
+      unfinished.html += html;
+      unfinished.end = line;
+      continue;
+    }
+    sections.push({ html, token, start, end: line });
   }
   const sourceLine = (transformed: number): number => origin[Math.min(transformed, origin.length - 1)] ?? transformed;
   // A `<!-- table: rtl -->` (or ltr / auto) comment on the line just above a
