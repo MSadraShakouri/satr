@@ -381,3 +381,49 @@ test('a checklist box stands in the same column in both views, at any text size'
     await page.waitForTimeout(400);
   }
 });
+
+test('a formula and a code span stand on the same side of a Persian line in both views', async ({ page }) => {
+  // A formula is one thing, not a run of Latin letters that happens to sit in
+  // a sentence: it is isolated, so on a Persian line it stands apart from the
+  // English words around it instead of being swept up into their run. The
+  // reading view and the PDF have always drawn it that way (a rendered
+  // formula is a box, and a box is a neutral object in an RTL paragraph); the
+  // editor was the odd one out, writing the formula between سلام and the
+  // English. Both views put it on the far side of the English now.
+  const note = 'سلام Inline math: $a^2 + b^2 = c^2$.\n\nسلام Inline code: `const x = 1`.\n';
+  await boot(page, note);
+  const source = await page.evaluate(async () => {
+    const { EditorView } = await window.__satr.load('/node_modules/@codemirror/view/dist/index.js');
+    const view = EditorView.findFromDOM(document.querySelector('#app .cm-editor') as HTMLElement)!;
+    const at = (p: number) => view.coordsAtPos(p, 1)!.left;
+    // `Inline` on each line, then the formula's and the code span's content.
+    return { word: [at(5), at(43)], inner: [Math.max(at(19), at(33)), Math.max(at(57), at(67))] };
+  });
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane')).toBeVisible();
+  const reading = await page.evaluate(() => {
+    const ps = Array.from(document.querySelectorAll('#preview-pane p'));
+    const word = (p: Element) => {
+      const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      let n: Node | null;
+      while ((n = walk.nextNode())) {
+        const i = (n.textContent || '').indexOf('Inline');
+        if (i < 0) continue;
+        const r = document.createRange();
+        r.setStart(n, i); r.setEnd(n, i + 'Inline'.length);
+        return r.getBoundingClientRect().left;
+      }
+      return NaN;
+    };
+    return {
+      word: [word(ps[0]), word(ps[1])],
+      inner: [ps[0].querySelector('.math-flow')!.getBoundingClientRect().right, ps[1].querySelector('code')!.getBoundingClientRect().right],
+    };
+  });
+  for (const [view, spots] of [['source mode', source], ['the reading view', reading]] as const) {
+    for (const [k, what] of [[0, 'a formula'], [1, 'a code span']] as const) {
+      expect(spots.inner[k], `${view}: ${what} stands past the English, not between it and سلام`)
+        .toBeLessThan(spots.word[k]);
+    }
+  }
+});

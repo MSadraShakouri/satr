@@ -10,9 +10,10 @@ import { syntaxTree } from '@codemirror/language';
 import { StateEffect, type Range } from '@codemirror/state';
 import { parseMarker } from './listMarkers';
 import { markerStrip } from './markerWidth';
+import { isolatesOf } from './caretMotion';
 import { inMath, mathSpans, overlapsMath } from './mathSource';
 import { spansHold } from './mathScan';
-import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { Decoration, Direction, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common';
 import { formatTimestamp, fullTimestamp, timestampDir, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { editFootnote, findDefinition } from './footnoteDialog';
@@ -82,7 +83,7 @@ const taskOpen = Decoration.mark({ class: 'cm-lp-task' });
 const taskDone = Decoration.mark({ class: 'cm-lp-task is-checked' });
 const listHidden = Decoration.mark({ class: 'cm-lp-list-hidden' });
 const rule = Decoration.replace({ widget: new RuleWidget() });
-const inlineCode = Decoration.mark({ class: 'cm-lp-inline-code' });
+const inlineCode = Decoration.mark({ class: 'cm-lp-inline-code', bidiIsolate: Direction.LTR });
 // Neutralises markdown styling the parser applies to characters that are not
 // markdown at all (see the Emphasis case below).
 const plainText = Decoration.mark({ class: 'cm-lp-plain' });
@@ -666,9 +667,11 @@ export const remeasured = (update: ViewUpdate): boolean =>
 
 const livePreviewPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
+  isolates: DecorationSet;
   private readonly refresh: () => void;
   constructor(view: EditorView) {
     this.decorations = build(view);
+    this.isolates = isolatesOf(this.decorations);
     this.refresh = () => view.dispatch({ effects: markersMeasured.of(null) });
     document.fonts?.addEventListener?.('loadingdone', this.refresh);
   }
@@ -677,8 +680,12 @@ const livePreviewPlugin = ViewPlugin.fromClass(class {
     if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged
       || remeasured(update) || syntaxTree(update.startState) !== syntaxTree(update.state)) {
       this.decorations = build(update.view);
+      this.isolates = isolatesOf(this.decorations);
     }
   }
-}, { decorations: (value) => value.decorations });
+}, {
+  decorations: (value) => value.decorations,
+  provide: (plugin) => EditorView.bidiIsolatedRanges.of((view) => view.plugin(plugin)?.isolates ?? Decoration.none),
+});
 
 export const livePreview = [livePreviewPlugin, toggleTask];

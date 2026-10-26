@@ -30,7 +30,7 @@
 // here means the note answers them the same way whether or not a word is still
 // with the keyboard.
 
-import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction, type Text } from '@codemirror/state';
+import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction, type Text, type Range} from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { cursorCharLeft, cursorCharRight } from '@codemirror/commands';
 import { directionsField, type TextDirection } from './direction';
@@ -224,6 +224,20 @@ const lineSide = EditorState.transactionFilter.of((tr) => {
 // link inside the Latin run around them (N1).
 const CS_SEP = ',.:/';
 const NUMBER_RUN = new RegExp(`[0-9۰-۹٠-٩]+(?:[${CS_SEP}][0-9۰-۹٠-٩]+)+`, 'g');
+/** The isolates in a decoration set, and nothing else. CodeMirror isolates
+ *  every range in a set handed to `bidiIsolatedRanges`, whether or not it
+ *  asked to be one, so a plugin that paints colours and marks as well as
+ *  isolates publishes the isolates on their own. Telling CodeMirror matters:
+ *  it works out the line's bidi order itself, and an isolate it does not know
+ *  about leaves its motion reasoning about a line that is not on the screen. */
+export function isolatesOf(set: DecorationSet): DecorationSet {
+  const out: Range<Decoration>[] = [];
+  for (const iter = set.iter(); iter.value; iter.next()) {
+    if (iter.value.spec?.bidiIsolate != null) out.push(iter.value.range(iter.from, iter.to));
+  }
+  return Decoration.set(out, true);
+}
+
 const ltrIsolate = Decoration.mark({
   attributes: { style: 'unicode-bidi: isolate; direction: ltr' },
   bidiIsolate: Direction.LTR,

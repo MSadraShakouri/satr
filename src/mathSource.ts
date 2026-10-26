@@ -12,8 +12,9 @@
 // their dollars are not coloured and nothing inside them is styled as math.
 import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type MathSpan } from './mathScan';
 import { StateField, type EditorState, type Range } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
+import { isolatesOf } from './caretMotion';
 
 /** Every math span of the document, cached until the text changes. The
  * preview's renderMarkdown() computes the same spans from the same source. */
@@ -34,7 +35,13 @@ export function inCode(state: EditorState, pos: number): boolean {
   return inCodeAt(state, pos);
 }
 
-const mathText = Decoration.mark({ class: 'cm-math' });
+// A formula is one thing, read left to right, and it is isolated in the CSS
+// (.cm-math) so it stands on its own side of a Persian line exactly where the
+// reading view draws it. The browser is not the only one that has to know:
+// CodeMirror works out the line's bidi order itself, and an isolate it has not
+// been told about leaves its motion reasoning about a line that is not the one
+// on the screen — arrows leap and turn back. `bidiIsolate` is how it is told.
+const mathText = Decoration.mark({ class: 'cm-math', bidiIsolate: Direction.LTR });
 const mathDelim = Decoration.mark({ class: 'cm-math-delim' });
 const mathDelimWrong = Decoration.mark({ class: 'cm-math-delim cm-math-delim-wrong' });
 
@@ -358,12 +365,19 @@ function build(view: EditorView): DecorationSet {
 
 const mathDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
-  constructor(view: EditorView) { this.decorations = build(view); }
+  isolates: DecorationSet;
+  constructor(view: EditorView) { this.decorations = build(view); this.isolates = isolatesOf(this.decorations); }
   update(update: ViewUpdate): void {
     // The caret decides nothing here any more, so it costs nothing to move.
-    if (update.docChanged || update.viewportChanged) this.decorations = build(update.view);
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = build(update.view);
+      this.isolates = isolatesOf(this.decorations);
+    }
   }
-}, { decorations: (value) => value.decorations });
+}, {
+  decorations: (value) => value.decorations,
+  provide: (plugin) => EditorView.bidiIsolatedRanges.of((view) => view.plugin(plugin)?.isolates ?? Decoration.none),
+});
 
 export const mathSource = [mathSpans, mathDecorations];
 

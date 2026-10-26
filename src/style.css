@@ -1392,7 +1392,12 @@ body {
   border-inline-start: var(--blockquote-border);
   pointer-events: none;
 }
+/* A code span is one thing too, isolated for the same reason as a formula:
+   the reading view and the PDF stand it on its own side of a Persian line
+   (`code` in src/style.css, src/print.css), and the editor must agree. */
 .cm-lp-inline-code {
+  direction: ltr;
+  unicode-bidi: isolate;
   padding: 0.15em 0.3em;
   border-radius: var(--code-radius);
   background: var(--code-background-tint);
@@ -1646,15 +1651,17 @@ body[data-mode="preview"] .workspace > .preview-pane {
    source math (.cm-s-obsidian span.cm-math / .cm-formatting-math): the
    monospace font at code size, italic, with the dollar signs in the accent
    colour. Only the things between the dollars are monospace; the dollars
-   themselves keep the note's font. A display formula is a line of its own and
-   reads left to right (src/direction.ts); an inline one is a piece of the
-   sentence it was written in and takes no direction of its own, so the caret
-   walks it the way the line is drawn. A pair that never closes is not math at
-   all, so its dollars get no accent (src/mathScan.ts). */
+   themselves keep the note's font. A formula is one thing, not a run of Latin
+   letters that happens to sit in a sentence: it is isolated, so it stands on
+   its own side of a Persian line exactly where the reading view and the PDF
+   draw it (.math-flow in src/style.css, src/print.css). A pair that never
+   closes is not math at all, so its dollars get no accent (src/mathScan.ts). */
 .cm-math {
   font-family: var(--font-monospace);
   font-style: italic;
   font-size: var(--code-size);
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 .cm-math-delim {
   color: var(--text-accent);

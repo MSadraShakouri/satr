@@ -79,6 +79,30 @@ for (const line of LINES) {
   });
 }
 
+test('a formula is one thing, and the caret walks past it a glyph at a time', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  // The reader's report: on this line the caret was "incredibly unpredictable
+  // and really weird, it's not visual at all and it jumps a good part of it".
+  // A formula is isolated, so it stands on its own side of the line the way
+  // the reading view and the PDF draw it — and CodeMirror has to be told
+  // (bidiIsolate, src/mathSource.ts), because it works out the line's order
+  // itself. Told, it walks the line a glyph a press; not told, its motion
+  // reasons about a line that is not the one on the screen, and this walk
+  // turned back on itself 5 times and leapt more than 20px 5 times.
+  const text = 'سلام Inline math: $a^2 + b^2 = c^2$.';
+  await boot(page, `${text}\n`);
+  await place(page, 0);
+  const xs: number[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    await page.keyboard.press('ArrowLeft');
+    xs.push((await caret(page)).x);
+  }
+  for (let i = 1; i < xs.length; i += 1) {
+    expect(xs[i], `press ${i + 1} keeps going left (${xs.join(' ')})`).toBeLessThan(xs[i - 1]);
+    expect(xs[i - 1] - xs[i], `press ${i + 1} is one glyph, not a leap (${xs.join(' ')})`).toBeLessThan(25);
+  }
+});
+
 test('a shift press grows the selection by one character, through a formula', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear());
   const text = 'این یک فرمول است $a^2 + b$ و ادامه دارد';
