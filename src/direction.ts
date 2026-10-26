@@ -1,4 +1,4 @@
-import type { Text } from '@codemirror/state';
+import { StateField, type Text } from '@codemirror/state';
 import { isMathBlockBoundary, maskMathAndCode } from './mathScan';
 
 // One direction policy for source lines and rendered blocks. This sets the
@@ -484,3 +484,15 @@ export function applyReadingDirections(root: HTMLElement): void {
   }
   root.querySelectorAll<HTMLElement>('.math-display,.math-flow,.katex,pre,code').forEach((el) => el.setAttribute('dir', 'ltr'));
 }
+
+// The note's per-line directions, kept up to date as the document changes.
+// The line's `dir` attribute is drawn from this (src/editor.ts), and so is the
+// side the caret takes at a run boundary (src/caretMotion.ts): one answer, read
+// from the document, never from the layout.
+export const directionsField = StateField.define<DirectionSnapshot>({
+  create: (state) => directionSnapshot(state.doc.toString()),
+  update: (value, tr) => {
+    if (!tr.docChanged) return value;
+    return directionsAfter(value, tr.startState.doc, tr.newDoc, tr.changes) ?? directionSnapshot(tr.newDoc.toString());
+  },
+});

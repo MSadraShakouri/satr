@@ -1,4 +1,4 @@
-import { directionSnapshot, directionsAfter, majorityDirection, type DirectionSnapshot } from './direction';
+import { directionsField, majorityDirection } from './direction';
 import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
@@ -202,13 +202,6 @@ const persianListMarkerPlugin = ViewPlugin.fromClass(class {
 // Cache whole-document context; viewport changes only rebuild decorations.
 // A keystroke that cannot move a line's decision reuses the last answer
 // (src/direction.ts, directionsAfter) instead of walking the whole note.
-const directionsField = StateField.define<DirectionSnapshot>({
-  create: (state) => directionSnapshot(state.doc.toString()),
-  update: (value, tr) => {
-    if (!tr.docChanged) return value;
-    return directionsAfter(value, tr.startState.doc, tr.newDoc, tr.changes) ?? directionSnapshot(tr.newDoc.toString());
-  },
-});
 const dirDecorations = {
   rtl: Decoration.line({ attributes: { dir: 'rtl' } }),
   ltr: Decoration.line({ attributes: { dir: 'ltr' } }),
