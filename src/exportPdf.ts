@@ -84,6 +84,15 @@ function documentDirection(bodies: HTMLElement[]): 'ltr' | 'rtl' {
   return printDirection(all, 'auto');
 }
 
+/** The printable page in CSS pixels: A4 (210x297mm at 96dpi) less the 1in
+ *  @page margins of src/print.css. What a note's vh and vw mean — see
+ *  pageViewportUnits. The frame itself keeps a size of its own: Paged.js
+ *  lays out in page boxes, and sizing the frame to the page only made its
+ *  measurements sit on a knife edge (print parity between the browser and
+ *  the app broke on it). */
+const PAGE_WIDTH = 602;
+const PAGE_HEIGHT = 930;
+
 async function exportDocuments(documents: ExportDocument[], name: string, collection: CollectionOptions): Promise<void> {
   if (busy || !documents.length) return;
   busy = true;
@@ -322,9 +331,28 @@ function printDocumentHtml(doc: Document): string {
 // The reading view's HTML, readied for paper: no copy buttons, wiki links as
 // plain text, section wrappers unwrapped, and each footnote moved to where
 // it's referenced (Paged.js floats it to the foot of that page).
+/** A note's viewport units, in print, mean the printed page.
+ *
+ *  On screen `100vh` is the window, and a cover page written as
+ *  `height: 100vh` fills it. Printing has no window: Chromium resolves the
+ *  unit against the sheet, and Paged.js — which has no handler for viewport
+ *  units at all — prints the sheet with no margins of its own, so `100vh`
+ *  came out a whole A4 instead of the page a browser's own print gives a
+ *  note, and a centred cover sat 78pt too low. Resolved here, once, against
+ *  the printable page, both the layout Paged.js measures and the one
+ *  Chromium finally prints agree with each other and with the browser. */
+function pageViewportUnits(css: string): string {
+  return css.replace(/(-?\d*\.?\d+)(vh|vw|vmin|vmax)\b/gi, (_match, size: string, unit: string) => {
+    const basis = { vh: PAGE_HEIGHT, vw: PAGE_WIDTH, vmin: Math.min(PAGE_WIDTH, PAGE_HEIGHT), vmax: Math.max(PAGE_WIDTH, PAGE_HEIGHT) }[unit.toLowerCase()] ?? PAGE_HEIGHT;
+    return `${Math.round(Number(size) * basis) / 100}px`;
+  });
+}
+
 function printableBody(html: string): HTMLElement {
   const root = document.createElement('div');
   root.innerHTML = html;
+  root.querySelectorAll('style').forEach((sheet) => { sheet.textContent = pageViewportUnits(sheet.textContent ?? ''); });
+  root.querySelectorAll<HTMLElement>('[style]').forEach((el) => el.setAttribute('style', pageViewportUnits(el.getAttribute('style') ?? '')));
   root.querySelectorAll('.copy-code-button, .heading-collapse-indicator, .footnote-backref').forEach((el) => el.remove());
   root.querySelectorAll('a.internal-link').forEach((link) => {
     const span = document.createElement('span');

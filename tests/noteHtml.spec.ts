@@ -176,3 +176,23 @@ test('a block a note wrote in HTML reads the same way in both views', async ({ p
   await expect(page.locator('.pagedjs_page .line')).toHaveAttribute('dir', 'rtl');
   await expect(page.locator('.pagedjs_page .line')).toHaveCSS('direction', 'rtl');
 });
+
+test('a note written in viewport units is measured against the page', async ({ page }) => {
+  // `height: 100vh` is how a cover page is written. Printing has no window:
+  // the unit has to mean the printable page (A4 less the 1in margins), or
+  // the cover is laid out against a sheet it does not own and everything
+  // centred in it slides down the paper.
+  const note = `<style>.cover { height: 100vh; display: flex; flex-direction: column; justify-content: center; }</style>\n\n<div class="cover">\n\n<h1>Cover</h1>\n\n</div>\n`;
+  await page.addInitScript(() => {
+    window.print = () => { window.parent.__printedHtml = document.documentElement.outerHTML; };
+  });
+  await page.goto('/');
+  const printed = await page.evaluate(async (markdown) => {
+    const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
+    await exportPdf('Cover', markdown);
+    return window.__printedHtml;
+  }, note);
+  expect(printed).not.toContain('100vh');
+  await page.setContent(printed!);
+  await expect(page.locator('.pagedjs_page .cover')).toHaveCSS('height', '930px');
+});
