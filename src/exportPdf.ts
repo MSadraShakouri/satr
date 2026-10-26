@@ -18,6 +18,7 @@ import katexCss from 'katex/dist/katex.min.css?raw';
 import printCss from './print.css?raw';
 import { loadImages } from './images';
 import { renderMarkdown } from './markdown';
+import { NOTE_ROOT } from './noteStyles';
 import { layoutMath } from './mathLayout';
 import { loadSettings } from './settings';
 import { keepHeadingWithContent } from './printHeadings';
@@ -96,8 +97,12 @@ async function exportDocuments(documents: ExportDocument[], name: string, collec
       embeddedFonts(hasMath),
       import('../node_modules/pagedjs/dist/paged.polyfill.min.js?raw').then((m) => m.default),
     ]);
-    const files = await Promise.all(documents.map(async (document) => {
-      const body = printableBody(renderMarkdown(document.markdown));
+    const files = await Promise.all(documents.map(async (document, index) => {
+      // A note's own stylesheet is scoped to the note it came from. In a
+      // collection that root has to be the file's own section, or file three's
+      // colours would repaint files four to forty.
+      const styleRoot = documents.length > 1 ? `.export-file-${index}` : `.${NOTE_ROOT}`;
+      const body = printableBody(renderMarkdown(document.markdown, styleRoot));
       await loadImages(body, document.path); // embedded as data: URLs before paging
       const direction = printDirection(body, document.options.direction);
       const align = document.options.mathAlign === 'center' ? 'center' : direction === 'rtl' ? 'right' : 'left';
@@ -177,11 +182,11 @@ async function exportDocuments(documents: ExportDocument[], name: string, collec
     // so text past the end of a page would silently vanish. The class only
     // puts the footnote rule on the right.
     const content = collectionExport
-      ? files.map((file) => `<section class="export-file doc-${file.direction}" data-align="${file.align}">`
+      ? files.map((file, index) => `<section class="export-file export-file-${index} doc-${file.direction}" data-align="${file.align}">`
         + (collection.heading ? `<h1 class="export-file-title" dir="auto">${escapeHtml(file.name)}</h1>` : '')
         + `${file.body.innerHTML}</section>`).join('\n')
       : files[0].body.innerHTML;
-    frame.srcdoc = `<!doctype html><html lang="${dir === 'rtl' ? 'fa' : 'en'}" dir="ltr" class="doc-${dir}"><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>${styles}</head><body>${content}</body></html>`;
+    frame.srcdoc = `<!doctype html><html lang="${dir === 'rtl' ? 'fa' : 'en'}" dir="ltr" class="doc-${dir}"><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>${styles}</head><body class="${NOTE_ROOT}">${content}</body></html>`;
     const loaded = new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
     document.body.appendChild(frame);
     await loaded;

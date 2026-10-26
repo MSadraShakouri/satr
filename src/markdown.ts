@@ -8,6 +8,7 @@ import type { Token, TokensList } from 'marked';
 import hljs from 'highlight.js/lib/common';
 import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
 import { widestMarkerEm } from './markerWidth';
+import { NOTE_ROOT, scopeNoteCss } from './noteStyles';
 
 marked.setOptions({ gfm: true, breaks: false });
 // Obsidian mobile shows a copy button on every code block (top end corner).
@@ -302,7 +303,7 @@ function leavesTagsOpen(html: string): boolean {
 // A fenced code block (to its closing fence, or the end of the note), a
 // code span (backtick runs of the same length, within one paragraph), or
 // math: $$display$$ or $inline$.
-export function renderMarkdown(source: string): string {
+export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): string {
   const normalized = source.replace(/\r\n?/g, '\n');
   // Front matter becomes blank lines, so line numbers don't shift.
   const withoutFrontMatter = normalized.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, (block) => block.replace(/[^\n]/g, ''));
@@ -390,10 +391,25 @@ export function renderMarkdown(source: string): string {
   const html = sections.map((section, index) => `<div class="md-section" data-sec="${index}">${section.html}</div>`).join('')
     + footnotesSectionHtml();
 
+  // What a note is allowed to be. The ban is on the things that execute, and
+  // on nothing else: a note is drawn inside the app's own page, and the vault
+  // is this origin's storage, so a <script> in a note is not styling — it is
+  // code holding the keys to every file you own. Scripts, frames and the
+  // event-handler attributes stay out, and a note that wants to run something
+  // says so in a live block, which gets a sealed frame of its own
+  // (src/liveBlocks.ts).
+  //
+  // Everything a writer can see is let in: <style> (rewritten below to reach
+  // that note and nothing else), style attributes, and inline SVG. CSS cannot
+  // run code, and its only other reach — the rest of the page — is what the
+  // rewrite takes away. <math> stays out because formulas come from KaTeX,
+  // which is put back after this sweep.
   let safe = DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true }, ADD_ATTR: ['data-satr-math', 'data-sec', 'data-href', 'data-heading', 'data-src', 'data-table-dir'],
-    FORBID_TAGS: ['style', 'script', 'iframe', 'svg', 'math'],
-    FORBID_ATTR: ['style', 'onerror', 'onclick', 'onload'],
+    USE_PROFILES: { html: true, svg: true, svgFilters: true },
+    ADD_TAGS: ['style'],
+    ADD_ATTR: ['style', 'data-satr-math', 'data-sec', 'data-href', 'data-heading', 'data-src', 'data-table-dir'],
+    FORBID_TAGS: ['script', 'iframe', 'math'],
+    FORBID_ATTR: ['onerror', 'onclick', 'onload'],
   });
   // One sweep for every formula. A replace per formula rescans the whole
   // note each time, so a note with a thousand formulas did a thousand passes
@@ -402,6 +418,15 @@ export function renderMarkdown(source: string): string {
   // literal: a string replacement would read $& and $1 inside KaTeX's output.
   safe = safe.replace(/<(span|div|pre) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
   const document = new DOMParser().parseFromString(safe, 'text/html');
+  // The note's own stylesheet, rewritten so that it reaches this note and
+  // stops there (src/noteStyles.ts). It happens here, in the markup, before
+  // the element is ever in a live page: CSS applies the instant it is
+  // inserted, so scoping it afterwards would flash a note's rules across the
+  // whole app. Where a note is drawn without that root — the switcher's
+  // little preview card — its styling simply does nothing.
+  document.querySelectorAll('style').forEach((sheet) => {
+    sheet.textContent = scopeNoteCss(sheet.textContent ?? '', styleRoot);
+  });
   // A checkbox hangs in the strip before the text and takes no room of its
   // own (style.css), so the space the parser writes after it would push a
   // task's first line past every other item's. The space is dropped here, in

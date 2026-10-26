@@ -67,7 +67,7 @@ app.innerHTML = `
     <main class="workspace">
       <section class="editor-pane" id="editor-pane" aria-label="Editor"><div id="editor"></div></section>
       <section class="empty-state" id="empty-tab" aria-label="New tab"></section>
-      <section class="preview-pane" id="preview-pane" aria-label="Preview"><article id="preview"></article></section>
+      <section class="preview-pane" id="preview-pane" aria-label="Preview"><article id="preview" class="md-note"></article></section>
     </main>
     <div class="edit-toolbar" id="edit-toolbar" role="toolbar" aria-label="Formatting" data-ignore-swipe>
       <button type="button" class="pill-gray" data-math-warning hidden></button>
