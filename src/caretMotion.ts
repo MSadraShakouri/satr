@@ -224,31 +224,4 @@ const numberRuns = ViewPlugin.fromClass(class {
   },
 });
 
-/** −1 at the start of a number run, +1 at the end, else 0. */
-function numberRunEdge(text: string, offset: number): -1 | 0 | 1 {
-  NUMBER_RUN.lastIndex = 0;
-  for (let match = NUMBER_RUN.exec(text); match; match = NUMBER_RUN.exec(text)) {
-    if (offset === match.index) return -1;
-    if (offset === match.index + match[0].length) return 1;
-  }
-  return 0;
-}
-
-// Both edges of that isolate have two homes. Outward assoc points at the
-// line, not the number: −1 before the first digit, +1 after the last.
-// Interior digits stay as they are so arrows still walk 2026. Typing is
-// left to lineSide; this only pins select/move (assoc 0, or arrows’ +1
-// at the start).
-const numberEdgeSide = EditorState.transactionFilter.of((tr) => {
-  if (tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
-  const main = tr.newSelection.main;
-  if (!main.empty) return tr;
-  if (tr.annotation(Transaction.userEvent)?.includes('compose')) return tr;
-  const line = tr.newDoc.lineAt(main.head);
-  if (inMath(tr.startState, main.head)) return tr;
-  const edge = numberRunEdge(line.text, main.head - line.from);
-  if (!edge || main.assoc === edge) return tr;
-  return [tr, { selection: EditorSelection.create([EditorSelection.cursor(main.head, edge)]), sequential: true }];
-});
-
-export const caretMotion = [lineSide, arrowKeys, numberRuns, numberEdgeSide];
+export const caretMotion = [lineSide, arrowKeys, numberRuns];

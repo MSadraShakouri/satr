@@ -130,59 +130,6 @@ test('arrows walk through digits of a date on a Persian line', async ({ page }) 
   expect(moved, `caret must move through the date: ${JSON.stringify(xs)}`).toBeGreaterThan(3);
 });
 
-test('selecting the start of a date pins the caret outward, to the line', async ({ page }) => {
-  const text = 'سلام این یک خط فارسی است 2026/10/11';
-  const start = text.indexOf('2026');
-  await draft(page, text, start);
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  const report = await page.evaluate(() => {
-    const view = window.testEditor.view;
-    const sel = view.state.selection.main;
-    const caret = view.coordsAtPos(sel.head, sel.assoc || 1);
-    const first = view.domAtPos(sel.head);
-    const range = document.createRange();
-    const node = first.node as Text;
-    range.setStart(node, first.offset);
-    range.setEnd(node, first.offset + 1);
-    const digit = range.getBoundingClientRect();
-    return {
-      assoc: sel.assoc,
-      caretX: caret ? Math.round(caret.left) : null,
-      digitLeft: Math.round(digit.left),
-      digitRight: Math.round(digit.right),
-    };
-  });
-  expect(report.assoc, JSON.stringify(report)).toBe(-1);
-  expect(Math.abs(report.caretX! - report.digitRight), JSON.stringify(report))
-    .toBeLessThan(Math.abs(report.caretX! - report.digitLeft));
-});
-
-test('selecting the end of a date pins the caret to the line’s side', async ({ page }) => {
-  const text = 'سلام این یک خط فارسی است 2026/10/11';
-  await draft(page, text, text.length);
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  const report = await page.evaluate(() => {
-    const view = window.testEditor.view;
-    const sel = view.state.selection.main;
-    const caret = view.coordsAtPos(sel.head, sel.assoc || 1);
-    const last = view.domAtPos(sel.head - 1);
-    const range = document.createRange();
-    const node = last.node as Text;
-    range.setStart(node, last.offset);
-    range.setEnd(node, last.offset + 1);
-    const digit = range.getBoundingClientRect();
-    return {
-      assoc: sel.assoc,
-      caretX: caret ? Math.round(caret.left) : null,
-      digitLeft: Math.round(digit.left),
-      digitRight: Math.round(digit.right),
-    };
-  });
-  expect(report.assoc, JSON.stringify(report)).toBe(1);
-  expect(Math.abs(report.caretX! - report.digitLeft), JSON.stringify(report))
-    .toBeLessThan(Math.abs(report.caretX! - report.digitRight));
-});
-
 // A markdown link or image inside an RTL line is one run of its own: `!`, `[`,
 // `]`, `(` and `)` are neutrals — the language they are written in gives them
 // no direction — and a neutral beside the paragraph's edge takes the
