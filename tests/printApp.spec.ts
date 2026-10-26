@@ -246,10 +246,13 @@ test('app: a phone font scale changes neither the pages nor the output', async (
   // untouched.
   const plain = await printNative(page, homework, { columns: 1, direction: 'ltr', mathAlign: 'center' }, 1);
   const scaled = await printNative(page, homework, { columns: 1, direction: 'ltr', mathAlign: 'center' }, 1.3);
-  // Paged.js writes a fresh data-ref onto every element it lays out, so the
+  // Paged.js writes a fresh data-ref onto every element it lays out, and a
+  // fresh uuid onto both halves of anything it splits across a page, so the
   // two hand-overs are compared without those: everything else — the order of
   // the pages, every measured box and style — must be identical.
-  const withoutRefs = (html: string): string => html.replace(/ ?data-ref="[^"]*"/g, '');
+  const withoutRefs = (html: string): string => html
+    .replace(/ ?data-ref="[^"]*"/g, '')
+    .replace(/ ?data-split-(?:to|from)="[^"]*"/g, '');
   expect(withoutRefs(scaled)).toBe(withoutRefs(plain));
   await openPrintDocument(page, scaled);
   const geometry = await pageGeometry(page);

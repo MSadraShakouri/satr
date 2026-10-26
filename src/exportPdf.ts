@@ -181,12 +181,23 @@ async function exportDocuments(documents: ExportDocument[], name: string, collec
     // looking to the right, and in an RTL page its columns grow to the left,
     // so text past the end of a page would silently vanish. The class only
     // puts the footnote rule on the right.
+    //
+    // The note is wrapped, and the wrapper — never the body — is what a
+    // note's own stylesheet is scoped to. Paged.js builds its pages inside
+    // the same body, so with the scope on the body a note holding
+    // `* { direction: rtl }` (the first line of every lecture in a real
+    // 52-page set of notes) also turned .pagedjs_area RTL, and the paragraph
+    // above describes what happens next: one page per explicit break, the
+    // other three quarters of the document drawn off the paper. Inside the
+    // wrapper the note can still style every element it owns, and none of
+    // the machinery printing it. A collection was always safe this way —
+    // each file has its own section — and now one note is too.
     const content = collectionExport
       ? files.map((file, index) => `<section class="export-file export-file-${index} doc-${file.direction}" data-align="${file.align}">`
         + (collection.heading ? `<h1 class="export-file-title" dir="auto">${escapeHtml(file.name)}</h1>` : '')
         + `${file.body.innerHTML}</section>`).join('\n')
-      : files[0].body.innerHTML;
-    frame.srcdoc = `<!doctype html><html lang="${dir === 'rtl' ? 'fa' : 'en'}" dir="ltr" class="doc-${dir}"><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>${styles}</head><body class="${NOTE_ROOT}">${content}</body></html>`;
+      : `<div class="${NOTE_ROOT}">${files[0].body.innerHTML}</div>`;
+    frame.srcdoc = `<!doctype html><html lang="${dir === 'rtl' ? 'fa' : 'en'}" dir="ltr" class="doc-${dir}"><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>${styles}</head><body>${content}</body></html>`;
     const loaded = new Promise<void>((resolve) => frame.addEventListener('load', () => resolve(), { once: true }));
     document.body.appendChild(frame);
     await loaded;

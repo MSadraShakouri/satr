@@ -139,8 +139,12 @@ test('print: the phone’s font scale changes neither the pages nor the hand-off
   const options: PrintOptions = { columns: 1, direction: 'ltr', mathAlign: 'center' };
   const plain = await printApp(page, homework, options, 1);
   const scaled = await printApp(page, homework, options, 1.3);
-  // Paged.js writes a fresh data-ref onto every element it lays out; everything
-  // else — the pages, their breaks, every measured box — must be the same.
-  const withoutRefs = (html: string): string => html.replace(/ ?data-ref="[^"]*"/g, '');
+  // Paged.js writes a fresh data-ref onto every element it lays out, and a
+  // fresh uuid onto both halves of anything it splits across a page — the
+  // note's own wrapper, first of all. Everything else — the pages, their
+  // breaks, every measured box — must be the same.
+  const withoutRefs = (html: string): string => html
+    .replace(/ ?data-ref="[^"]*"/g, '')
+    .replace(/ ?data-split-(?:to|from)="[^"]*"/g, '');
   expect(withoutRefs(scaled)).toBe(withoutRefs(plain));
 });

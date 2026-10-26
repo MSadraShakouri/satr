@@ -64,3 +64,42 @@ for (const fontSize of [15, 12, 20]) {
     expect(pdf.length).toBeGreaterThan(10_000);
   });
 }
+
+// A note's stylesheet belongs to the note, never to the sheet it is printed
+// on. `* { direction: rtl }` opens every lecture in a real 52-page set of
+// notes, and an RTL page box hides overflow from Paged.js: the whole export
+// came out as one page per explicit break, with the other three quarters of
+// the text drawn past the edge of the paper.
+test('a note cannot restyle the page it is printed on', async ({ page }) => {
+  const paragraphs = Array.from({ length: 90 }, (_, index) => `بند ${index + 1}. ` + 'این متن برای سنجش صفحه‌بندی نوشته شده است. '.repeat(4));
+  await page.addInitScript(() => {
+    window.print = () => {
+      window.parent.__printedHtml = document.documentElement.outerHTML;
+    };
+  });
+  await page.goto('/');
+  const html = await page.evaluate(async (markdown) => {
+    const { exportPdf } = await window.__satr.load('/src/exportPdf.ts');
+    await exportPdf('notes', markdown);
+    return window.__printedHtml;
+  }, `<style>*{direction:rtl}</style>\n\n${paragraphs.join('\n\n')}`);
+  await page.setContent(html!);
+  await page.evaluate(() => document.fonts.ready);
+
+  const pages = await page.locator('.pagedjs_page').count();
+  expect(pages, 'the note pages normally').toBeGreaterThan(8);
+  const printed = await page.evaluate(() => {
+    const area = document.querySelector('.pagedjs_area') as HTMLElement;
+    const note = document.querySelector('.pagedjs_page .md-note p') as HTMLElement;
+    return {
+      areaDirection: getComputedStyle(area).direction,
+      noteDirection: getComputedStyle(note).direction,
+      text: (document.body.textContent || '').replace(/\s+/g, ' '),
+    };
+  });
+  // The page keeps its own direction; the note keeps the one it asked for.
+  expect(printed.areaDirection).toBe('ltr');
+  expect(printed.noteDirection).toBe('rtl');
+  // And nothing is left behind: the last paragraph is on the paper too.
+  expect(printed.text).toContain('بند 90');
+});
