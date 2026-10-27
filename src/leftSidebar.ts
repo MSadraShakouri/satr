@@ -15,6 +15,7 @@ import {
   addSpace, currentScope, loadSpaces, moveSpaces, removeSpace, scopeName, scopeRoot, setScope, setWalkDir, walkDir, type Scope,
 } from './spaces';
 import { backend, basename, dirname, extension, freeName, isNote, joinPath, within, type Entry } from './vault';
+import { fileKind } from './fileKinds';
 import { shortenPath, siblingList } from './pathShort';
 
 export interface LeftSidebarDeps {
@@ -157,7 +158,12 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const note = isNote(entry.name);
     const title = note && (ext === 'md' || ext === 'markdown') ? entry.name.replace(/\.(md|markdown)$/i, '') : entry.name;
     const classes = ['tree-item-self', 'is-clickable', isFolder ? 'nav-folder-title' : 'nav-file-title',
-      isFolder && !opts.walker ? 'mod-collapsible' : '', entry.path === current ? 'is-active' : '', !isFolder && !note ? 'is-plain-file' : ''];
+      isFolder && !opts.walker ? 'mod-collapsible' : '', entry.path === current ? 'is-active' : '',
+      // Faint means Satr has nothing to open this with yet — a PDF, an
+      // archive, bytes. Anything it edits or shows reads at full strength,
+      // whatever its extension, and the badge beside the name is what says
+      // which kind it is.
+      !isFolder && fileKind(entry.name) === 'none' ? 'is-unsupported' : ''];
     return `<div class="${classes.filter(Boolean).join(' ')}" data-path="${escapeHtml(entry.path)}" data-kind="${entry.kind}" role="treeitem"${isFolder && !opts.walker ? ` aria-expanded="${!opts.collapsed}"` : ''}>`
       + (isFolder && !opts.walker ? `<div class="tree-item-icon collapse-icon">${ICONS.chevronDown}</div>` : '')
       + (opts.walker ? `<div class="tree-item-icon nav-entry-icon">${isFolder ? ICONS.folder : ICONS.file}</div>` : '')

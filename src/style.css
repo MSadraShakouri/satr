@@ -3023,7 +3023,11 @@ input.mod-no-match {
   font-weight: 600;
   letter-spacing: 0.1em;
 }
-.tree-item-self.is-plain-file {
+/* Dimmed means Satr has no view for this file yet — a PDF today, an archive,
+   a binary it can only decode into rubbish. A .json, a .py or a .patch is
+   edited here as well as a note is, so it reads at full strength and its
+   extension badge is what tells it apart. */
+.tree-item-self.is-unsupported {
   color: var(--text-faint);
 }
 .nav-file-tag {
