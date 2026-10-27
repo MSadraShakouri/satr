@@ -4551,3 +4551,20 @@ iframe.html-file {
   opacity: 0.85;
 }
 
+/* A code file is edited in the face code is read in, and its lines are not
+   prose: no note width to centre, no Vazirmatn. The colours are the ones a
+   fenced block already wears, painted by the same palette. */
+.cm-content.is-code-file {
+  font-family: var(--font-monospace, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: calc(var(--note-font-size, 1rem) * 0.92);
+  direction: ltr;
+}
+.cm-content.is-code-file .cm-line {
+  text-align: left;
+}
+/* And it is not held to the reading width: prose is easier to read in a
+   narrow column, a line of code is easier to read whole. The gutter's
+   numbers sit beside the code rather than a column away from it. */
+.cm-content.is-code-file {
+  padding-inline: 16px;
+}

@@ -43,6 +43,7 @@ import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupS
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
+import { fileKind } from './fileKinds';
 
 type Mode = 'edit' | 'preview';
 // The tour (demo.md, at the top of the repo): the first note in a fresh
@@ -1552,8 +1553,12 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   const session = curTab().session;
   if (session) { editor.restoreSession(session); editor.replaceValue(content); }
   else editor.setValue(content);
-  // Inactive states may predate a global settings change.
-  editor.setLineNumbers(loadSettings().lineNumbers);
+  // Inactive states may predate a global settings change. A code file is
+  // read as its own language rather than as Markdown, and it keeps the line
+  // numbers an editor is expected to show whatever the note setting says.
+  const codeFile = fileKind(fileName(path)) === 'code';
+  void editor.setFileLanguage(fileName(path));
+  editor.setLineNumbers(loadSettings().lineNumbers || codeFile);
   // A file Satr cannot write back is not offered a pen: a picture, bytes that
   // are not text, a file another app lent us read-only, shared text. The
   // chrome says so (a header with the file's name and a ⋮ in place of the

@@ -1,4 +1,5 @@
-import { directionsField, majorityDirection } from './direction';
+import { directionsField, majorityDirection, setCodeDocument } from './direction';
+import { codeLanguage, fileKind } from './fileKinds';
 import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
@@ -1011,6 +1012,14 @@ const followCaretScript = EditorView.updateListener.of((update) => {
   gutterScript.script = next;
   update.view.dispatch({ effects: lineNumberSlot.reconfigure(lineNumberConfig()) });
 });
+/** The parser, and the behaviour that only makes sense over one. Markdown is
+ *  the default; a code file swaps the grammar in and parks the rest, because
+ *  a `# ` in Python is a comment and a `*` in C is a pointer — read as
+ *  Markdown they become a heading and an italic, which is exactly the kind of
+ *  cleverness a code file must not get. */
+const languageSlot = new Compartment();
+const markdownOnlySlot = new Compartment();
+const markdownLateSlot = new Compartment();
 const readOnlySlot = new Compartment();
 // New tabs start clean; living tabs reattach their complete EditorState.
 // Histories never cross files and are never serialized to disk.
@@ -1022,6 +1031,10 @@ export class SatrEditor {
   private isReadOnly = false;
   /** The space after a sign, as the settings have it (src/autoSpace.ts). */
   private autoSpaceOn = false;
+  /** This file is code, not prose (src/fileKinds.ts). */
+  private codeMode = false;
+  private codeName = '';
+  isCodeFile(): boolean { return this.codeMode; }
   /** Bring the caret's line back into view after a beat — the keyboard has
    *  taken the bottom of the screen and the caret must step clear of it. Set
    *  by the constructor; src/main.ts calls it, because a browser that reports
@@ -1061,7 +1074,7 @@ export class SatrEditor {
       // of lib/codemirror/modes.min.js on demand, while its reading view runs
       // Prism. Two highlighters, one set of colours — ours are hljs in the
       // reading view and Lezer here, both painted from the --code-* palette.
-      readsEveryNumber(markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages })),
+      languageSlot.of(readsEveryNumber(markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages }))),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
         { tag: tags.strong, fontWeight: '700' },
@@ -1096,12 +1109,13 @@ export class SatrEditor {
         { tag: [tags.meta, tags.annotation, tags.standard(tags.variableName)], color: 'var(--code-important)' },
       ])),
       titleField,
-      rtlLineDirection, directionsField, directionPlugin, lineGutterField, headingLineField, livePreview,
+      rtlLineDirection, directionsField, directionPlugin, lineGutterField,
+      markdownOnlySlot.of([headingLineField, livePreview]),
       // After the live preview: a lettered line is given a list's indent
       // here, and a quoted line is given the quote's by the live preview —
       // the one that comes last writes the line's style, and the lettered
       // list's has the quote's step already in it.
-      persianListMarkerPlugin, mathSource,
+      markdownLateSlot.of([persianListMarkerPlugin, mathSource]),
       searchFlashField, searchFlashDecorations,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when
@@ -1469,6 +1483,40 @@ export class SatrEditor {
     if (on === this.autoSpaceOn) return;
     this.autoSpaceOn = on;
     this.view.dispatch({ effects: autoSpaceSlot.reconfigure(autoSpace(() => this.autoSpaceOn)) });
+  }
+  /** Open this file as what it is. A note, a page and plain text are read by
+   *  the Markdown parser as they always were; a file with a language behind
+   *  it — .js, .json, .css, .py, .yaml — is parsed by that language instead,
+   *  and everything Markdown brings with it steps aside: no live preview
+   *  turning a `#` comment into a heading, no list continuation, no marker
+   *  widths, no math scan, and every line left to right, as a fenced block
+   *  has always been here. Simple editing, in the file's own colours.
+   *
+   *  The grammar is fetched on demand (each is its own chunk), so the editor
+   *  shows the file at once and colours it a moment later. */
+  async setFileLanguage(name: string): Promise<void> {
+    const description = codeLanguage(name);
+    const asCode = Boolean(description) && fileKind(name) === 'code';
+    if (asCode === this.codeMode && (!asCode || this.codeName === name)) return;
+    this.codeMode = asCode;
+    this.codeName = asCode ? name : '';
+    setCodeDocument(asCode);
+    this.view.contentDOM.classList.toggle('is-code-file', asCode);
+    if (!asCode) {
+      this.view.dispatch({ effects: [
+        languageSlot.reconfigure(readsEveryNumber(markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages }))),
+        markdownOnlySlot.reconfigure([headingLineField, livePreview]),
+        markdownLateSlot.reconfigure([persianListMarkerPlugin, mathSource]),
+      ] });
+      return;
+    }
+    this.view.dispatch({ effects: [
+      markdownOnlySlot.reconfigure([]),
+      markdownLateSlot.reconfigure([]),
+    ] });
+    const support = await description!.load();
+    if (this.codeName !== name) return; // another file arrived while the grammar loaded
+    this.view.dispatch({ effects: languageSlot.reconfigure(support) });
   }
   setLineNumbers(on: boolean): void {
     gutterScript.on = on;

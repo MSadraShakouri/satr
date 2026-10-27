@@ -138,8 +138,28 @@ export interface DirectionSnapshot {
 
 /** Full-document context, cached by the editor's StateField. No viewport
  * cutoff: scrolling 200 lines away must not change a number's direction. */
+/** A code file is not prose. Its lines are statements in a language written
+ *  left to right, and a Persian string or comment inside one is a run within
+ *  the line, not the line's own direction — the same rule a fenced code block
+ *  has always had here, applied to a file that is nothing but code. The
+ *  editor sets this when it opens such a file (src/editor.ts). */
+let codeDocument = false;
+export function setCodeDocument(on: boolean): void { codeDocument = on; }
+export const isCodeDocument = (): boolean => codeDocument;
+
 export function directionSnapshot(markdown: string): DirectionSnapshot {
   const source = markdown.replace(/\r\n?/g, '\n');
+  if (codeDocument) {
+    const count = source.split('\n').length;
+    return {
+      dirs: Array.from({ length: count }, () => 'ltr' as TextDirection),
+      units: [],
+      carried: Array.from({ length: count }, () => null),
+      firstOwn: -1, lastNullHeading: -1, lastMasked: -1, openBracket: false, math: false,
+      blanked: Array.from({ length: count }, () => false),
+      masked: Array.from({ length: count }, () => false),
+    };
+  }
   const originalLines = source.split('\n');
   const blank = (text: string) => text.replace(/[^\n]/g, ' ');
   const plain = source.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, blank)
@@ -272,6 +292,7 @@ export function directionsAfter(
   newDoc: Text,
   changes: { iterChanges(f: (fromA: number, toA: number, fromB: number, toB: number, inserted: Text) => void): void },
 ): DirectionSnapshot | null {
+  if (codeDocument) return null; // every line is ltr; nothing to carry
   // Below the first line that has a strong letter of its own, a line's answer
   // is `excluded ? ltr : own ?? carried from above`, and every heading there
   // has something carried into it. Nothing depends on what comes after the
