@@ -627,6 +627,16 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     refresh: render,
     /** Ask, then delete a note (the ≡ menu's Delete note). */
     deleteFile: (path: string) => remove(path, false),
+    /** Rename a file from somewhere other than its own row — the ⋮ of a
+     *  file that is shown and not edited, which has no inline title to type
+     *  in. A name is edited in the tree, so the file is revealed there
+     *  first if it is not already drawn. */
+    async renameFile(path: string): Promise<void> {
+      if (!rowOf(path)) await locate();
+      startRename(path);
+    },
+    /** "Move to…" for the open file, the same picker its row offers. */
+    moveFile: (path: string) => moveTo(path, false),
     /** The note being read changed: move the mark, and nothing else. The tree
      *  stays exactly where the reader left it — `locate` (the footer's
      *  "Reveal current file") is the only thing that moves the panel. */

@@ -59,7 +59,9 @@ app.innerHTML = `
     <div class="notice-container" role="status"></div>
     <div class="topbar">
       <button class="floating-button sidebar-button" id="files" aria-label="Open files" data-ignore-swipe><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="2" width="22" height="20" rx="4"/><rect x="4" y="5" width="2" height="14" rx="2" fill="currentColor"/></svg></button>
+      <div class="topbar-title" id="topbar-title" dir="auto"></div>
       <div class="topbar-actions">
+        <button class="floating-button" id="file-actions" aria-label="More options"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg></button>
         <button class="floating-button" id="preview-toggle" aria-label="Toggle preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 5.25A2.25 2.25 0 0 1 5 3h3.25A3.75 3.75 0 0 1 12 6.75V20a3.75 3.75 0 0 0-3.75-3.75H5a2.25 2.25 0 0 0-2.25 2.25z"/><path d="M21.25 5.25A2.25 2.25 0 0 0 19 3h-3.25A3.75 3.75 0 0 0 12 6.75V20a3.75 3.75 0 0 1 3.75-3.75H19a2.25 2.25 0 0 1 2.25 2.25z"/></svg></button>
       </div>
     </div>
@@ -150,6 +152,16 @@ const fileName = (path: string): string => externalFilesByPath.get(path)?.name ?
 /** Markdown and text notes can be renamed from the title; anything else is
  *  opened raw, and its name is changed from the sidebar's long-press menu. */
 const canRenameInline = (path: string): boolean => !isExternalPath(path) && ['md', 'markdown'].includes(extension(path));
+/** A file that is shown and not edited: a picture, an undecodable binary, a
+ *  file lent read-only by another app. The pen it has no use for is replaced
+ *  by a ⋮, and the header shows the name the note would have shown itself. */
+let viewOnly = false;
+function setViewOnly(on: boolean): void {
+  viewOnly = on;
+  document.body.classList.toggle('is-view-only', on);
+  const title = document.querySelector<HTMLElement>('#topbar-title');
+  if (title) title.textContent = on ? fileBase : '';
+}
 /** A picture the reading view can show: the data: URL of the file open in the
  *  tab (a photo from the file manager, or an image found in the folders). */
 const picture = { path: '', url: '' };
@@ -1421,6 +1433,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
+(document.querySelector('#file-actions') as HTMLButtonElement).onclick = showFileMenu;
 document.querySelector('#files')!.addEventListener('click', () => toggleFiles());
 // Tabs: every note opens in its own tab (a note that's already open just
 // switches to its tab), and the bottom bar's arrows step to the previous /
@@ -1541,7 +1554,12 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   else editor.setValue(content);
   // Inactive states may predate a global settings change.
   editor.setLineNumbers(loadSettings().lineNumbers);
-  editor.setReadOnly(Boolean(imageTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  // A file Satr cannot write back is not offered a pen: a picture, bytes that
+  // are not text, a file another app lent us read-only, shared text. The
+  // chrome says so (a header with the file's name and a ⋮ in place of the
+  // pen) rather than letting a tap land in an editor that refuses it.
+  setViewOnly(Boolean(imageTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  editor.setReadOnly(viewOnly);
   // Say it once per file: the editor takes no writing because the bytes are
   // not text, and nobody should wonder why nothing happens.
   if (lossy && !incoming && !isPicture(path) && lossyNoticed !== path) {
@@ -2433,6 +2451,7 @@ const MENU_ICONS = {
   trash: svg('<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   settings: svg('<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>'),
   normalize: svg('<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>'), // arrows-left-right
+  move: svg('<path d="M4 20V7a2 2 0 0 1 2-2h3.5l2 2.5H18a2 2 0 0 1 2 2V20"/><path d="M12 11v6"/><path d="m9 14 3-3 3 3"/>'), // folder-up
 };
 const FLAIR = '<span class="mobile-navbar-action-flair"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';
 
@@ -2498,7 +2517,29 @@ async function exportFilePdf(path: string): Promise<void> {
     notice.hide();
   }
 }
+/** The ⋮ of a file Satr shows but cannot write: what applies to it and
+ *  nothing else. Folding, the two views, the normalizer and the PDF all
+ *  belong to a note's text, and a picture has none — they are left out
+ *  rather than listed greyed, which is what Obsidian does for the same
+ *  files (its FileView menu is rename and delete, and the markdown view is
+ *  what adds the rest). Renaming happens in the tree, where a name is
+ *  edited, so the panel opens on the file first. */
+function showFileMenu(): void {
+  const path = filePath;
+  const entries: MenuEntry[] = [];
+  const external = isExternalPath(path);
+  if (!external) entries.push(
+    { title: 'Rename…', icon: MENU_ICONS.rename, action: () => { toggleFiles(true); void leftSidebar.renameFile(path); } },
+    { title: 'Move to…', icon: MENU_ICONS.move, action: () => { void leftSidebar.moveFile(path); } },
+    'separator',
+    { title: 'Delete', icon: MENU_ICONS.trash, warning: true, action: () => leftSidebar.deleteFile(path) },
+    'separator',
+  );
+  entries.push({ title: 'Settings', icon: MENU_ICONS.settings, action: showSettings });
+  openMenu(entries, { title: fileBase || fileName(path) });
+}
 function showNoteMenu(): void {
+  if (viewOnly) { showFileMenu(); return; }
   const item = (key: Exclude<QuickAction, ''>): MenuEntry => {
     const a = noteAction(key);
     const externalRestriction = isExternalPath(filePath) && (key === 'rename' || key === 'delete');

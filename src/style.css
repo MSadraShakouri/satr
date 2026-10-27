@@ -317,6 +317,45 @@ button:focus-visible {
   display: flex;
   gap: 8px;
 }
+/* A file that is shown and not edited gets what Obsidian gives every view on
+   a phone: a header with the file's name between the sidebar button and the
+   actions, floating over the content and hiding with the rest of the chrome.
+   A note needs none of it — its own inline title says the name, which is why
+   Obsidian hides the header's title for a markdown view and nobody else's. */
+.topbar-title {
+  display: none;
+}
+body.is-view-only .topbar-title {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 10px;
+  height: 44px;
+  line-height: 44px;
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  text-align: center;
+}
+#file-actions {
+  display: none;
+}
+body.is-view-only #file-actions {
+  display: grid;
+}
+body.is-view-only #preview-toggle {
+  display: none;
+}
+/* The name is in the header now, so the inline title does not say it twice.
+   (Obsidian makes the same trade the other way round: a note keeps its
+   inline title and loses the header's.) */
+body.is-view-only .inline-title,
+body.is-view-only .cm-file-title {
+  display: none;
+}
 .floating-button {
   display: grid;
   place-items: center;
@@ -4507,3 +4546,4 @@ iframe.html-file {
   font-size: 0.8em;
   opacity: 0.85;
 }
+
