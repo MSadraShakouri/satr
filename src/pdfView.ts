@@ -102,7 +102,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url);
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl.href;
   const data = typeof source === 'string' ? { url: source } : { data: source };
-  const document_: PDFDocumentProxy = await pdfjs.getDocument({ ...data, isEvalSupported: false }).promise;
+  // A PDF is a document to be read, never a program to be run, and on this
+  // version of pdf.js there is nothing left to switch off: `isEvalSupported`
+  // is gone from 6, the eval path with it, and the scripting sandbox that
+  // CVE-2026-16633 ran a malicious page's own JavaScript through belongs to
+  // the bundled viewer — which defaults it on, and which Satr does not use.
+  // This is the library's own API; it never loads `pdf.sandbox`.
+  const loading = pdfjs.getDocument(data);
+  const document_: PDFDocumentProxy = await loading.promise;
 
   const { scroller } = options;
   const doc = window.document.createElement('div');
@@ -474,7 +481,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       scroller.removeEventListener('pointerup', endPinch);
       scroller.removeEventListener('pointercancel', endPinch);
       for (const slab of slabs) { slab.task?.cancel(); slab.proxy?.cleanup(); }
-      void document_.destroy();
+      // the loading task owns the worker; the document proxy stopped
+      // carrying its own destroy in pdfjs-dist 6
+      void loading.destroy();
       doc.remove();
       counter.remove();
     },
