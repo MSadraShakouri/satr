@@ -46,7 +46,7 @@ import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupS
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, base64Bytes, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
-import { fileKind } from './fileKinds';
+import { fileKind, isEditableFile } from './fileKinds';
 
 type Mode = 'edit' | 'preview';
 // The tour (demo.md, at the top of the repo): the first note in a fresh
@@ -1068,7 +1068,11 @@ for (const warning of mathWarnings) warning.addEventListener('click', runNormali
  *  page is where the reader is, and the moment they scroll it themselves it
  *  is theirs, not this. */
 let placeLeftInSource: number | null = null;
-function setMode(next: Mode, restoredLine?: number): void {
+function setMode(requested: Mode, restoredLine?: number): void {
+  // The one gate into edit mode, so a file that cannot be written cannot be
+  // reached through any path into it — a tap, a button, or a tab restored
+  // from a session that got there before this existed.
+  const next: Mode = requested === 'edit' && filePath && !isEditableFile(filePath) ? 'preview' : requested;
   if (restoredLine === undefined) releaseHold();
   const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
@@ -3581,6 +3585,10 @@ layoutToolbar();
 // position carries over through the same source-line mapping as the toggle.
 function editFromPreview(): void {
   if (mode !== 'preview') return;
+  // A picture and a document have no text to edit. A double tap on one used
+  // to hand its raw bytes to the editor, which is unreadable and, once the
+  // tab remembered it, unescapable.
+  if (!isEditableFile(filePath)) return;
   if (window.getSelection()?.toString()) return;
   (document.activeElement as HTMLElement | null)?.blur?.();
   setMode('edit');

@@ -49,3 +49,43 @@ test('a note keeps the chrome it has always had', async ({ page }) => {
   await expect(page.locator('#topbar-title')).toBeHidden();
   await expect(page.locator('.cm-file-title')).toBeVisible();
 });
+
+// A file with no text of its own is read, never written. Two taps on it used
+// to hand the editor its raw bytes — a page of PNG or PDF noise with no way
+// back, since the tab then remembered the mode it was left in.
+const twoTaps = async (page: Page): Promise<void> => {
+  const pane = page.locator('#preview-pane');
+  const box = (await pane.boundingBox())!;
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.evaluate(({ x, y }) => {
+    const pane = document.querySelector('#preview-pane')!;
+    const touch = (): Touch => new Touch({ identifier: 1, target: pane, clientX: x, clientY: y });
+    for (const _ of [0, 1]) {
+      pane.dispatchEvent(new TouchEvent('touchstart', { touches: [touch()], changedTouches: [touch()], bubbles: true, cancelable: true }));
+      pane.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch()], bubbles: true, cancelable: true }));
+    }
+  }, at);
+  await page.waitForTimeout(120);
+};
+
+test('two taps on a picture do not open its bytes', async ({ page }) => {
+  await boot(page, { 'Notes/photo.png': PNG });
+  await expect(page.locator('#preview-pane img')).toBeVisible();
+  await twoTaps(page);
+  expect(await page.evaluate(() => document.body.dataset.mode)).toBe('preview');
+  await expect(page.locator('#preview-pane img')).toBeVisible();
+  await expect(page.locator('.cm-content')).toBeHidden();
+});
+
+test('a file tapped twice does not come back raw on the next open', async ({ page }) => {
+  // What the phone is in right now: tapped twice before this existed, the
+  // mode kept in the file's own view record, and every open since landing
+  // in the editor full of bytes.
+  await boot(page, { 'Notes/photo.png': PNG });
+  await twoTaps(page);
+  await page.reload();
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
+  await expect(page.locator('#preview-pane img')).toBeVisible();
+  expect(await page.evaluate(() => document.body.dataset.mode)).toBe('preview');
+  expect(await page.evaluate(() => localStorage.getItem('satr:view:Notes/photo.png'))).not.toContain('"mode":"edit"');
+});
