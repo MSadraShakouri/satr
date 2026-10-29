@@ -4177,6 +4177,17 @@ textarea,
   line-height: 1.5;
   cursor: pointer;
 }
+/* A file that says .pdf and is not one, or one pdf.js will not read. */
+.pdf-unreadable {
+  width: fit-content;
+  max-width: 100%;
+  margin: 24px auto;
+  padding: 6px 12px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  color: var(--text-faint);
+  font-size: 15px;
+}
 .pdf-jump {
   display: flex;
   gap: 6px;

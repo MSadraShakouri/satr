@@ -192,6 +192,12 @@ test('the zoom comes back with the place', async ({ page }) => {
   expect(await widthOf(page, 1)).toBeCloseTo(zoomed, -1);
 });
 
+test('a file that says .pdf and is not one says so where the pages would be', async ({ page }) => {
+  await boot(page, { 'broken.pdf': 'data:application/pdf;base64,bm90IGEgUERGIGF0IGFsbA==' }, 'broken.pdf');
+  await expect(page.locator('.pdf-unreadable')).toHaveText('“broken.pdf” could not be opened.', { timeout: 15000 });
+  expect(await page.locator('.pdf-page').count()).toBe(0);
+});
+
 /** Two fingers, apart or together, as the pane sees them. */
 async function pinch(page: Page, factor: number): Promise<void> {
   await page.locator('#preview-pane').evaluate((pane, by: number) => {

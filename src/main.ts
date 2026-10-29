@@ -518,21 +518,14 @@ function renderPreview(): void {
     preview.classList.add('is-document');
     previewPane.classList.add('is-document');
     previewReady = (async () => {
-      const { showPdf, pdfKey } = await import('./pdfView');
-      if (filePath !== path) return;
-      const key = await pdfKey(bytes);
-      if (filePath !== path) return;
-      const handle = await showPdf(preview, bytes.slice().buffer, {
-        scroller: previewPane,
-        place: readPlace(key),
-        onPlace: (place) => writePlace(key, place),
-        // Putting a document back where it was is not the reader scrolling:
-        // the bars stay as they are.
-        ownScroll: () => ownScroll(400),
-        onJump: (current, total, goTo, chip) => askForPage(current, total, goTo, chip),
-      });
-      if (filePath !== path) { handle.destroy(); return; }
-      pdfView = handle;
+      try {
+        await mountPdf(path, bytes);
+      } catch {
+        // Not a PDF after all, or one pdf.js will not read: say so where the
+        // pages would have been, rather than leaving an empty reading view.
+        if (filePath !== path) return;
+        preview.innerHTML = `<p class="pdf-unreadable">“${escapeText(fileName(path))}” could not be opened.</p>`;
+      }
     })();
     return;
   }
@@ -572,6 +565,24 @@ function renderPreview(): void {
   const path = filePath;
   previewReady = Promise.all([loadImages(preview, path), highlightCodeBlocks(preview)])
     .then(() => { if (path === filePath) layoutMath(preview); });
+}
+/** Draw a PDF into the reading view, where it was left. */
+async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
+  const { showPdf, pdfKey } = await import('./pdfView');
+  if (filePath !== path) return;
+  const key = await pdfKey(bytes);
+  if (filePath !== path) return;
+  const handle = await showPdf(preview, bytes.slice().buffer, {
+    scroller: previewPane,
+    place: readPlace(key),
+    onPlace: (place) => writePlace(key, place),
+    // Putting a document back where it was is not the reader scrolling: the
+    // bars stay as they are.
+    ownScroll: () => ownScroll(400),
+    onJump: (current, total, goTo, chip) => askForPage(current, total, goTo, chip),
+  });
+  if (filePath !== path) { handle.destroy(); return; }
+  pdfView = handle;
 }
 /** The page counter was tapped: a number, and the document goes there. A
  *  field rather than a list — 52 pages is a short list and 500 is not, and
