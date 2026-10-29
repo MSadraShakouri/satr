@@ -108,7 +108,18 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // CVE-2026-16633 ran a malicious page's own JavaScript through belongs to
   // the bundled viewer — which defaults it on, and which Satr does not use.
   // This is the library's own API; it never loads `pdf.sandbox`.
-  const loading = pdfjs.getDocument(data);
+  const loading = pdfjs.getDocument({
+    ...data,
+    // All three fail silently when unset, which is how a scanned page came
+    // out blank: its pictures are JPEG 2000 or JBIG2, and those decoders are
+    // wasm files pdf.js fetches at the moment it needs them. Same three
+    // Obsidian serves (from /lib/pdfjs/), resolved against the document's
+    // own base so a build under any path, and the APK, find them.
+    cMapUrl: new URL('pdfjs/cmaps/', window.document.baseURI).href,
+    cMapPacked: true,
+    standardFontDataUrl: new URL('pdfjs/standard_fonts/', window.document.baseURI).href,
+    wasmUrl: new URL('pdfjs/wasm/', window.document.baseURI).href,
+  });
   const document_: PDFDocumentProxy = await loading.promise;
 
   const { scroller } = options;

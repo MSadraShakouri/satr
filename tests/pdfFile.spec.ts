@@ -263,3 +263,18 @@ async function reopen(page: Page, name: string): Promise<void> {
   await page.reload();
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
 }
+
+test('pdf.js can reach the decoders and tables it fetches separately', async ({ page }) => {
+  // A scanned page is JPEG 2000 or JBIG2, and those decoders are wasm files
+  // pdf.js asks for at the moment it needs them. Unreachable, they fail
+  // silently and the page comes out blank — Gander's own bug #24.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const reachable = await page.evaluate(async () => {
+    const paths = ['pdfjs/wasm/openjpeg.wasm', 'pdfjs/wasm/jbig2.wasm', 'pdfjs/cmaps/Adobe-Japan1-UCS2.bcmap', 'pdfjs/standard_fonts/FoxitFixed.pfb'];
+    const codes = [];
+    for (const path of paths) codes.push((await fetch(new URL(path, document.baseURI))).status);
+    return codes;
+  });
+  expect(reachable).toEqual([200, 200, 200, 200]);
+});

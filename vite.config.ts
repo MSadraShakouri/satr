@@ -1,6 +1,45 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import { cpSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, normalize } from 'node:path';
+import { createReadStream } from 'node:fs';
+
+/**
+ * pdf.js keeps three things outside its own bundle, and every one of them
+ * fails silently when it cannot be fetched: the CMap tables (CJK text draws
+ * nothing), the standard font data (a document that embeds no font draws
+ * with the wrong metrics), and the wasm image decoders (JPEG 2000 and JBIG2
+ * images are left out — which is most of what a scanned page is made of).
+ * Obsidian serves all three from /lib/pdfjs/; Satr serves them from /pdfjs/,
+ * out of the installed package, in dev and in every build.
+ */
+function pdfjsAssets(): Plugin {
+  const root = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+  const parts = ['cmaps', 'standard_fonts', 'wasm'];
+  return {
+    name: 'satr-pdfjs-assets',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const path = (request.url ?? '').split('?')[0];
+        if (!path.startsWith('/pdfjs/')) return next();
+        // normalize first: a request may not climb out of the package
+        const inside = normalize(path.slice('/pdfjs/'.length));
+        if (inside.startsWith('..') || !parts.some((part) => inside.startsWith(part))) return next();
+        const file = join(root, inside);
+        if (!existsSync(file)) return next();
+        createReadStream(file).pipe(response);
+        return undefined;
+      });
+    },
+    closeBundle() {
+      const out = this.environment?.config?.build?.outDir ?? 'dist';
+      for (const part of parts) cpSync(join(root, part), join(out, 'pdfjs', part), { recursive: true });
+    },
+  };
+}
 
 export default defineConfig({
+  plugins: [pdfjsAssets()],
   server: { host: '0.0.0.0', port: 5173, strictPort: true, allowedHosts: true },
   preview: { host: '0.0.0.0', port: 5173, strictPort: true, allowedHosts: true },
   build: {
