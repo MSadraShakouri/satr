@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import sharp from 'sharp';
 
 // A faint line at each level of indentation, inside code and nowhere else.
 // Obsidian's rule — a tab or a full group of spaces is one level — with the
@@ -92,4 +93,70 @@ test('the markers are in the same columns when the block is read', async ({ page
 test('a note with no code has no markers at all', async ({ page }) => {
   await boot(page, 'plain.md', '# سلام\n\n    چهار فاصله\n\nمتن.\n');
   expect((await guidesPerLine(page)).every((n) => n === 0)).toBe(true);
+});
+
+// A phone's screen is rarely a whole number of device pixels per CSS pixel
+// (2.625 and 2.75 are the common ones). A border is painted at its true
+// fractional width and a gradient's band is snapped out to whole pixels, so
+// the two kinds of marker can come out different weights on the same screen
+// even though both are declared 1px. The editor's band is tuned to the
+// border; this holds it there.
+test.describe('on a screen whose pixels are not whole', () => {
+  test.use({ deviceScaleFactor: 2.75, viewport: { width: 390, height: 800 } });
+
+  const LIST = `- one
+  - two
+    - three
+`;
+  /**
+   * How many device pixels each marker in one 90px strip is painted across.
+   *
+   * A marker is a thin line of its own colour standing in open background;
+   * a letter's edge is the same grey but has the letter's own dark pixels
+   * beside it, so runs that touch anything dark are not markers.
+   */
+  const markerWidths = async (page: Page, y: number, from: number): Promise<number[]> => {
+    const dpr = 2.75;
+    const shot = await page.screenshot();
+    const { data, info } = await sharp(shot).raw().toBuffer({ resolveWithObject: true });
+    const row = Math.round(y * dpr);
+    const grey = (x: number): number => {
+      const i = (row * info.width + x) * info.channels;
+      return (data[i] + data[i + 1] + data[i + 2]) / 3;
+    };
+    const widths: number[] = [];
+    let run: number[] = [];
+    for (let x = Math.round(from * dpr); x < Math.round((from + 90) * dpr); x += 1) {
+      const here = grey(x);
+      if (here < 248) { run.push(here); continue; }
+      const marker = run.length > 0 && run.length <= 4 && Math.min(...run) > 200;
+      if (marker) widths.push(run.filter((g) => Math.abs(g - 224) <= 2).length);
+      run = [];
+    }
+    return widths;
+  };
+
+  test('the marker beside a list is the same line in both views', async ({ page }) => {
+    await boot(page, 'list.md', LIST);
+    // the strip between where the line box starts and where its text does,
+    // which is where both markers for that item are drawn
+    const inSource = await page.evaluate(() => {
+      const line = [...document.querySelectorAll('.cm-content .cm-line')].find((l) => l.textContent?.includes('three'))!;
+      const box = line.getBoundingClientRect();
+      return { y: box.top + box.height / 2, from: box.left + 2 };
+    });
+    const source = await markerWidths(page, inSource.y, inSource.from);
+    await page.locator('#preview-toggle').click();
+    await expect(page.locator('#preview-pane li')).not.toHaveCount(0);
+    const inRead = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('#preview-pane li')]
+        .filter((li) => li.textContent?.includes('three') && !li.querySelector('li'));
+      const box = items[items.length - 1].getBoundingClientRect();
+      return { y: box.top + box.height / 2, from: box.left - 92 };
+    });
+    const read = await markerWidths(page, inRead.y, inRead.from);
+    // two markers on that row in either view, each the same line as the other
+    expect(read).toHaveLength(2);
+    expect(source).toEqual(read);
+  });
 });

@@ -1260,19 +1260,29 @@ body {
   background-position-x: var(--lp-quote, 0px);
   /* --guide-band, not the guide's own width: a 0.5px border is painted as
      one whole device pixel, while a 0.5px band inside a gradient is sampled
-     away to nothing. The band is given the pixel the border gets, so the two
-     kinds of marker are the same weight on the screen. */
+     away to nothing. The band is given the weight the border gets, so the
+     two kinds of marker are the same line on the screen.
+
+     0.9px and not 1px, which is the width the reading view's border is
+     declared at. A border is painted at its true fractional width — the
+     last device pixel comes out part-strength — while a band inside a
+     gradient is snapped out to whole ones, so on a screen whose pixels are
+     not whole (a phone is 2.625 or 2.75, rarely 3) a 1px band painted three
+     solid columns beside a border's two and a faint third. Measured at 1,
+     2, 2.5, 2.625, 2.75 and 3: 0.9px is the one width that lands on the
+     same columns as the border at every one of them. */
+  --guide-band: 0.9px;
   background-image: repeating-linear-gradient(to right,
     transparent 0 0.75em,
-    var(--indentation-guide-color) 0.75em calc(0.75em + 1px),
-    transparent calc(0.75em + 1px) 2.25em);
+    var(--indentation-guide-color) 0.75em calc(0.75em + var(--guide-band)),
+    transparent calc(0.75em + var(--guide-band)) 2.25em);
 }
 .cm-editor .cm-line.cm-lp-list-line[dir="rtl"] {
   background-position-x: right var(--lp-quote, 0px);
   background-image: repeating-linear-gradient(to left,
     transparent 0 0.75em,
-    var(--indentation-guide-color) 0.75em calc(0.75em + 1px),
-    transparent calc(0.75em + 1px) 2.25em);
+    var(--indentation-guide-color) 0.75em calc(0.75em + var(--guide-band)),
+    transparent calc(0.75em + var(--guide-band)) 2.25em);
 }
 .cm-editor .cm-line.cm-lp-list-line {
   padding-block: var(--list-spacing);
