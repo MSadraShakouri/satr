@@ -18,6 +18,9 @@ import { backend, basename, dirname, extension, freeName, isNote, joinPath, with
 import { fileKind } from './fileKinds';
 import { shortenPath, siblingList } from './pathShort';
 
+/** How much of the list is left showing under a name being typed. */
+const RENAME_MARGIN = 8;
+
 export interface LeftSidebarDeps {
   currentPath(): string;
   /** Open the folder export page for a folder (a folder row's menu). */
@@ -352,10 +355,40 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const sel = window.getSelection();
     sel?.removeAllRanges();
     sel?.addRange(range);
+    // A name being typed has to be on screen. The row being renamed can be the
+    // last one in the list — and then the keyboard comes up over the bottom of
+    // it, so the field that was just given the caret is behind the keys and
+    // the writer types a name they cannot read. The list is given a
+    // keyboard's worth of room underneath while the rename is live, so the
+    // last row has somewhere to rise to, and the row is carried above the
+    // visible edge now and again whenever that edge moves (the keyboard
+    // arrives a moment after the focus does, and may overlay the page
+    // instead of resizing it, in which case nothing else would notice).
+    const scroller = row.closest<HTMLElement>('.nav-files-container');
+    const keepVisible = (): void => {
+      if (!scroller) { row.scrollIntoView({ block: 'nearest' }); return; }
+      const viewport = window.visualViewport;
+      const edge = (viewport ? viewport.height + viewport.offsetTop : window.innerHeight) - RENAME_MARGIN;
+      // Room under the last row to rise into — as much of the list as the
+      // keyboard covers. Without it the scroll runs out while the row is
+      // still behind the keys, which is the whole of the bug when the
+      // keyboard overlays the page rather than resizing it.
+      const covered = Math.max(0, Math.round(scroller.getBoundingClientRect().bottom - edge));
+      scroller.style.paddingBottom = `${covered}px`;
+      const box = row.getBoundingClientRect();
+      if (box.bottom > edge) scroller.scrollTop += box.bottom - edge;
+      else row.scrollIntoView({ block: 'nearest' });
+    };
+    keepVisible();
+    window.visualViewport?.addEventListener('resize', keepVisible);
+    window.visualViewport?.addEventListener('scroll', keepVisible);
     let done = false;
     const finish = async (commit: boolean): Promise<void> => {
       if (done) return;
       done = true;
+      if (scroller) scroller.style.paddingBottom = '';
+      window.visualViewport?.removeEventListener('resize', keepVisible);
+      window.visualViewport?.removeEventListener('scroll', keepVisible);
       inner.contentEditable = 'false';
       row.classList.remove('is-being-renamed');
       const value = (inner.textContent ?? '').replace(/[\n\r]/g, '').trim();
