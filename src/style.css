@@ -325,7 +325,8 @@ button:focus-visible {
 .topbar-title {
   display: none;
 }
-body.is-view-only .topbar-title {
+body.is-view-only .topbar-title,
+body.is-named-file .topbar-title {
   display: block;
   flex: 1;
   min-width: 0;

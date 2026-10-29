@@ -97,3 +97,18 @@ test('a markdown note is untouched by any of it', async ({ page }) => {
   expect(await page.locator('iframe.html-file').count()).toBe(0);
   expect(await page.locator('#preview.is-page').count()).toBe(0);
 });
+
+test('a page being read says its name in the header, since the page itself will not', async ({ page }) => {
+  // The pane is handed to the page whole — its own stylesheet, no title of
+  // ours inside it — so the only place left to say which file this is, is
+  // the chrome. Obsidian's view header does exactly this for every view
+  // that is not a markdown note.
+  await open(page, { 'Notes/page.html': '<h1>a page</h1>' });
+  await expect(page.locator('iframe.html-file')).toBeVisible();
+  await expect(page.locator('#topbar-title')).toBeVisible();
+  await expect(page.locator('#topbar-title')).toHaveText('page.html');
+  // and back in the editor the file's own inline title says it instead
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#topbar-title')).toBeHidden();
+  await expect(page.locator('.cm-file-title')).toContainText('page.html');
+});

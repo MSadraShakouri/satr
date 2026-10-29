@@ -169,8 +169,21 @@ let viewOnly = false;
 function setViewOnly(on: boolean): void {
   viewOnly = on;
   document.body.classList.toggle('is-view-only', on);
+  nameInChrome();
+}
+/**
+ * The chrome says which file this is whenever the file itself will not.
+ * A note carries its own inline title, and so does every file the editor
+ * opens — but a picture and a document have no text of ours at all, and a
+ * page being read is handed the whole pane with none of Satr's typography
+ * in it, title included. Obsidian draws the same line: its view header
+ * carries the name for every view and hides it for a markdown one.
+ */
+function nameInChrome(): void {
+  const named = viewOnly || (mode === 'preview' && fileKind(filePath) === 'page');
+  document.body.classList.toggle('is-named-file', named);
   const title = document.querySelector<HTMLElement>('#topbar-title');
-  if (title) title.textContent = on ? fileBase : '';
+  if (title) title.textContent = named ? fileBase : '';
 }
 /** A picture the reading view can show: the data: URL of the file open in the
  *  tab (a photo from the file manager, or an image found in the folders). */
@@ -1083,6 +1096,7 @@ function setMode(requested: Mode, restoredLine?: number): void {
   placeLeftInSource = restoredLine === undefined && mode === 'edit' && typeof position === 'number' ? position : null;
   mode = next;
   document.body.dataset.mode = mode;
+  nameInChrome();
   // Nothing is said about the formula under the caret on a page that has no
   // caret: the reading view draws KaTeX's own red instead.
   updateMathSaying();
