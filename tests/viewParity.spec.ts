@@ -427,3 +427,27 @@ test('a formula and a code span stand on the same side of a Persian line in both
     }
   }
 });
+
+test('code is set the same in both views: one row step, one set of colours', async ({ page }) => {
+  // A <pre> left at the prose size keeps a prose-sized strut, and the page
+  // spaced code rows 29.6px apart against the editor's 26px — the same block,
+  // visibly looser when read. The block is set at the code size in both.
+  await boot(page, '```js\nlet a = 1;\nlet b = 2;\n```\n');
+  const rows = (where: string) => page.evaluate((root) => {
+    const tops = [...document.querySelectorAll(root)]
+      .filter((element) => element.textContent === 'let' && !element.querySelector('span'))
+      .map((element) => Math.round(element.getBoundingClientRect().top));
+    return tops.length === 2 ? tops[1] - tops[0] : null;
+  }, where);
+  await expect.poll(() => rows('#app .cm-content span')).toBe(26);
+  const colour = (where: string) => page.evaluate((root) => {
+    const span = [...document.querySelectorAll(root)]
+      .find((element) => element.textContent === 'let' && !element.querySelector('span')) as HTMLElement;
+    return getComputedStyle(span).color;
+  }, where);
+  const source = await colour('#app .cm-content span');
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane pre code')).toBeVisible();
+  await expect.poll(() => rows('#preview-pane pre code span')).toBe(26);
+  expect(await colour('#preview-pane pre code span')).toBe(source);
+});

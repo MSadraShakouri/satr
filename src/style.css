@@ -768,6 +768,13 @@ body {
   white-space: pre-wrap;
   direction: ltr;
   text-align: left;
+  /* The block is set at the code size itself, not just the <code> inside it.
+     A <pre> left at the prose size keeps a prose-sized strut — the invisible
+     line box the block's own font demands — and every row of code was spaced
+     by that 29.6px instead of by the 26px the editor gives the same lines.
+     Set here, the strut is the code's own and the two views step alike. */
+  font-size: var(--code-size);
+  line-height: var(--note-line-height);
 }
 .preview-pane .copy-code-button {
   position: absolute;
@@ -942,6 +949,7 @@ body {
   border-radius: 0;
   background: none;
   white-space: inherit;
+  font-size: inherit; /* the block is already at --code-size; not 0.875 of it */
 }
 .preview-pane a {
   color: var(--accent);
