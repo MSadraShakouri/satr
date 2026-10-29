@@ -1,6 +1,6 @@
 # The plan
 
-The author's list, as it stands after 0.17.0, plus the findings he asked be
+The author's list, as it stands after 0.17.1, plus the findings he asked be
 added from this side (marked *(found here)*) — do not invent any others. Web
 first, then APK. Lint and GitHub stay deferred. Italic notes are the state of
 play, not new work.
@@ -47,7 +47,7 @@ being watched for its return.
 ## PDF, and other files beside the note
 
 - [ ] pdf compression with something like ghostscript, the method not the tool, tested normal file and 108kb became 98kb, but in files with images it compresses images, if we do something like squoosh we probably won't need to do this
-- [ ] possibly open PDFs too, a great idea would be to have something open dual panes manually so one could both read a PDF or any other file and write it down in the text bar, maybe something at the top, would really help me personally, but would not load the entire pdf at once to keep the app light. Overlay over text area to not touch it would probably be an optimal solution — *opening is built (0.17): a PDF is a column of pages in the reading view, pinched between a quarter of the pane's width and eight times it, and it comes back at the page, the offset into it and the zoom it was left at — kept against the document's own bytes, so a copy under another name opens in the same place. The page counter names the page being read, scrubs the document when it is dragged and asks for a number when it is tapped. Nothing is held in memory but the band being looked at and a screen either side, and the library itself is only fetched when a PDF is opened. What is left of this item is the second half: the two panes, the overlay over the text area, selecting text on a page, and (next item) taking a piece of a page into a note.*
+- [ ] possibly open PDFs too, a great idea would be to have something open dual panes manually so one could both read a PDF or any other file and write it down in the text bar, maybe something at the top, would really help me personally, but would not load the entire pdf at once to keep the app light. Overlay over text area to not touch it would probably be an optimal solution — *opening is built (0.17): a PDF is a column of pages in the reading view, pinched between a quarter of the pane's width and eight times it, and it comes back at the page, the offset into it and the zoom it was left at — kept against the document's own bytes, so a copy under another name opens in the same place. The page counter names the page being read, scrubs the document when it is dragged and asks for a number when it is tapped. 0.17.1 rebuilt the drawing itself on what Obsidian and Gander do — one picture per page at the screen's own pixels inside Obsidian's budget, the decoders a scanned page needs served rather than missing, and a zoom that holds the point under the finger. Nothing is held in memory but the band being looked at and a screen either side, and the library itself is only fetched when a PDF is opened. What is left of this item is the second half: the two panes, the overlay over the text area, selecting text on a page, and (next item) taking a piece of a page into a note.*
 - [ ] opened pdf or other files have the option to crop a part of it and insert that into notes
 
 ## direction
