@@ -4115,6 +4115,95 @@ textarea,
 #preview p > img.md-image:only-child {
   margin-block: 0;
 }
+
+/* A PDF being read (src/pdfView.ts). The pane is the scroller and the
+   article is the column of pages, so none of the prose measurements apply:
+   a page is as wide as the reader has zoomed it to, and the column is
+   centred on whatever that is. Zoomed past the pane it can be pushed
+   sideways, and `safe` keeps the left edge reachable when it is. */
+.preview-pane.is-document {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.preview-pane article.is-document {
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  max-width: none;
+  padding: 0;
+  font-size: initial;
+  line-height: initial;
+}
+.pdf-doc {
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  gap: 8px;
+  width: max-content;
+  min-width: 100%;
+  padding: 8px 0;
+}
+/* The page itself: white under the ink whatever the theme is, because that
+   is what the document says. Its box is the page's size at this zoom and it
+   holds the drawn band, which is never bigger than a screen or two. */
+.pdf-page {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
+}
+.pdf-raster {
+  position: absolute;
+  inset-inline-start: 0;
+  display: block;
+}
+/* Which page is being read, and the way to another one. It rides at the
+   bottom of the pane over the pages and takes no room of its own. */
+.pdf-counter {
+  position: sticky;
+  /* Clear of the navbar pill, which is 52px tall and sits that far off the
+     bottom: the counter rides just above it rather than behind it. */
+  bottom: calc(max(var(--safe-bottom), 12px) + 58px);
+  z-index: 2;
+  margin-top: -32px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 62%);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.pdf-jump {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pdf-jump input {
+  width: 4.5em;
+  padding: 4px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--editor);
+  color: var(--text-normal);
+  font: inherit;
+}
+.pdf-jump-total {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.pdf-jump button {
+  padding: 4px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  font: inherit;
+  cursor: pointer;
+}
 #preview .md-image-missing {
   display: block;
   width: fit-content;

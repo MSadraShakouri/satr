@@ -53,6 +53,7 @@ export interface Backend {
 const MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
   svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif', heic: 'image/heic', heif: 'image/heif',
+  pdf: 'application/pdf',
 };
 export const mimeType = (path: string): string => MIME[path.slice(path.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream';
 
@@ -259,7 +260,7 @@ interface FilesystemPlugin {
 const EXTERNAL = 'EXTERNAL_STORAGE';
 
 /** base64 (as the Filesystem plugin returns bytes) to a writable array. */
-function base64Bytes(base64: string): Uint8Array {
+export function base64Bytes(base64: string): Uint8Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);

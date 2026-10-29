@@ -1,5 +1,6 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
+import type { PdfHandle } from './pdfView';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
 import { setTimestampChipTap } from './livePreview';
@@ -44,7 +45,7 @@ import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
-import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
+import { DEFAULT_FOLDER, backend, base64Bytes, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 import { fileKind } from './fileKinds';
 
 type Mode = 'edit' | 'preview';
@@ -150,6 +151,12 @@ const isPicture = (path: string): boolean => {
   const external = externalFilesByPath.get(path);
   return (external ? external.mimeType : mimeType(path)).startsWith('image/');
 };
+/** A PDF: read page by page in the reading view (src/pdfView.ts), never as
+ *  text. Its own bytes are what its place is remembered against. */
+const isDocument = (path: string): boolean => {
+  const external = externalFilesByPath.get(path);
+  return (external ? external.mimeType : mimeType(path)) === 'application/pdf';
+};
 /** The note's name, for the messages about files that wouldn't open. */
 const fileName = (path: string): string => externalFilesByPath.get(path)?.name ?? path.slice(path.lastIndexOf('/') + 1);
 /** Markdown and text notes can be renamed from the title; anything else is
@@ -168,6 +175,10 @@ function setViewOnly(on: boolean): void {
 /** A picture the reading view can show: the data: URL of the file open in the
  *  tab (a photo from the file manager, or an image found in the folders). */
 const picture = { path: '', url: '' };
+/** The PDF open in the tab, as its own bytes: pdf.js reads them, and the
+ *  place is remembered against them. */
+const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
+let pdfView: PdfHandle | null = null;
 function rememberPicture(path: string, url: string | null | undefined): boolean {
   if (!url?.startsWith('data:image/')) return false;
   picture.path = path;
@@ -484,7 +495,35 @@ function renderPreview(): void {
   previewDirty = false;
   lastRender = Date.now();
   releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
+  // A document being read holds a worker and a pile of canvases: the one
+  // open at a time is let go before anything else is drawn.
+  pdfView?.destroy();
+  pdfView = null;
   const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
+  if (!isDocument(filePath)) {
+    preview.classList.remove('is-document');
+    previewPane.classList.remove('is-document');
+  }
+  // A PDF: pdf.js draws its pages into the pane, which scrolls them, and the
+  // place it was left at comes back with it (src/pdfView.ts).
+  if (openedDocument.bytes && openedDocument.path === filePath) {
+    const bytes = openedDocument.bytes;
+    const path = filePath;
+    preview.innerHTML = '';
+    preview.classList.add('is-document');
+    previewPane.classList.add('is-document');
+    previewReady = (async () => {
+      const { showPdf } = await import('./pdfView');
+      if (filePath !== path) return;
+      const handle = await showPdf(preview, bytes.slice().buffer, {
+        scroller: previewPane,
+        onJump: (current, total, goTo, chip) => askForPage(current, total, goTo, chip),
+      });
+      if (filePath !== path) { handle.destroy(); return; }
+      pdfView = handle;
+    })();
+    return;
+  }
   if (!isHtmlFile(filePath)) {
     preview.classList.remove('is-page');
     previewPane.classList.remove('is-page');
@@ -521,6 +560,49 @@ function renderPreview(): void {
   const path = filePath;
   previewReady = Promise.all([loadImages(preview, path), highlightCodeBlocks(preview)])
     .then(() => { if (path === filePath) layoutMath(preview); });
+}
+/** The page counter was tapped: a number, and the document goes there. A
+ *  field rather than a list — 52 pages is a short list and 500 is not, and
+ *  the page a reader wants is the one they already have in mind. */
+function askForPage(current: number, total: number, goTo: (page: number) => void, chip: HTMLElement): void {
+  const form = document.createElement('form');
+  form.className = 'pdf-jump';
+  const field = document.createElement('input');
+  field.type = 'number';
+  field.min = '1';
+  field.max = String(total);
+  field.value = String(current);
+  field.inputMode = 'numeric';
+  field.setAttribute('aria-label', `Page, 1 to ${total}`);
+  const go = document.createElement('button');
+  go.type = 'submit';
+  go.textContent = 'Go';
+  const of = document.createElement('span');
+  of.className = 'pdf-jump-total';
+  of.textContent = `of ${total}`;
+  form.append(field, of, go);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const page = Number(field.value);
+    if (Number.isFinite(page)) goTo(page);
+    closePopover();
+  });
+  openPopover({
+    className: 'pdf-jump-popover',
+    anchor: () => (chip.isConnected ? chip.getBoundingClientRect() : null),
+    rtl: false,
+    content: form,
+    scrollers: [previewPane],
+    // The navbar pill is right below the counter: the card goes above it
+    // rather than across the buttons.
+    obscuredBottom: () => {
+      const bar = document.querySelector('#navbar')?.getBoundingClientRect();
+      const room = bar ? window.innerHeight - bar.top : 0;
+      return Math.max(obscuredBottom(), room > 0 ? room : 0);
+    },
+  });
+  field.focus();
+  field.select();
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -756,7 +838,7 @@ async function saveNow(): Promise<boolean> {
   if (!path) return false;
   // A picture tab has no text of its own: there is nothing to save, and the
   // file must never be written over with what the editor shows (nothing).
-  if (isPicture(path)) return true;
+  if (isPicture(path) || isDocument(path)) return true;
   if (isExternalPath(path)) {
     const incoming = externalFilesByPath.get(path);
     if (!incoming || (incoming.kind !== 'text' && incoming.kind !== 'shared-text') || incoming.readOnly || incoming.kind === 'shared-text') return true;
@@ -1514,8 +1596,9 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // per byte, a megabyte of them per megabyte of photo, all of it in the
   // editor before anything could be seen.
   const imageTab = isPicture(path);
+  const documentTab = isDocument(path);
   const fileText = content; // what the file itself holds; for a picture, not its note
-  if (imageTab) content = '';
+  if (imageTab || documentTab) content = '';
   // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
   // never saved back over the original.
   const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
@@ -1534,7 +1617,22 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // the file manager, or read here), the editor the bytes as they decode.
   picture.path = '';
   picture.url = '';
+  openedDocument.path = '';
+  openedDocument.bytes = null;
   let opening: Mode = 'edit';
+  if (documentTab) {
+    // A PDF has no text mode either: it is read, page by page, however this
+    // file was last left. Its bytes are read once and kept, because pdf.js
+    // and the place both want them.
+    opening = 'preview';
+    void backend.readDataUrl(path).then((url) => {
+      const base64 = url?.startsWith('data:') ? url.slice(url.indexOf(',') + 1) : '';
+      if (!base64 || filePath !== path) return;
+      openedDocument.path = path;
+      openedDocument.bytes = base64Bytes(base64);
+      if (mode === 'preview') renderPreview();
+    });
+  }
   if (imageTab) {
     // A picture has no text mode to be in: the reading view shows it, whatever
     // mode this file was last left in.
@@ -1571,7 +1669,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // are not text, a file another app lent us read-only, shared text. The
   // chrome says so (a header with the file's name and a ⋮ in place of the
   // pen) rather than letting a tap land in an editor that refuses it.
-  setViewOnly(Boolean(imageTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  setViewOnly(Boolean(imageTab || documentTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
   editor.setReadOnly(viewOnly);
   // Say it once per file: the editor takes no writing because the bytes are
   // not text, and nobody should wonder why nothing happens.
@@ -1618,7 +1716,7 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   }
   // A picture's bytes are not read: as text they are the whole file, base64
   // and all. The reading view shows the picture (showFile reads its data URL).
-  const opened: TextOpen = isPicture(path)
+  const opened: TextOpen = isPicture(path) || isDocument(path)
     ? { status: 'text', text: '', clean: true }
     : await backend.readText(path);
   if (opened.status !== 'text') {

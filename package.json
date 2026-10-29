@@ -39,7 +39,8 @@
     "dompurify": "^3.2.6",
     "katex": "^0.16.22",
     "marked": "^15.0.7",
-    "pagedjs": "^0.4.3"
+    "pagedjs": "^0.4.3",
+    "pdfjs-dist": "^5.6.205"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",

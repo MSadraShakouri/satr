@@ -17,7 +17,8 @@ export type FileKind =
   | 'code' // a language the editor can colour and indent
   | 'text' // plain text with no grammar behind it
   | 'picture' // shown, not edited
-  | 'none'; // nothing yet: a PDF, an archive, bytes
+  | 'document' // a PDF: read here, page by page, not edited
+  | 'none'; // nothing yet: an archive, bytes
 
 /** Plain text that no grammar describes: a log, a CSV, a licence. A file with
  *  no extension at all is text too — a `LICENSE`, a `Makefile` — since the
@@ -39,6 +40,7 @@ export function fileKind(name: string): FileKind {
   if (ext === 'md' || ext === 'markdown') return 'note';
   if (/^x?html?$/.test(ext)) return 'page';
   if (mimeType(name).startsWith('image/')) return 'picture';
+  if (ext === 'pdf') return 'document';
   if (PLAIN.has(ext) || ext === '') return 'text';
   return codeLanguage(name) ? 'code' : 'none';
 }
@@ -47,5 +49,5 @@ export function fileKind(name: string): FileKind {
  *  plain characters. Everything else is shown rather than written. */
 export const isEditableFile = (name: string): boolean => {
   const kind = fileKind(name);
-  return kind !== 'picture' && kind !== 'none';
+  return kind !== 'picture' && kind !== 'document' && kind !== 'none';
 };
