@@ -906,6 +906,20 @@ body {
 .preview-pane .tok-property { color: var(--code-property); }
 .preview-pane .tok-tag { color: var(--code-tag); }
 .preview-pane .tok-important { color: var(--code-important); }
+
+/* The columns of a CSV, told apart where the file is edited
+   (src/csvColumns.ts) — the editor's own code colours, cycled, so a file
+   brings no palette of its own. An eighth column starts again at the first,
+   which reads as the colours having come round rather than as two columns
+   being the same. Where the file is read it is a table, and a table tells
+   its columns apart without colour. */
+.cm-csv-col-0 { color: var(--code-property); }
+.cm-csv-col-1 { color: var(--code-function); }
+.cm-csv-col-2 { color: var(--code-string); }
+.cm-csv-col-3 { color: var(--code-value); }
+.cm-csv-col-4 { color: var(--code-tag); }
+.cm-csv-col-5 { color: var(--code-keyword); }
+.cm-csv-col-6 { color: var(--code-important); }
 .preview-pane .persian-ordered {
   list-style: none;
   counter-reset: persian-list;

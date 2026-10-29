@@ -1,4 +1,6 @@
 import { directionsField, majorityDirection, setCodeDocument } from './direction';
+import { csvColumns } from './csvColumns';
+import { isCsvFile } from './csv';
 import { codeLanguage, fileKind } from './fileKinds';
 import { indentGuides } from './indentGuides';
 import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
@@ -1041,6 +1043,7 @@ const followCaretScript = EditorView.updateListener.of((update) => {
  *  Markdown they become a heading and an italic, which is exactly the kind of
  *  cleverness a code file must not get. */
 const languageSlot = new Compartment();
+const csvSlot = new Compartment();
 const markdownOnlySlot = new Compartment();
 const markdownLateSlot = new Compartment();
 const readOnlySlot = new Compartment();
@@ -1057,6 +1060,7 @@ export class SatrEditor {
   /** This file is code, not prose (src/fileKinds.ts). */
   private codeMode = false;
   private codeName = '';
+  private csvName = '';
   isCodeFile(): boolean { return this.codeMode; }
   /** Bring the caret's line back into view after a beat — the keyboard has
    *  taken the bottom of the screen and the caret must step clear of it. Set
@@ -1118,6 +1122,7 @@ export class SatrEditor {
       ])),
       titleField,
       rtlLineDirection, directionsField, directionPlugin, lineGutterField,
+      csvSlot.of([]),
       markdownOnlySlot.of([headingLineField, livePreview]),
       // After the live preview: a lettered line is given a list's indent
       // here, and a quoted line is given the quote's by the live preview —
@@ -1508,6 +1513,16 @@ export class SatrEditor {
   async setFileLanguage(name: string): Promise<void> {
     const description = codeLanguage(name);
     const asCode = Boolean(description) && fileKind(name) === 'code';
+    // A .csv is edited as the characters it is, with its columns told apart
+    // by colour (src/csvColumns.ts). Switched before the line below, which
+    // returns early when the language has not changed: two CSV files in a
+    // row are both "not code", and the second one's own punctuation still
+    // has to reach the painter.
+    const csv = isCsvFile(name) ? name : '';
+    if (csv !== this.csvName) {
+      this.csvName = csv;
+      this.view.dispatch({ effects: csvSlot.reconfigure(csv ? csvColumns(csv) : []) });
+    }
     if (asCode === this.codeMode && (!asCode || this.codeName === name)) return;
     this.codeMode = asCode;
     this.codeName = asCode ? name : '';

@@ -47,6 +47,44 @@ test('the file is read as a table, with its first row as the header', async ({ p
   expect((await rows.nth(2).locator('td').nth(2).textContent())?.trim()).toBe('');
 });
 
+test('the table is not coloured — only the editor is', async ({ page }) => {
+  await boot(page);
+  // the title the editor draws is the content's first child, so the header
+  // row is the first .cm-line rather than the first child of anything
+  const editor = await page.evaluate(() => (Array.from(document.querySelectorAll('#app .cm-content .cm-line')[0].querySelectorAll('span')) as HTMLElement[])
+    .filter((span) => span.className.startsWith('cm-csv-col'))
+    .map((span) => [span.textContent, getComputedStyle(span).color]));
+  expect(editor.length, 'the header line is painted column by column').toBeGreaterThanOrEqual(3);
+  await read(page);
+  const cells = await page.evaluate(() => (Array.from(document.querySelectorAll('#preview-pane table td, #preview-pane table th')) as HTMLElement[])
+    .map((cell) => getComputedStyle(cell).color));
+  expect(new Set(cells).size, `one colour for the whole table, found ${new Set(cells).size}`).toBe(1);
+  expect(cells[0], 'and it is the text colour, not a column colour').not.toBe(editor[0][1]);
+});
+
+test('each column keeps its own colour, and the colours come round', async ({ page }) => {
+  // nine columns: the eighth and ninth start the palette again
+  const wide = ['a,b,c,d,e,f,g,h,i', '1,2,3,4,5,6,7,8,9'].join('\n');
+  await boot(page, wide, 'Notes/wide.csv');
+  const columns = await page.evaluate(() => (Array.from(document.querySelectorAll('#app .cm-content .cm-line')) as HTMLElement[])
+    .slice(0, 2)
+    .map((line) => (Array.from(line.querySelectorAll('span')) as HTMLElement[])
+      .filter((span) => span.className.startsWith('cm-csv-col'))
+      .map((span) => ({ text: span.textContent ?? '', colour: getComputedStyle(span).color }))));
+  expect(columns[0], 'nine fields painted').toHaveLength(9);
+  // the delimiter travels with the field it introduces, as Markor paints it
+  expect(columns[0][1].text).toBe(',b');
+  // the same column, two rows apart, is the same colour
+  for (let i = 0; i < 9; i += 1) {
+    expect(columns[1][i].colour, `column ${i} is one colour down the file`).toBe(columns[0][i].colour);
+  }
+  // seven colours, then round again
+  const palette = columns[0].map((field) => field.colour);
+  expect(new Set(palette.slice(0, 7)).size, 'seven colours, all different').toBe(7);
+  expect(palette[7], 'the eighth column starts the palette again').toBe(palette[0]);
+  expect(palette[8]).toBe(palette[1]);
+});
+
 test('the punctuation is the file’s own: semicolons, tabs, pipes', async ({ page }) => {
   await boot(page, 'City;People\nTehran;9.5\nAmsterdam;0.9', 'Notes/semi.csv');
   await read(page);
