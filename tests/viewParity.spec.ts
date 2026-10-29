@@ -329,6 +329,31 @@ test('the bullet stands the same distance from the text in both views', async ({
   expect(reading.onATask).toBe('none');
 });
 
+/** Where the editor paints its indentation markers on a list line: the band
+ *  is one mark per level of nesting, drawn from the line's own side (past
+ *  the quote's rules), each line 0.75em into its own step — the column the
+ *  bullet's dot stands in. Chromium reports a right-anchored band as
+ *  `background-position-x: 100%`, which has to be resolved against the room
+ *  the band leaves, exactly as the paint does. */
+async function paintedColumns(page: Page): Promise<{ text: string; rtl: boolean; columns: number[]; toTheLeft: boolean }[]> {
+  return page.evaluate(() => (Array.from(document.querySelectorAll('#app .cm-content .cm-lp-list-line')) as HTMLElement[])
+    .map((line) => {
+      const style = getComputedStyle(line);
+      const em = parseFloat(style.fontSize);
+      const box = line.getBoundingClientRect();
+      const band = parseFloat(style.backgroundSize);
+      const rtl = line.getAttribute('dir') === 'rtl';
+      const offset = style.backgroundPositionX.endsWith('%')
+        ? ((box.width - band) * parseFloat(style.backgroundPositionX)) / 100
+        : parseFloat(style.backgroundPositionX);
+      const columns: number[] = [];
+      for (let x = 0.75 * em; x < band; x += 2.25 * em) {
+        columns.push(Math.round(rtl ? box.left + offset + band - x : box.left + offset + x));
+      }
+      return { text: (line.textContent ?? '').trim().slice(0, 6), rtl, columns, toTheLeft: style.backgroundImage.includes('to left') };
+    }));
+}
+
 /** Five levels of bullets, a nested task, a quoted list and a Persian list:
  *  the shapes the markers and their lines have to survive. */
 const DEEP = `- one
@@ -339,6 +364,13 @@ const DEEP = `- one
 
 - [ ] task
   - [x] sub task
+`;
+
+const SIDEWAYS = `> - quoted
+>   - deeper
+
+۱. الف
+   ۱۰. ب
 `;
 
 test('a bullet hangs in the same strip at every level, in both views', async ({ page }) => {
@@ -379,6 +411,61 @@ test('a bullet hangs in the same strip at every level, in both views', async ({ 
   // column its own view would have put a nested bullet in
   const step = editor[1] - editor[0];
   expect(reading.boxes[1] - reading.boxes[0], 'a nested task box steps by one level, like the bullets').toBeCloseTo(step, 0);
+});
+
+test('a nested list is marked in the same columns in both views', async ({ page }) => {
+  // Reported: "the reverse for unnumbered lists exists, I'd like consistency
+  // everywhere" and, of the three places the line could fall, "B" — straight
+  // down from the bullet. The editor paints the lines along the whole list
+  // line, so they carry on through a row that wraps; the reading view hangs
+  // one beside each nested list.
+  await boot(page, DEEP);
+  const lines = await paintedColumns(page);
+  const columns = [...new Set(lines.flatMap((line) => line.columns))].sort((a, b) => a - b);
+  const painted = await page.evaluate(() => getComputedStyle(document.querySelector('#app .cm-content .cm-lp-list-line') as HTMLElement).backgroundImage);
+  expect(painted, 'the lines are painted along the line itself, so a wrapped row keeps them').toContain('repeating-linear-gradient');
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane ul').first()).toBeVisible();
+  await page.waitForTimeout(400);
+  const reading = await page.evaluate(() => {
+    const columns = new Set<number>();
+    (Array.from(document.querySelectorAll('#preview-pane li > :is(ul, ol)')) as HTMLElement[]).forEach((list) => {
+      const inset = parseFloat(getComputedStyle(list, '::before').insetInlineStart);
+      columns.add(Math.round(list.getBoundingClientRect().left + inset));
+    });
+    return [...columns].sort((a, b) => a - b);
+  });
+  expect(reading, `marked at ${columns} in source mode, ${reading} in the reading view`).toEqual(columns);
+  // and those columns are the bullets': every step is one level of nesting
+  const steps = columns.slice(1).map((x, i) => x - columns[i]);
+  expect(new Set(steps).size, `evenly spaced: ${steps}`).toBe(1);
+});
+
+test('the marks fall the same way on a quoted list and on the Persian side', async ({ page }) => {
+  await boot(page, SIDEWAYS);
+  const editor = await paintedColumns(page);
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane blockquote').first()).toBeVisible();
+  await page.waitForTimeout(400);
+  const reading = await page.evaluate(() => (Array.from(document.querySelectorAll('#preview-pane li > :is(ul, ol)')) as HTMLElement[])
+    .map((list) => {
+      const box = list.getBoundingClientRect();
+      const inset = parseFloat(getComputedStyle(list, '::before').insetInlineStart);
+      return { rtl: getComputedStyle(list).direction === 'rtl', column: Math.round(getComputedStyle(list).direction === 'rtl' ? box.right - inset : box.left + inset) };
+    }));
+  const quoted = editor.find((line) => line.text.startsWith('>') && line.columns.length);
+  const persian = editor.find((line) => line.rtl && line.columns.length);
+  expect(quoted, 'the quoted sub-item is marked').toBeTruthy();
+  expect(persian, 'the Persian sub-item is marked').toBeTruthy();
+  // a line written the other way round is painted the other way round
+  expect(persian?.toTheLeft, 'the Persian line is painted from its own side').toBe(true);
+  expect(quoted?.toTheLeft, 'the English line is painted from its own side').toBe(false);
+  const quotedRead = reading.find((list) => !list.rtl);
+  const persianRead = reading.find((list) => list.rtl);
+  expect(Math.abs((quotedRead?.column ?? 0) - (quoted?.columns[0] ?? 0)),
+    `quoted: ${quoted?.columns[0]} in source mode, ${quotedRead?.column} in the reading view`).toBeLessThanOrEqual(1);
+  expect(Math.abs((persianRead?.column ?? 0) - (persian?.columns[0] ?? 0)),
+    `Persian: ${persian?.columns[0]} in source mode, ${persianRead?.column} in the reading view`).toBeLessThanOrEqual(1);
 });
 
 /** A checklist's box stands in the same column in both views, at any text

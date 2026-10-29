@@ -679,7 +679,14 @@ body {
 .preview-pane ul > li:has(> p > input[type="checkbox"])::before {
   content: none;
 }
-/* Obsidian's indentation guide beside a nested list */
+/* The indentation marker beside a nested list: one faint line per level,
+   falling from the bullet of the item that owns it. Obsidian puts it at a
+   flat 0.85em before the nested list, which lands on the parent's bullet at
+   the first level and then drifts further from it the deeper the list goes
+   (its own two views disagree about this by half a level). Here it is tied to
+   the marker's own strip instead — the dot's centre is 0.75em into it — so
+   the line falls from the bullet at every level, in both views, whatever the
+   markers are wide enough to need. */
 .preview-pane li > :is(ul, ol) {
   position: relative;
 }
@@ -687,7 +694,7 @@ body {
   content: "";
   position: absolute;
   inset-block: 0;
-  inset-inline-start: -0.85em;
+  inset-inline-start: calc(0.75em - var(--list-marker-strip, 3ch));
   border-inline-end: var(--indentation-guide-width, 0.5px) solid var(--indentation-guide-color, rgba(var(--mono-rgb-100), 0.12));
   pointer-events: none;
 }
@@ -1225,6 +1232,33 @@ body {
    there and still editable; only where they are allowed to hang changes. */
 .cm-editor .cm-line {
   white-space: pre-wrap;
+}
+/* The same markers while the list is being written (src/livePreview.ts sets
+   the two numbers). One line per level in the indented band, each at 0.75em
+   into its own step — the column the bullet's dot stands in — so a nested
+   item is written under the same lines it is read under. The band is drawn
+   from the line's own edge, past the quote's rules if it is inside a quote,
+   and stops where the marker's strip begins. */
+.cm-editor .cm-line.cm-lp-list-line {
+  background-origin: border-box;
+  background-repeat: no-repeat;
+  background-size: var(--lp-indent, 0px) 100%;
+  background-position-x: var(--lp-quote, 0px);
+  /* --guide-band, not the guide's own width: a 0.5px border is painted as
+     one whole device pixel, while a 0.5px band inside a gradient is sampled
+     away to nothing. The band is given the pixel the border gets, so the two
+     kinds of marker are the same weight on the screen. */
+  background-image: repeating-linear-gradient(to right,
+    transparent 0 0.75em,
+    var(--indentation-guide-color) 0.75em calc(0.75em + 1px),
+    transparent calc(0.75em + 1px) 2.25em);
+}
+.cm-editor .cm-line.cm-lp-list-line[dir="rtl"] {
+  background-position-x: right var(--lp-quote, 0px);
+  background-image: repeating-linear-gradient(to left,
+    transparent 0 0.75em,
+    var(--indentation-guide-color) 0.75em calc(0.75em + 1px),
+    transparent calc(0.75em + 1px) 2.25em);
 }
 .cm-editor .cm-line.cm-lp-list-line {
   padding-block: var(--list-spacing);

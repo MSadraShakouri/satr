@@ -143,9 +143,19 @@ export function listLine(level: number, task = false, quotes = 0, strip = `${LIS
       strip,
       level > 1 ? `${LIST_INDENT_EM}em * ${level - 1}` : '',
     ].filter(Boolean).join(' + ')})`;
+    // --lp-indent / --lp-quote are the indentation markers' two numbers: how
+    // wide the indented part of the line is, and where it begins (a quoted
+    // list starts after the quote's rules). style.css draws one faint line
+    // per level in that band, each falling from the bullet of the item that
+    // owns the level — the same lines, in the same columns, that the reading
+    // view draws beside a nested list.
+    const band = level > 1 ? `calc(${LIST_INDENT_EM}em * ${level - 1})` : '0px';
     deco = Decoration.line({
       class: task ? 'cm-lp-list-line cm-lp-task-line' : 'cm-lp-list-line',
-      attributes: { style: `padding-inline-start:${indent};text-indent:calc(-1 * ${indent})` },
+      attributes: {
+        style: `padding-inline-start:${indent};text-indent:calc(-1 * ${indent});`
+          + `--lp-indent:${band};--lp-quote:${quotes * QUOTE_STEP_PX}px`,
+      },
     });
     listLines.set(key, deco);
   }
