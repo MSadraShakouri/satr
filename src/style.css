@@ -951,6 +951,23 @@ body {
   white-space: inherit;
   font-size: inherit; /* the block is already at --code-size; not 0.875 of it */
 }
+
+/* Indentation markers inside a block that is being read, drawn exactly as
+   the editor draws them (src/indentGuides.ts, src/codeHighlight.ts): the same
+   groups, the same faint line, so the block keeps its shape between the two
+   views. */
+.preview-pane pre .indent {
+  display: inline-block;
+  position: relative;
+}
+.preview-pane pre .indent::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-inline-start: var(--indentation-guide-width, 0.5px) solid var(--indentation-guide-color);
+  pointer-events: none;
+}
 .preview-pane a {
   color: var(--accent);
 }

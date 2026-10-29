@@ -55,6 +55,38 @@ function codeRanges(view: EditorView, whole: boolean): Array<[number, number]> {
   return out;
 }
 
+/** The pieces of a line's leading run that are a level of indentation, as
+ *  [from, to) columns. A tab is one level on its own; spaces count in groups
+ *  of `step`, and a group that is short of it is space rather than a level.
+ *  A quote's `>` is stepped over — it opens the line, it does not indent it.
+ *
+ *  The reading view paints the same groups from the same function
+ *  (src/codeHighlight.ts), so a block is marked identically wherever it is
+ *  read. */
+export function indentGroups(text: string, step: number): Array<[number, number]> {
+  const lead = /^[\s>]+/.exec(text)?.[0] ?? '';
+  const out: Array<[number, number]> = [];
+  let at = 0;
+  while (at < lead.length) {
+    const char = lead.charAt(at);
+    if (char === '>') { // a quoted fence: the quote is not an indent
+      at += lead.charAt(at + 1) === ' ' ? 2 : 1;
+      continue;
+    }
+    if (char === '\t') {
+      out.push([at, at + 1]);
+      at += 1;
+      continue;
+    }
+    if (char !== ' ') break;
+    let run = 0;
+    while (run < step && lead.charAt(at + run) === ' ') run += 1;
+    if (run === step) out.push([at, at + run]);
+    at += run; // a partial group is space, not a level
+  }
+  return out;
+}
+
 function build(view: EditorView, whole: boolean): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const { doc } = view.state;
@@ -65,25 +97,7 @@ function build(view: EditorView, whole: boolean): DecorationSet {
     for (const block of view.viewportLineBlocks) {
       const line = doc.lineAt(block.from);
       if (line.number < first || line.number > last) continue;
-      const lead = /^[\s>]+/.exec(line.text)?.[0] ?? '';
-      let at = 0;
-      while (at < lead.length) {
-        const char = lead.charAt(at);
-        if (char === '>') { // a quoted fence: the quote is not an indent
-          at += lead.charAt(at + 1) === ' ' ? 2 : 1;
-          continue;
-        }
-        if (char === '\t') {
-          builder.add(line.from + at, line.from + at + 1, guide);
-          at += 1;
-          continue;
-        }
-        if (char !== ' ') break;
-        let run = 0;
-        while (run < step && lead.charAt(at + run) === ' ') run += 1;
-        if (run === step) builder.add(line.from + at, line.from + at + run, guide);
-        at += run; // a partial group is space, not a level
-      }
+      for (const [from, to] of indentGroups(line.text, step)) builder.add(line.from + from, line.from + to, guide);
     }
   }
   return builder.finish();

@@ -18,6 +18,7 @@ import { LanguageDescription } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { highlightCode, tagHighlighter, tags, type Tag } from '@lezer/highlight';
 import type { Parser } from '@lezer/common';
+import { indentGroups, indentStep } from './indentGuides';
 
 /** The one table of code colours. The editor builds a CodeMirror
  *  HighlightStyle out of it (src/editor.ts), the reading view and the PDF
@@ -58,16 +59,53 @@ function grammarFor(name: string): Promise<Parser | null> {
   return found;
 }
 
-/** Paint one block: its tokens, in the palette. */
-function paint(code: HTMLElement, text: string, parser: Parser): void {
+/** Paint one block: its tokens in the palette, and its indentation marked at
+ *  every level the way the editor marks it. A block whose language is not
+ *  known still gets its markers — the indentation is the writer's, not the
+ *  grammar's. */
+function paint(code: HTMLElement, text: string, parser: Parser | null): void {
+  const lines = text.split('\n');
+  const step = indentStep(lines);
   const out = document.createDocumentFragment();
-  highlightCode(text, parser.parse(text), painter, (piece, kind) => {
-    if (!kind) { out.append(document.createTextNode(piece)); return; }
+  let row = 0;
+  let column = 0;
+  const put = (piece: string, kind: string, indent: boolean): void => {
+    if (!piece) return;
+    if (!kind && !indent) { out.append(document.createTextNode(piece)); return; }
     const span = document.createElement('span');
-    span.className = kind;
+    span.className = indent ? (kind ? `indent ${kind}` : 'indent') : kind;
     span.textContent = piece;
     out.append(span);
-  }, () => out.append(document.createTextNode('\n')));
+  };
+  // A token is cut where it crosses the edge of an indentation level, so the
+  // marker is its own box however the grammar happened to group the line's
+  // leading whitespace (inside a multi-line string it is one token with the
+  // text, which is the one case where the two overlap).
+  const putText = (piece: string, kind: string): void => {
+    const groups = indentGroups(lines[row] ?? '', step);
+    let rest = piece;
+    while (rest) {
+      const inside = groups.find(([from, to]) => column >= from && column < to);
+      const next = groups.find(([from]) => from > column);
+      const edge = inside ? inside[1] : next ? next[0] : Infinity;
+      const take = Math.min(rest.length, edge - column);
+      put(rest.slice(0, take), kind, Boolean(inside));
+      column += take;
+      rest = rest.slice(take);
+    }
+  };
+  if (parser) {
+    highlightCode(text, parser.parse(text), painter, putText, () => {
+      out.append(document.createTextNode('\n'));
+      row += 1;
+      column = 0;
+    });
+  } else {
+    lines.forEach((line, index) => {
+      if (index) { out.append(document.createTextNode('\n')); row += 1; column = 0; }
+      putText(line, '');
+    });
+  }
   code.replaceChildren(out);
 }
 
@@ -80,7 +118,7 @@ export async function highlightCodeBlocks(root: ParentNode): Promise<void> {
     const text = code.textContent ?? '';
     const language = code.dataset.lang;
     const parser = language ? await grammarFor(language) : null;
-    if (!parser || (code.textContent ?? '') !== text) return;
+    if ((code.textContent ?? '') !== text) return;
     paint(code, text, parser);
   }));
 }

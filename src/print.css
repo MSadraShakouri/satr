@@ -247,6 +247,15 @@ pre code {
 .tok-property { color: #00bfbc; }
 .tok-tag { color: #e93147; }
 .tok-important { color: #ec7500; }
+/* and its indentation, marked as it is on screen */
+pre .indent { display: inline-block; position: relative; }
+pre .indent::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-inline-start: 0.5px solid rgba(0, 0, 0, 0.12);
+}
 
 /* Tables: centred, as in the reading view. A table splits at row boundaries
    so pages stay full; how many rows must travel together is decided by the
