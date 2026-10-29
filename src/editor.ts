@@ -1,5 +1,6 @@
 import { directionsField, majorityDirection, setCodeDocument } from './direction';
 import { codeLanguage, fileKind } from './fileKinds';
+import { indentGuides } from './indentGuides';
 import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, historyKeymap, toggleComment, undo, redo } from '@codemirror/commands';
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
@@ -1116,6 +1117,7 @@ export class SatrEditor {
       // the one that comes last writes the line's style, and the lettered
       // list's has the quote's step already in it.
       markdownLateSlot.of([persianListMarkerPlugin, mathSource]),
+      indentGuides(() => this.codeMode),
       searchFlashField, searchFlashDecorations,
       keyboardAttributes, closeBrackets(), pairs, Prec.high(delimiterInput),
       // Keep the caret clear of the on-screen keyboard and the toolbar when

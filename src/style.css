@@ -4568,3 +4568,19 @@ iframe.html-file {
 .cm-content.is-code-file {
   padding-inline: 16px;
 }
+
+/* The indentation markers (src/indentGuides.ts): one faint line at each level
+   of indentation inside code, in the same colour the reading view's nested
+   lists already use. */
+.cm-editor .cm-indent {
+  display: inline-block;
+  position: relative;
+}
+.cm-editor .cm-indent::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-inline-start: var(--indentation-guide-width, 0.5px) solid var(--indentation-guide-color);
+  pointer-events: none;
+}
