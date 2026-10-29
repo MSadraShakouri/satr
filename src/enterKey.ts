@@ -2,6 +2,7 @@ import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { isCodeDocument } from './direction';
+import { indentStep } from './indentGuides';
 import { inMath } from './mathSource';
 
 // What a new line starts with.
@@ -37,12 +38,31 @@ export const INDENT_STEP = 2;
  *  code here: that indentation is markup, it is what makes the block, and it
  *  is the one indentation a writer has to be able to leave. */
 export function codeLineAt(state: EditorState, pos: number): boolean {
-  if (isCodeDocument()) return true;
-  if (inMath(state, pos)) return true;
+  return isCodeDocument() || inMath(state, pos) || fencedAt(state, pos) !== null;
+}
+
+/** The fenced block this position is inside, if any. */
+function fencedAt(state: EditorState, pos: number) {
   for (let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
-    if (node.name === 'FencedCode') return true;
+    if (node.name === 'FencedCode') return node;
   }
-  return false;
+  return null;
+}
+
+/** How far one level is, here: what this code indents by, read off the code
+ *  itself — the file when the file is code, otherwise the block the caret
+ *  stands in. It is the number the indentation markers are drawn at, so a
+ *  block is walked out of in the steps it is drawn in. A file is sampled
+ *  rather than read whole; no file announces its indentation on line 2001. */
+const SAMPLE = 2000;
+function stepAt(state: EditorState, pos: number): number {
+  const { doc } = state;
+  if (isCodeDocument()) return indentStep(doc.iterLines(1, Math.min(doc.lines, SAMPLE) + 1));
+  const node = fencedAt(state, pos);
+  if (!node) return INDENT_STEP;
+  const first = doc.lineAt(node.from).number + 1;
+  const last = Math.min(doc.lineAt(node.to).number - 1, first + SAMPLE);
+  return last >= first ? indentStep(doc.iterLines(first, last + 1)) : INDENT_STEP;
 }
 
 /** Enter on a line of code: the next line begins exactly where this one does.
@@ -60,6 +80,24 @@ export function enterInCode(view: EditorView): boolean {
   // The caret is inside the run itself: that is an ordinary split, and the
   // text to its right keeps the indentation it was written with.
   if (range.head < line.from + lead.length) return false;
+  // Indentation and nothing else on the line, with the caret at the end of
+  // it: one level comes back where it stands, exactly as it does in prose.
+  // Repeating it instead would pile blank lines under a block with no way
+  // out of the nesting — Shift-Tab dedents now, but Backspace was the only
+  // way out when this was written, and neither is a thing Enter should need.
+  if (line.text && !line.text.trim() && range.head === line.to) {
+    const spaces = /[ ]*$/.exec(line.text)![0].length;
+    const step = line.text.endsWith('\t') ? 1 : Math.min(stepAt(state, range.head), spaces);
+    if (step) {
+      view.dispatch({
+        changes: { from: line.to - step, to: line.to, insert: '' },
+        selection: { anchor: line.to - step },
+        userEvent: 'input.enter',
+        scrollIntoView: true,
+      });
+      return true;
+    }
+  }
   // Space and nothing else before the caret: the line is left empty rather
   // than holding spaces nobody typed. A quote marker is not space — dropping
   // that would cut a quoted block in half, which is the bug this fixes.

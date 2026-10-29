@@ -20,8 +20,10 @@ const guide = Decoration.mark({ class: 'cm-indent' });
 /** The step this code indents by: the smallest indent anyone actually used,
  *  held between 2 and 8. A file written in fours gets a marker per four, one
  *  written in twos a marker per two — rather than a fixed guess that suits
- *  one of them and halves or doubles the other. */
-function indentStep(lines: string[]): number {
+ *  one of them and halves or doubles the other. Enter asks the same question
+ *  when it gives a level back (src/enterKey.ts), so a block is walked out of
+ *  in the steps its own markers are drawn in. */
+export function indentStep(lines: Iterable<string>): number {
   let step = 0;
   for (const text of lines) {
     const spaces = /^ +/.exec(text);

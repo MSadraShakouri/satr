@@ -83,6 +83,30 @@ test('nothing re-indents: an opening brace adds no level of its own', async ({ p
   await expect.poll(() => written(page)).toBe('function a() {\n‸\n}\n');
 });
 
+test('a code line with nothing but indentation gives a level back', async ({ page }) => {
+  const block = '```python\nfor j in range(5):\n  for k in range(4):\n    pass\n```\n';
+  await boot(page, 'A.md', block);
+  await expect(page.locator('.cm-lp-code-line').first()).toBeVisible();
+  await caretAfter(page, '    pass');
+  await page.keyboard.press('Enter'); // the same level, to carry on writing
+  await expect.poll(() => written(page)).toBe('```python\nfor j in range(5):\n  for k in range(4):\n    pass\n    ‸\n```\n');
+  await page.keyboard.press('Enter'); // out of the inner loop — in the block's own step, two
+  await expect.poll(() => written(page)).toBe('```python\nfor j in range(5):\n  for k in range(4):\n    pass\n  ‸\n```\n');
+  await page.keyboard.press('Enter'); // out of the outer one
+  await expect.poll(() => written(page)).toBe('```python\nfor j in range(5):\n  for k in range(4):\n    pass\n‸\n```\n');
+  await page.keyboard.press('Enter'); // nothing left to give back: an ordinary line
+  await expect.poll(() => written(page)).toBe('```python\nfor j in range(5):\n  for k in range(4):\n    pass\n\n‸\n```\n');
+});
+
+test('a file written in fours is walked out of in fours', async ({ page }) => {
+  await boot(page, 'a.py', 'def f():\n    if x:\n        pass\n');
+  await expect(page.locator('.cm-content')).toHaveClass(/is-code-file/);
+  await caretAfter(page, '        pass');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('def f():\n    if x:\n        pass\n    ‸\n');
+});
+
 test('Shift-Tab steps the caret’s own line back, with nothing selected', async ({ page }) => {
   await boot(page, 'a.py', 'def f():\n    if x:\n        pass\n');
   await expect(page.locator('.cm-content')).toHaveClass(/is-code-file/);
