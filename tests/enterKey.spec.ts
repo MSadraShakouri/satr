@@ -117,6 +117,30 @@ test('an empty indented line gives a step back instead of repeating it', async (
   await expect.poll(() => written(page)).toBe('متن\n\n  دو\n\n‸\n');
 });
 
+test('an empty sub-item leaves its list one level a press', async ({ page }) => {
+  await boot(page, 'A.md', '- یک\n  - دو\n');
+  await caretAfter(page, '  - دو');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('- یک\n  - دو\n  - ‸\n');
+  await page.keyboard.press('Enter'); // out of the sub-list, into the one above it
+  await expect.poll(() => written(page)).toBe('- یک\n  - دو\n- ‸\n');
+  await page.keyboard.press('Enter'); // and the list itself ends
+  await expect.poll(() => written(page)).toBe('- یک\n  - دو\n‸\n');
+});
+
+test('a sub-item inside a quote walks all the way out, a level a press', async ({ page }) => {
+  await boot(page, 'A.md', '> - یک\n>   - دو\n');
+  await caretAfter(page, '>   - دو');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('> - یک\n>   - دو\n>   - ‸\n');
+  await page.keyboard.press('Enter'); // the indent
+  await expect.poll(() => written(page)).toBe('> - یک\n>   - دو\n> - ‸\n');
+  await page.keyboard.press('Enter'); // the marker, the quote kept
+  await expect.poll(() => written(page)).toBe('> - یک\n>   - دو\n> ‸\n');
+  await page.keyboard.press('Enter'); // the quote
+  await expect.poll(() => written(page)).toBe('> - یک\n>   - دو\n\n‸\n');
+});
+
 test('a list is untouched: the item continues, the empty one ends', async ({ page }) => {
   await boot(page, 'A.md', '- یک\n');
   await caretAfter(page, 'یک');

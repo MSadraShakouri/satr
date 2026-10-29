@@ -19,7 +19,7 @@ import { Highlight, highlightTag } from './highlightSyntax';
 import { languages } from '@codemirror/language-data';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
-import { enterEndsPrefixLine, enterInCode } from './enterKey';
+import { INDENT_STEP, enterEndsPrefixLine, enterInCode } from './enterKey';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
@@ -507,6 +507,17 @@ function continueOnEnter(view: EditorView): boolean {
     // The item goes; the quote it was written in stays, as the reading view
     // and Obsidian both keep it. `> - ` comes back to `> `, not to nothing.
     const quoted = /^[ \t]*(?:>[ \t]*)*>[ \t]?/.exec(indent)?.[0] ?? '';
+    // A sub-item leaves its own list before it ends the list it hangs under:
+    // one level a press, keeping the marker, so the outer list carries on
+    // where it left off (Obsidian does the same). The whole run then
+    // renumbers around the item that moved, as any other edit would.
+    const nested = indent.slice(quoted.length);
+    const step = nested.endsWith('\t') ? 1 : Math.min(INDENT_STEP, /[ ]*$/.exec(nested)![0].length);
+    if (step) {
+      const at = line.from + indent.length - step;
+      view.dispatch({ changes: { from: at, to: at + step, insert: '' }, selection: { anchor: selection.head - step }, userEvent: 'input.enter' });
+      return true;
+    }
     const start = line.from + quoted.length;
     view.dispatch({ changes: { from: start, to: selection.head, insert: '' }, selection: { anchor: start }, userEvent: 'input.enter' });
     return true;

@@ -27,8 +27,10 @@ const LEAD_IN_CODE = /^[ \t]*/;
 /** A line that is its own opening and nothing else. */
 const LEAD_ONLY = /^[ \t]*(?:>[ \t]*)*$/;
 /** One step of indentation: what Tab inserts (indentMore, src/editor.ts), so
- *  that Enter on an empty indented line undoes exactly one press of it. */
-const STEP = 2;
+ *  that Enter on a line with nothing but indentation undoes exactly one press
+ *  of it — and so that an empty sub-item leaves its list one level a press
+ *  (continueOnEnter, src/editor.ts). */
+export const INDENT_STEP = 2;
 
 /** Is this position code — any line of a code file, a fenced block in a note,
  *  or a display formula? An indented (four-space) block is deliberately not
@@ -107,7 +109,7 @@ export function enterEndsPrefixLine(view: EditorView): boolean {
   // nothing to step out of, only a margin to give back, and the caret walking
   // left on its own line is how Shift-Tab reads too.
   const spaces = /[ ]*$/.exec(text)![0].length;
-  const unit = text.endsWith('\t') ? 1 : Math.min(STEP, spaces);
+  const unit = text.endsWith('\t') ? 1 : Math.min(INDENT_STEP, spaces);
   if (!unit) return false;
   view.dispatch({
     changes: { from: line.to - unit, to: line.to, insert: '' },
