@@ -594,10 +594,17 @@ body {
   padding-inline-start: 0;
 }
 .preview-pane :where(ul, ol) > li {
-  /* The strip a marker hangs in, before the text: the platform's own lists
-     put `1.` and `-` there, 3ch in from the list's edge, and a marker the
-     reading view paints (src/markdown.ts) goes to the same place. */
+  /* Two numbers, not one. --list-marker-gutter is how far the item is
+     indented; --list-marker-strip is the room its marker hangs in before its
+     own text. They are the same 3ch at the top level, and they part company
+     below it: a nested item is indented by a whole level (2.25em) while its
+     bullet still hangs 3ch before its text, which is where the editor draws
+     it (.cm-lp-bullet, --lp-strip) and where this view's own checkbox hangs
+     (--list-gutter). One variable did both jobs before, so a nested bullet
+     sat 9px further from its text here than in the editor — and the deeper
+     the list, the more obviously the two views disagreed. */
   --list-marker-gutter: 3ch;
+  --list-marker-strip: 3ch;
   margin-inline-start: var(--list-marker-gutter);
   padding-block: var(--list-spacing);
 }
@@ -615,9 +622,12 @@ body {
    strip: `۱.` to `۱۰.` is 3ch as it has always been. */
 .preview-pane .persian-ordered > li {
   --list-marker-gutter: max(3ch, calc(var(--list-marker-width, 0em) + 0.4em));
+  --list-marker-strip: max(3ch, calc(var(--list-marker-width, 0em) + 0.4em));
 }
 .preview-pane :where(ul, ol) .persian-ordered > li {
   --list-marker-gutter: max(var(--list-indent), calc(var(--list-marker-width, 0em) + 0.4em));
+  /* the strip does not grow with the level, only with the markers in it */
+  --list-marker-strip: max(3ch, calc(var(--list-marker-width, 0em) + 0.4em));
 }
 .preview-pane :where(ul, ol) :where(ul, ol) {
   margin-block: 0;
@@ -653,7 +663,7 @@ body {
   /* against the text, then back out into the strip: the dot's own end lands
      0.9em from the list's edge, which puts its centre at 0.75em */
   inset-inline-end: 100%;
-  margin-inline-end: calc(var(--list-marker-gutter) - 0.9em);
+  margin-inline-end: calc(var(--list-marker-strip) - 0.9em);
   width: 0.3em; /* --list-bullet-size */
   height: 0.3em;
   border-radius: 50%;

@@ -329,6 +329,58 @@ test('the bullet stands the same distance from the text in both views', async ({
   expect(reading.onATask).toBe('none');
 });
 
+/** Five levels of bullets, a nested task, a quoted list and a Persian list:
+ *  the shapes the markers and their lines have to survive. */
+const DEEP = `- one
+  - two
+    - three
+      - four
+        - five and a row long enough that it has to wrap onto another row of the pane
+
+- [ ] task
+  - [x] sub task
+`;
+
+test('a bullet hangs in the same strip at every level, in both views', async ({ page }) => {
+  // Reported: "the alignment part I feel is a bit misaligned... especially
+  // for unnumbered lists". The first bullet agreed between the views; the
+  // nested ones did not. One variable was doing two jobs in the reading
+  // view — how far the item is indented and how much room its marker hangs
+  // in — so below the top level the dot sat 9px further from its own text
+  // than the editor's, and further still than this view's own checkbox.
+  await boot(page, DEEP);
+  const editor = await page.evaluate(() => (Array.from(document.querySelectorAll('#app .cm-content .cm-lp-bullet')) as HTMLElement[])
+    .map((bullet) => {
+      const dot = getComputedStyle(bullet, '::after');
+      const into = parseFloat(dot.insetInlineStart) + parseFloat(dot.marginInlineStart) + parseFloat(dot.width) / 2;
+      return Math.round(bullet.getBoundingClientRect().left + into);
+    }));
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#preview-pane ul').first()).toBeVisible();
+  await page.waitForTimeout(400);
+  const reading = await page.evaluate(() => {
+    const dots = (Array.from(document.querySelectorAll('#preview-pane li:not(:has(input[type="checkbox"]))')) as HTMLElement[])
+      .map((item) => {
+        const dot = getComputedStyle(item, '::before');
+        return Math.round(item.getBoundingClientRect().left - parseFloat(dot.marginInlineEnd) - parseFloat(dot.width) / 2);
+      });
+    const boxes = (Array.from(document.querySelectorAll('#preview-pane li input[type="checkbox"]')) as HTMLElement[])
+      .map((box) => Math.round(box.getBoundingClientRect().left + box.getBoundingClientRect().width / 2));
+    return { dots, boxes };
+  });
+  expect(editor, 'five bullets, one per level').toHaveLength(5);
+  expect(reading.boxes, 'both task boxes').toHaveLength(2);
+  for (const [level, column] of editor.entries()) {
+    expect(reading.dots[level], `level ${level + 1}: the dot is at ${column} in source mode, ${reading.dots[level]} in the reading view`)
+      .toBeGreaterThanOrEqual(column - 1);
+    expect(reading.dots[level]).toBeLessThanOrEqual(column + 1);
+  }
+  // one strip, whatever hangs in it: a nested checkbox stands in the same
+  // column its own view would have put a nested bullet in
+  const step = editor[1] - editor[0];
+  expect(reading.boxes[1] - reading.boxes[0], 'a nested task box steps by one level, like the bullets').toBeCloseTo(step, 0);
+});
+
 /** A checklist's box stands in the same column in both views, at any text
  *  size. Reported after 0.15.0: "the checkbox moves a bit to the side when
  *  switching from source to preview... in the APK it's a lot more visible".
