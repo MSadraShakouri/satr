@@ -4176,6 +4176,13 @@ textarea,
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
   cursor: pointer;
+  /* The vertical drag belongs to the counter, which scrubs the document
+     with it; the browser must not take it for a scroll. */
+  touch-action: none;
+}
+.pdf-counter.is-scrubbing {
+  background: rgb(0 0 0 / 78%);
+  cursor: grabbing;
 }
 /* A file that says .pdf and is not one, or one pdf.js will not read. */
 .pdf-unreadable {

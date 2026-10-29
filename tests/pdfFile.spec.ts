@@ -115,6 +115,34 @@ test('a page is reached by its number', async ({ page }) => {
   expect(Math.abs((fifth?.y ?? 0) - (pane?.y ?? 0))).toBeLessThan(4);
 });
 
+test('the counter scrubs the document when it is dragged', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await expect(page.locator('.pdf-counter')).toHaveText('1 / 6');
+  // a finger on the counter, dragged a third of the pane down: a third of
+  // the way into the document, and the chip comes with the finger
+  const moved = await page.locator('.pdf-counter').evaluate((chip: HTMLElement) => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const box = chip.getBoundingClientRect();
+    const fire = (type: string, y: number) => chip.dispatchEvent(new PointerEvent(type, {
+      pointerId: 7, pointerType: 'touch', clientX: box.left + 10, clientY: y, bubbles: true, cancelable: true,
+    }));
+    fire('pointerdown', box.top);
+    fire('pointermove', box.top + pane.clientHeight / 3);
+    const carried = chip.style.transform;
+    fire('pointerup', box.top + pane.clientHeight / 3);
+    return { carried, top: pane.scrollTop, reach: pane.scrollHeight - pane.clientHeight };
+  });
+  expect(moved.carried).toContain('translateY');
+  expect(moved.top).toBeGreaterThan(moved.reach * 0.25);
+  expect(moved.top).toBeLessThan(moved.reach * 0.42);
+  // a third of the way down six pages puts the second one at the top of the
+  // screen, and the counter names the page the reader is looking at
+  await expect(page.locator('.pdf-counter')).toHaveText('2 / 6');
+  // and the chip is back where it lives, not left where the finger stopped
+  expect(await page.locator('.pdf-counter').evaluate((c: HTMLElement) => c.style.transform)).toBe('');
+});
+
 test('the last page is named as the last page', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
