@@ -19,7 +19,12 @@ import { fileKind } from './fileKinds';
 import { shortenPath, siblingList } from './pathShort';
 
 /** How much of the list is left showing under a name being typed. */
-const RENAME_MARGIN = 8;
+/** Clear of the keyboard, and not pressed against it: the row being renamed
+ *  is lifted this far plus two rows of its own height, the way the editor
+ *  keeps 24px and three lines under the line being written rather than
+ *  letting it sit on the keys. */
+const RENAME_MARGIN = 24;
+const RENAME_ROWS_CLEAR = 2;
 
 export interface LeftSidebarDeps {
   currentPath(): string;
@@ -368,7 +373,9 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const keepVisible = (): void => {
       if (!scroller) { row.scrollIntoView({ block: 'nearest' }); return; }
       const viewport = window.visualViewport;
-      const edge = (viewport ? viewport.height + viewport.offsetTop : window.innerHeight) - RENAME_MARGIN;
+      const row_ = row.getBoundingClientRect().height;
+      const lift = RENAME_MARGIN + Math.round(row_ * RENAME_ROWS_CLEAR);
+      const edge = (viewport ? viewport.height + viewport.offsetTop : window.innerHeight) - lift;
       // Room under the last row to rise into — as much of the list as the
       // keyboard covers. Without it the scroll runs out while the row is
       // still behind the keys, which is the whole of the bug when the

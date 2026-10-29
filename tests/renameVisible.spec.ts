@@ -59,6 +59,15 @@ const hidden = (page: Page, path: string): Promise<number> => page.evaluate((tar
   return Math.round(row.getBoundingClientRect().bottom - edge);
 }, path);
 
+/** How many of its own heights the row clears the keyboard's edge by. */
+const clearance = (page: Page, path: string): Promise<number> => page.evaluate((target) => {
+  const row = document.querySelector<HTMLElement>(`#file-panel .tree-item-self[data-path="${target}"]`)!;
+  const viewport = window.visualViewport;
+  const edge = viewport ? viewport.height + viewport.offsetTop : window.innerHeight;
+  const box = row.getBoundingClientRect();
+  return Math.round(((edge - box.bottom) / box.height) * 100) / 100;
+}, path);
+
 test('the last row in the list is visible while its name is being typed', async ({ page }) => {
   await boot(page);
   await renameFromMenu(page, LAST);
@@ -69,6 +78,9 @@ test('the last row in the list is visible while its name is being typed', async 
   // case the browser does not handle for us, so it is the case tested.
   await keyboardUp(page, 380);
   await expect.poll(() => hidden(page, LAST)).toBeLessThanOrEqual(0);
+  // and not pressed against the keys either: two rows of air under it, the
+  // way the editor keeps room under the line being written
+  await expect.poll(() => clearance(page, LAST)).toBeGreaterThanOrEqual(2);
   // The room under the list is only there while the rename is.
   await page.keyboard.press('Escape');
   await expect(page.locator(`#file-panel .tree-item-self[data-path="${LAST}"]`)).not.toHaveClass(/is-being-renamed/);
