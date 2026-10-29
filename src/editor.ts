@@ -19,7 +19,7 @@ import { Highlight, highlightTag } from './highlightSyntax';
 import { languages } from '@codemirror/language-data';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
-import { enterInCode } from './enterKey';
+import { enterEndsPrefixLine, enterInCode } from './enterKey';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
 import { foldAllHeadings, foldedHeadingLines, headingFolding, restoreHeadingFolds, toggleHeadingFold, unfoldAllHeadings } from './headingFold';
@@ -538,7 +538,8 @@ function continueOnEnter(view: EditorView): boolean {
 // button and the key can never drift apart.
 function enterAtCaret(view: EditorView): boolean {
   return enterDisplayMath(view) || enterCodeFence(view) || enterInCode(view)
-    || continueOnEnter(view) || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+    || continueOnEnter(view) || enterEndsPrefixLine(view)
+    || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
 /** A space a keyboard or another app may send in place of the one we type: a
@@ -1153,6 +1154,7 @@ export class SatrEditor {
         { key: 'Enter', run: enterCodeFence },
         { key: 'Enter', run: enterInCode }, // code: the line's own indentation
         { key: 'Enter', run: continueOnEnter },
+        { key: 'Enter', run: enterEndsPrefixLine }, // a line that is only its own opening
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
         { key: 'Tab', run: indentMore, shift: outdentLess },
         { key: 'Backspace', run: deleteDelimiterPair },

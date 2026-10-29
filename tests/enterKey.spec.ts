@@ -2,13 +2,17 @@ import { test, expect, type Page } from '@playwright/test';
 
 // What a new line starts with.
 //
-// A line of code repeats exactly (src/enterKey.ts) — a tab stays a tab, four
-// spaces stay four, and a fenced block written inside a quote keeps its `> `
-// instead of breaking in half.
+// Two rules (src/enterKey.ts). A line of code repeats exactly — a tab stays a
+// tab, four spaces stay four, and a fenced block written inside a quote keeps
+// its `> ` instead of breaking in half. A line of prose that holds nothing but
+// its own opening gives one level of it back instead of repeating it, so a
+// quote can be left and an indent can be escaped without reaching for
+// Backspace.
 //
 // The reference is Obsidian 1.14.4's own Enter, read out of app.js
-// (newlineAndIndentOnly): every expectation below is what it produces for the
-// same keystrokes.
+// (newlineAndIndentContinueMarkdownList / newlineAndIndentOnly): every
+// expectation below is what it produces for the same keystrokes, except the
+// indent step, which is Satr's own Tab (two spaces) rather than its four.
 
 async function boot(page: Page, name: string, body: string): Promise<void> {
   await page.addInitScript(([file, text]) => {
@@ -77,4 +81,47 @@ test('nothing re-indents: an opening brace adds no level of its own', async ({ p
   await caretAfter(page, 'function a() {');
   await page.keyboard.press('Enter');
   await expect.poll(() => written(page)).toBe('function a() {\n‸\n}\n');
+});
+
+// ---- prose: a line that is only its own opening gives one level back ----
+
+test('an empty quote line ends the quote, with nothing left behind', async ({ page }) => {
+  await boot(page, 'A.md', '> سلام\n');
+  await caretAfter(page, 'سلام');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('> سلام\n> ‸\n');
+  await page.keyboard.press('Enter');
+  // out of the quote, and no bare `>` line where the writer was standing
+  await expect.poll(() => written(page)).toBe('> سلام\n\n‸\n');
+});
+
+test('a nested quote comes out one level a press', async ({ page }) => {
+  await boot(page, 'A.md', '>> سلام\n');
+  await caretAfter(page, 'سلام');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('>> سلام\n>> ‸\n');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('>> سلام\n>\n>‸\n');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('>> سلام\n>\n\n‸\n');
+});
+
+test('an empty indented line gives a step back instead of repeating it', async ({ page }) => {
+  await boot(page, 'A.md', 'متن\n\n  دو\n');
+  await caretAfter(page, '  دو');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('متن\n\n  دو\n  ‸\n');
+  await page.keyboard.press('Enter'); // the step Tab inserts, given back
+  await expect.poll(() => written(page)).toBe('متن\n\n  دو\n‸\n');
+  await page.keyboard.press('Enter'); // nothing left to give: an ordinary line
+  await expect.poll(() => written(page)).toBe('متن\n\n  دو\n\n‸\n');
+});
+
+test('a list is untouched: the item continues, the empty one ends', async ({ page }) => {
+  await boot(page, 'A.md', '- یک\n');
+  await caretAfter(page, 'یک');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('- یک\n- ‸\n');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => written(page)).toBe('- یک\n‸\n');
 });

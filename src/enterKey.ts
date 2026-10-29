@@ -6,13 +6,17 @@ import { inMath } from './mathSource';
 
 // What a new line starts with.
 //
-// A line of code is repeated exactly: its indentation is the writer's own
-// text, so a tab stays a tab and four spaces stay four, and a fenced block
-// written inside a quote keeps the quote it is written in.
+// Two rules, and between them they answer every line in the app. A line of
+// code is repeated exactly: its indentation is the writer's own text, so a tab
+// stays a tab and four spaces stay four. A line of prose repeats its markup —
+// the quote it is written inside, the item it belongs to — unless the line
+// holds nothing but that markup, and then one level of it comes off instead.
 //
-// Measured against Obsidian 1.14.4, which routes Enter on the same question —
-// is this line code? — and answers it with newlineAndIndentOnly in app.js:
-// copy the line's leading run, and consult no grammar.
+// Measured against Obsidian 1.14.4 (newlineAndIndentContinueMarkdownList and
+// newlineAndIndentOnly in app.js, which route on the same question: is this
+// line code?). The two rules below are where Satr used to differ from it —
+// a fenced block inside a quote lost its `> ` and broke in half, a tab became
+// two spaces, and indentation could only be escaped with Backspace.
 
 /** The run a new line repeats in a note: the line's indentation and the quote
  *  markers it is written inside. */
@@ -20,6 +24,11 @@ const LEAD_IN_NOTE = /^[ \t]*(?:>[ \t]*)*/;
 /** In a code file there is no markup. A line opening with `>` is the writer's
  *  own code — a shell redirect, a doctest prompt — so only space is repeated. */
 const LEAD_IN_CODE = /^[ \t]*/;
+/** A line that is its own opening and nothing else. */
+const LEAD_ONLY = /^[ \t]*(?:>[ \t]*)*$/;
+/** One step of indentation: what Tab inserts (indentMore, src/editor.ts), so
+ *  that Enter on an empty indented line undoes exactly one press of it. */
+const STEP = 2;
 
 /** Is this position code — any line of a code file, a fenced block in a note,
  *  or a display formula? An indented (four-space) block is deliberately not
@@ -57,6 +66,52 @@ export function enterInCode(view: EditorView): boolean {
   view.dispatch({
     changes: { from, to: range.head, insert: `\n${lead}` },
     selection: { anchor: from + 1 + lead.length },
+    userEvent: 'input.enter',
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+/** Enter at the end of a line that holds nothing but its own opening — a `>`,
+ *  or indentation. Repeating it is the one thing the writer cannot have meant:
+ *  the line they are on is already empty. One level comes off instead,
+ *  innermost first, one press at a time — the same answer an empty list item
+ *  gets (continueOnEnter, src/editor.ts), now given to the other two kinds of
+ *  opening a line can have. */
+export function enterEndsPrefixLine(view: EditorView): boolean {
+  const { state } = view;
+  const range = state.selection.main;
+  if (state.readOnly || !range.empty || state.selection.ranges.length !== 1) return false;
+  if (codeLineAt(state, range.head)) return false;
+  const line = state.doc.lineAt(range.head);
+  if (range.head !== line.to || !line.text || !LEAD_ONLY.test(line.text)) return false;
+  const { text } = line;
+  // A quote: the innermost `>` goes, and the line break still happens. A
+  // blockquote ends where a line outside it begins, so a marker merely deleted
+  // would leave the writer on a line the quote swallows again as soon as they
+  // type (CommonMark's lazy continuation) — they would have left the quote on
+  // screen and not in the file.
+  const quote = /(>[ \t]?)$/.exec(text);
+  if (quote) {
+    const keep = text.slice(0, text.length - quote[1].length);
+    const at = line.from + keep.length;
+    view.dispatch({
+      changes: { from: at, to: line.to, insert: `\n${keep}` },
+      selection: { anchor: at + 1 + keep.length },
+      userEvent: 'input.enter',
+      scrollIntoView: true,
+    });
+    return true;
+  }
+  // Indentation: one step off, where it stands. No new line — there is
+  // nothing to step out of, only a margin to give back, and the caret walking
+  // left on its own line is how Shift-Tab reads too.
+  const spaces = /[ ]*$/.exec(text)![0].length;
+  const unit = text.endsWith('\t') ? 1 : Math.min(STEP, spaces);
+  if (!unit) return false;
+  view.dispatch({
+    changes: { from: line.to - unit, to: line.to, insert: '' },
+    selection: { anchor: line.to - unit },
     userEvent: 'input.enter',
     scrollIntoView: true,
   });
