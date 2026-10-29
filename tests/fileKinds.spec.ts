@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 
 // The file list says what every file is, and dims only what Satr has nothing
 // to open with yet. Satr edits text of any extension, so a .json or a .py
-// reads at full strength; a PDF does not — until it does.
+// reads at full strength, and a PDF is read page by page — what is left
+// faint is an archive, bytes, the things with no view at all.
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAQklEQVR42u3OMQEAAAgDoC251a3gLWQgnbvKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4GlxsAAGnJP8tAAAAAElFTkSuQmCC';
 
@@ -34,6 +35,6 @@ test('every file says which kind it is, and only the ones with no view are faint
   expect(rows['page.html']).toEqual({ dim: false, badge: 'html' });
   expect(rows['photo.png']).toEqual({ dim: false, badge: 'png' });
   // nothing opens these two yet, and the list says so
-  expect(rows['paper.pdf']).toEqual({ dim: true, badge: 'pdf' });
+  expect(rows['paper.pdf']).toEqual({ dim: false, badge: 'pdf' });
   expect(rows['archive.zip']).toEqual({ dim: true, badge: 'zip' });
 });
