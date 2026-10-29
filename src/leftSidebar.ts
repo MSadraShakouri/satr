@@ -373,9 +373,16 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     const keepVisible = (): void => {
       if (!scroller) { row.scrollIntoView({ block: 'nearest' }); return; }
       const viewport = window.visualViewport;
-      const row_ = row.getBoundingClientRect().height;
-      const lift = RENAME_MARGIN + Math.round(row_ * RENAME_ROWS_CLEAR);
-      const edge = (viewport ? viewport.height + viewport.offsetTop : window.innerHeight) - lift;
+      const lift = RENAME_MARGIN + Math.round(row.getBoundingClientRect().height * RENAME_ROWS_CLEAR);
+      // Two things cover the bottom of this list, not one. The keyboard is
+      // the obvious one; the other is the panel's own row of buttons — new
+      // note, new folder — which floats over the list rather than sitting
+      // under it, so a row scrolled to the list's own bottom edge is behind
+      // them. The edge is whichever of the two is higher up the screen.
+      const keys = viewport ? viewport.height + viewport.offsetTop : window.innerHeight;
+      const buttons = scroller.parentElement?.querySelector('.nav-buttons-container');
+      const floating = buttons ? buttons.getBoundingClientRect().top : Number.POSITIVE_INFINITY;
+      const edge = Math.min(keys, floating) - lift;
       // Room under the last row to rise into — as much of the list as the
       // keyboard covers. Without it the scroll runs out while the row is
       // still behind the keys, which is the whole of the bug when the

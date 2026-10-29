@@ -96,3 +96,28 @@ test('the name itself is what gets the caret, and Enter still moves the file', a
   await expect(page.locator('#file-panel .tree-item-self[data-path="Notes/last one.md"]')).toHaveCount(1);
   await expect(page.locator(`#file-panel .tree-item-self[data-path="${LAST}"]`)).toHaveCount(0);
 });
+
+// ...and not behind the panel's own bottom bar either.
+//
+// The keys in the test above are served the way Chrome serves them, as an
+// overlay: the visual viewport shrinks and the layout viewport does not. The
+// app is also shipped inside a WebView whose default is the other way round —
+// the layout itself shrinks for the keyboard. In that mode the panel's bar of
+// buttons, new note and new folder, rides up with it and floats over the
+// bottom of the list, and a row lifted only clear of the keys is still
+// underneath those buttons.
+test('the row clears the panel\u2019s own buttons when the layout shrinks for the keys', async ({ page }) => {
+  await boot(page);
+  await renameFromMenu(page, LAST);
+  // the layout viewport itself shrinks, the way the WebView serves it
+  await page.setViewportSize({ width: 390, height: 420 });
+  await page.waitForTimeout(400);
+  const gap = await page.evaluate(() => {
+    const row = document.querySelector<HTMLElement>('#file-panel .tree-item-self.is-being-renamed')!;
+    const bar = document.querySelector<HTMLElement>('#file-panel .nav-buttons-container')!;
+    return Math.round(bar.getBoundingClientRect().top - row.getBoundingClientRect().bottom);
+  });
+  expect(gap).toBeGreaterThan(0);
+  // and the name is still the thing being typed into
+  await expect(page.locator('#file-panel .tree-item-self.is-being-renamed .tree-item-inner')).toBeFocused();
+});
