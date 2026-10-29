@@ -685,12 +685,19 @@ function indentMore(view: EditorView): boolean {
 
 function outdentLess(view: EditorView): boolean {
   const selection = view.state.selection.main;
-  if (selection.empty) return false;
-  const changes = selectedLines(view).flatMap((line) => {
-    const spaces = /^ {1,2}/.exec(line.text);
-    return spaces ? [{ from: line.from, to: line.from + spaces[0].length, insert: '' }] : [];
+  // Nothing selected: the line the caret is on steps back, the way Shift-Tab
+  // reads in any editor. It used to do nothing at all there, which left
+  // Backspace as the only way out of an indent — and in a code file, where
+  // the indentation is the structure, that is the one thing a writer needs.
+  const lines = selection.empty ? [view.state.doc.lineAt(selection.head)] : selectedLines(view);
+  const changes = lines.flatMap((line) => {
+    const lead = /^(?:\t| {1,2})/.exec(line.text);
+    return lead ? [{ from: line.from, to: line.from + lead[0].length, insert: '' }] : [];
   });
   if (changes.length) view.dispatch({ changes });
+  // The key is answered either way: Tab is held by the editor (indentMore
+  // above always answers), so Shift-Tab cannot be the one that throws the
+  // focus out of the note.
   return true;
 }
 

@@ -83,6 +83,16 @@ test('nothing re-indents: an opening brace adds no level of its own', async ({ p
   await expect.poll(() => written(page)).toBe('function a() {\n‸\n}\n');
 });
 
+test('Shift-Tab steps the caret’s own line back, with nothing selected', async ({ page }) => {
+  await boot(page, 'a.py', 'def f():\n    if x:\n        pass\n');
+  await expect(page.locator('.cm-content')).toHaveClass(/is-code-file/);
+  await caretAfter(page, '        pass');
+  await page.keyboard.press('Shift+Tab');
+  await expect.poll(() => written(page)).toBe('def f():\n    if x:\n      pass‸\n');
+  await page.keyboard.press('Shift+Tab');
+  await expect.poll(() => written(page)).toBe('def f():\n    if x:\n    pass‸\n');
+});
+
 // ---- prose: a line that is only its own opening gives one level back ----
 
 test('an empty quote line ends the quote, with nothing left behind', async ({ page }) => {
