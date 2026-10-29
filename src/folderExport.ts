@@ -24,6 +24,7 @@ import { openMenu, type MenuEntry } from './menu';
 import type { NoticeHandle } from './notice';
 import type { PrintOptions } from './printOptions';
 import { exportFolder, type ExportDocument } from './exportPdf';
+import { asMarkdown } from './csv';
 import { backend, basename, dirname, isNote, stem, walkNotes, type Entry } from './vault';
 
 export interface FolderExportState {
@@ -473,9 +474,9 @@ export function createFolderExport(root: HTMLElement, deps: FolderExportDeps): F
     try {
       const documents: ExportDocument[] = [];
       for (const path of included) {
-        const markdown = await backend.read(path);
-        if (markdown === null) continue;
-        documents.push({ name: fileName(path), markdown, path, options: deps.noteOptions(path) });
+        const text = await backend.read(path);
+        if (text === null) continue;
+        documents.push({ name: fileName(path), markdown: asMarkdown(path, text), path, options: deps.noteOptions(path) });
       }
       if (!documents.length) throw new Error('nothing to export');
       await exportFolder(name, documents, {

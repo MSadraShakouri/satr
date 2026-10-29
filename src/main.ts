@@ -1,3 +1,4 @@
+import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
@@ -507,7 +508,7 @@ function renderPreview(): void {
     previewReady = showHtmlFile(preview, editor.getValue(), page, () => filePath === page);
     return;
   }
-  preview.innerHTML = `${title}${renderMarkdown(editor.getValue())}`;
+  preview.innerHTML = `${title}${renderMarkdown(asMarkdown(filePath, editor.getValue()))}`;
   // A task is ticked where it is read, not only where it is written. The
   // parser hands over a box that cannot be touched; here, and only here, it
   // is live — a card in the tab switcher and an exported page keep theirs
@@ -2408,7 +2409,7 @@ function showTabs(): void {
         }
         const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
         const card = isHtmlFile(path) ? `<pre class="card-source">${escapeText(text.slice(0, 1500))}</pre>`
-          : stripLiveBlocks(renderMarkdown(text.slice(0, 1500)));
+          : stripLiveBlocks(renderMarkdown(asMarkdown(path, text.slice(0, 1500))));
         return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${card}`;
       },
       select: (i) => void switchTab(i),
@@ -2497,7 +2498,7 @@ const hasNote = (): boolean => !document.body.classList.contains('is-empty-tab')
 async function exportCurrentPdf(): Promise<void> {
   const path = filePath;
   const name = displayNameForPath(path) || 'Note';
-  const markdown = editor.getValue();
+  const markdown = asMarkdown(path, editor.getValue());
   const options = loadPrintOptions(path);
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
@@ -2513,7 +2514,8 @@ async function exportCurrentPdf(): Promise<void> {
  *  the ≡ menu exports the open note. No tab opens; nothing on screen changes
  *  but the notice. */
 async function exportFilePdf(path: string): Promise<void> {
-  const markdown = await backend.read(path);
+  const text = await backend.read(path);
+  const markdown = text === null ? null : asMarkdown(path, text);
   if (markdown === null) {
     showNotice(`“${fileName(path)}” could not be read.`, 5000);
     return;
