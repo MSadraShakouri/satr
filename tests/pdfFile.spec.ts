@@ -278,3 +278,17 @@ test('pdf.js can reach the decoders and tables it fetches separately', async ({ 
   });
   expect(reachable).toEqual([200, 200, 200, 200]);
 });
+
+test('a page is drawn at the screen’s own pixels, inside the budget', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await expect(page.locator('.pdf-raster').first()).toBeVisible();
+  const drawn = await page.locator('.pdf-raster').first().evaluate((canvas: HTMLCanvasElement) => ({
+    ratio: canvas.width / parseFloat(canvas.style.width),
+    pixels: canvas.width * canvas.height,
+    screen: window.devicePixelRatio,
+  }));
+  // the screen's ratio, not a cap of our own, and within the page budget
+  expect(drawn.ratio).toBeCloseTo(drawn.screen, 1);
+  expect(drawn.pixels).toBeLessThanOrEqual(16_777_216);
+});

@@ -4155,7 +4155,7 @@ textarea,
 }
 /* The page itself: white under the ink whatever the theme is, because that
    is what the document says. Its box is the page's size at this zoom and it
-   holds the drawn band, which is never bigger than a screen or two. */
+   holds that page's own picture, drawn whole. */
 .pdf-page {
   position: relative;
   overflow: hidden;
@@ -4164,7 +4164,7 @@ textarea,
 }
 .pdf-raster {
   position: absolute;
-  inset-inline-start: 0;
+  inset: 0;
   display: block;
 }
 /* Which page is being read, and the way to another one. It rides at the

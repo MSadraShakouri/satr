@@ -64,11 +64,18 @@ const DOUBLE_TAP_SLOP = 24;
 /** Between two pages, in CSS pixels at any zoom — a gap that grew with the
  *  zoom would push the pages apart as they were read. */
 const GAP = 8;
-/** At most two device pixels per CSS pixel: beyond that a phone's own screen
- *  has nothing left to show for the memory. */
-const RASTER_CAP = 2;
-/** The drawn band: the screen, and one screen either side of it. */
-const BAND_SCREENS = 1;
+/** How many device pixels one page's picture may cost. Obsidian's own pair,
+ *  read out of its app.js: 16777216, and `isMobile && 5242880`. A page is
+ *  drawn at the screen's own pixel ratio until that would cost more than
+ *  this, and at whatever ratio fits when it would — which is what keeps a
+ *  page sharp at a phone's 2.75 or 3 without a canvas the size of a room
+ *  when it is zoomed all the way in. */
+const maxCanvasPixels = (): number => (Math.min(window.innerWidth, window.innerHeight) < 600 ? 5_242_880 : 16_777_216);
+/** Pages are drawn one screen either side of the one being read, and their
+ *  pictures kept until they are this far off it, so turning back a page
+ *  costs nothing. Gander draws 3 and keeps 5 — of pages, not screens. */
+const DRAW_SCREENS = 1;
+const KEEP_SCREENS = 2.5;
 /** After the reader stops, before the band is drawn again. */
 const SETTLE_MS = 120;
 /** How far the counter has to be dragged before it is a scrub and not a tap. */
@@ -80,10 +87,9 @@ interface Slab {
   canvas: HTMLCanvasElement | null;
   proxy: PDFPageProxy | null;
   task: RenderTask | null;
-  /** The band this canvas holds, in CSS pixels down the page, and at what zoom. */
-  drawnFrom: number;
-  drawnTo: number;
+  /** The zoom its picture was drawn at, and the one being drawn now. */
   drawnZoom: number;
+  painting: number;
   width: number; // natural, at scale 1
   height: number;
   /** The height of its box as the page is actually laid out: whole pixels,
@@ -150,7 +156,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     box.className = 'pdf-page';
     box.dataset.page = String(index + 1);
     doc.append(box);
-    slabs.push({ page: index + 1, box, canvas: null, proxy: page, task: null, drawnFrom: 0, drawnTo: 0, drawnZoom: 0, width, height, laid: height });
+    slabs.push({ page: index + 1, box, canvas: null, proxy: page, task: null, drawnZoom: 0, painting: 0, width, height, laid: height });
   });
 
   const widest = sizes.reduce((most, size) => Math.max(most, size.width), 1);
@@ -224,31 +230,46 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const letGo = (): void => { pending = null; };
 
   let settleTimer = 0;
+  /**
+   * One picture per page, as pdf.js's own viewer draws them — Obsidian's and
+   * Gander's alike. Drawing a slice of a page instead meant a new picture
+   * for every scroll and every pinch, each landing at a different offset,
+   * which is what made zooming flicker and crawl.
+   */
   const drawBand = (): void => {
     const screen = scroller.clientHeight;
     const top = scroller.scrollTop - columnTop;
     let edge = 0;
     for (const slab of slabs) {
       const height = heightOf(slab);
-      const from = clamp(top - BAND_SCREENS * screen - edge, 0, height);
-      const to = clamp(top + (BAND_SCREENS + 1) * screen - edge, 0, height);
+      const from = edge;
+      const to = edge + height;
       edge += height + GAP;
-      if (to <= from) { // far from the screen: give its memory back
-        if (slab.canvas) { slab.task?.cancel(); slab.task = null; slab.canvas.remove(); slab.canvas = null; slab.drawnZoom = 0; }
+      const near = to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen;
+      const keep = to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen;
+      if (!keep) { // far from the screen: give its memory back
+        if (slab.canvas) { slab.task?.cancel(); slab.task = null; slab.canvas.remove(); slab.canvas = null; slab.drawnZoom = 0; slab.painting = 0; }
         continue;
       }
-      const covered = slab.drawnZoom === zoom && from >= slab.drawnFrom && to <= slab.drawnTo;
-      if (covered || !slab.proxy) continue;
-      void paint(slab, from, to);
+      if (!near || !slab.proxy) continue;
+      if (slab.drawnZoom === zoom || slab.painting === zoom) continue;
+      void paint(slab);
     }
   };
 
-  async function paint(slab: Slab, from: number, to: number): Promise<void> {
+  async function paint(slab: Slab): Promise<void> {
     const scale = scaleNow();
-    const raster = Math.min(RASTER_CAP, window.devicePixelRatio || 1);
     const width = Math.round(slab.width * scale);
-    const height = Math.round(to - from);
+    const height = Math.round(slab.height * scale);
     if (!slab.proxy || width <= 0 || height <= 0) return;
+    // The screen's own pixels, unless the page is zoomed far enough in that
+    // they would cost more than the budget, and then as many as fit. This is
+    // the whole of why a page looked soft before: it was drawn at two device
+    // pixels per CSS pixel on a screen with three.
+    const fit = Math.sqrt(maxCanvasPixels() / Math.max(1, width * height));
+    const raster = Math.max(1, Math.min(window.devicePixelRatio || 1, fit));
+    const drawnAt = zoom;
+    slab.painting = drawnAt;
     slab.task?.cancel();
     const canvas = window.document.createElement('canvas');
     canvas.className = 'pdf-raster';
@@ -256,30 +277,25 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     canvas.height = Math.round(height * raster);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
-    canvas.style.top = `${Math.round(from)}px`;
     const context = canvas.getContext('2d');
     if (!context) return;
     const viewport = slab.proxy.getViewport({ scale: scale * raster });
-    const task = slab.proxy.render({
-      canvas,
-      canvasContext: context,
-      viewport,
-      // the band, not the page: everything above it is drawn off the top
-      transform: [1, 0, 0, 1, 0, -from * raster],
-    });
+    const task = slab.proxy.render({ canvas, canvasContext: context, viewport });
     slab.task = task;
     try {
       await task.promise;
     } catch {
-      return; // cancelled by a later band, or the document went away
+      if (slab.painting === drawnAt) slab.painting = 0;
+      return; // cancelled by a later zoom, or the document went away
     }
     if (slab.task !== task) return;
+    // the page it replaces stays up until this one is ready, so a zoom is
+    // never a column of empty boxes
     slab.canvas?.remove();
     slab.box.append(canvas);
     slab.canvas = canvas;
-    slab.drawnFrom = from;
-    slab.drawnTo = to;
-    slab.drawnZoom = zoom;
+    slab.drawnZoom = drawnAt;
+    slab.painting = 0;
     slab.task = null;
   }
 
