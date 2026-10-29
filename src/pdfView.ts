@@ -37,8 +37,6 @@ export interface PdfOptions {
   place?: PdfPlace | null;
   /** Called as the reader moves, already settled — the caller writes it down. */
   onPlace?: (place: PdfPlace) => void;
-  /** The counter was tapped: the caller asks which page to go to. */
-  onJump?: (current: number, total: number, goTo: (page: number) => void, chip: HTMLElement) => void;
   /** About to scroll the pane itself, rather than the reader doing it: the
    *  app's own chrome reads scrolling as a hand and hides the bars for it. */
   ownScroll?: () => void;
@@ -78,8 +76,6 @@ const DRAW_SCREENS = 1;
 const KEEP_SCREENS = 2.5;
 /** After the reader stops, before the band is drawn again. */
 const SETTLE_MS = 120;
-/** How far the counter has to be dragged before it is a scrub and not a tap. */
-const SCRUB_SLOP = 6;
 
 interface Slab {
   page: number;
@@ -131,8 +127,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const { scroller } = options;
   const doc = window.document.createElement('div');
   doc.className = 'pdf-doc';
-  const counter = window.document.createElement('button');
-  counter.type = 'button';
+  // A reading of where the reader is, and nothing else: it is not tapped and
+  // not dragged. The way through a long document is the scrollbar.
+  const counter = window.document.createElement('div');
   counter.className = 'pdf-counter';
   // One page is its own counter: it says nothing a reader doesn't see.
   counter.hidden = document_.numPages < 2;
@@ -448,47 +445,6 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     zoomTo(zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1, event.clientY, event.clientX);
   };
   doc.addEventListener('pointerup', onTap);
-
-  // The counter is also the way through the document: dragged, it scrubs —
-  // the pane's own height is the whole document, so a thumb's travel covers
-  // all of it — and tapped, it asks for a page number. Dragging is for
-  // finding a page by the look of it, typing for a page already in mind.
-  let scrub: { from: number; top: number; moved: number } | null = null;
-  let scrubbed = false;
-  counter.addEventListener('pointerdown', (event: PointerEvent) => {
-    scrub = { from: event.clientY, top: scroller.scrollTop, moved: 0 };
-    letGo();
-    // Keeping the pointer is what lets the finger wander off the chip and
-    // still drag it; a pointer that cannot be captured still scrubs.
-    try { counter.setPointerCapture(event.pointerId); } catch { /* nothing to capture */ }
-  });
-  counter.addEventListener('pointermove', (event: PointerEvent) => {
-    if (!scrub) return;
-    const shift = event.clientY - scrub.from;
-    scrub.moved = Math.max(scrub.moved, Math.abs(shift));
-    if (scrub.moved < SCRUB_SLOP) return; // a tap that wandered a pixel is a tap
-    const reach = Math.max(1, scroller.scrollHeight - scroller.clientHeight);
-    scroller.scrollTop = clamp(scrub.top + (shift / Math.max(1, scroller.clientHeight)) * reach, 0, reach);
-    // the chip comes with the finger, so it is the thing being dragged
-    counter.style.transform = `translateY(${clamp(shift, -(scroller.clientHeight - 120), 24)}px)`;
-    counter.classList.add('is-scrubbing');
-  });
-  const endScrub = (event: PointerEvent): void => {
-    if (!scrub) return;
-    scrubbed = scrub.moved >= SCRUB_SLOP;
-    scrub = null;
-    counter.style.transform = '';
-    counter.classList.remove('is-scrubbing');
-    try { if (counter.hasPointerCapture(event.pointerId)) counter.releasePointerCapture(event.pointerId); } catch { /* never held */ }
-    if (scrubbed) remember();
-  };
-  counter.addEventListener('pointerup', endScrub);
-  counter.addEventListener('pointercancel', endScrub);
-  counter.addEventListener('click', () => {
-    // The end of a scrub is not a tap, whatever the browser calls it.
-    if (scrubbed) { scrubbed = false; return; }
-    options.onJump?.(pageShown(), document_.numPages, (page) => handle.goTo(page), counter);
-  });
 
   const onResize = (): void => {
     const held = placeNow();

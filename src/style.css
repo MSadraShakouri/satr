@@ -4186,14 +4186,9 @@ textarea,
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
-  cursor: pointer;
-  /* The vertical drag belongs to the counter, which scrubs the document
-     with it; the browser must not take it for a scroll. */
-  touch-action: none;
-}
-.pdf-counter.is-scrubbing {
-  background: rgb(0 0 0 / 78%);
-  cursor: grabbing;
+  /* Nothing to press and nothing to drag: a gesture that lands on it belongs
+     to the page underneath. */
+  pointer-events: none;
 }
 /* A file that says .pdf and is not one, or one pdf.js will not read. */
 .pdf-unreadable {
@@ -4205,33 +4200,6 @@ textarea,
   border-radius: var(--radius-s, 4px);
   color: var(--text-faint);
   font-size: 15px;
-}
-.pdf-jump {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.pdf-jump input {
-  width: 4.5em;
-  padding: 4px 6px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
-  background: var(--editor);
-  color: var(--text-normal);
-  font: inherit;
-}
-.pdf-jump-total {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-.pdf-jump button {
-  padding: 4px 10px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-  font: inherit;
-  cursor: pointer;
 }
 #preview .md-image-missing {
   display: block;

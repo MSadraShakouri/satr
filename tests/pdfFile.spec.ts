@@ -92,6 +92,14 @@ test('a page fills the pane edge to edge when it opens', async ({ page }) => {
   expect(first).toBeLessThanOrEqual(room);
 });
 
+/** Scroll until the given page is at the top of the pane, the way a reader
+ *  gets there now that the counter is no longer a control. */
+async function scrollToPage(page: Page, n: number): Promise<void> {
+  const box = await pageBox(page, n).boundingBox();
+  const pane = await page.locator('#preview-pane').boundingBox();
+  await page.locator('#preview-pane').evaluate((el, to: number) => { el.scrollTop += to; }, (box?.y ?? 0) - (pane?.y ?? 0));
+}
+
 test('the counter says which page is being read, and only when there are several', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF, 'one.pdf': tinyPdf(1) }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
@@ -100,47 +108,6 @@ test('the counter says which page is being read, and only when there are several
   const pane = await page.locator('#preview-pane').boundingBox();
   await page.locator('#preview-pane').evaluate((el, to: number) => { el.scrollTop += to; }, (third?.y ?? 0) - (pane?.y ?? 0));
   await expect(page.locator('.pdf-counter')).toHaveText('3 / 6');
-});
-
-test('a page is reached by its number', async ({ page }) => {
-  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
-  await readThis(page, 'handout.pdf');
-  await page.locator('.pdf-counter').click();
-  await page.locator('.pdf-jump input').fill('5');
-  await page.locator('.pdf-jump button').click();
-  await expect(page.locator('.pdf-counter')).toHaveText('5 / 6');
-  const fifth = await pageBox(page, 5).boundingBox();
-  const pane = await page.locator('#preview-pane').boundingBox();
-  // the page asked for is at the top of the pane, not merely somewhere on it
-  expect(Math.abs((fifth?.y ?? 0) - (pane?.y ?? 0))).toBeLessThan(4);
-});
-
-test('the counter scrubs the document when it is dragged', async ({ page }) => {
-  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
-  await readThis(page, 'handout.pdf');
-  await expect(page.locator('.pdf-counter')).toHaveText('1 / 6');
-  // a finger on the counter, dragged a third of the pane down: a third of
-  // the way into the document, and the chip comes with the finger
-  const moved = await page.locator('.pdf-counter').evaluate((chip: HTMLElement) => {
-    const pane = document.querySelector('#preview-pane') as HTMLElement;
-    const box = chip.getBoundingClientRect();
-    const fire = (type: string, y: number) => chip.dispatchEvent(new PointerEvent(type, {
-      pointerId: 7, pointerType: 'touch', clientX: box.left + 10, clientY: y, bubbles: true, cancelable: true,
-    }));
-    fire('pointerdown', box.top);
-    fire('pointermove', box.top + pane.clientHeight / 3);
-    const carried = chip.style.transform;
-    fire('pointerup', box.top + pane.clientHeight / 3);
-    return { carried, top: pane.scrollTop, reach: pane.scrollHeight - pane.clientHeight };
-  });
-  expect(moved.carried).toContain('translateY');
-  expect(moved.top).toBeGreaterThan(moved.reach * 0.25);
-  expect(moved.top).toBeLessThan(moved.reach * 0.42);
-  // a third of the way down six pages puts the second one at the top of the
-  // screen, and the counter names the page the reader is looking at
-  await expect(page.locator('.pdf-counter')).toHaveText('2 / 6');
-  // and the chip is back where it lives, not left where the finger stopped
-  expect(await page.locator('.pdf-counter').evaluate((c: HTMLElement) => c.style.transform)).toBe('');
 });
 
 test('the last page is named as the last page', async ({ page }) => {
@@ -187,9 +154,7 @@ test('zooming in redraws the page rather than blowing it up', async ({ page }) =
 test('a document opens where it was left, by its own bytes rather than its name', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF, 'copy.pdf': PDF, 'other.pdf': OTHER }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
-  await page.locator('.pdf-counter').click();
-  await page.locator('.pdf-jump input').fill('4');
-  await page.locator('.pdf-jump button').click();
+  await scrollToPage(page, 4);
   await expect(page.locator('.pdf-counter')).toHaveText('4 / 6');
   await page.waitForTimeout(600); // the place is written down once the reader settles
   // the app closed and opened again on the same document: the same page

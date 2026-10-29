@@ -592,53 +592,9 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
     // Putting a document back where it was is not the reader scrolling: the
     // bars stay as they are.
     ownScroll: () => ownScroll(400),
-    onJump: (current, total, goTo, chip) => askForPage(current, total, goTo, chip),
   });
   if (filePath !== path) { handle.destroy(); return; }
   pdfView = handle;
-}
-/** The page counter was tapped: a number, and the document goes there. A
- *  field rather than a list — 52 pages is a short list and 500 is not, and
- *  the page a reader wants is the one they already have in mind. */
-function askForPage(current: number, total: number, goTo: (page: number) => void, chip: HTMLElement): void {
-  const form = document.createElement('form');
-  form.className = 'pdf-jump';
-  const field = document.createElement('input');
-  field.type = 'number';
-  field.min = '1';
-  field.max = String(total);
-  field.value = String(current);
-  field.inputMode = 'numeric';
-  field.setAttribute('aria-label', `Page, 1 to ${total}`);
-  const go = document.createElement('button');
-  go.type = 'submit';
-  go.textContent = 'Go';
-  const of = document.createElement('span');
-  of.className = 'pdf-jump-total';
-  of.textContent = `of ${total}`;
-  form.append(field, of, go);
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const page = Number(field.value);
-    if (Number.isFinite(page)) goTo(page);
-    closePopover();
-  });
-  openPopover({
-    className: 'pdf-jump-popover',
-    anchor: () => (chip.isConnected ? chip.getBoundingClientRect() : null),
-    rtl: false,
-    content: form,
-    scrollers: [previewPane],
-    // The navbar pill is right below the counter: the card goes above it
-    // rather than across the buttons.
-    obscuredBottom: () => {
-      const bar = document.querySelector('#navbar')?.getBoundingClientRect();
-      const room = bar ? window.innerHeight - bar.top : 0;
-      return Math.max(obscuredBottom(), room > 0 ? room : 0);
-    },
-  });
-  field.focus();
-  field.select();
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
