@@ -18,6 +18,7 @@ import katexCss from 'katex/dist/katex.min.css?raw';
 import printCss from './print.css?raw';
 import { loadImages } from './images';
 import { renderMarkdown } from './markdown';
+import { highlightCodeBlocks } from './codeHighlight';
 import { NOTE_ROOT } from './noteStyles';
 import { embeddedFonts } from './embedFonts';
 import { layoutMath } from './mathLayout';
@@ -114,6 +115,7 @@ async function exportDocuments(documents: ExportDocument[], name: string, collec
       const styleRoot = documents.length > 1 ? `.export-file-${index}` : `.${NOTE_ROOT}`;
       const body = printableBody(renderMarkdown(document.markdown, styleRoot));
       await loadImages(body, document.path); // embedded as data: URLs before paging
+      await highlightCodeBlocks(body); // the same code colours the screen has
       const direction = printDirection(body, document.options.direction);
       const align = document.options.mathAlign === 'center' ? 'center' : direction === 'rtl' ? 'right' : 'left';
       return { body, direction, align, name: document.name };

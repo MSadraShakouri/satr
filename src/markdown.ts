@@ -5,7 +5,6 @@ import DOMPurify from 'dompurify';
 import { renderMath } from './math';
 import { TIMESTAMP_START, timestampTag, type TimestampFormat } from './timestamps';
 import type { Token, TokensList } from 'marked';
-import hljs from 'highlight.js/lib/common';
 import { formatDigits, formatMarker, letterItem, lineIsLettered, MARKER, orderOf, parseMarker, type Alphabet } from './listMarkers';
 import { widestMarkerEm } from './markerWidth';
 import { NOTE_ROOT, scopeNoteCss } from './noteStyles';
@@ -21,14 +20,15 @@ const COPY_BUTTON = '<button class="copy-code-button" type="button" aria-label="
 let liveBlocks: Array<{ source: string; info: string }> = [];
 marked.use({
   renderer: {
+    // The text, and the name of the language it is in. The colours are put
+    // on afterwards by the editor's own highlighter, over the DOM
+    // (src/codeHighlight.ts): its grammars load on demand, and this has to
+    // return a string. Indentation markers arrive in the same pass.
     code({ text, lang }: { text: string; lang?: string }): string {
       const info = (lang ?? '').trim();
       if (isLive(info)) return `<div data-satr-live="${liveBlocks.push({ source: text, info }) - 1}"></div>`;
-      if (lang && hljs.getLanguage(lang)) {
-        const highlighted = hljs.highlight(text, { language: lang }).value;
-        return `<pre><code class="hljs language-${escapeHtml(lang)}">${highlighted}</code>${COPY_BUTTON}</pre>`;
-      }
-      return `<pre><code>${escapeHtml(text)}</code>${COPY_BUTTON}</pre>`;
+      const named = info ? ` class="language-${escapeHtml(info)}" data-lang="${escapeHtml(info)}"` : '';
+      return `<pre><code${named}>${escapeHtml(text)}</code>${COPY_BUTTON}</pre>`;
     },
   },
 });

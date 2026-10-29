@@ -871,65 +871,17 @@ body {
   color: var(--text-normal);
   border-radius: 4px;
 }
-/* highlight.js tokens in Obsidian's code colours */
-.preview-pane .hljs-comment,
-.preview-pane .hljs-quote {
-  color: var(--code-comment);
-}
-.preview-pane .hljs-keyword,
-.preview-pane .hljs-type {
-  color: var(--code-keyword);
-}
-/* A selector, in the colours the editor's own grammar gives the same three
-   pieces: the class and the pseudo-element are named things, and the
-   element selector is the same red an HTML tag is — in both views, which is
-   the point. Without these, `.card::first-line` was plain text in the page
-   and yellow in the source. */
-.preview-pane .hljs-selector-class,
-.preview-pane .hljs-selector-id,
-.preview-pane .hljs-selector-pseudo,
-.preview-pane .hljs-selector-attr {
-  color: var(--code-function);
-}
-.preview-pane .hljs-string,
-.preview-pane .hljs-regexp,
-.preview-pane .hljs-addition {
-  color: var(--code-string);
-}
-.preview-pane .hljs-number,
-.preview-pane .hljs-literal,
-.preview-pane .hljs-symbol {
-  color: var(--code-value);
-}
-.preview-pane .hljs-title,
-.preview-pane .hljs-section {
-  color: var(--code-function);
-}
-.preview-pane .hljs-attr,
-.preview-pane .hljs-attribute,
-.preview-pane .hljs-property,
-.preview-pane .hljs-variable,
-.preview-pane .hljs-params {
-  color: var(--code-property);
-}
-.preview-pane .hljs-tag,
-.preview-pane .hljs-name,
-.preview-pane .hljs-selector-tag,
-.preview-pane .hljs-operator,
-.preview-pane .hljs-deletion {
-  color: var(--code-tag);
-}
-.preview-pane .hljs-meta,
-.preview-pane .hljs-built_in {
-  color: var(--code-important);
-}
-.preview-pane .hljs-punctuation {
-  color: var(--code-punctuation);
-}
-.preview-pane pre code.hljs {
-  background: transparent;
-  padding: 0;
-}
+/* The painted tokens (src/codeHighlight.ts). One class per kind in the
+   --code-* palette, and the editor paints the same kinds from the same
+   table, so a fence reads the same in both views. */
+.preview-pane .tok-comment { color: var(--code-comment); }
+.preview-pane .tok-keyword { color: var(--code-keyword); }
+.preview-pane .tok-string { color: var(--code-string); }
+.preview-pane .tok-value { color: var(--code-value); }
+.preview-pane .tok-function { color: var(--code-function); }
+.preview-pane .tok-property { color: var(--code-property); }
+.preview-pane .tok-tag { color: var(--code-tag); }
+.preview-pane .tok-important { color: var(--code-important); }
 .preview-pane .persian-ordered {
   list-style: none;
   counter-reset: persian-list;
@@ -990,10 +942,6 @@ body {
   border-radius: 0;
   background: none;
   white-space: inherit;
-}
-.preview-pane pre code {
-  background: none;
-  padding: 0;
 }
 .preview-pane a {
   color: var(--accent);
@@ -3007,6 +2955,7 @@ input.mod-no-match {
 .nav-files-container .tree-item-icon {
   transition: transform 0.1s ease;
 }
+
 .nav-files-container .nav-entry-icon {
   inset-inline-start: 2px;
 }

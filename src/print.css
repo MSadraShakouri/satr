@@ -238,15 +238,15 @@ pre code {
   background: none;
   white-space: inherit;
 }
-.hljs-comment, .hljs-quote { color: #ababab; }
-.hljs-keyword, .hljs-selector-tag, .hljs-type { color: #d53984; }
-.hljs-string, .hljs-regexp, .hljs-addition { color: #08b94e; }
-.hljs-number, .hljs-literal, .hljs-symbol { color: #7852ee; }
-.hljs-title, .hljs-section { color: #e0ac00; }
-.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-params { color: #00bfbc; }
-.hljs-tag, .hljs-name, .hljs-operator, .hljs-deletion { color: #e93147; }
-.hljs-meta, .hljs-built_in { color: #ec7500; }
-.hljs-punctuation { color: #5c5c5c; }
+/* The painted tokens (src/codeHighlight.ts) — the screen's palette on paper. */
+.tok-comment { color: #ababab; }
+.tok-keyword { color: #d53984; }
+.tok-string { color: #08b94e; }
+.tok-value { color: #7852ee; }
+.tok-function { color: #e0ac00; }
+.tok-property { color: #00bfbc; }
+.tok-tag { color: #e93147; }
+.tok-important { color: #ec7500; }
 
 /* Tables: centred, as in the reading view. A table splits at row boundaries
    so pages stay full; how many rows must travel together is decided by the

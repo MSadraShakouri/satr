@@ -42,6 +42,10 @@ const NOTE = [
   '',
   'Empty: $\\frac$ has no parts at all.',
   '',
+  '```toml',
+  'key = "value"',
+  '```',
+  '',
 ].join('\n');
 
 async function boot(page: Page) {
@@ -160,15 +164,29 @@ test('a fence is one picture: the source and the reading view paint it the same'
   const rows = ['// a greeting', 'const greeting', 'let n = 42'];
   const source = await fencePaint(page, '#app .cm-content .cm-line', rows);
   await page.locator('#preview-toggle').click();
-  await expect(page.locator('#app .preview-pane pre code')).toBeVisible();
+  await expect(page.locator('#app .preview-pane pre code').first()).toBeVisible();
   const reading = await fencePaint(page, '#app .preview-pane pre code', rows);
-  // Two highlighters, one palette: Lezer here, highlight.js there. The
-  // reading view is the reference — it names keywords, strings, numbers,
-  // functions, properties and comments and leaves everything else as text,
-  // so the editor does not paint punctuation, operators or bare names
-  // either. The same fence cannot be two pictures.
+  // One highlighter, one palette: the reading view runs the editor's own
+  // Lezer grammars over the editor's own table of colours
+  // (src/codeHighlight.ts). Keywords, strings, numbers, functions,
+  // properties and comments are named; punctuation, operators and bare names
+  // are left as text. The same fence cannot be two pictures.
   expect(source).toEqual(reading);
   expect(source[1]).toEqual([['const', 'keyword'], ['greeting=', 'plain'], ['"hello"', 'string'], [';', 'plain']]);
+});
+
+test('a language only the editor used to know is painted in the page too', async ({ page }) => {
+  await boot(page);
+  // highlight.js's common bundle knew 36 languages; the editor's grammars
+  // number about 150. toml was one of the ~110 that were painted while
+  // writing and flat grey when read.
+  await expect.poll(async () => (await paint(page, 'key', 'key = ')).colour)
+    .toBe((await paint(page, 'key', 'key = ')).palette.property);
+  const source = await fencePaint(page, '#app .cm-content .cm-line', ['key = "value"']);
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('#app .preview-pane pre code').first()).toBeVisible();
+  await expect.poll(() => fencePaint(page, '#app .preview-pane pre code', ['key = "value"'])).toEqual(source);
+  expect(source[0]).toEqual([['key', 'property'], ['=', 'plain'], ['"value"', 'string']]);
 });
 
 test('prose keeps its own colour: the code palette stops at the fence', async ({ page }) => {

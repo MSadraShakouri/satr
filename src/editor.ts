@@ -16,6 +16,7 @@ import { indentBox, listLine, livePreview, markerGap, markerText, numberMarker, 
 import { markerStrip } from './markerWidth';
 import { autoSpace } from './autoSpace';
 import { Highlight, highlightTag } from './highlightSyntax';
+import { CODE_COLOURS } from './codeHighlight';
 import { languages } from '@codemirror/language-data';
 import { inCode, inMath, mathSource } from './mathSource';
 import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
@@ -1094,8 +1095,9 @@ export class SatrEditor {
       // grammar only when a fence asks for it (Vite gives each its own
       // chunk), which is how Obsidian does it too: its editor loads modes out
       // of lib/codemirror/modes.min.js on demand, while its reading view runs
-      // Prism. Two highlighters, one set of colours — ours are hljs in the
-      // reading view and Lezer here, both painted from the --code-* palette.
+      // Prism. Satr uses this one everywhere instead: the reading view and
+      // the PDF run the same Lezer grammars over the same tags
+      // (src/codeHighlight.ts), so there is one picture of a fence.
       languageSlot.of(readsEveryNumber(markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages }))),
       syntaxHighlighting(HighlightStyle.define([
         { tag: tags.processingInstruction, opacity: '0.42' },
@@ -1106,29 +1108,13 @@ export class SatrEditor {
         { tag: tags.link, color: 'var(--accent)' },
         { tag: tags.url, opacity: '0.62' },
         { tag: tags.monospace, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
-        // Code inside a fence, in the colours the reading view gives the same
-        // tokens (src/style.css, .preview-pane .hljs-*). Only tags a code
-        // grammar emits are listed: a markdown marker is a
-        // processingInstruction and a heading is a heading, and neither may
-        // be recoloured by this block.
-        //
-        // The reading view is the reference, because the same fence must not
-        // be two different pictures. highlight.js paints the kinds it knows —
-        // keywords, strings, numbers, function and class names, properties,
-        // comments, meta — and leaves the rest as text, so punctuation,
-        // brackets, operators and bare identifiers are left alone here too.
-        // Lezer would happily name all of them, and naming them is what made
-        // `const greeting = "hello";` read as five colours in the editor and
-        // two in the page. Fewer spans per line, so this is also the cheaper
-        // of the two; nothing about the parse changes.
-        { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--code-comment)' },
-        { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.operatorKeyword, tags.modifier, tags.self, tags.null, tags.typeName, tags.namespace], color: 'var(--code-keyword)' },
-        { tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character, tags.inserted], color: 'var(--code-string)' },
-        { tag: [tags.number, tags.bool, tags.atom, tags.literal, tags.unit], color: 'var(--code-value)' },
-        { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.function(tags.definition(tags.variableName)), tags.className, tags.macroName], color: 'var(--code-function)' },
-        { tag: [tags.propertyName, tags.attributeName, tags.labelName, tags.self], color: 'var(--code-property)' },
-        { tag: [tags.tagName, tags.deleted], color: 'var(--code-tag)' },
-        { tag: [tags.meta, tags.annotation, tags.standard(tags.variableName)], color: 'var(--code-important)' },
+        // Code inside a fence. The kinds and their colours are the one
+        // table in src/codeHighlight.ts, which the reading view and the PDF
+        // paint from as well: the same fence cannot be two pictures, and now
+        // it cannot drift into being two either. Markdown's own markers are
+        // not in it — a marker is a processingInstruction and a heading is a
+        // heading, and neither may be recoloured by a code palette.
+        ...CODE_COLOURS.map(({ name, tags: kinds }) => ({ tag: kinds, color: `var(--code-${name})` })),
       ])),
       titleField,
       rtlLineDirection, directionsField, directionPlugin, lineGutterField,

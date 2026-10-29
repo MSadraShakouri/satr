@@ -7,6 +7,7 @@ import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { renderMarkdown, sizeListMarkers } from './markdown';
+import { highlightCodeBlocks } from './codeHighlight';
 import { isHtmlFile, showHtmlFile } from './htmlFiles';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, typingTop } from './scrollSync';
@@ -512,7 +513,8 @@ function renderPreview(): void {
   scheduleMathLayout(preview);
   markBrokenLinks();
   const path = filePath;
-  previewReady = loadImages(preview, path).then(() => { if (path === filePath) layoutMath(preview); });
+  previewReady = Promise.all([loadImages(preview, path), highlightCodeBlocks(preview)])
+    .then(() => { if (path === filePath) layoutMath(preview); });
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');

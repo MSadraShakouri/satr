@@ -37,7 +37,6 @@
     "@lezer/common": "^1.5.3",
     "@lezer/highlight": "^1.2.4",
     "dompurify": "^3.2.6",
-    "highlight.js": "^11.11.1",
     "katex": "^0.16.22",
     "marked": "^15.0.7",
     "pagedjs": "^0.4.3"
