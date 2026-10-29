@@ -508,6 +508,11 @@ function renderPreview(): void {
     return;
   }
   preview.innerHTML = `${title}${renderMarkdown(editor.getValue())}`;
+  // A task is ticked where it is read, not only where it is written. The
+  // parser hands over a box that cannot be touched; here, and only here, it
+  // is live — a card in the tab switcher and an exported page keep theirs
+  // inert, since there is no note behind them to write the tick into.
+  preview.querySelectorAll('input[type="checkbox"]').forEach((box) => box.removeAttribute('disabled'));
   applyPreviewFolds();
   watchSections();
   scheduleMathLayout(preview);
@@ -3235,8 +3240,28 @@ setTimestampChipTap((chip) => {
   editTimestampAt({ seconds, format }, { from: at, to: at + match[0].length });
 });
 
+/** The `[ ]` behind a box tapped in the reading view. The item carries the
+ *  line it was made from (src/markdown.ts), so the marker is looked up on
+ *  that line rather than counted: a sub-task, a task inside a quote and two
+ *  tasks worded alike are all the same lookup. The note is the only place
+ *  the tick can live, so it is written there and the box follows the render
+ *  that comes back. If the line turns out not to be a task after all, the
+ *  box is put back the way the reader found it. */
+function tickTaskFromBox(box: HTMLInputElement): void {
+  const item = box.closest<HTMLElement>('li');
+  const at = Number(item?.dataset.line);
+  const doc = editor.view.state.doc;
+  const line = Number.isFinite(at) && at >= 0 && at < doc.lines ? doc.line(at + 1) : null;
+  const marker = line && /^[ \t]*(?:>[ \t]?)*(?:[-*+]|\d+[.)])[ \t]+\[.\]/.exec(line.text);
+  if (!line || !marker) { box.checked = !box.checked; return; }
+  const from = line.from + marker[0].length - 2;
+  editor.view.dispatch({ changes: { from, to: from + 1, insert: box.checked ? 'x' : ' ' }, userEvent: 'input' });
+}
+
 preview.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  const tick = target.closest<HTMLInputElement>('input[type="checkbox"]');
+  if (tick) { tickTaskFromBox(tick); return; }
   const wiki = target.closest<HTMLElement>('a.internal-link');
   if (wiki) { event.preventDefault(); openLink(wiki.dataset.href ?? '', wiki.dataset.heading ?? ''); return; }
   // A timestamp chip in the reading view opens the date sheet wearing its
