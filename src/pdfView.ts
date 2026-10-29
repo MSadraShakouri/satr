@@ -34,8 +34,14 @@ export interface PdfPlace {
 export interface PdfOptions {
   /** The pane that scrolls, which the pages are laid out inside. */
   scroller: HTMLElement;
+  place?: PdfPlace | null;
+  /** Called as the reader moves, already settled — the caller writes it down. */
+  onPlace?: (place: PdfPlace) => void;
   /** The counter was tapped: the caller asks which page to go to. */
   onJump?: (current: number, total: number, goTo: (page: number) => void, chip: HTMLElement) => void;
+  /** About to scroll the pane itself, rather than the reader doing it: the
+   *  app's own chrome reads scrolling as a hand and hides the bars for it. */
+  ownScroll?: () => void;
 }
 
 export interface PdfHandle {
@@ -106,7 +112,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   counter.hidden = document_.numPages < 2;
   host.append(doc, counter);
 
-  let zoom = 1;
+  let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
   let fit = 1; // the scale at which a page fills the pane's width
   const slabs: Slab[] = [];
 
@@ -178,6 +184,24 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     }
     return 0;
   };
+
+  // The place a document is opened at, held until the reader touches it.
+  // Opening is not a quiet moment: the pane is measured, laid out, hidden
+  // and shown again while the app settles, and a pane that is re-laid out
+  // loses its scroll offset without anybody setting it — the browser simply
+  // drops it. So the place is not applied once and trusted; it is kept and
+  // put back after every one of those, and only a hand on the document
+  // spends it. Until then nothing is written down either, or the stray
+  // scroll to the top would become the place.
+  let pending: PdfPlace | null = null;
+  const applyPending = (): boolean => {
+    if (!pending) return false;
+    if (!scroller.clientWidth || !scroller.clientHeight) return true; // nowhere to put it yet
+    options.ownScroll?.();
+    scroller.scrollTop = offsetOf(pending);
+    return true;
+  };
+  const letGo = (): void => { pending = null; };
 
   let settleTimer = 0;
   const drawBand = (): void => {
@@ -253,16 +277,34 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     counter.textContent = `${pageShown()} / ${document_.numPages}`;
   };
 
+  let placeTimer = 0;
+  const remember = (): void => {
+    window.clearTimeout(placeTimer);
+    placeTimer = window.setTimeout(() => options.onPlace?.(placeNow()), 400);
+  };
+
   const settle = (): void => {
     window.clearTimeout(settleTimer);
     settleTimer = window.setTimeout(drawBand, SETTLE_MS);
   };
 
   const onScroll = (): void => {
+    // A scroll nobody asked for, while the document is still being put back
+    // where it was: put it back again.
+    if (pending && Math.abs(scroller.scrollTop - offsetOf(pending)) > 4) {
+      applyPending();
+      showCounter();
+      return;
+    }
     showCounter();
     settle();
+    if (!pending) remember();
   };
   scroller.addEventListener('scroll', onScroll, { passive: true });
+  // A hand on the document: it is the reader's now.
+  scroller.addEventListener('pointerdown', letGo, { passive: true });
+  scroller.addEventListener('wheel', letGo, { passive: true });
+  scroller.addEventListener('keydown', letGo);
 
   /** Zoom to `next`, keeping whatever is under `anchorY` (a client y) where
    *  it is — the pinch's middle, or the point a double tap landed on. */
@@ -279,10 +321,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       edge += height + GAP;
     }
     zoom = limited;
+    letGo();
     layout();
+    options.ownScroll?.();
     scroller.scrollTop = Math.max(0, offsetOf(found) - (anchorY - paneTop));
     showCounter();
     drawBand();
+    remember();
   };
 
   // Pinch: the pages follow the fingers at once, scaled as they are, and are
@@ -352,7 +397,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const held = placeNow();
     measureFit();
     layout();
-    scroller.scrollTop = offsetOf(held);
+    if (!applyPending()) scroller.scrollTop = offsetOf(held);
     showCounter();
     drawBand();
   };
@@ -361,6 +406,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   measureFit();
   layout();
+  pending = options.place ? { ...options.place, zoom } : null;
+  applyPending();
   showCounter();
   drawBand();
 
@@ -368,14 +415,21 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     pages: document_.numPages,
     place: placeNow,
     goTo: (page: number) => {
+      letGo();
+      options.ownScroll?.();
       scroller.scrollTop = offsetOf({ page: clamp(Math.round(page), 1, document_.numPages), into: 0 });
       showCounter();
       drawBand();
+      remember();
     },
     destroy: () => {
       window.clearTimeout(settleTimer);
+      window.clearTimeout(placeTimer);
       watcher.disconnect();
       scroller.removeEventListener('scroll', onScroll);
+      scroller.removeEventListener('pointerdown', letGo);
+      scroller.removeEventListener('wheel', letGo);
+      scroller.removeEventListener('keydown', letGo);
       scroller.removeEventListener('pointerdown', onPointerDown);
       scroller.removeEventListener('pointermove', onPointerMove);
       scroller.removeEventListener('pointerup', endPinch);
@@ -387,4 +441,23 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     },
   };
   return handle;
+}
+
+/** What a document is remembered by: its first bytes and its length, never
+ *  its name or where it sits. Gander's key (Positions.kt), and for its
+ *  reasons — one file reaches the reader down several routes, and a place
+ *  should survive it being moved or renamed. Two copies of one document
+ *  therefore share a place, and a document saved again with changes in it
+ *  starts from the top. */
+const HEAD_BYTES = 64 * 1024;
+
+export async function pdfKey(bytes: Uint8Array | ArrayBuffer): Promise<string> {
+  const all = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const head = all.subarray(0, HEAD_BYTES);
+  const stamp = new TextEncoder().encode(String(all.byteLength));
+  const both = new Uint8Array(head.byteLength + stamp.byteLength);
+  both.set(head, 0);
+  both.set(stamp, head.byteLength);
+  const digest = await crypto.subtle.digest('SHA-256', both);
+  return [...new Uint8Array(digest).slice(0, 8)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

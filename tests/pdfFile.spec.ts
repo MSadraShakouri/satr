@@ -33,6 +33,7 @@ function tinyPdf(pages: number): string {
 }
 
 const PDF = tinyPdf(6);
+const OTHER = tinyPdf(3); // a different document, to tell the places apart
 
 /** The vault as the web backend keeps it: a PDF is a data: URL in a value. */
 async function boot(page: Page, files: Record<string, string>, open: string): Promise<void> {
@@ -155,6 +156,42 @@ test('zooming in redraws the page rather than blowing it up', async ({ page }) =
   await expect.poll(async () => rasterWidth(page), { timeout: 15000 }).toBeGreaterThan(before * 2);
 });
 
+test('a document opens where it was left, by its own bytes rather than its name', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF, 'copy.pdf': PDF, 'other.pdf': OTHER }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await page.locator('.pdf-counter').click();
+  await page.locator('.pdf-jump input').fill('4');
+  await page.locator('.pdf-jump button').click();
+  await expect(page.locator('.pdf-counter')).toHaveText('4 / 6');
+  await page.waitForTimeout(600); // the place is written down once the reader settles
+  // the app closed and opened again on the same document: the same page
+  await reopen(page, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await expect(page.locator('.pdf-counter')).toHaveText('4 / 6');
+  // the same bytes under another name: the same page, because the place
+  // belongs to the document and not to where it happens to sit
+  await reopen(page, 'copy.pdf');
+  await readThis(page, 'copy.pdf');
+  await expect(page.locator('.pdf-counter')).toHaveText('4 / 6');
+  // a different document knows nothing about it
+  await reopen(page, 'other.pdf');
+  await readThis(page, 'other.pdf');
+  await expect(page.locator('.pdf-counter')).toHaveText('1 / 3');
+});
+
+test('the zoom comes back with the place', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  await pinch(page, 2);
+  const zoomed = await widthOf(page, 1);
+  expect(zoomed).toBeGreaterThan(fit * 1.5);
+  await page.waitForTimeout(600);
+  await reopen(page, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  expect(await widthOf(page, 1)).toBeCloseTo(zoomed, -1);
+});
+
 /** Two fingers, apart or together, as the pane sees them. */
 async function pinch(page: Page, factor: number): Promise<void> {
   await page.locator('#preview-pane').evaluate((pane, by: number) => {
@@ -181,4 +218,14 @@ async function rasterWidth(page: Page): Promise<number> {
     const canvas = document.querySelector('.pdf-page canvas') as HTMLCanvasElement | null;
     return canvas ? canvas.width : 0;
   });
+}
+
+/** The app shut and opened again on a file: everything it remembers has to
+ *  come from what it wrote down, not from anything still in memory. */
+async function reopen(page: Page, name: string): Promise<void> {
+  await page.evaluate((file) => {
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: `Notes/${file}` }], active: 0 }));
+  }, name);
+  await page.reload();
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
 }

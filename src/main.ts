@@ -1,5 +1,5 @@
 import { asMarkdown } from './csv';
-import { readViewMemory, writeViewMemory, viewMemoryKey, type ViewIdentity, type SavedView } from './viewMemory';
+import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
 import type { PdfHandle } from './pdfView';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
@@ -179,6 +179,11 @@ const picture = { path: '', url: '' };
  *  place is remembered against them. */
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
 let pdfView: PdfHandle | null = null;
+/** A PDF is being read in the pane. It keeps its own place, by its own
+ *  bytes, and has no lines for the note machinery to scroll to: everything
+ *  that would move the reading view for a note leaves this one alone, or it
+ *  would drag the reader back to page one the moment the pages appear. */
+const documentOpen = (): boolean => Boolean(openedDocument.bytes) && openedDocument.path === filePath;
 function rememberPicture(path: string, url: string | null | undefined): boolean {
   if (!url?.startsWith('data:image/')) return false;
   picture.path = path;
@@ -513,10 +518,17 @@ function renderPreview(): void {
     preview.classList.add('is-document');
     previewPane.classList.add('is-document');
     previewReady = (async () => {
-      const { showPdf } = await import('./pdfView');
+      const { showPdf, pdfKey } = await import('./pdfView');
+      if (filePath !== path) return;
+      const key = await pdfKey(bytes);
       if (filePath !== path) return;
       const handle = await showPdf(preview, bytes.slice().buffer, {
         scroller: previewPane,
+        place: readPlace(key),
+        onPlace: (place) => writePlace(key, place),
+        // Putting a document back where it was is not the reader scrolling:
+        // the bars stay as they are.
+        ownScroll: () => ownScroll(400),
         onJump: (current, total, goTo, chip) => askForPage(current, total, goTo, chip),
       });
       if (filePath !== path) { handle.destroy(); return; }
@@ -709,7 +721,7 @@ function reloadOpenText(path: string, text: string, mtime: number): void {
   // been replaced and the reading view rebuilt from nothing, which is the
   // least settled the page ever is — and it happens on resume, where the
   // reader is watching.
-  if (position !== null) {
+  if (position !== null && !documentOpen()) {
     if (mode === 'preview') applyPreviewScroll(previewPane, preview, position, () => true, true, y);
     else applyEditorScroll(editor.view, position, () => true, true, y);
   }
@@ -1072,7 +1084,7 @@ function setMode(next: Mode, restoredLine?: number): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
-    if (position !== null) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
+    if (position !== null && !documentOpen()) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
   } else if (position !== null) {
     applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);
@@ -1483,7 +1495,7 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit',
   // Never sample the previous file's pane while installing the new file.
   setMode(force ? unvisited : view?.mode ?? unvisited, line);
   const apply = (): void => {
-    if (!current()) return;
+    if (!current() || documentOpen()) return;
     ownScroll();
     syncingScroll = true;
     if (mode === 'preview') {
