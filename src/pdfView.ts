@@ -344,10 +344,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   /** Zoom to `next`, keeping whatever is under `anchorY` (a client y) where
    *  it is — the pinch's middle, or the point a double tap landed on. */
-  const zoomTo = (next: number, anchorY: number): void => {
+  /**
+   * Zoom about a point, which is the point the reader put their fingers on
+   * — in both directions. Vertically that is a page and a fraction into it,
+   * because the gaps between pages do not scale with the pages; across, it
+   * is a fraction of the column's width, which is the whole of what used to
+   * throw a zoomed-in page sideways: the column grew and the sideways
+   * scroll stayed where it was.
+   */
+  const zoomTo = (next: number, anchorY: number, anchorX?: number): void => {
     const limited = clamp(next, MIN_ZOOM, MAX_ZOOM);
     if (limited === zoom) return;
-    const paneTop = scroller.getBoundingClientRect().top;
+    const pane = scroller.getBoundingClientRect();
+    const paneTop = pane.top;
+    const column = doc.getBoundingClientRect();
+    const acrossAt = anchorX ?? pane.left + pane.width / 2;
+    const across = clamp((acrossAt - column.left) / Math.max(1, column.width), 0, 1);
     const held = scroller.scrollTop + (anchorY - paneTop) - columnTop;
     let edge = 0;
     let found = { page: 1, into: 0 };
@@ -361,6 +373,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     layout();
     options.ownScroll?.();
     scroller.scrollTop = Math.max(0, offsetOf(found) - (anchorY - paneTop));
+    // the same slice of the page stays under the finger across as well as down
+    const reach = scroller.scrollWidth - scroller.clientWidth;
+    if (reach > 0) scroller.scrollLeft = clamp(doc.offsetLeft + across * doc.offsetWidth - (acrossAt - pane.left), 0, reach);
     showCounter();
     drawBand();
     remember();
@@ -371,18 +386,23 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // gesture would be a page of work per frame for a picture that is about to
   // be wrong anyway.
   const touches = new Map<number, { x: number; y: number }>();
-  let pinch: { span: number; middle: number; zoom: number } | null = null;
-  const spanOf = (): { span: number; middle: number } => {
+  let pinch: { span: number; middle: number; across: number; zoom: number } | null = null;
+  const spanOf = (): { span: number; middle: number; across: number } => {
     const [a, b] = [...touches.values()];
-    return { span: Math.hypot(a.x - b.x, a.y - b.y), middle: (a.y + b.y) / 2 };
+    return { span: Math.hypot(a.x - b.x, a.y - b.y), middle: (a.y + b.y) / 2, across: (a.x + b.x) / 2 };
   };
   const onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType !== 'touch') return;
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (touches.size === 2) {
-      const { span, middle } = spanOf();
-      pinch = { span, middle, zoom };
-      doc.style.transformOrigin = `50% ${scroller.scrollTop + (middle - scroller.getBoundingClientRect().top)}px`;
+      const { span, middle, across } = spanOf();
+      pinch = { span, middle, across, zoom };
+      // The origin is the point between the fingers in the column's own
+      // coordinates, both ways. Measured off the column's live box, so it
+      // carries the scroll and the padding above the first page with it —
+      // which the old one did not, and the pages slid at every pinch.
+      const column = doc.getBoundingClientRect();
+      doc.style.transformOrigin = `${across - column.left}px ${middle - column.top}px`;
     }
   };
   const onPointerMove = (event: PointerEvent): void => {
@@ -400,10 +420,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
     doc.style.transform = '';
     doc.style.transformOrigin = '';
-    const middle = pinch.middle;
+    const { middle, across } = pinch;
     const from = pinch.zoom;
     pinch = null;
-    zoomTo(from * factor, middle);
+    zoomTo(from * factor, middle, across);
   };
   scroller.addEventListener('pointerdown', onPointerDown, { passive: true });
   scroller.addEventListener('pointermove', onPointerMove, { passive: false });
@@ -419,9 +439,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const quick = now - lastTap.time < DOUBLE_TAP_MS;
     const near = Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP;
     lastTap = { time: now, x: event.clientX, y: event.clientY };
-    if (!quick || !near || touches.size) return;
+    // > 1, not > 0: the finger doing the tapping is itself in the set, and
+    // asking for an empty one meant a double tap never zoomed on a phone at
+    // all — this fires before the pointerup that clears it. Two fingers
+    // down is a pinch, and a pinch is not a tap.
+    if (!quick || !near || touches.size > 1) return;
     lastTap.time = 0;
-    zoomTo(zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1, event.clientY);
+    zoomTo(zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1, event.clientY, event.clientX);
   };
   doc.addEventListener('pointerup', onTap);
 

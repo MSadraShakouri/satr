@@ -264,19 +264,44 @@ async function reopen(page: Page, name: string): Promise<void> {
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
 }
 
-test('pdf.js can reach the decoders and tables it fetches separately', async ({ page }) => {
-  // A scanned page is JPEG 2000 or JBIG2, and those decoders are wasm files
-  // pdf.js asks for at the moment it needs them. Unreachable, they fail
-  // silently and the page comes out blank — Gander's own bug #24.
+/** Which page is under a point on the screen, and how far into it. */
+const under = (page: Page, x: number, y: number): Promise<{ page: number; into: number } | null> => page.evaluate(([px, py]) => {
+  const boxes = [...document.querySelectorAll('.pdf-page')];
+  for (const [index, box] of boxes.entries()) {
+    const r = box.getBoundingClientRect();
+    if (py >= r.top && py <= r.bottom && px >= r.left && px <= r.right) {
+      return { page: index + 1, into: Math.round(((py - r.top) / r.height) * 1000) / 1000, across: Math.round(((px - r.left) / r.width) * 1000) / 1000 };
+    }
+  }
+  return null;
+}, [x, y]) as Promise<{ page: number; into: number } | null>;
+
+test.describe('on a phone-sized screen, where a zoomed page is wider than the pane', () => {
+  test.use({ viewport: { width: 390, height: 700 } });
+
+test('a double tap zooms about the point tapped, not about the middle of the column', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
-  const reachable = await page.evaluate(async () => {
-    const paths = ['pdfjs/wasm/openjpeg.wasm', 'pdfjs/wasm/jbig2.wasm', 'pdfjs/cmaps/Adobe-Japan1-UCS2.bcmap', 'pdfjs/standard_fonts/FoxitFixed.pfb'];
-    const codes = [];
-    for (const path of paths) codes.push((await fetch(new URL(path, document.baseURI))).status);
-    return codes;
-  });
-  expect(reachable).toEqual([200, 200, 200, 200]);
+  await expect(page.locator('.pdf-raster').first()).toBeVisible();
+  const at = { x: 300, y: 260 }; // off to one side: the sideways anchor is the point
+  const before = await under(page, at.x, at.y);
+  expect(before).not.toBeNull();
+  const wide = await page.locator('.pdf-page').first().evaluate((box) => box.getBoundingClientRect().width);
+  // on the page itself, which is where a finger lands
+  for (const id of [3, 4]) {
+    await page.locator('.pdf-page').first().dispatchEvent('pointerdown', { pointerId: id, pointerType: 'touch', clientX: at.x, clientY: at.y, isPrimary: true });
+    await page.locator('.pdf-page').first().dispatchEvent('pointerup', { pointerId: id, pointerType: 'touch', clientX: at.x, clientY: at.y, isPrimary: true });
+  }
+  await page.waitForTimeout(400);
+  const zoomed = await page.locator('.pdf-page').first().evaluate((box) => box.getBoundingClientRect().width);
+  expect(zoomed).toBeGreaterThan(wide * 2); // it did zoom in, which on a phone it never used to
+  const after = await under(page, at.x, at.y);
+  expect(after).not.toBeNull();
+  // the same place on the same page is still under the finger, both ways
+  expect(after!.page).toBe(before!.page);
+  expect(Math.abs(after!.into - before!.into)).toBeLessThan(0.06);
+  expect(Math.abs((after as { across: number }).across - (before as unknown as { across: number }).across)).toBeLessThan(0.06);
+});
 });
 
 test('a page is drawn at the screen’s own pixels, inside the budget', async ({ page }) => {
@@ -291,4 +316,19 @@ test('a page is drawn at the screen’s own pixels, inside the budget', async ({
   // the screen's ratio, not a cap of our own, and within the page budget
   expect(drawn.ratio).toBeCloseTo(drawn.screen, 1);
   expect(drawn.pixels).toBeLessThanOrEqual(16_777_216);
+});
+
+test('pdf.js can reach the decoders and tables it fetches separately', async ({ page }) => {
+  // A scanned page is JPEG 2000 or JBIG2, and those decoders are wasm files
+  // pdf.js asks for at the moment it needs them. Unreachable, they fail
+  // silently and the page comes out blank — Gander's own bug #24.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const reachable = await page.evaluate(async () => {
+    const paths = ['pdfjs/wasm/openjpeg.wasm', 'pdfjs/wasm/jbig2.wasm', 'pdfjs/cmaps/Adobe-Japan1-UCS2.bcmap', 'pdfjs/standard_fonts/FoxitFixed.pfb'];
+    const codes = [];
+    for (const path of paths) codes.push((await fetch(new URL(path, document.baseURI))).status);
+    return codes;
+  });
+  expect(reachable).toEqual([200, 200, 200, 200]);
 });
