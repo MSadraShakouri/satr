@@ -47,10 +47,15 @@ export interface PdfOptions {
   overlay?: HTMLElement | null;
 }
 
+/** The two stops Obsidian offers in its display options' zoom section. */
+export type PdfFit = 'width' | 'height';
 export interface PdfHandle {
   pages: number;
   place(): PdfPlace;
   goTo(page: number): void;
+  fitTo(mode: PdfFit): void;
+  /** Which stop the page is sitting at, if either — for the checkmark. */
+  fitNow(): PdfFit | null;
   destroy(): void;
 }
 
@@ -176,6 +181,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   });
 
   const widest = sizes.reduce((most, size) => Math.max(most, size.width), 1);
+  const tallest = sizes.reduce((most, size) => Math.max(most, size.height), 1);
   const measureFit = (): void => {
     const room = scroller.clientWidth - 2 * GAP;
     fit = room > 0 ? room / widest : 1;
@@ -497,6 +503,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * throw a zoomed-in page sideways: the column grew and the sideways
    * scroll stayed where it was.
    */
+  /** Fit width is zoom 1 by construction, because fit is measured from the
+   *  pane's width. Fit height is therefore the ratio between the two fits:
+   *  the whole of the tallest page on the screen at once, which is how a
+   *  handout gets read a page at a time without a spread mode. */
+  const heightStop = (): number => {
+    const room = scroller.clientHeight - chromeTop() - 2 * GAP;
+    return room > 0 && fit > 0 ? (room / tallest) / fit : 1;
+  };
+
   const zoomTo = (next: number, anchorY: number, anchorX?: number): void => {
     const limited = clamp(next, MIN_ZOOM, MAX_ZOOM);
     if (limited === zoom) return;
@@ -615,6 +630,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const handle: PdfHandle = {
     pages: document_.pageCount,
     place: placeNow,
+    fitTo: (mode: PdfFit) => {
+      const pane = scroller.getBoundingClientRect();
+      // anchored at the top of the readable area, not the middle: a fit is
+      // a request to see this page, from its top
+      zoomTo(mode === 'height' ? heightStop() : 1, pane.top + chromeTop(), pane.left + pane.width / 2);
+    },
+    fitNow: () => {
+      if (Math.abs(zoom - 1) < 0.01) return 'width';
+      return Math.abs(zoom - heightStop()) < 0.01 ? 'height' : null;
+    },
     goTo: (page: number) => {
       letGo();
       options.ownScroll?.();

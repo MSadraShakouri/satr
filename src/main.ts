@@ -2700,6 +2700,17 @@ async function exportFilePdf(path: string): Promise<void> {
 function showFileMenu(): void {
   const path = filePath;
   const entries: MenuEntry[] = [];
+  // A document's display options, where Obsidian keeps them: a ▾ on its PDF
+  // toolbar holding the zoom stops and "Adapt to theme". We have no toolbar
+  // and are not growing one, so they go in the ⋮ the file already has.
+  // Thumbnails, the table of contents, the spread modes and the page box
+  // are not here on purpose: three are desktop panels and the fourth was
+  // taken out deliberately.
+  if (pdfView) entries.push(
+    { title: 'Fit width', checked: pdfView.fitNow() === 'width', action: () => pdfView?.fitTo('width') },
+    { title: 'Fit height', checked: pdfView.fitNow() === 'height', action: () => pdfView?.fitTo('height') },
+    'separator',
+  );
   const external = isExternalPath(path);
   if (!external) entries.push(
     { title: 'Rename…', icon: MENU_ICONS.rename, action: () => { toggleFiles(true); void leftSidebar.renameFile(path); } },
