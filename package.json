@@ -34,13 +34,15 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/streamparser": "^6.0.0",
     "@codemirror/view": "^6.36.5",
+    "@embedpdf/engines": "^2.15.1",
+    "@embedpdf/models": "^2.15.1",
+    "@embedpdf/pdfium": "^2.15.1",
     "@lezer/common": "^1.5.3",
     "@lezer/highlight": "^1.2.4",
     "dompurify": "^3.2.6",
     "katex": "^0.16.22",
     "marked": "^15.0.7",
-    "pagedjs": "^0.4.3",
-    "pdfjs-dist": "^6.4.299"
+    "pagedjs": "^0.4.3"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",

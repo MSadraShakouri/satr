@@ -17,7 +17,8 @@
 // part of it being looked at at whatever zoom the reader has actually
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import { PdfErrorCode, type PdfDocumentObject, type PdfPageObject, type PdfTask } from '@embedpdf/models';
+import { pdfium } from './pdfiumEngine';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
  *  offset, so the place survives a different zoom, a rotation, or a wider
@@ -81,8 +82,8 @@ interface Slab {
   page: number;
   box: HTMLElement;
   canvas: HTMLCanvasElement | null;
-  proxy: PDFPageProxy | null;
-  task: RenderTask | null;
+  proxy: PdfPageObject | null;
+  task: PdfTask<Blob> | null;
   /** The zoom its picture was drawn at, and the one being drawn now. */
   drawnZoom: number;
   painting: number;
@@ -97,32 +98,28 @@ interface Slab {
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
+/** Tells a draw already in flight that nobody wants its picture — a zoom
+ *  that lands mid-render, or a page scrolled far enough away to be given
+ *  back. Without this the engine would finish every page ever asked for. */
+const stop = (task: PdfTask<Blob> | null): void => {
+  task?.abort({ code: PdfErrorCode.Cancelled, message: 'superseded' });
+};
+
+/** Each document opened in this session gets its own name, so two tabs on
+ *  the same file never share the engine's copy of it. */
+let opened = 0;
+
 export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, options: PdfOptions): Promise<PdfHandle> {
-  const pdfjs = await import('pdfjs-dist');
-  // The worker keeps parsing off the page's own thread; without it pdf.js
-  // does the work inline and a large document visibly stalls.
-  const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url);
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl.href;
-  const data = typeof source === 'string' ? { url: source } : { data: source };
-  // A PDF is a document to be read, never a program to be run, and on this
-  // version of pdf.js there is nothing left to switch off: `isEvalSupported`
-  // is gone from 6, the eval path with it, and the scripting sandbox that
-  // CVE-2026-16633 ran a malicious page's own JavaScript through belongs to
-  // the bundled viewer — which defaults it on, and which Satr does not use.
-  // This is the library's own API; it never loads `pdf.sandbox`.
-  const loading = pdfjs.getDocument({
-    ...data,
-    // All three fail silently when unset, which is how a scanned page came
-    // out blank: its pictures are JPEG 2000 or JBIG2, and those decoders are
-    // wasm files pdf.js fetches at the moment it needs them. Same three
-    // Obsidian serves (from /lib/pdfjs/), resolved against the document's
-    // own base so a build under any path, and the APK, find them.
-    cMapUrl: new URL('pdfjs/cmaps/', window.document.baseURI).href,
-    cMapPacked: true,
-    standardFontDataUrl: new URL('pdfjs/standard_fonts/', window.document.baseURI).href,
-    wasmUrl: new URL('pdfjs/wasm/', window.document.baseURI).href,
-  });
-  const document_: PDFDocumentProxy = await loading.promise;
+  // PDFium, not pdf.js: the engine draws on its own and hands back a
+  // picture, so there is no worker to wire up and no cmap, font or decoder
+  // directory to point at — the one wasm file carries all of it, which is
+  // why a scanned page can no longer come out blank for a missing decoder.
+  const engine = await pdfium();
+  opened += 1;
+  const id = `satr-${opened}`;
+  const document_: PdfDocumentObject = await (typeof source === 'string'
+    ? engine.openDocumentUrl({ id, url: source })
+    : engine.openDocumentBuffer({ id, content: source })).toPromise();
 
   const { scroller } = options;
   const doc = window.document.createElement('div');
@@ -132,7 +129,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const counter = window.document.createElement('div');
   counter.className = 'pdf-counter';
   // One page is its own counter: it says nothing a reader doesn't see.
-  counter.hidden = document_.numPages < 2;
+  counter.hidden = document_.pageCount < 2;
   host.append(doc, counter);
 
   let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
@@ -140,14 +137,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const slabs: Slab[] = [];
 
   // Every page's natural size, which is what the column is laid out from.
-  // Asked for once: a page's own viewport is the only thing needed before it
-  // is drawn, and asking for all of them up front keeps the column from
-  // jumping about as the reader scrolls into pages of another size.
-  const sizes = await Promise.all(Array.from({ length: document_.numPages }, async (_, index) => {
-    const page = await document_.getPage(index + 1);
-    const view = page.getViewport({ scale: 1 });
-    return { page, width: view.width, height: view.height };
-  }));
+  // The engine reports all of them when the document opens, so the column is
+  // laid out whole from the first frame and never jumps as the reader
+  // scrolls into a page of another size.
+  const sizes = document_.pages.map((page) => ({ page, width: page.size.width, height: page.size.height }));
   sizes.forEach(({ page, width, height }, index) => {
     const box = window.document.createElement('div');
     box.className = 'pdf-page';
@@ -245,7 +238,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const near = to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen;
       const keep = to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen;
       if (!keep) { // far from the screen: give its memory back
-        if (slab.canvas) { slab.task?.cancel(); slab.task = null; slab.canvas.remove(); slab.canvas = null; slab.drawnZoom = 0; slab.painting = 0; }
+        if (slab.canvas) { stop(slab.task); slab.task = null; slab.canvas.remove(); slab.canvas = null; slab.drawnZoom = 0; slab.painting = 0; }
         continue;
       }
       if (!near || !slab.proxy) continue;
@@ -267,7 +260,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const raster = Math.max(1, Math.min(window.devicePixelRatio || 1, fit));
     const drawnAt = zoom;
     slab.painting = drawnAt;
-    slab.task?.cancel();
+    stop(slab.task);
     const canvas = window.document.createElement('canvas');
     canvas.className = 'pdf-raster';
     canvas.width = Math.round(width * raster);
@@ -276,16 +269,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     canvas.style.height = `${height}px`;
     const context = canvas.getContext('2d');
     if (!context) return;
-    const viewport = slab.proxy.getViewport({ scale: scale * raster });
-    const task = slab.proxy.render({ canvas, canvasContext: context, viewport });
+    // The engine draws the page off this thread and hands back a picture of
+    // it; the only work left here is putting that picture on the canvas.
+    const task = engine.renderPage(document_, slab.proxy, { scaleFactor: scale, dpr: raster, withAnnotations: true });
     slab.task = task;
+    let picture: ImageBitmap;
     try {
-      await task.promise;
+      picture = await createImageBitmap(await task.toPromise());
     } catch {
       if (slab.painting === drawnAt) slab.painting = 0;
       return; // cancelled by a later zoom, or the document went away
     }
-    if (slab.task !== task) return;
+    if (slab.task !== task) { picture.close(); return; }
+    canvas.width = picture.width;
+    canvas.height = picture.height;
+    context.drawImage(picture, 0, 0);
+    picture.close();
     // the page it replaces stays up until this one is ready, so a zoom is
     // never a column of empty boxes
     slab.canvas?.remove();
@@ -307,7 +306,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     return scrollable && atEnd ? slabs.length : placeNow().page;
   };
   const showCounter = (): void => {
-    counter.textContent = `${pageShown()} / ${document_.numPages}`;
+    counter.textContent = `${pageShown()} / ${document_.pageCount}`;
   };
 
   let placeTimer = 0;
@@ -465,12 +464,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   drawBand();
 
   const handle: PdfHandle = {
-    pages: document_.numPages,
+    pages: document_.pageCount,
     place: placeNow,
     goTo: (page: number) => {
       letGo();
       options.ownScroll?.();
-      scroller.scrollTop = offsetOf({ page: clamp(Math.round(page), 1, document_.numPages), into: 0 });
+      scroller.scrollTop = offsetOf({ page: clamp(Math.round(page), 1, document_.pageCount), into: 0 });
       showCounter();
       drawBand();
       remember();
@@ -487,10 +486,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       scroller.removeEventListener('pointermove', onPointerMove);
       scroller.removeEventListener('pointerup', endPinch);
       scroller.removeEventListener('pointercancel', endPinch);
-      for (const slab of slabs) { slab.task?.cancel(); slab.proxy?.cleanup(); }
-      // the loading task owns the worker; the document proxy stopped
-      // carrying its own destroy in pdfjs-dist 6
-      void loading.destroy();
+      for (const slab of slabs) stop(slab.task);
+      // The document's memory goes back to the engine; the engine itself is
+      // the app's and stays up, because compiling the wasm again for the
+      // next document would be felt.
+      void engine.closeDocument(document_).toPromise().catch(() => undefined);
       doc.remove();
       counter.remove();
     },

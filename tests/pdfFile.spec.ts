@@ -258,17 +258,11 @@ test('a page is drawn at the screen’s own pixels, inside the budget', async ({
   expect(drawn.pixels).toBeLessThanOrEqual(16_777_216);
 });
 
-test('pdf.js can reach the decoders and tables it fetches separately', async ({ page }) => {
-  // A scanned page is JPEG 2000 or JBIG2, and those decoders are wasm files
-  // pdf.js asks for at the moment it needs them. Unreachable, they fail
-  // silently and the page comes out blank — Gander's own bug #24.
-  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
-  await readThis(page, 'handout.pdf');
-  const reachable = await page.evaluate(async () => {
-    const paths = ['pdfjs/wasm/openjpeg.wasm', 'pdfjs/wasm/jbig2.wasm', 'pdfjs/cmaps/Adobe-Japan1-UCS2.bcmap', 'pdfjs/standard_fonts/FoxitFixed.pfb'];
-    const codes = [];
-    for (const path of paths) codes.push((await fetch(new URL(path, document.baseURI))).status);
-    return codes;
-  });
-  expect(reachable).toEqual([200, 200, 200, 200]);
+test('the engine itself is served by the app, whole and from its own origin', async () => {
+  // PDFium is one 4.5 MB wasm file and the viewer is nothing without it:
+  // unreachable or truncated, every page comes out blank. It is served from
+  // the app's own origin so a document opens with no network at all.
+  const response = await fetch('http://127.0.0.1:5173/pdfium/pdfium.wasm');
+  expect(response.status).toBe(200);
+  expect((await response.arrayBuffer()).byteLength).toBe(4_646_932);
 });
