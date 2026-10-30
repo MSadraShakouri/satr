@@ -18,6 +18,7 @@
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask } from '@embedpdf/models';
+import type { Rect as PageRect } from '@embedpdf/models';
 import { pdfium } from './pdfiumEngine';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
@@ -58,6 +59,8 @@ export interface PdfOutlineItem {
   page: number | null;
   children: PdfOutlineItem[];
 }
+/** One match: the page it is on, and the boxes to draw over it. */
+export interface PdfHit { page: number; rects: PageRect[] }
 export interface PdfHandle {
   pages: number;
   place(): PdfPlace;
@@ -74,6 +77,11 @@ export interface PdfHandle {
   /** Told whenever the page at the top of the screen changes, so the
    *  toolbar's number and the sidebar's highlight follow the reader. */
   onPage(listen: (page: number) => void): () => void;
+  /** Every hit for a word, in reading order. PDFium searches the text
+   *  itself, where pdf.js makes a viewer assemble the text first. */
+  find(keyword: string): Promise<PdfHit[]>;
+  /** Mark them all, and put the one being looked at on the screen. */
+  showHits(hits: PdfHit[], current: number): void;
   destroy(): void;
 }
 
@@ -215,6 +223,28 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     columnTop = doc.getBoundingClientRect().top - scroller.getBoundingClientRect().top
       + scroller.scrollTop + (parseFloat(getComputedStyle(doc).paddingTop) || 0);
   };
+  /** The matches on screen. They are boxes over the page rather than
+   *  anything the renderer knows about, so a zoom just re-lays them. */
+  let marks: PdfHit[] = [];
+  let marked = -1;
+  const drawMarks = (): void => {
+    const scale = scaleNow();
+    for (const slab of slabs) for (const old of slab.box.querySelectorAll('.pdf-find-hit')) old.remove();
+    marks.forEach((hit, index) => {
+      const slab = slabs[hit.page - 1];
+      if (!slab) return;
+      for (const rect of hit.rects) {
+        const el = document.createElement('div');
+        el.className = index === marked ? 'pdf-find-hit is-current' : 'pdf-find-hit';
+        el.style.left = `${rect.origin.x * scale}px`;
+        el.style.top = `${rect.origin.y * scale}px`;
+        el.style.width = `${rect.size.width * scale}px`;
+        el.style.height = `${rect.size.height * scale}px`;
+        slab.box.append(el);
+      }
+    });
+  };
+
   const layout = (): void => {
     const scale = scaleNow();
     for (const slab of slabs) {
@@ -225,6 +255,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // redrawn when the reader stops moving
       placeDetail(slab);
     }
+    if (marks.length) drawMarks();
     measureTop();
   };
 
@@ -696,6 +727,33 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       }));
       try { return read((await engine.getBookmarks(document_).toPromise()).bookmarks ?? []); }
       catch { return []; }
+    },
+    find: async (keyword: string) => {
+      if (!keyword.trim()) return [];
+      try {
+        const found = await engine.searchAllPages(document_, keyword).toPromise();
+        return found.results.map((result) => ({ page: result.pageIndex + 1, rects: result.rects }));
+      } catch { return []; }
+    },
+    showHits: (hits: PdfHit[], current: number) => {
+      marks = hits;
+      marked = current;
+      drawMarks();
+      const hit = hits[current];
+      if (!hit) return;
+      const slab = slabs[hit.page - 1];
+      const box = hit.rects[0];
+      if (!slab || !box) { handle.goTo(hit.page); return; }
+      // A couple of lines of context above the match, but never so far up
+      // that its own page is no longer the page at the top of the screen —
+      // otherwise the counter and the page box would name the page before.
+      const scale = scaleNow();
+      const edge = offsetOf({ page: hit.page, into: 0 });
+      letGo();
+      options.ownScroll?.();
+      scroller.scrollTop = Math.max(0, Math.max(edge, edge + box.origin.y * scale - 48) - chromeTop());
+      showCounter();
+      drawBand();
     },
     onPage: (listen: (page: number) => void) => {
       watchers.add(listen);

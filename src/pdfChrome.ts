@@ -17,7 +17,7 @@
 // panel's view picker, then zoom out, zoom in, the display options, and the
 // page box with the count beside it.
 import { openMenu, type MenuEntry } from './menu';
-import type { PdfFit, PdfHandle, PdfOutlineItem } from './pdfView';
+import type { PdfFit, PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 
 const ICONS: Record<string, string> = {
   panel: '<path d="M3 5.5A2.5 2.5 0 0 1 5.5 3h13A2.5 2.5 0 0 1 21 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5z"/><path d="M9 3v18"/>',
@@ -25,6 +25,10 @@ const ICONS: Record<string, string> = {
   minus: '<path d="M5 12h14"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
   options: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 };
 const button = (name: string, label: string): HTMLButtonElement => {
   const el = document.createElement('button');
@@ -125,7 +129,72 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
   box.onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); jump(); } };
   box.onblur = () => { box.value = String(shownPage); };
   box.onfocus = () => box.select();
-  right.append(out, into, divider, display, box, count);
+  const search = button('search', 'Find in document');
+  search.onclick = () => setFinding(true);
+  right.append(search, out, into, divider, display, box, count);
+
+  // ---- the find bar ----------------------------------------------------
+  // Obsidian's lies across the top of the pages, above everything, and on a
+  // phone it sheds its divider, its settings button and its message line
+  // and keeps the field, the count and the two arrows.
+  const findbar = document.createElement('div');
+  findbar.className = 'pdf-findbar mod-hidden';
+  const wrap = document.createElement('div');
+  wrap.className = 'pdf-search-wrapper';
+  const field = document.createElement('input');
+  field.className = 'pdf-toolbar-field';
+  field.setAttribute('type', 'text');
+  field.setAttribute('aria-label', 'Find');
+  field.setAttribute('placeholder', 'Find in document');
+  const tally = document.createElement('span');
+  tally.className = 'pdf-find-results-count';
+  const previous = button('up', 'Previous match');
+  const next = button('down', 'Next match');
+  const shut = button('close', 'Close find');
+  wrap.append(field, tally, previous, next, shut);
+  findbar.append(wrap);
+
+  let hits: PdfHit[] = [];
+  let at = -1;
+  const show = (): void => {
+    tally.textContent = hits.length ? `${at + 1} of ${hits.length}` : (field.value.trim() ? 'No matches' : '');
+    field.classList.toggle('mod-not-found', Boolean(field.value.trim()) && !hits.length);
+    handle.showHits(hits, at);
+  };
+  const step = (by: number): void => {
+    if (!hits.length) return;
+    at = (at + by + hits.length) % hits.length;
+    show();
+  };
+  previous.onclick = () => step(-1);
+  next.onclick = () => step(1);
+  let asking = 0;
+  const look = (): void => {
+    const asked = field.value;
+    window.clearTimeout(asking);
+    asking = window.setTimeout(async () => {
+      hits = await handle.find(asked);
+      if (field.value !== asked) return;
+      at = hits.length ? 0 : -1;
+      show();
+    }, 200);
+  };
+  field.oninput = look;
+  field.onkeydown = (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); step(event.shiftKey ? -1 : 1); }
+    if (event.key === 'Escape') setFinding(false);
+  };
+  function setFinding(on: boolean): void {
+    findbar.classList.toggle('mod-hidden', !on);
+    document.body.classList.toggle('is-pdf-finding', on);
+    if (on) { field.focus(); field.select(); return; }
+    hits = [];
+    at = -1;
+    field.value = '';
+    tally.textContent = '';
+    handle.showHits([], -1);
+  }
+  shut.onclick = () => setFinding(false);
 
   // ---- what follows the reader ---------------------------------------
   let shownPage = handle.place().page;
@@ -211,14 +280,16 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
   };
 
   box.value = String(shownPage);
-  document.body.append(toolbar, sidebar);
+  document.body.append(toolbar, sidebar, findbar);
 
   return {
     destroy: () => {
       unfollow();
+      window.clearTimeout(asking);
       toolbar.remove();
       sidebar.remove();
-      document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
+      findbar.remove();
+      document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar', 'is-pdf-finding');
     },
   };
 }

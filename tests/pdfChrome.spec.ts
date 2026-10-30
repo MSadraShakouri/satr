@@ -41,7 +41,8 @@ test('a document gets the strip of controls, in Obsidian\'s own order', async ({
   // left group is the panel, right group is zoom and the page
   const order = await page.evaluate(() => [...document.querySelectorAll('.pdf-toolbar [aria-label], .pdf-toolbar input, .pdf-toolbar span')]
     .map((el) => el.getAttribute('aria-label') ?? el.className));
-  expect(order).toEqual(['Toggle sidebar', 'Sidebar options', 'Zoom out', 'Zoom in', 'Display options', 'Page', 'pdf-page-numbers']);
+  expect(order).toEqual(['Toggle sidebar', 'Sidebar options', 'Find in document', 'Zoom out', 'Zoom in',
+    'Display options', 'Page', 'pdf-page-numbers']);
 
   await boot(page, 'note.md');
   await expect(page.locator('.pdf-toolbar')).toHaveCount(0); // a note has no document chrome
@@ -120,4 +121,30 @@ test('zoom out and zoom in step the page', async ({ page }) => {
   await control(page, 'Zoom out').click();
   await page.waitForTimeout(500);
   expect(await pageWidth(page)).toBe(fit); // a step out undoes a step in
+});
+
+test('find marks every match and walks them', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  await expect(page.locator('.pdf-findbar')).toBeHidden();
+  await control(page, 'Find in document').click();
+  await expect(page.locator('.pdf-findbar')).toBeVisible();
+  // every page of this document says "Page", so there is one hit per page
+  await page.locator('.pdf-findbar input').fill('Page');
+  await expect(page.locator('.pdf-find-results-count')).toHaveText('1 of 8', { timeout: 15000 });
+  await expect(page.locator('.pdf-find-hit')).toHaveCount(8);
+  await expect(page.locator('.pdf-find-hit.is-current')).toHaveCount(1);
+  // the arrows walk them, and the document follows
+  await control(page, 'Next match').click();
+  await expect(page.locator('.pdf-find-results-count')).toHaveText('2 of 8');
+  await page.waitForTimeout(500);
+  await expect(page.locator('.pdf-counter')).toHaveText('2 / 8');
+  // a word that is not there says so rather than going quiet
+  await page.locator('.pdf-findbar input').fill('zzzzz');
+  await expect(page.locator('.pdf-find-results-count')).toHaveText('No matches', { timeout: 15000 });
+  await expect(page.locator('.pdf-find-hit')).toHaveCount(0);
+  // and closing it puts the page back the way it was
+  await control(page, 'Close find').click();
+  await expect(page.locator('.pdf-findbar')).toBeHidden();
+  await expect(page.locator('.pdf-toolbar')).toBeVisible();
 });

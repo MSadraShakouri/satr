@@ -4387,6 +4387,64 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
+
+/* Obsidian's find bar lies across the top of the pages, over everything.
+   Its phone layout sheds the divider, the settings button and the message
+   line and keeps the field, the count and the arrows, with the field given
+   the room the rest leave; these are its own class names again. */
+.pdf-findbar {
+  position: fixed;
+  top: var(--view-top-spacing);
+  inset-inline: 0;
+  z-index: 101;
+  display: flex;
+  padding: var(--size-2-3, 6px) var(--size-4-2, 8px);
+  background-color: var(--background-primary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-small);
+}
+.pdf-findbar.mod-hidden { display: none; }
+.pdf-findbar .pdf-search-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2, 8px);
+  width: 100%;
+}
+.pdf-findbar .pdf-toolbar-field {
+  flex-grow: 1;
+  min-width: 0;
+  height: 28px;
+  font-size: var(--font-ui-small);
+}
+.pdf-findbar .pdf-toolbar-field.mod-not-found {
+  --background-modifier-border-focus: var(--text-error);
+  border-color: var(--text-error);
+}
+.pdf-find-results-count {
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.pdf-find-results-count:empty { display: none; }
+/* The find bar takes the strip's place while it is up, rather than
+   stacking on top of it: one row of chrome under the file's name. */
+body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
+/* A match is a box over the page, not something the renderer drew, so a
+   zoom only re-lays it. Obsidian marks every hit in yellow and the one
+   being looked at in the accent colour; same here. */
+.pdf-find-hit {
+  position: absolute;
+  z-index: 2;
+  border-radius: 2px;
+  background-color: var(--color-yellow);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.pdf-find-hit.is-current {
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+.theme-dark .pdf-find-hit { mix-blend-mode: screen; }
 .pdf-raster {
   position: absolute;
   inset: 0;
