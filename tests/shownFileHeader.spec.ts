@@ -74,3 +74,14 @@ test('opening a shown file brings the chrome back', async ({ page }) => {
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
   expect(await hidden(page)).toBe(false);
 });
+
+test('a document starts below the header, not behind it', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  const bar = await page.locator('.topbar').boundingBox();
+  const first = await page.locator('.pdf-page[data-page="1"]').boundingBox();
+  expect(bar).not.toBeNull();
+  expect(first).not.toBeNull();
+  // the page's own top edge is at or below the bar's bottom edge
+  expect(first!.y).toBeGreaterThanOrEqual((bar!.y + bar!.height) - 1);
+});

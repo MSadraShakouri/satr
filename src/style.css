@@ -454,6 +454,13 @@ body {
   /* --view-top-spacing-markdown: Obsidian's safe area + 44px + 16px, so the
      note starts just under the buttons */
   --view-top-spacing-markdown: calc(var(--safe-top) + 44px + 16px);
+  /* --view-top-spacing: the same strip for a file that is shown rather than
+     read. Obsidian puts it on every view's content (.view-content gets
+     margin-top: var(--view-top-spacing)) so that floating the header never
+     costs the document its first inch. Obsidian measures from the safe area
+     alone; the topbar here is padded by max(12px, safe), so this follows the
+     topbar instead and stays 8px clear of it on a phone with no notch too. */
+  --view-top-spacing: calc(max(12px, var(--safe-top)) + 44px + 8px);
 }
 .is-hidden-nav {
   --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 var(--safe-top));
@@ -4141,7 +4148,9 @@ textarea,
   flex-direction: column;
   align-items: safe center;
   max-width: none;
-  padding: 0;
+  /* The column keeps the header's strip clear, as a note's article does:
+     the first page starts under the bar rather than behind it. */
+  padding: var(--view-top-spacing) 0 0;
   font-size: initial;
   line-height: initial;
 }
@@ -4679,6 +4688,11 @@ body.external-file-active .notice {
 }
 #preview.is-page {
   display: flex;
+  /* The page scrolls inside its own frame, so the frame — not the pane —
+     is what has to start below the header. It gives back the height it
+     was moved down by, or the bottom of the page would fall off the pane. */
+  margin-top: var(--view-top-spacing);
+  height: calc(100% - var(--view-top-spacing));
 }
 iframe.html-file {
   flex: 1;

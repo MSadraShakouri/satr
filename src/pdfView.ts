@@ -204,9 +204,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     measureTop();
   };
 
+  /** The strip the chrome keeps for itself at the top of the pane. A file
+   *  that is shown rather than read never hides its header, so a place at
+   *  "the top of the screen" belongs under the header and not behind it —
+   *  otherwise opening a document scrolls its first page straight back
+   *  under the bar and undoes the room the stylesheet just made.
+   *  drawBand deliberately does NOT use this: the bar is frosted, so the
+   *  page behind it is visible and still has to be drawn. */
+  const chromeTop = (): number => parseFloat(getComputedStyle(host).paddingTop) || 0;
   /** Where the top of the screen is, as a page and a fraction into it. */
   const placeNow = (): PdfPlace => {
-    const top = scroller.scrollTop - columnTop;
+    const top = scroller.scrollTop + chromeTop() - columnTop;
     let edge = 0;
     for (const slab of slabs) {
       const height = heightOf(slab);
@@ -229,6 +237,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     }
     return 0;
   };
+  /** The same offset, as a scroll position: the place lands just below the
+   *  header rather than under it. The pinch keeps the raw offsetOf, because
+   *  there the anchor is the finger and not the top of the screen. */
+  const topFor = (place: { page: number; into: number }): number =>
+    Math.max(0, offsetOf(place) - chromeTop());
 
   // The place a document is opened at, held until the reader touches it.
   // Opening is not a quiet moment: the pane is measured, laid out, hidden
@@ -243,7 +256,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!pending) return false;
     if (!scroller.clientWidth || !scroller.clientHeight) return true; // nowhere to put it yet
     options.ownScroll?.();
-    scroller.scrollTop = offsetOf(pending);
+    scroller.scrollTop = topFor(pending);
     return true;
   };
   const letGo = (): void => { pending = null; };
@@ -459,7 +472,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const onScroll = (): void => {
     // A scroll nobody asked for, while the document is still being put back
     // where it was: put it back again.
-    if (pending && Math.abs(scroller.scrollTop - offsetOf(pending)) > 4) {
+    if (pending && Math.abs(scroller.scrollTop - topFor(pending)) > 4) {
       applyPending();
       showCounter();
       return;
@@ -585,7 +598,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const held = placeNow();
     measureFit();
     layout();
-    if (!applyPending()) scroller.scrollTop = offsetOf(held);
+    if (!applyPending()) scroller.scrollTop = topFor(held);
     showCounter();
     drawBand();
   };
@@ -605,7 +618,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     goTo: (page: number) => {
       letGo();
       options.ownScroll?.();
-      scroller.scrollTop = offsetOf({ page: clamp(Math.round(page), 1, document_.pageCount), into: 0 });
+      scroller.scrollTop = topFor({ page: clamp(Math.round(page), 1, document_.pageCount), into: 0 });
       showCounter();
       drawBand();
       remember();
