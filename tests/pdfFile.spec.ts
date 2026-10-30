@@ -140,6 +140,45 @@ test('zooming in draws the part on screen sharply, and does not redraw the page'
   expect(await pixelsHeld(page, 1)).toBeLessThan(held * 3);
 });
 
+test('a page\u2019s picture fits its page, zoomed in or out', async ({ page }) => {
+  // Reported: zooming out acts weird. It did — the picture was drawn for
+  // the page at the pane's width and kept that size while the box shrank
+  // around it, so pages lay over the ones below them. A canvas is a
+  // replaced element: it keeps the size of its own pixels unless it is told
+  // otherwise, and being stretched to its box is the whole point of drawing
+  // it once.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fits = async (): Promise<string[]> => page.evaluate(() => {
+    const wrong: string[] = [];
+    for (const box of document.querySelectorAll<HTMLElement>('.pdf-page')) {
+      const page_ = box.getBoundingClientRect();
+      const base = box.querySelector<HTMLCanvasElement>('canvas:not(.pdf-detail)');
+      if (!base) continue;
+      const drawn = base.getBoundingClientRect();
+      if (Math.abs(drawn.width - page_.width) > 1 || Math.abs(drawn.height - page_.height) > 1) {
+        wrong.push(`page ${box.dataset.page}: box ${Math.round(page_.width)}x${Math.round(page_.height)}, picture ${Math.round(drawn.width)}x${Math.round(drawn.height)}`);
+      }
+    }
+    return wrong;
+  });
+  expect(await fits()).toEqual([]);
+  await pinch(page, 3);
+  await page.waitForTimeout(500);
+  expect(await fits()).toEqual([]);
+  for (const out of [0.2, 0.4]) { // back out, and further out than the pane
+    await pinch(page, out);
+    await page.waitForTimeout(500);
+    expect(await fits(), 'zoomed out').toEqual([]);
+  }
+  // and the pages are still a column, each below the last, none overlapping
+  const overlaps = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll('.pdf-page')].map((b) => b.getBoundingClientRect());
+    return boxes.filter((box, index) => index > 0 && box.top < boxes[index - 1].bottom - 0.5).length;
+  });
+  expect(overlaps).toBe(0);
+});
+
 test('a document opens where it was left, by its own bytes rather than its name', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF, 'copy.pdf': PDF, 'other.pdf': OTHER }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
@@ -339,7 +378,9 @@ test('a page is drawn at the screen’s own pixels, inside the budget', async ({
   await readThis(page, 'handout.pdf');
   await expect(page.locator('.pdf-raster').first()).toBeVisible();
   const drawn = await page.locator('.pdf-raster').first().evaluate((canvas: HTMLCanvasElement) => ({
-    ratio: canvas.width / parseFloat(canvas.style.width),
+    // against the size it is actually shown at, which is the box it is
+    // stretched into — it carries no CSS size of its own
+    ratio: canvas.width / canvas.getBoundingClientRect().width,
     pixels: canvas.width * canvas.height,
     screen: window.devicePixelRatio,
   }));

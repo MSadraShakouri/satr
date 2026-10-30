@@ -306,12 +306,21 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     return Math.max(1, Math.min(window.devicePixelRatio || 1, fitted));
   };
 
+  /**
+   * A canvas of a given size in the screen's pixels. It is given no size in
+   * CSS: the base fills its page box by the stylesheet (inset: 0), so the
+   * browser stretches it to whatever the zoom makes the box — which is the
+   * whole point of drawing it once. A tile is placed by placeDetail.
+   *
+   * Pinning a CSS size here was a bug worth naming: zoomed out, a picture
+   * drawn for the page's full width stayed that wide while its box shrank,
+   * so pages overlapped the ones below them; zoomed in, the page was empty
+   * wherever a tile had not landed yet, instead of soft.
+   */
   const sheet = (width: number, height: number, raster: number): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } | null => {
     const canvas = window.document.createElement('canvas');
     canvas.width = Math.round(width * raster);
     canvas.height = Math.round(height * raster);
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
     const context = canvas.getContext('2d');
     return context ? { canvas, context } : null;
   };

@@ -4166,6 +4166,12 @@ textarea,
 .pdf-raster {
   position: absolute;
   inset: 0;
+  /* A canvas is a replaced element: inset alone does not stretch it, it
+     keeps the size of its own pixels. The page's picture is drawn once and
+     has to fill whatever the zoom makes the box, so it is sized in the
+     box's own terms. */
+  width: 100%;
+  height: 100%;
   display: block;
 }
 /* Which page is being read. It lives in the floating layer with the navbar
