@@ -346,10 +346,11 @@ test('the counter stays with the pane when a zoomed page is pushed sideways', as
   expect(Math.abs(await centred() - still)).toBeLessThan(2);
 });
 
-test('the counter rides with the floating buttons, and comes down when they go', async ({ page }) => {
+test('the counter rides with the floating buttons, which a document keeps', async ({ page }) => {
   // It is chrome, not part of the page: it belongs in the same floating
-  // layer as the navbar pill, above it, and when that pill slides away the
-  // counter takes the space it left rather than hovering over nothing.
+  // layer as the navbar pill and above it. The pill used to slide away
+  // under a scrolling document and the counter came down into the space;
+  // a shown file keeps its chrome now, so the pair simply stays put.
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
   expect(await page.locator('.navbar-wrap .pdf-counter').count()).toBe(1);
@@ -363,13 +364,14 @@ test('the counter rides with the floating buttons, and comes down when they go',
   });
   const above = await offTheEdge();
   expect(above).toBeGreaterThan(await bar()); // clear of the pill, above it
-  // scrolling the document is a hand on it, and the bars go away
-  await page.evaluate(() => { (document.querySelector('#preview-pane') as HTMLElement).scrollTop = 1200; });
-  await expect.poll(async () => page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(true);
-  await page.waitForTimeout(400); // the slide, which the counter shares
-  const down = await offTheEdge();
-  expect(down).toBeLessThan(above - 40); // it came down into the empty space
-  expect(down).toBeGreaterThan(4); // but is still clear of the screen's edge
+  // a hand on the document moves the document and nothing else: the name
+  // in the header is a document's only label, and it does not come and go
+  await page.mouse.move(195, 400);
+  for (let i = 0; i < 3; i += 1) { await page.mouse.wheel(0, 500); await page.waitForTimeout(300); }
+  const moved = await page.evaluate(() => (document.querySelector('#preview-pane') as HTMLElement).scrollTop);
+  expect(moved).toBeGreaterThan(200); // the reader really did travel
+  expect(await page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(false);
+  expect(await offTheEdge()).toBe(above); // and the counter stayed with the pill
 });
 });
 

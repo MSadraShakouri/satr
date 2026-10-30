@@ -167,6 +167,13 @@ const canRenameInline = (path: string): boolean => !isExternalPath(path) && ['md
  *  file lent read-only by another app. The pen it has no use for is replaced
  *  by a ⋮, and the header shows the name the note would have shown itself. */
 let viewOnly = false;
+/** The chrome is carrying the file's own name, because the file will not.
+ *  Obsidian draws its two lines in the same place: the header's title is
+ *  hidden for a markdown view and shown for every other, and its
+ *  auto-full-screen is wired into the two markdown views and nothing else.
+ *  So the views whose header says the name are exactly the views whose
+ *  header never leaves, and one flag is enough for both. */
+let namedFile = false;
 function setViewOnly(on: boolean): void {
   viewOnly = on;
   document.body.classList.toggle('is-view-only', on);
@@ -182,6 +189,7 @@ function setViewOnly(on: boolean): void {
  */
 function nameInChrome(): void {
   const named = viewOnly || (mode === 'preview' && fileKind(filePath) === 'page');
+  namedFile = named;
   document.body.classList.toggle('is-named-file', named);
   const title = document.querySelector<HTMLElement>('#topbar-title');
   if (title) title.textContent = named ? fileBase : '';
@@ -1351,6 +1359,14 @@ let programmaticUntil = 0;
 function ownScroll(ms = 150): void { programmaticUntil = Math.max(programmaticUntil, performance.now() + ms); }
 function onNavScroll(el: HTMLElement): void {
   const top = el.scrollTop;
+  // A file that is shown rather than read keeps its chrome on screen. In
+  // Obsidian only the two markdown views ever report a scroll to the navbar,
+  // so a PDF, a picture or a page never hides the header no matter how far
+  // you scroll it — the header is their only label, and taking it away
+  // leaves a nameless document. The anchor still keeps up, so coming back to
+  // a note does not count the distance the document travelled as the
+  // reader's first gesture.
+  if (el === previewPane && namedFile) { scrollAnchors.set(el, top); return; }
   const anchor = scrollAnchors.get(el) ?? 0; // panes start at the top
   if (syncingScroll || restoringView || performance.now() < programmaticUntil
     || Date.now() - lastRender < 100 || el.getBoundingClientRect().height === 0
@@ -1671,6 +1687,11 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // chrome says so (a header with the file's name and a ⋮ in place of the
   // pen) rather than letting a tap land in an editor that refuses it.
   setViewOnly(Boolean(imageTab || documentTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  // The chrome comes back whenever the open file changes, as Obsidian does
+  // on active-leaf-change. Without this you could scroll a note until the
+  // bars left, open a PDF, and arrive at a view that keeps its header —
+  // and so never reports a scroll that would bring the header back.
+  restoreNavigation();
   editor.setReadOnly(viewOnly);
   // Say it once per file: the editor takes no writing because the bytes are
   // not text, and nobody should wonder why nothing happens.
