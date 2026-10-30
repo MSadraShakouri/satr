@@ -270,6 +270,32 @@ test('the counter stays with the pane when a zoomed page is pushed sideways', as
   expect(pushed).toBeGreaterThan(0); // the pane really did scroll sideways
   expect(Math.abs(await centred() - still)).toBeLessThan(2);
 });
+
+test('the counter rides with the floating buttons, and comes down when they go', async ({ page }) => {
+  // It is chrome, not part of the page: it belongs in the same floating
+  // layer as the navbar pill, above it, and when that pill slides away the
+  // counter takes the space it left rather than hovering over nothing.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  expect(await page.locator('.navbar-wrap .pdf-counter').count()).toBe(1);
+  const offTheEdge = (): Promise<number> => page.evaluate(() => {
+    const pill = document.querySelector('.pdf-counter')!.getBoundingClientRect();
+    return Math.round(window.innerHeight - pill.bottom);
+  });
+  const bar = (): Promise<number> => page.evaluate(() => {
+    const white = document.querySelector('.pill-white')!.getBoundingClientRect();
+    return Math.round(window.innerHeight - white.bottom);
+  });
+  const above = await offTheEdge();
+  expect(above).toBeGreaterThan(await bar()); // clear of the pill, above it
+  // scrolling the document is a hand on it, and the bars go away
+  await page.evaluate(() => { (document.querySelector('#preview-pane') as HTMLElement).scrollTop = 1200; });
+  await expect.poll(async () => page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(true);
+  await page.waitForTimeout(400); // the slide, which the counter shares
+  const down = await offTheEdge();
+  expect(down).toBeLessThan(above - 40); // it came down into the empty space
+  expect(down).toBeGreaterThan(4); // but is still clear of the screen's edge
+});
 });
 
 test('a page is drawn at the screen’s own pixels, inside the budget', async ({ page }) => {

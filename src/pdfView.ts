@@ -41,6 +41,10 @@ export interface PdfOptions {
   /** About to scroll the pane itself, rather than the reader doing it: the
    *  app's own chrome reads scrolling as a hand and hides the bars for it. */
   ownScroll?: () => void;
+  /** The app's floating layer — where the navbar pill lives. The page
+   *  counter belongs there rather than in the document: it is chrome, not
+   *  part of the page. */
+  overlay?: HTMLElement | null;
 }
 
 export interface PdfHandle {
@@ -128,18 +132,18 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // not dragged. The way through a long document is the scrollbar.
   const counter = window.document.createElement('div');
   counter.className = 'pdf-counter';
-  // The pill is a reading of the pane, not a part of the column. Zoomed in,
-  // the column is wider than the pane and slides sideways beneath it, and a
-  // counter living in the column slid away with it. This bar is the
-  // scroller's own child, so it is the pane's width whatever the column
-  // does, and the pill stays centred in it.
-  const counterBar = window.document.createElement('div');
-  counterBar.className = 'pdf-counter-bar';
+  // Chrome, not content. It used to ride inside the scroller, which made it
+  // part of the document in every way that shows: it sat under the floating
+  // buttons rather than with them, it slid sideways with a zoomed column,
+  // and a sticky thing is moved by the compositor as the scroll goes by, so
+  // it shifted a little when a fast scroll hit an edge. In the app's own
+  // floating layer it is fixed to the screen, in the same stack as the
+  // navbar pill, and none of that can happen.
+  const overlay = options.overlay ?? window.document.querySelector<HTMLElement>('.navbar-wrap') ?? scroller;
   // One page is its own counter: it says nothing a reader doesn't see.
-  counterBar.hidden = document_.pageCount < 2;
-  counterBar.append(counter);
+  counter.hidden = document_.pageCount < 2;
   host.append(doc);
-  (scroller.contains(host) ? scroller : host).append(counterBar);
+  overlay.prepend(counter); // above the navbar pill, which is the layer's own child
 
   let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
   let fit = 1; // the scale at which a page fills the pane's width
@@ -501,7 +505,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // next document would be felt.
       void engine.closeDocument(document_).toPromise().catch(() => undefined);
       doc.remove();
-      counterBar.remove();
+      counter.remove();
     },
   };
   return handle;

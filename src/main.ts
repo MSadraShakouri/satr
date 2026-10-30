@@ -593,6 +593,9 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
     // Putting a document back where it was is not the reader scrolling: the
     // bars stay as they are.
     ownScroll: () => ownScroll(400),
+    // The page counter is chrome: it rides in the floating layer with the
+    // navbar pill rather than inside the document.
+    overlay: document.querySelector<HTMLElement>('#navbar-wrap'),
   });
   if (filePath !== path) { handle.destroy(); return; }
   pdfView = handle;

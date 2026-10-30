@@ -4168,27 +4168,14 @@ textarea,
   inset: 0;
   display: block;
 }
-/* Which page is being read. The bar is the scroller's own child, so it is
-   as wide as the pane and no wider — a zoomed column scrolls sideways
-   underneath it and the pill stays where the reader left it. It takes no
-   height, so it adds nothing to the length of the document. */
-.pdf-counter-bar {
-  position: sticky;
-  inset-inline-start: 0;
-  /* Clear of the navbar pill, which is 52px tall and sits that far off the
-     bottom: the counter rides just above it rather than behind it. */
-  bottom: calc(max(var(--safe-bottom), 12px) + 58px);
-  z-index: 2;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  width: 100%;
-  height: 0;
-  /* Nothing to press and nothing to drag: a gesture that lands on it belongs
-     to the page underneath. */
-  pointer-events: none;
-}
+/* Which page is being read. It lives in the floating layer with the navbar
+   pill, so it is fixed to the screen: a zoomed column slides under it, a
+   fast scroll into an edge cannot drag it, and it is in the same stack as
+   the buttons rather than behind them. */
 .pdf-counter {
+  width: fit-content;
+  /* 8px of air above the navbar pill, which sits below it in the layer. */
+  margin: 0 auto 8px;
   padding: 3px 10px;
   border: 0;
   border-radius: 999px;
@@ -4198,6 +4185,27 @@ textarea,
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
+  /* Nothing to press and nothing to drag: a gesture that lands on it belongs
+     to the page underneath. */
+  pointer-events: none;
+  /* It follows the bar it sits above, at the bar's own pace. */
+  transition:
+    opacity 0.2s ease-in-out,
+    transform 0.3s ease-out;
+}
+/* When the navbar slides away the counter comes down into the space it
+   left, to the same clearance the pill keeps off the bottom: 52px of pill,
+   the 10px under it and the 8px above it, less the 12px it keeps itself. */
+.is-hidden-nav .pdf-counter {
+  transform: translateY(58px);
+}
+/* With a drawer open or the keyboard up the whole layer is out of the way,
+   and a page counter over a drawer is nonsense. */
+.keyboard-open .pdf-counter,
+.keyboard-up .pdf-counter,
+.files-open .pdf-counter,
+.outline-open .pdf-counter {
+  opacity: 0;
 }
 /* A file that says .pdf and is not one, or one the engine will not read. */
 .pdf-unreadable {
