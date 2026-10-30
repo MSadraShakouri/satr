@@ -17,7 +17,7 @@
 // part of it being looked at at whatever zoom the reader has actually
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
-import { PdfErrorCode, type PdfDocumentObject, type PdfPageObject, type PdfTask } from '@embedpdf/models';
+import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask } from '@embedpdf/models';
 import { pdfium } from './pdfiumEngine';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
@@ -49,6 +49,15 @@ export interface PdfOptions {
 
 /** The two stops Obsidian offers in its display options' zoom section. */
 export type PdfFit = 'width' | 'height';
+/** A line of the document's own table of contents. Obsidian shows this as a
+ *  tree in the second of its two sidebar views; PDFium reads it out of the
+ *  file's bookmarks, where pdf.js reads the same thing from its outline. */
+export interface PdfOutlineItem {
+  title: string;
+  /** Null for a bookmark that runs an action rather than naming a page. */
+  page: number | null;
+  children: PdfOutlineItem[];
+}
 export interface PdfHandle {
   pages: number;
   place(): PdfPlace;
@@ -56,6 +65,15 @@ export interface PdfHandle {
   fitTo(mode: PdfFit): void;
   /** Which stop the page is sitting at, if either — for the checkmark. */
   fitNow(): PdfFit | null;
+  /** The toolbar's − and +: a step in or out, about the middle of the screen. */
+  zoomBy(step: number): void;
+  zoomNow(): number;
+  /** A page as a small picture, for the sidebar. */
+  thumbnail(page: number, width: number): Promise<string | null>;
+  outline(): Promise<PdfOutlineItem[]>;
+  /** Told whenever the page at the top of the screen changes, so the
+   *  toolbar's number and the sidebar's highlight follow the reader. */
+  onPage(listen: (page: number) => void): () => void;
   destroy(): void;
 }
 
@@ -460,8 +478,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const atEnd = scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 2;
     return scrollable && atEnd ? slabs.length : placeNow().page;
   };
+  /** Everything that follows the reader down the document: the counter in
+   *  the floating layer, and the toolbar's number and the sidebar's
+   *  highlight, which are told only when the page actually changes. */
+  const watchers = new Set<(page: number) => void>();
+  let announced = 0;
   const showCounter = (): void => {
-    counter.textContent = `${pageShown()} / ${document_.pageCount}`;
+    const page = pageShown();
+    counter.textContent = `${page} / ${document_.pageCount}`;
+    if (page === announced) return;
+    announced = page;
+    for (const listen of watchers) listen(page);
   };
 
   let placeTimer = 0;
@@ -640,6 +667,40 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       if (Math.abs(zoom - 1) < 0.01) return 'width';
       return Math.abs(zoom - heightStop()) < 0.01 ? 'height' : null;
     },
+    zoomBy: (step: number) => {
+      const pane = scroller.getBoundingClientRect();
+      const top = pane.top + chromeTop();
+      zoomTo(zoom * step, top + (pane.bottom - top) / 2, pane.left + pane.width / 2);
+    },
+    zoomNow: () => zoom,
+    thumbnail: async (page: number, width: number) => {
+      const slab = slabs[page - 1];
+      if (!slab?.proxy) return null;
+      const made = engine.renderThumbnail(document_, slab.proxy,
+        { scaleFactor: width / Math.max(1, slab.width), dpr: 1, withAnnotations: true });
+      try {
+        const picture = await createImageBitmap(await made.toPromise());
+        const canvas = document.createElement('canvas');
+        canvas.width = picture.width;
+        canvas.height = picture.height;
+        canvas.getContext('2d')?.drawImage(picture, 0, 0);
+        picture.close();
+        return canvas.toDataURL('image/png');
+      } catch { return null; }
+    },
+    outline: async () => {
+      const read = (items: PdfBookmarkObject[]): PdfOutlineItem[] => items.map((item) => ({
+        title: item.title,
+        page: item.target?.type === 'destination' ? item.target.destination.pageIndex + 1 : null,
+        children: read(item.children ?? []),
+      }));
+      try { return read((await engine.getBookmarks(document_).toPromise()).bookmarks ?? []); }
+      catch { return []; }
+    },
+    onPage: (listen: (page: number) => void) => {
+      watchers.add(listen);
+      return () => { watchers.delete(listen); };
+    },
     goTo: (page: number) => {
       letGo();
       options.ownScroll?.();
@@ -649,6 +710,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       remember();
     },
     destroy: () => {
+      watchers.clear();
       window.clearTimeout(settleTimer);
       window.clearTimeout(placeTimer);
       watcher.disconnect();
