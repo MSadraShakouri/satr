@@ -4207,6 +4207,11 @@ textarea,
 .outline-open .pdf-counter {
   opacity: 0;
 }
+/* A sharp picture of the part of a page on screen, laid over the stretched
+   whole-page one. Placed by the viewer, in the page's own coordinates. */
+.pdf-detail {
+  inset: auto;
+}
 /* A file that says .pdf and is not one, or one the engine will not read. */
 .pdf-unreadable {
   width: fit-content;

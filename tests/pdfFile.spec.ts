@@ -113,17 +113,31 @@ test('pinching zooms the pages, and stops at a quarter of the width', async ({ p
   expect(new Set(lefts).size).toBe(1);
 });
 
-test('zooming in redraws the page rather than blowing it up', async ({ page }) => {
+test('zooming in draws the part on screen sharply, and does not redraw the page', async ({ page }) => {
+  // The complaint this answers: zooming rendered the whole page again from
+  // scratch. It no longer does. The page's own picture is drawn once at the
+  // width the pane gives it and stretched from then on, and what a zoom
+  // costs is one screenful of sharp pixels over the top of it.
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
+  const middle = await page.locator('#preview-pane').evaluate((pane) => {
+    const box = pane.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  });
   const fit = await widthOf(page, 1);
-  const before = await rasterWidth(page);
+  const whole = await rasterWidth(page);
+  const held = await pixelsHeld(page, 1);
+  expect(await sharpnessAt(page, middle.x, middle.y)).toBeGreaterThan(0.95);
+
   await pinch(page, 3);
-  const after = await widthOf(page, 1);
-  expect(after).toBeGreaterThan(fit * 2.5);
-  // the canvas behind it holds more pixels than it did, which is the whole
-  // point: a stretched picture would keep the same ones
-  await expect.poll(async () => rasterWidth(page), { timeout: 15000 }).toBeGreaterThan(before * 2);
+  expect(await widthOf(page, 1)).toBeGreaterThan(fit * 2.5);
+  // what the reader looks at is drawn for the size it is shown at, still
+  await expect.poll(async () => sharpnessAt(page, middle.x, middle.y), { timeout: 15000 }).toBeGreaterThan(0.95);
+  // and the page's own picture was never asked for again: same pixels wide
+  expect(await rasterWidth(page)).toBe(whole);
+  // three times the zoom is nine times the page; what is held is a screen's
+  // worth more, not nine times more
+  expect(await pixelsHeld(page, 1)).toBeLessThan(held * 3);
 });
 
 test('a document opens where it was left, by its own bytes rather than its name', async ({ page }) => {
@@ -192,6 +206,28 @@ async function rasterWidth(page: Page): Promise<number> {
     const canvas = document.querySelector('.pdf-page canvas') as HTMLCanvasElement | null;
     return canvas ? canvas.width : 0;
   });
+}
+
+/** What the reader is actually looking at, at a point on the screen: how
+ *  many of the picture's own pixels there are per pixel of screen, taking
+ *  the sharpest picture that covers the point. One means a picture drawn
+ *  for exactly this size; less means it is being stretched. */
+async function sharpnessAt(page: Page, x: number, y: number): Promise<number> {
+  return page.evaluate(([px, py]) => {
+    let best = 0;
+    for (const canvas of document.querySelectorAll<HTMLCanvasElement>('.pdf-page canvas')) {
+      const box = canvas.getBoundingClientRect();
+      if (px < box.left || px > box.right || py < box.top || py > box.bottom) continue;
+      best = Math.max(best, canvas.width / Math.max(1, box.width) / (window.devicePixelRatio || 1));
+    }
+    return Math.round(best * 100) / 100;
+  }, [x, y]);
+}
+
+/** Every pixel the app is holding for a page, over all its pictures. */
+async function pixelsHeld(page: Page, number: number): Promise<number> {
+  return page.evaluate((n) => [...document.querySelectorAll<HTMLCanvasElement>(`.pdf-page[data-page="${n}"] canvas`)]
+    .reduce((total, canvas) => total + canvas.width * canvas.height, 0), number);
 }
 
 /** The app shut and opened again on a file: everything it remembers has to

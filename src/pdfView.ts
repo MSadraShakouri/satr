@@ -85,20 +85,32 @@ const SETTLE_MS = 120;
 interface Slab {
   page: number;
   box: HTMLElement;
-  canvas: HTMLCanvasElement | null;
   proxy: PdfPageObject | null;
-  task: PdfTask<Blob> | null;
-  /** The zoom its picture was drawn at, and the one being drawn now. */
-  drawnZoom: number;
-  painting: number;
+  /**
+   * The whole page, drawn once at the width the pane gives it — not at the
+   * zoom. The browser stretches it for free, so a zoom shows something
+   * immediately and a page is never blank, and no amount of zooming asks
+   * for it again.
+   */
+  base: HTMLCanvasElement | null;
+  baseFit: number;
+  baseTask: PdfTask<Blob> | null;
+  /**
+   * The part of the page actually on screen, drawn at the screen's own
+   * pixels and laid over the stretched base. Zoomed in, this is the only
+   * thing a zoom or a scroll costs: one screenful, whatever the zoom.
+   */
+  detail: HTMLCanvasElement | null;
+  detailRect: Rect | null;
+  detailZoom: number;
+  detailTask: PdfTask<Blob> | null;
   width: number; // natural, at scale 1
   height: number;
-  /** The height of its box as the page is actually laid out: whole pixels,
-   *  because that is what the browser gives it. The place arithmetic works
-   *  in these and not in the exact fractions, or a jump to page thirty of
-   *  fifty-two lands a pixel short of it and reads as page twenty-nine. */
   laid: number;
 }
+
+/** A rectangle of a page, in the page's own units (scale 1). */
+interface Rect { x: number; y: number; width: number; height: number }
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
@@ -159,7 +171,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     box.className = 'pdf-page';
     box.dataset.page = String(index + 1);
     doc.append(box);
-    slabs.push({ page: index + 1, box, canvas: null, proxy: page, task: null, drawnZoom: 0, painting: 0, width, height, laid: height });
+    slabs.push({ page: index + 1, box, proxy: page, base: null, baseFit: 0, baseTask: null,
+      detail: null, detailRect: null, detailZoom: 0, detailTask: null, width, height, laid: height });
   });
 
   const widest = sizes.reduce((most, size) => Math.max(most, size.width), 1);
@@ -184,6 +197,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       slab.laid = Math.round(slab.height * scale);
       slab.box.style.width = `${Math.round(slab.width * scale)}px`;
       slab.box.style.height = `${slab.laid}px`;
+      // the sharp picture goes where the zoom put it, stretched for now and
+      // redrawn when the reader stops moving
+      placeDetail(slab);
     }
     measureTop();
   };
@@ -233,11 +249,31 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const letGo = (): void => { pending = null; };
 
   let settleTimer = 0;
+
+  /** Everything this slab is holding, handed back. */
+  const forget = (slab: Slab): void => {
+    stop(slab.baseTask); stop(slab.detailTask);
+    slab.baseTask = null; slab.detailTask = null;
+    slab.base?.remove(); slab.base = null; slab.baseFit = 0;
+    slab.detail?.remove(); slab.detail = null; slab.detailRect = null; slab.detailZoom = 0;
+  };
+
   /**
-   * One picture per page, as pdf.js's own viewer draws them — Obsidian's and
-   * Gander's alike. Drawing a slice of a page instead meant a new picture
-   * for every scroll and every pinch, each landing at a different offset,
-   * which is what made zooming flicker and crawl.
+   * Two pictures per page, not one.
+   *
+   * The base is the whole page at the pane's width, and it never changes
+   * when the reader zooms: the browser stretches it, which costs nothing
+   * and means a zoom is instant and a page is never blank. Zoomed in, the
+   * stretch is soft, so a second picture is drawn over it — but only of the
+   * part on screen, at the screen's own pixels. That is the whole of what a
+   * zoom costs now: one screenful, at 8x as at 2x.
+   *
+   * The page used to be redrawn whole at every zoom, which at 4x is sixteen
+   * times the pixels of the screen it is shown on, nearly all of them off
+   * the edges — and over the budget, so the engine was asked for fewer
+   * pixels than the screen has and the text came back soft anyway. Slicing
+   * was tried before this and abandoned, because with pdf.js a slice cost a
+   * page: the engine can draw a rectangle on its own now.
    */
   const drawBand = (): void => {
     const screen = scroller.clientHeight;
@@ -250,63 +286,141 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       edge += height + GAP;
       const near = to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen;
       const keep = to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen;
-      if (!keep) { // far from the screen: give its memory back
-        if (slab.canvas) { stop(slab.task); slab.task = null; slab.canvas.remove(); slab.canvas = null; slab.drawnZoom = 0; slab.painting = 0; }
+      if (!keep) { forget(slab); continue; } // far from the screen: its memory back
+      if (!near || !slab.proxy) continue;
+      if (slab.baseFit !== fit) void paintBase(slab);
+      const want = detailWanted(slab);
+      if (!want) {
+        if (slab.detail) { stop(slab.detailTask); slab.detailTask = null; slab.detail.remove(); slab.detail = null; slab.detailRect = null; }
         continue;
       }
-      if (!near || !slab.proxy) continue;
-      if (slab.drawnZoom === zoom || slab.painting === zoom) continue;
-      void paint(slab);
+      if (slab.detailZoom === zoom && slab.detailRect && covers(slab.detailRect, want)) continue;
+      void paintDetail(slab, want);
     }
   };
 
-  async function paint(slab: Slab): Promise<void> {
-    const scale = scaleNow();
-    const width = Math.round(slab.width * scale);
-    const height = Math.round(slab.height * scale);
-    if (!slab.proxy || width <= 0 || height <= 0) return;
-    // The screen's own pixels, unless the page is zoomed far enough in that
-    // they would cost more than the budget, and then as many as fit. This is
-    // the whole of why a page looked soft before: it was drawn at two device
-    // pixels per CSS pixel on a screen with three.
-    const fit = Math.sqrt(maxCanvasPixels() / Math.max(1, width * height));
-    const raster = Math.max(1, Math.min(window.devicePixelRatio || 1, fit));
-    const drawnAt = zoom;
-    slab.painting = drawnAt;
-    stop(slab.task);
+  /** The screen's own pixels, unless the picture asked for would cost more
+   *  than the budget, and then as many as fit. */
+  const rasterFor = (width: number, height: number): number => {
+    const fitted = Math.sqrt(maxCanvasPixels() / Math.max(1, width * height));
+    return Math.max(1, Math.min(window.devicePixelRatio || 1, fitted));
+  };
+
+  const sheet = (width: number, height: number, raster: number): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } | null => {
     const canvas = window.document.createElement('canvas');
-    canvas.className = 'pdf-raster';
     canvas.width = Math.round(width * raster);
     canvas.height = Math.round(height * raster);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     const context = canvas.getContext('2d');
-    if (!context) return;
-    // The engine draws the page off this thread and hands back a picture of
-    // it; the only work left here is putting that picture on the canvas.
-    const task = engine.renderPage(document_, slab.proxy, { scaleFactor: scale, dpr: raster, withAnnotations: true });
-    slab.task = task;
+    return context ? { canvas, context } : null;
+  };
+
+  /** The whole page at the pane's width. Drawn once, stretched thereafter. */
+  async function paintBase(slab: Slab): Promise<void> {
+    const drawnFor = fit;
+    const width = Math.round(slab.width * drawnFor);
+    const height = Math.round(slab.height * drawnFor);
+    if (!slab.proxy || width <= 0 || height <= 0) return;
+    slab.baseFit = drawnFor; // claimed, so the next pass does not ask again
+    stop(slab.baseTask);
+    const raster = rasterFor(width, height);
+    const made = sheet(width, height, raster);
+    if (!made) return;
+    const task = engine.renderPage(document_, slab.proxy, { scaleFactor: drawnFor, dpr: raster, withAnnotations: true });
+    slab.baseTask = task;
     let picture: ImageBitmap;
     try {
       picture = await createImageBitmap(await task.toPromise());
     } catch {
-      if (slab.painting === drawnAt) slab.painting = 0;
-      return; // cancelled by a later zoom, or the document went away
+      if (slab.baseFit === drawnFor) slab.baseFit = 0;
+      return; // called off, or the document went away
     }
-    if (slab.task !== task) { picture.close(); return; }
-    canvas.width = picture.width;
-    canvas.height = picture.height;
-    context.drawImage(picture, 0, 0);
+    if (slab.baseTask !== task) { picture.close(); return; }
+    made.canvas.width = picture.width;
+    made.canvas.height = picture.height;
+    made.context.drawImage(picture, 0, 0);
     picture.close();
-    // the page it replaces stays up until this one is ready, so a zoom is
-    // never a column of empty boxes
-    slab.canvas?.remove();
-    slab.box.append(canvas);
-    slab.canvas = canvas;
-    slab.drawnZoom = drawnAt;
-    slab.painting = 0;
-    slab.task = null;
+    made.canvas.className = 'pdf-raster';
+    // the picture it replaces stays up until this one is ready, so a resize
+    // is never a column of empty boxes
+    slab.base?.remove();
+    slab.box.prepend(made.canvas);
+    slab.base = made.canvas;
+    slab.baseTask = null;
   }
+
+  /** The part of a page the reader can see, with a quarter-screen of margin
+   *  so a small scroll does not need a new one. Null when the page is not
+   *  zoomed past its own width, where the base is already sharp. */
+  const detailWanted = (slab: Slab): Rect | null => {
+    if (zoom <= 1.01) return null;
+    const scale = scaleNow();
+    const box = slab.box.getBoundingClientRect();
+    const pane = scroller.getBoundingClientRect();
+    const margin = { x: pane.width / 4, y: pane.height / 4 };
+    const left = clamp((pane.left - margin.x - box.left) / scale, 0, slab.width);
+    const right = clamp((pane.right + margin.x - box.left) / scale, 0, slab.width);
+    const top = clamp((pane.top - margin.y - box.top) / scale, 0, slab.height);
+    const bottom = clamp((pane.bottom + margin.y - box.top) / scale, 0, slab.height);
+    if (right - left < 1 || bottom - top < 1) return null;
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  };
+  /** Whether a tile already drawn still covers what is wanted. */
+  const covers = (have: Rect, want: Rect): boolean =>
+    have.x <= want.x + 0.5 && have.y <= want.y + 0.5
+    && have.x + have.width >= want.x + want.width - 0.5
+    && have.y + have.height >= want.y + want.height - 0.5;
+
+  async function paintDetail(slab: Slab, rect: Rect): Promise<void> {
+    const scale = scaleNow();
+    const drawnAt = zoom;
+    if (!slab.proxy) return;
+    const width = Math.round(rect.width * scale);
+    const height = Math.round(rect.height * scale);
+    if (width <= 0 || height <= 0) return;
+    slab.detailZoom = drawnAt;
+    stop(slab.detailTask);
+    const raster = rasterFor(width, height);
+    const made = sheet(width, height, raster);
+    if (!made) return;
+    const task = engine.renderPageRect(document_, slab.proxy,
+      { origin: { x: rect.x, y: rect.y }, size: { width: rect.width, height: rect.height } },
+      { scaleFactor: scale, dpr: raster, withAnnotations: true });
+    slab.detailTask = task;
+    let picture: ImageBitmap;
+    try {
+      picture = await createImageBitmap(await task.toPromise());
+    } catch {
+      if (slab.detailZoom === drawnAt) slab.detailZoom = 0;
+      return;
+    }
+    if (slab.detailTask !== task) { picture.close(); return; }
+    made.canvas.width = picture.width;
+    made.canvas.height = picture.height;
+    made.context.drawImage(picture, 0, 0);
+    picture.close();
+    made.canvas.className = 'pdf-raster pdf-detail';
+    slab.detail?.remove();
+    slab.box.append(made.canvas);
+    slab.detail = made.canvas;
+    slab.detailRect = rect;
+    slab.detailZoom = drawnAt;
+    slab.detailTask = null;
+    placeDetail(slab);
+  }
+
+  /** Where a tile sits on its page, in the layout's own pixels. Recomputed
+   *  rather than redrawn when the zoom changes, so the sharp picture is
+   *  stretched into its new place and stays until a fresh one lands. */
+  const placeDetail = (slab: Slab): void => {
+    if (!slab.detail || !slab.detailRect) return;
+    const scale = scaleNow();
+    slab.detail.style.left = `${Math.round(slab.detailRect.x * scale)}px`;
+    slab.detail.style.top = `${Math.round(slab.detailRect.y * scale)}px`;
+    slab.detail.style.width = `${Math.round(slab.detailRect.width * scale)}px`;
+    slab.detail.style.height = `${Math.round(slab.detailRect.height * scale)}px`;
+  };
 
   /** Which page the counter names. The page at the top of the screen,
    *  except at the very bottom of a document: there the scroll cannot go
@@ -499,7 +613,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       scroller.removeEventListener('pointermove', onPointerMove);
       scroller.removeEventListener('pointerup', endPinch);
       scroller.removeEventListener('pointercancel', endPinch);
-      for (const slab of slabs) stop(slab.task);
+      for (const slab of slabs) forget(slab);
       // The document's memory goes back to the engine; the engine itself is
       // the app's and stays up, because compiling the wasm again for the
       // next document would be felt.
