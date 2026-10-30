@@ -2,12 +2,18 @@
  *  never need a file checked in beside them. Shared by the specs that open a
  *  document from the vault and the one that imports it from the device.
  */
-export function tinyPdf(pages: number, darkPages: number[] = []): string {
+export function tinyPdf(pages: number, darkPages: number[] = [], outline: string[] = []): string {
   const objects: string[] = [];
   const pageIds: number[] = [];
   for (let index = 0, id = 3; index < pages; index += 1, id += 2) pageIds.push(id);
   const fontId = 3 + pages * 2;
-  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  // A document outline, when one is asked for: title i points at page i.
+  // Browsers' print-to-PDF never writes this dictionary, which is why a
+  // file exported from a note app has no contents for any viewer to show.
+  const outlineId = fontId + 1;
+  objects[1] = outline.length
+    ? `<< /Type /Catalog /Pages 2 0 R /Outlines ${outlineId} 0 R >>`
+    : '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages} >>`;
   pageIds.forEach((id, index) => {
     objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
@@ -20,6 +26,16 @@ export function tinyPdf(pages: number, darkPages: number[] = []): string {
     objects[id + 1] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
   });
   objects[fontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+  if (outline.length) {
+    const itemId = (index: number): number => outlineId + 1 + index;
+    objects[outlineId] = `<< /Type /Outlines /First ${itemId(0)} 0 R /Last ${itemId(outline.length - 1)} 0 R /Count ${outline.length} >>`;
+    outline.forEach((title, index) => {
+      const previous = index > 0 ? ` /Prev ${itemId(index - 1)} 0 R` : '';
+      const next = index < outline.length - 1 ? ` /Next ${itemId(index + 1)} 0 R` : '';
+      objects[itemId(index)] = `<< /Title (${title}) /Parent ${outlineId} 0 R${previous}${next}`
+        + ` /Dest [${pageIds[Math.min(index, pages - 1)]} 0 R /Fit] >>`;
+    });
+  }
   let out = '%PDF-1.4\n';
   const offsets: number[] = [];
   for (let id = 1; id < objects.length; id += 1) {

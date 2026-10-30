@@ -185,6 +185,25 @@ test('the two left buttons are two buttons, each saying whether its view is up',
   expect(await lit()).toEqual([false, false]);
 });
 
+test('the contents are read from the document, when the document has any', async ({ page }) => {
+  // Every browser's print-to-PDF writes no outline dictionary at all, so a
+  // file exported from a note app has nothing for a viewer to show. Given a
+  // document that does carry one, this panel shows it.
+  await page.addInitScript((pdf) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/book.pdf': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/book.pdf', pdf as string);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/book.pdf' }], active: 0 }));
+  }, tinyPdf(4, [], ['Opening', 'Middle', 'The end']));
+  await page.goto('/');
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
+  await ready(page);
+  await control(page, 'Table of contents').click();
+  await expect(page.locator('.pdf-outline-view .tree-item-self')).toHaveCount(3);
+  await expect(page.locator('.pdf-outline-view')).toContainText('Opening');
+  await expect(page.locator('.pdf-outline-view')).toContainText('The end');
+  await expect(page.locator('.pdf-outline-empty')).toHaveCount(0);
+});
+
 test('the thumbnails do not slide sideways under a thumb', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);

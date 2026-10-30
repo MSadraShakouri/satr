@@ -203,11 +203,14 @@ const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', b
 let pdfView: PdfHandle | null = null;
 let pdfChrome: { destroy(): void } | null = null;
 /** Obsidian's "Adapt to theme" for a PDF: a flag it remembers across
- *  sessions (pdfjs-is-themed in its own storage), off by default. It only
- *  does anything while the theme is dark —
+ *  sessions (pdfjs-is-themed in its own storage). Obsidian starts it off
+ *  and makes you find it; here it starts ON, because a white page opening
+ *  in a dark app is the thing a reader notices and the setting is the
+ *  thing they do not. Once it has been tapped the answer is theirs and is
+ *  kept, either way. It only does anything while the theme is dark —
  *  adapting to a light theme means leaving the paper alone. */
 const PDF_THEME_KEY = 'satr:pdf-theme';
-let pdfThemed = localStorage.getItem(PDF_THEME_KEY) === '1';
+let pdfThemed = (localStorage.getItem(PDF_THEME_KEY) ?? '1') === '1';
 function applyPdfTheme(): void {
   document.body.classList.toggle('is-pdf-themed', pdfThemed);
 }

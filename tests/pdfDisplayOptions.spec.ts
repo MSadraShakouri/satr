@@ -101,21 +101,26 @@ test('adapt to theme turns the paper over, and only in the dark', async ({ page 
   expect(await inked()).toBe('none');
   await option(page, 'Adapt to theme');
   expect(await inked()).toBe('none'); // adapting to a light theme leaves the paper alone
-  await expect(page.locator('body')).toHaveClass(/is-pdf-themed/);
 
+  // Dark, and nothing chosen yet: the paper is turned over without being
+  // asked. Obsidian starts this off; a white page opening in a dark app is
+  // the thing a reader notices and the setting is the thing they do not.
+  await page.evaluate(() => localStorage.removeItem('satr:pdf-theme')); // the tap above is not this reader's
   await boot(page, 'handout.pdf', 'dark');
   await openDocument(page);
-  // the flag was remembered, the way Obsidian remembers its own
   await expect(page.locator('body')).toHaveClass(/is-pdf-themed/);
   expect(await inked()).toContain('invert');
+  // and turning it off is remembered, the way Obsidian remembers its own
   await option(page, 'Adapt to theme');
+  expect(await inked()).toBe('none');
+  await boot(page, 'handout.pdf', 'dark');
+  await openDocument(page);
   expect(await inked()).toBe('none');
 });
 
 test('the inversion is softened, so paper is not pitch and ink is not glare', async ({ page }) => {
   await boot(page, 'handout.pdf', 'dark');
   await openDocument(page);
-  await option(page, 'Adapt to theme');
   // 0.86, not 1: white paper lands on #242424 and black ink on #dbdbdb,
   // this app's own dark pairing, rather than pure black against pure white.
   const paint = await page.evaluate(() => {
@@ -130,7 +135,6 @@ test('the inversion is softened, so paper is not pitch and ink is not glare', as
 test('a page that was authored dark is left alone', async ({ page }) => {
   await boot(page, 'handout.pdf', 'dark', MIXED);
   await openDocument(page);
-  await option(page, 'Adapt to theme');
   await page.mouse.move(195, 400);
   for (let i = 0; i < 5; i += 1) { await page.mouse.wheel(0, 200); await page.waitForTimeout(80); }
   await expect(page.locator('.pdf-page[data-page="2"] .pdf-raster')).toBeVisible({ timeout: 15000 });
