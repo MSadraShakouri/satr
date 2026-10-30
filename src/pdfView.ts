@@ -152,6 +152,42 @@ const stop = (task: PdfTask<Blob> | null): void => {
   task?.abort({ code: PdfErrorCode.Cancelled, message: 'superseded' });
 };
 
+/** Is this page dark already? Adapting a PDF to a dark theme inverts the
+ *  paper and the ink, which is wrong for a page that was authored dark —
+ *  a slide deck, a dark-background poster — because inverting it hands
+ *  back the white page the reader was trying to get away from. The page
+ *  is squeezed into a 24x24 thumbnail and the ring of cells around its
+ *  edge is read, where the background lives and the content usually does
+ *  not, and their brightness is weighted the way an eye weighs it
+ *  (BT.601: green 58.7%, red 29.9%, blue 11.4%). The median of the ring
+ *  resists one dark photo bleeding off one side. 576 pixels, once per
+ *  drawn page. */
+const PROBE = 24;
+const alreadyDark = (canvas: HTMLCanvasElement): boolean => {
+  const small = document.createElement('canvas');
+  small.width = PROBE;
+  small.height = PROBE;
+  const context = small.getContext('2d', { willReadFrequently: true });
+  if (!context) return false;
+  context.drawImage(canvas, 0, 0, PROBE, PROBE);
+  let pixels: Uint8ClampedArray;
+  try {
+    pixels = context.getImageData(0, 0, PROBE, PROBE).data;
+  } catch {
+    return false;
+  }
+  const ring: number[] = [];
+  for (let y = 0; y < PROBE; y += 1) {
+    for (let x = 0; x < PROBE; x += 1) {
+      if (x !== 0 && y !== 0 && x !== PROBE - 1 && y !== PROBE - 1) continue;
+      const at = (y * PROBE + x) * 4;
+      ring.push(0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2]);
+    }
+  }
+  ring.sort((a, b) => a - b);
+  return ring[ring.length >> 1] < 110;
+};
+
 /** Each document opened in this session gets its own name, so two tabs on
  *  the same file never share the engine's copy of it. */
 let opened = 0;
@@ -419,6 +455,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     made.context.drawImage(picture, 0, 0);
     picture.close();
     made.canvas.className = 'pdf-raster';
+    // A page that was authored dark must not be inverted into a white one.
+    slab.box.classList.toggle('is-dark-page', alreadyDark(made.canvas));
     // the picture it replaces stays up until this one is ready, so a resize
     // is never a column of empty boxes
     slab.base?.remove();

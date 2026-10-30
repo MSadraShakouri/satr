@@ -7,9 +7,11 @@ import { tinyPdf } from './support/tinyPdf';
 test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 2 });
 
 const PDF = tinyPdf(6);
+// Page 2 of this one is painted dark with pale ink, the way a slide deck is.
+const MIXED = tinyPdf(3, [2]);
 const NOTE = '# a note\n\nwith a line in it\n';
 
-async function boot(page: Page, open: string, theme?: 'dark'): Promise<void> {
+async function boot(page: Page, open: string, theme?: 'dark', doc: string = PDF): Promise<void> {
   await page.addInitScript(([pdf, note, dark]) => {
     localStorage.setItem('satr:fs:index', JSON.stringify({
       files: { 'Notes/handout.pdf': 1, 'Notes/note.md': 1 }, folders: ['Notes'],
@@ -17,7 +19,7 @@ async function boot(page: Page, open: string, theme?: 'dark'): Promise<void> {
     localStorage.setItem('satr:fs:file:Notes/handout.pdf', pdf as string);
     localStorage.setItem('satr:fs:file:Notes/note.md', note as string);
     if (dark) localStorage.setItem('satr:theme', 'dark');
-  }, [PDF, NOTE, theme === 'dark'] as [string, string, boolean]);
+  }, [doc, NOTE, theme === 'dark'] as [string, string, boolean]);
   await page.addInitScript((first) => {
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: `Notes/${first as string}` }], active: 0 }));
   }, open);
@@ -108,4 +110,40 @@ test('adapt to theme turns the paper over, and only in the dark', async ({ page 
   expect(await inked()).toContain('invert');
   await option(page, 'Adapt to theme');
   expect(await inked()).toBe('none');
+});
+
+test('the inversion is softened, so paper is not pitch and ink is not glare', async ({ page }) => {
+  await boot(page, 'handout.pdf', 'dark');
+  await openDocument(page);
+  await option(page, 'Adapt to theme');
+  // 0.86, not 1: white paper lands on #242424 and black ink on #dbdbdb,
+  // this app's own dark pairing, rather than pure black against pure white.
+  const paint = await page.evaluate(() => {
+    const raster = document.querySelector<HTMLElement>('.pdf-raster')!;
+    const box = document.querySelector<HTMLElement>('.pdf-page')!;
+    return { filter: getComputedStyle(raster).filter, box: getComputedStyle(box).backgroundColor };
+  });
+  expect(paint.filter).toBe('invert(0.86) hue-rotate(180deg)');
+  expect(paint.box).toBe('rgb(36, 36, 36)'); // the colour white turns into, so no rim and no flash
+});
+
+test('a page that was authored dark is left alone', async ({ page }) => {
+  await boot(page, 'handout.pdf', 'dark', MIXED);
+  await openDocument(page);
+  await option(page, 'Adapt to theme');
+  await page.mouse.move(195, 400);
+  for (let i = 0; i < 5; i += 1) { await page.mouse.wheel(0, 200); await page.waitForTimeout(80); }
+  await expect(page.locator('.pdf-page[data-page="2"] .pdf-raster')).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(400);
+  const marked = await page.evaluate(() => [1, 2].map((n) => {
+    const box = document.querySelector<HTMLElement>(`.pdf-page[data-page="${n}"]`)!;
+    return { dark: box.classList.contains('is-dark-page'),
+      filter: getComputedStyle(box.querySelector<HTMLElement>('.pdf-raster')!).filter };
+  }));
+  // white page: turned over. dark page: inverting it would hand back the
+  // white page the reader was getting away from.
+  expect(marked[0].dark).toBe(false);
+  expect(marked[0].filter).toContain('invert');
+  expect(marked[1].dark).toBe(true);
+  expect(marked[1].filter).toBe('none');
 });

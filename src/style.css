@@ -4205,12 +4205,26 @@ textarea,
    the ink trade places. The page's own box goes dark with them, because it
    is what shows through before a page has been drawn. */
 .theme-dark body.is-pdf-themed .pdf-page {
-  background: #000;
+  /* What white turns into below, so an undrawn page is not a white flash
+     and a drawn one has no rim. */
+  background: #242424;
   box-shadow: 0 1px 4px rgb(0 0 0 / 60%);
 }
 .theme-dark body.is-pdf-themed .pdf-raster,
-.theme-dark body.is-pdf-themed .pdf-detail {
-  filter: invert(1) hue-rotate(180deg);
+.theme-dark body.is-pdf-themed .pdf-detail,
+.theme-dark body.is-pdf-themed .thumbnailImage {
+  /* 0.86, not 1: a full inversion makes paper pure black and ink pure
+     white, which is the harshest pairing a screen can show and is tiring
+     over a chapter. At 0.86 the paper lands on #242424 and the ink on
+     #dbdbdb -- the contrast of this app's own dark theme. */
+  filter: invert(0.86) hue-rotate(180deg);
+}
+/* Authored dark already (a slide deck, a dark poster): inverting it would
+   hand back the white page the reader was getting away from. Measured off
+   the drawn pixels in src/pdfView.ts. */
+.theme-dark body.is-pdf-themed .pdf-page.is-dark-page .pdf-raster,
+.theme-dark body.is-pdf-themed .pdf-page.is-dark-page .pdf-detail {
+  filter: none;
 }
 
 /* ── Obsidian's PDF chrome ─────────────────────────────────────────────

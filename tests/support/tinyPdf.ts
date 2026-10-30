@@ -2,7 +2,7 @@
  *  never need a file checked in beside them. Shared by the specs that open a
  *  document from the vault and the one that imports it from the device.
  */
-export function tinyPdf(pages: number): string {
+export function tinyPdf(pages: number, darkPages: number[] = []): string {
   const objects: string[] = [];
   const pageIds: number[] = [];
   for (let index = 0, id = 3; index < pages; index += 1, id += 2) pageIds.push(id);
@@ -11,7 +11,12 @@ export function tinyPdf(pages: number): string {
   objects[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages} >>`;
   pageIds.forEach((id, index) => {
     objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
-    const stream = `BT /F1 36 Tf 60 740 Td (Page ${index + 1}) Tj ET`;
+    // A page listed in darkPages is painted dark grey with pale ink, the way
+    // a slide deck is: the one shape a dark theme must leave alone.
+    const dark = darkPages.includes(index + 1);
+    const stream = dark
+      ? `0.1 0.1 0.12 rg 0 0 595 842 re f 0.9 0.9 0.9 rg BT /F1 36 Tf 60 740 Td (Page ${index + 1}) Tj ET`
+      : `BT /F1 36 Tf 60 740 Td (Page ${index + 1}) Tj ET`;
     objects[id + 1] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
   });
   objects[fontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
