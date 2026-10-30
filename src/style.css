@@ -4168,15 +4168,27 @@ textarea,
   inset: 0;
   display: block;
 }
-/* Which page is being read, and the way to another one. It rides at the
-   bottom of the pane over the pages and takes no room of its own. */
-.pdf-counter {
+/* Which page is being read. The bar is the scroller's own child, so it is
+   as wide as the pane and no wider — a zoomed column scrolls sideways
+   underneath it and the pill stays where the reader left it. It takes no
+   height, so it adds nothing to the length of the document. */
+.pdf-counter-bar {
   position: sticky;
+  inset-inline-start: 0;
   /* Clear of the navbar pill, which is 52px tall and sits that far off the
      bottom: the counter rides just above it rather than behind it. */
   bottom: calc(max(var(--safe-bottom), 12px) + 58px);
   z-index: 2;
-  margin-top: -32px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 0;
+  /* Nothing to press and nothing to drag: a gesture that lands on it belongs
+     to the page underneath. */
+  pointer-events: none;
+}
+.pdf-counter {
   padding: 3px 10px;
   border: 0;
   border-radius: 999px;
@@ -4186,11 +4198,8 @@ textarea,
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
-  /* Nothing to press and nothing to drag: a gesture that lands on it belongs
-     to the page underneath. */
-  pointer-events: none;
 }
-/* A file that says .pdf and is not one, or one pdf.js will not read. */
+/* A file that says .pdf and is not one, or one the engine will not read. */
 .pdf-unreadable {
   width: fit-content;
   max-width: 100%;

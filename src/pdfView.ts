@@ -128,9 +128,18 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // not dragged. The way through a long document is the scrollbar.
   const counter = window.document.createElement('div');
   counter.className = 'pdf-counter';
+  // The pill is a reading of the pane, not a part of the column. Zoomed in,
+  // the column is wider than the pane and slides sideways beneath it, and a
+  // counter living in the column slid away with it. This bar is the
+  // scroller's own child, so it is the pane's width whatever the column
+  // does, and the pill stays centred in it.
+  const counterBar = window.document.createElement('div');
+  counterBar.className = 'pdf-counter-bar';
   // One page is its own counter: it says nothing a reader doesn't see.
-  counter.hidden = document_.pageCount < 2;
-  host.append(doc, counter);
+  counterBar.hidden = document_.pageCount < 2;
+  counterBar.append(counter);
+  host.append(doc);
+  (scroller.contains(host) ? scroller : host).append(counterBar);
 
   let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
   let fit = 1; // the scale at which a page fills the pane's width
@@ -492,7 +501,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // next document would be felt.
       void engine.closeDocument(document_).toPromise().catch(() => undefined);
       doc.remove();
-      counter.remove();
+      counterBar.remove();
     },
   };
   return handle;

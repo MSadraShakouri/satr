@@ -242,6 +242,34 @@ test('a double tap zooms about the point tapped, not about the middle of the col
   expect(Math.abs(after!.into - before!.into)).toBeLessThan(0.06);
   expect(Math.abs((after as { across: number }).across - (before as unknown as { across: number }).across)).toBeLessThan(0.06);
 });
+
+test('the counter stays with the pane when a zoomed page is pushed sideways', async ({ page }) => {
+  // It is a reading of where the reader is, so it has to be where the reader
+  // can read it. Zoomed in, the column is wider than the pane and scrolls
+  // sideways; the counter belongs to the pane, not to the column.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await expect(page.locator('.pdf-raster').first()).toBeVisible();
+  for (const id of [7, 8]) { // a double tap, which is how a reader zooms in
+    await page.locator('.pdf-page').first().dispatchEvent('pointerdown', { pointerId: id, pointerType: 'touch', clientX: 200, clientY: 300, isPrimary: true });
+    await page.locator('.pdf-page').first().dispatchEvent('pointerup', { pointerId: id, pointerType: 'touch', clientX: 200, clientY: 300, isPrimary: true });
+  }
+  await page.waitForTimeout(400);
+  const centred = async (): Promise<number> => page.evaluate(() => {
+    const pill = document.querySelector('.pdf-counter')!.getBoundingClientRect();
+    const pane = document.querySelector('#preview-pane')!.getBoundingClientRect();
+    return Math.round((pill.left + pill.width / 2) - (pane.left + pane.width / 2));
+  });
+  const still = await centred();
+  await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    pane.scrollLeft = 160;
+  });
+  await page.waitForTimeout(60);
+  const pushed = await page.evaluate(() => (document.querySelector('#preview-pane') as HTMLElement).scrollLeft);
+  expect(pushed).toBeGreaterThan(0); // the pane really did scroll sideways
+  expect(Math.abs(await centred() - still)).toBeLessThan(2);
+});
 });
 
 test('a page is drawn at the screen’s own pixels, inside the budget', async ({ page }) => {
