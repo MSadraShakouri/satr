@@ -300,12 +300,16 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
   };
 
   box.value = String(shownPage);
-  // Inside the workspace, not on the body: the workspace is what the
-  // drawers translate (src/drawers.ts movers), so the strip rides the
-  // finger with the note instead of hanging over the opening drawer, and
-  // the bottom sheet -- a body child -- comes up over the panel rather
-  // than under it.
-  (document.querySelector<HTMLElement>('.workspace') ?? document.body).append(toolbar, sidebar, findbar);
+  // The strip and the findbar go INSIDE the header, as a second line of it.
+  // Not beside it: two bars that each paint their own frosted background
+  // show a line between them wherever the thing behind them changes colour,
+  // because each blurs its own patch of it. One element cannot do that, and
+  // it rides the drawer's slide for free -- the header is already one of the
+  // movers (src/drawers.ts). The panel stays in the workspace, where the
+  // bottom sheet still comes up over it.
+  const header = document.querySelector<HTMLElement>('.topbar');
+  (header ?? document.body).append(toolbar, findbar);
+  (document.querySelector<HTMLElement>('.workspace') ?? document.body).append(sidebar);
 
   return {
     destroy: () => {

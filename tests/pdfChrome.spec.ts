@@ -54,7 +54,10 @@ test('the strip sits under the file\'s header, and the pages under both', async 
   const bar = (await page.locator('.topbar').boundingBox())!;
   const strip = (await page.locator('.pdf-toolbar').boundingBox())!;
   const first = (await page.locator('.pdf-page[data-page="1"]').boundingBox())!;
-  expect(Math.round(strip.y)).toBe(Math.round(bar.y + bar.height)); // no seam
+  // The strip is the header's second line, inside it: a seam is not possible
+  // because there is only one element painting the glass.
+  expect(await page.evaluate(() => document.querySelector('.pdf-toolbar')!.parentElement!.className)).toBe('topbar');
+  expect(Math.round(strip.y + strip.height)).toBe(Math.round(bar.y + bar.height));
   expect(first.y).toBeGreaterThanOrEqual(strip.y + strip.height - 1); // nothing behind either
 });
 
@@ -182,6 +185,20 @@ test('the two left buttons are two buttons, each saying whether its view is up',
   expect(await lit()).toEqual([false, false]);
 });
 
+test('the thumbnails do not slide sideways under a thumb', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  await control(page, 'Thumbnails').click();
+  await page.waitForTimeout(400);
+  const pan = await page.evaluate(() => {
+    const view = document.querySelector<HTMLElement>('.pdf-thumbnail-view')!;
+    view.scrollLeft = 200;
+    return { left: view.scrollLeft, overflowX: getComputedStyle(view).overflowX };
+  });
+  expect(pan.overflowX).toBe('hidden');
+  expect(pan.left).toBe(0);
+});
+
 test('the strip and the panel ride the drawer, and the switcher comes up over them', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
@@ -213,40 +230,20 @@ test('the strip and the panel ride the drawer, and the switcher comes up over th
   expect(top.inMenu).toBe(true); // nothing of the panel is in front of it
 });
 
-test('the strip carries on the header\'s frosting instead of restarting it', async ({ page }) => {
+test('the header and the strip are one pane of glass', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
   const look = await page.evaluate(() => {
-    const bar = getComputedStyle(document.querySelector('.topbar')!);
     const strip = getComputedStyle(document.querySelector('.pdf-toolbar')!);
-    return { blur: [bar.backdropFilter, strip.backdropFilter], tint: [bar.backgroundColor, strip.backgroundColor],
-      gradient: strip.backgroundImage, border: strip.borderBottomWidth };
+    const bar = getComputedStyle(document.querySelector('.topbar')!);
+    return { stripTint: strip.backgroundColor, stripBlur: strip.backdropFilter,
+      barTint: bar.backgroundColor, barBlur: bar.backdropFilter,
+      height: Math.round(document.querySelector('.topbar')!.getBoundingClientRect().height) };
   });
-  expect(look.blur[1]).toBe(look.blur[0]);   // the same glass
-  expect(look.tint[1]).toBe(look.tint[0]);   // the same colour
-  // --raised-background fades from solid to 65%; a second copy of it under
-  // the first is a dark step at the seam, so the strip holds the colour the
-  // header's fade ends on and adds no rule of its own.
-  expect(look.gradient).toBe('none');
-  expect(look.border).toBe('0px');
-
-  // and the page really is visible through it: scrolled, the strip sits over
-  // white paper and must lighten, not stay the colour of the app behind it.
-  await page.mouse.move(195, 400);
-  for (let i = 0; i < 6; i += 1) { await page.mouse.wheel(0, 200); await page.waitForTimeout(80); }
-  await page.waitForTimeout(800);
-  const shot = await page.screenshot();
-  const read = await page.evaluate(async (b64) => {
-    const img = new Image(); img.src = `data:image/png;base64,${b64}`;
-    await img.decode();
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width; canvas.height = img.height;
-    const ink = canvas.getContext('2d')!;
-    ink.drawImage(img, 0, 0);
-    const grey = (y: number): number => ink.getImageData(700, y * 2, 1, 1).data[0];
-    return { header: grey(58), strip: grey(70), page: grey(130) };
-  }, shot.toString('base64'));
-  expect(read.page).toBeGreaterThan(240);              // white paper under it all
-  expect(read.strip).toBeGreaterThan(read.header);     // no dark step at the seam
-  expect(read.strip).toBeGreaterThan(100);             // the paper shows through
+  // the strip paints nothing of its own: one surface, so no line can appear
+  // between them whatever is behind
+  expect(look.stripTint).toBe('rgba(0, 0, 0, 0)');
+  expect(look.stripBlur).toBe('none');
+  expect(look.barBlur).not.toBe('none');
+  expect(look.height).toBe(104); // 12 + 44 + 8 + 40, the strip included
 });

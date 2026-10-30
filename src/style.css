@@ -208,12 +208,6 @@
      pill there. */
   --raised-background: color-mix(in srgb, var(--raised-base) 65%, transparent)
     linear-gradient(var(--raised-base), color-mix(in srgb, var(--raised-base) 65%, transparent));
-  /* Where that gradient ends. A bar stacked directly under another one
-     takes this instead, so the fade runs once across the pair rather than
-     restarting -- two gradients meeting mid-air is a dark step at the seam,
-     and the lower bar reads as a slab bolted on rather than more of the
-     same frosted glass. */
-  --raised-background-continued: color-mix(in srgb, var(--raised-base) 65%, transparent);
   --raised-blur: blur(6px) saturate(1.5) brightness(1.15);
   --scrollbar-thumb-bg: rgba(var(--mono-rgb-100), 0.1);
   --scrollbar-active-thumb-bg: rgba(var(--mono-rgb-100), 0.2);
@@ -4237,29 +4231,23 @@ textarea,
    because in Satr the header floats over a scrolling pane; the document
    is pushed down by both together, and the viewer reads that inset off
    the column itself, so its scrolling follows with nothing to tell it. */
+/* A second line of the header, wrapped under its buttons: no background
+   and no blur of its own, because the header is painting both. */
 .pdf-toolbar {
-  position: fixed;
-  top: var(--view-top-spacing);
-  inset-inline: 0;
-  z-index: 6;
+  flex: 0 0 100%;
   height: var(--pdf-toolbar-height);
+  margin-top: 8px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--size-4-3, 12px);
-  /* The header's own blur, and the colour its gradient ends on: the two
-     are one frosted surface, not a pane with a slab bolted under it. */
-  background: var(--raised-background-continued);
-  backdrop-filter: var(--raised-blur);
-  -webkit-backdrop-filter: var(--raised-blur);
-  pointer-events: auto;
+  /* No padding of its own: the header's 12px already holds it, and its
+     first button lines up under the header's. */
+  padding: 0;
 }
-/* With the strip under it the header stops fading: one flat pane of glass
-   104px deep rather than a gradient that ends mid-air and a second surface
-   carrying on from it at a different tone. */
 body.is-pdf-chrome .topbar {
-  background: var(--raised-background-continued);
+  flex-wrap: wrap;
+  padding-bottom: 0;
 }
 body.is-pdf-chrome .preview-pane article.is-document {
   padding-top: calc(var(--view-top-spacing) + var(--pdf-toolbar-height));
@@ -4349,7 +4337,11 @@ body.is-pdf-sidebar .pdf-sidebar-container {
 .pdf-outline-view {
   position: absolute;
   inset: 0;
-  overflow: auto;
+  /* Down only. (overflow-x: clip would be the exact word for it, but paired
+     with a scrolling y axis it computes back to hidden.) */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -4361,7 +4353,11 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   gap: var(--size-4-1, 4px);
   justify-content: center;
   align-content: flex-start;
-  padding: var(--size-4-3, 12px);
+  /* 8px at the sides, not 12: a 100px thumbnail with its 8px selection
+     border is 116, and 12 either side came to 140 against the 139 the
+     panel has once its own border is taken off. That one pixel was
+     scrollable, so a thumb dragging down the column slid it sideways. */
+  padding: var(--size-4-3, 12px) var(--size-4-2, 8px);
 }
 .pdf-thumbnail-view .thumbnail {
   position: relative;
@@ -4429,16 +4425,18 @@ body.is-pdf-sidebar .pdf-sidebar-container {
    line and keeps the field, the count and the arrows, with the field given
    the room the rest leave; these are its own class names again. */
 .pdf-findbar {
-  position: fixed;
-  top: var(--view-top-spacing);
-  inset-inline: 0;
-  z-index: 7;
+  flex: 0 0 100%;
+  box-sizing: border-box;
+  height: var(--pdf-toolbar-height);
+  margin-top: 8px;
   display: flex;
-  padding: var(--size-2-3, 6px) var(--size-4-2, 8px);
-  background-color: var(--background-primary);
-  border-bottom: 1px solid var(--background-modifier-border);
+  align-items: center;
+  padding: 0 var(--size-4-2, 8px);
   font-size: 13px;
 }
+/* One line at a time: the find row takes the strip's place rather than
+   covering it, so the header is the same height either way. */
+body.is-pdf-finding .pdf-toolbar { display: none; }
 .pdf-findbar.mod-hidden { display: none; }
 .pdf-findbar .pdf-search-wrapper {
   display: flex;
