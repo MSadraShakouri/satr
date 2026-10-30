@@ -7,8 +7,20 @@ import { expect, test, type Page } from '@playwright/test';
 // wrote the empty note into their notes folder. An install they only looked
 // at left a stray note behind.
 
-const files = (page: Page) => page.evaluate(() =>
-  Object.keys(localStorage).filter((k) => k.startsWith('satr:fs:file:')).map((k) => k.replace('satr:fs:file:', '')).sort());
+// Which files the vault has. The index is what says so: contents live in
+// IndexedDB now (src/webStore.ts), and localStorage only ever holds one on
+// its way there.
+const files = (page: Page) => page.evaluate(() => {
+  const index = JSON.parse(localStorage.getItem('satr:fs:index') ?? '{"files":{}}') as { files: Record<string, number> };
+  return Object.keys(index.files ?? {}).sort();
+});
+
+/** What is actually inside a file of the browser vault. */
+const contentOf = (page: Page, path: string) => page.evaluate(async (want) => {
+  const { backend } = await (window as unknown as { __satr: { load(p: string): Promise<Record<string, never>> } })
+    .__satr.load('/src/vault.ts') as unknown as { backend: { read(p: string): Promise<string | null> } };
+  return backend.read(want);
+}, path);
 
 /** A browser that has never run Satr. */
 async function freshBrowser(page: Page): Promise<void> {
@@ -49,7 +61,7 @@ test('writing in the tour makes it a note of your own', async ({ page }) => {
   await page.locator('.cm-content').click();
   await page.keyboard.type('mine');
   await expect.poll(() => files(page)).toEqual(['Notes/demo.md']);
-  expect(await page.evaluate(() => localStorage.getItem('satr:fs:file:Notes/demo.md'))).toContain('mine');
+  expect(await contentOf(page, 'Notes/demo.md')).toContain('mine');
 });
 
 test('a space with nothing in it opens the new-tab page, not a note', async ({ page }) => {

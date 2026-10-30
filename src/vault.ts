@@ -13,6 +13,7 @@
 // the user creates: no settings folder, no index file. Spaces and view
 // state live in the app's own storage.
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { asStored, dropStored, getStored, putStored, storedText } from './webStore';
 
 export interface Entry {
   path: string;
@@ -48,6 +49,9 @@ export interface Backend {
   stat(path: string): Promise<Entry | null>;
   /** A file as a data: URL (images), or null. */
   readDataUrl(path: string): Promise<string | null>;
+  /** Bytes straight in, without going through text. The browser vault only:
+   *  the device writes a file by its path and has no need of it. */
+  writeBytes?(path: string, blob: Blob): Promise<void>;
 }
 
 const MIME: Record<string, string> = {
@@ -139,30 +143,56 @@ class WebBackend implements Backend {
     }
     return [...out.values()];
   }
-  readSync(path: string): string | null {
-    return path in this.index.files ? localStorage.getItem(fileKey(path)) ?? '' : null;
+  /** What is in a file, from wherever it is. Contents live in the store
+   *  (src/webStore.ts); a localStorage key under the same name is an older
+   *  version's copy, or one the legacy migration below just wrote, and it is
+   *  moved into the store the first time it is read. */
+  private async contents(path: string): Promise<string | null> {
+    if (!(path in this.index.files)) return null;
+    const left = localStorage.getItem(fileKey(path));
+    if (left !== null) {
+      await putStored(path, asStored(left));
+      localStorage.removeItem(fileKey(path));
+      return left;
+    }
+    const value = await getStored(path);
+    return value ? storedText(value) : '';
   }
   async read(path: string): Promise<string | null> {
-    return this.readSync(path);
+    return this.contents(path);
   }
-  /** Everything in the web backend is text already. */
   async readText(path: string): Promise<TextOpen> {
-    const text = this.readSync(path);
+    const text = await this.contents(path);
     return text === null ? { status: 'unreadable' } : { status: 'text', text, clean: !looksBinary(text) };
   }
-  /** The web version keeps text only; an image stored as a data: URL works. */
+  /** A picture or a document is kept as its bytes and read back as the data:
+   *  URL the rest of the app knows it by. */
   async readDataUrl(path: string): Promise<string | null> {
-    const value = this.readSync(path);
+    const value = await this.contents(path);
     return value && value.startsWith('data:') ? value : null;
   }
+  /** Straight to localStorage, where the next read moves it into the store.
+   *  The legacy migration runs before anything may be awaited, so it needs a
+   *  way to put a file down without waiting. */
   writeSync(path: string, text: string): void {
     localStorage.setItem(fileKey(path), text);
     this.index.files[path] = Date.now();
     this.addFolders(path);
     this.save();
   }
+  private note(path: string): void {
+    localStorage.removeItem(fileKey(path));
+    this.index.files[path] = Date.now();
+    this.addFolders(path);
+    this.save();
+  }
   async write(path: string, text: string): Promise<void> {
-    this.writeSync(path, text);
+    await putStored(path, asStored(text));
+    this.note(path);
+  }
+  async writeBytes(path: string, blob: Blob): Promise<void> {
+    await putStored(path, { blob, mime: blob.type || mimeType(path) });
+    this.note(path);
   }
   async mkdir(path: string): Promise<void> {
     if (!this.isFolder(path)) this.index.folders.push(path);
@@ -173,8 +203,9 @@ class WebBackend implements Backend {
     if (from === to) return;
     if (await this.stat(to)) throw new Error('Something with that name already exists');
     if (from in this.index.files) {
-      const text = localStorage.getItem(fileKey(from)) ?? '';
-      localStorage.setItem(fileKey(to), text);
+      await this.contents(from); // anything left in localStorage lands in the store
+      const value = await getStored(from);
+      if (value) { await putStored(to, value); await dropStored(from); }
       localStorage.removeItem(fileKey(from));
       this.index.files[to] = this.index.files[from];
       delete this.index.files[from];
@@ -183,7 +214,9 @@ class WebBackend implements Backend {
       const move = (path: string): string => to + path.slice(from.length);
       for (const path of Object.keys(this.index.files)) {
         if (!within(path, from)) continue;
-        localStorage.setItem(fileKey(move(path)), localStorage.getItem(fileKey(path)) ?? '');
+        await this.contents(path);
+        const value = await getStored(path);
+        if (value) { await putStored(move(path), value); await dropStored(path); }
         localStorage.removeItem(fileKey(path));
         this.index.files[move(path)] = this.index.files[path];
         delete this.index.files[path];
@@ -199,6 +232,7 @@ class WebBackend implements Backend {
     for (const file of Object.keys(this.index.files)) {
       if (!within(file, path)) continue;
       localStorage.removeItem(fileKey(file));
+      await dropStored(file);
       delete this.index.files[file];
     }
     this.index.folders = this.index.folders.filter((f) => !within(f, path));
