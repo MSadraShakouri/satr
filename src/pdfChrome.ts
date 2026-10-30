@@ -17,6 +17,7 @@
 // panel's view picker, then zoom out, zoom in, the display options, and the
 // page box with the count beside it.
 import { openMenu, type MenuEntry } from './menu';
+import { majorityDirection } from './direction';
 import type { PdfFit, PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 
 const ICONS: Record<string, string> = {
@@ -281,12 +282,32 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
       outline.append(empty);
       return;
     }
-    const draw = (list: PdfOutlineItem[], depth: number, into: HTMLElement): void => {
+    // The same tree the right sidebar's outline is, down to its markup:
+    // a row of its own per heading, the title in .tree-item-inner, the
+    // number beside it as flair, and the headings under it in a nested
+    // .tree-item-children, which is where the indent and its guide line
+    // come from. The panel takes the document's own direction the way
+    // that outline takes the note's (rightSidebar.ts: list.dir =
+    // majorityDirection), so a Persian document indents from the right;
+    // each row is dir=auto on top of that, so one English heading among
+    // them still reads the way it was written.
+    const titles: string[] = [];
+    const collect = (list: PdfOutlineItem[]): void => {
+      for (const item of list) { titles.push(item.title); collect(item.children); }
+    };
+    collect(items);
+    outline.dir = majorityDirection(titles.join('\n'));
+    const draw = (list: PdfOutlineItem[], into: HTMLElement): void => {
       for (const item of list) {
+        const branch = document.createElement('div');
+        branch.className = 'tree-item';
         const row = document.createElement('div');
         row.className = 'tree-item-self';
-        row.style.paddingInlineStart = `${8 + depth * 17}px`;
-        row.textContent = item.title;
+        row.dir = 'auto';
+        const inner = document.createElement('span');
+        inner.className = 'tree-item-inner';
+        inner.textContent = item.title;
+        row.append(inner);
         if (item.page !== null) {
           const flair = document.createElement('span');
           flair.className = 'tree-item-flair';
@@ -295,11 +316,17 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
           row.onclick = () => { handle.goTo(item.page!); setOpen(false); };
           rows.push({ page: item.page, el: row });
         }
-        into.append(row);
-        if (item.children.length) draw(item.children, depth + 1, into);
+        branch.append(row);
+        if (item.children.length) {
+          const under = document.createElement('div');
+          under.className = 'tree-item-children';
+          draw(item.children, under);
+          branch.append(under);
+        }
+        into.append(branch);
       }
     };
-    draw(items, 0, outline);
+    draw(items, outline);
     // The scan outlives the tap that opened the panel, so the row for the
     // page being read is found once there are rows to find it among.
     if (sidebar.dataset.view === '2') revealOutline(shownPage);

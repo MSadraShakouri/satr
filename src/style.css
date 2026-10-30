@@ -4405,6 +4405,12 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   font-size: 13px;
   color: var(--text-normal);
 }
+/* The nesting is the sidebar outline's, one step narrower: this panel is
+   275px wide where that drawer is most of the screen. */
+.pdf-outline-view .tree-item-children {
+  margin-inline-start: 8px;
+  padding-inline-start: 4px;
+}
 .pdf-outline-view .tree-item-self.mod-active {
   color: var(--text-accent);
   background-color: var(--background-modifier-hover);

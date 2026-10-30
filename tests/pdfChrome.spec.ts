@@ -247,16 +247,37 @@ test('a derived heading is indented under the one above it and names its page', 
   await control(page, 'Table of contents').click();
   const rows = page.locator('.pdf-outline-view .tree-item-self');
   await expect(rows).toHaveCount(5, { timeout: 15000 });
-  // the chapters sit flush and the sections sit in from them, the way the
-  // tree draws a document's own bookmarks: 8px, then 8 + 17
-  const indents = await rows.evaluateAll((list) =>
-    list.map((row) => parseInt(getComputedStyle(row).paddingInlineStart, 10)));
-  expect(indents).toEqual([8, 25, 25, 8, 25]);
+  // The chapters sit flush and the sections sit in from them, nested the
+  // way the right sidebar's outline nests its headings: a child row starts
+  // 13px in from its parent — 8 of margin, 4 of padding, and the 1px guide
+  // line between them.
+  const lefts = await rows.evaluateAll((list) =>
+    list.map((row) => Math.round(row.getBoundingClientRect().left)));
+  expect(lefts.map((left) => left - lefts[0])).toEqual([0, 13, 13, 0, 13]);
+  // and an English document leaves the tree the way round it already is
+  await expect(page.locator('.pdf-outline-view')).toHaveAttribute('dir', 'ltr');
   // each one knows the page it is on, and goes there
   await expect(rows.nth(3).locator('.tree-item-flair')).toHaveText('3');
   await rows.nth(3).click();
   await page.waitForTimeout(700);
   await expect(page.locator('.pdf-counter')).toHaveText('3 / 3');
+});
+
+test('a document written in Persian turns the whole tree around', async ({ page }) => {
+  // The right sidebar's outline takes the note's own direction and mirrors
+  // itself: the indent and its guide line come in from the right, and the
+  // flair goes to the left. A document's contents are the same tree, so
+  // they answer to the same rule (src/rightSidebar.ts, src/direction.ts).
+  await bootTypeset(page, tinyPdf(4, [], ['جلسه اول', 'جلسه دوم', 'جلسه سوم']));
+  await control(page, 'Table of contents').click();
+  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await expect(rows).toHaveCount(3, { timeout: 15000 });
+  await expect(rows.first()).toContainText('جلسه اول');
+  await expect(page.locator('.pdf-outline-view')).toHaveAttribute('dir', 'rtl');
+  // the number is on the left of the row and the title runs to the right edge
+  const flair = (await rows.first().locator('.tree-item-flair').boundingBox())!;
+  const inner = (await rows.first().locator('.tree-item-inner').boundingBox())!;
+  expect(flair.x).toBeLessThan(inner.x);
 });
 
 test('a document with nothing set larger than its body still says so', async ({ page }) => {

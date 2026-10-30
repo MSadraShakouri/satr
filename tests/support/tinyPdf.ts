@@ -32,11 +32,21 @@ export function tinyPdf(pages: number, darkPages: number[] = [], outline: string
     outline.forEach((title, index) => {
       const previous = index > 0 ? ` /Prev ${itemId(index - 1)} 0 R` : '';
       const next = index < outline.length - 1 ? ` /Next ${itemId(index + 1)} 0 R` : '';
-      objects[itemId(index)] = `<< /Title (${title}) /Parent ${outlineId} 0 R${previous}${next}`
+      objects[itemId(index)] = `<< /Title ${pdfString(title)} /Parent ${outlineId} 0 R${previous}${next}`
         + ` /Dest [${pageIds[Math.min(index, pages - 1)]} 0 R /Fit] >>`;
     });
   }
   return assemble(objects);
+}
+
+/** A PDF text string: plain between the brackets while it is ASCII, and
+ *  UTF-16 in hex once it is not, which is how a bookmark carries a title
+ *  written in any other script. */
+function pdfString(text: string): string {
+  if (/^[\x20-\x7e]*$/.test(text)) return `(${text.replace(/([()\\])/g, '\\$1')})`;
+  let hex = 'FEFF';
+  for (const char of text) hex += char.codePointAt(0)!.toString(16).padStart(4, '0').toUpperCase();
+  return `<${hex}>`;
 }
 
 /** The numbered objects, the cross-reference table under them and the
