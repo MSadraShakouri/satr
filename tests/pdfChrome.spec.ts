@@ -134,6 +134,15 @@ test('find marks every match and walks them', async ({ page }) => {
   await expect(page.locator('.pdf-find-results-count')).toHaveText('1 of 8', { timeout: 15000 });
   await expect(page.locator('.pdf-find-hit')).toHaveCount(8);
   await expect(page.locator('.pdf-find-hit.is-current')).toHaveCount(1);
+  // and a mark is actually painted: the colours here are Satr's own, and a
+  // name borrowed from the app being mimicked would leave a box of nothing
+  const paint = await page.evaluate(() => {
+    const el = document.querySelector('.pdf-find-hit')!;
+    const seen = getComputedStyle(el);
+    return { fill: seen.backgroundColor, wide: Math.round(el.getBoundingClientRect().width) };
+  });
+  expect(paint.fill).not.toBe('rgba(0, 0, 0, 0)');
+  expect(paint.wide).toBeGreaterThan(4);
   // the arrows walk them, and the document follows
   await control(page, 'Next match').click();
   await expect(page.locator('.pdf-find-results-count')).toHaveText('2 of 8');

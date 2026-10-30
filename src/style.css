@@ -4250,7 +4250,7 @@ body.is-pdf-chrome .preview-pane article.is-document {
   height: 30px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-s);
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   box-shadow: none;
@@ -4274,14 +4274,14 @@ body.is-pdf-chrome .preview-pane article.is-document {
   width: 7ch;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  font-size: var(--font-ui-small);
+  font-size: 13px;
   padding: 2px 6px;
   height: 26px;
 }
 .pdf-page-numbers {
   white-space: nowrap;
   margin-inline-end: var(--size-4-1, 4px);
-  font-size: var(--font-ui-small);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
@@ -4331,7 +4331,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   position: relative;
   display: block;
   border: var(--size-4-2, 8px) solid transparent;
-  border-radius: var(--radius-s);
+  border-radius: 6px;
   box-sizing: content-box;
 }
 .pdf-thumbnail-view .thumbnail:not([data-loaded]) {
@@ -4349,7 +4349,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   border-radius: 3px;
   background-color: var(--background-secondary);
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
+  font-size: 11px;
   line-height: 1;
 }
 .pdf-thumbnail-view .thumbnail.selected,
@@ -4369,14 +4369,14 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   justify-content: space-between;
   gap: var(--size-4-2, 8px);
   padding: 4px 8px;
-  border-radius: var(--radius-s);
-  font-size: var(--font-ui-small);
+  border-radius: 6px;
+  font-size: 13px;
   color: var(--text-normal);
 }
 .pdf-outline-view .tree-item-self.mod-active {
-  color: var(--nav-item-color-active);
-  background-color: var(--nav-item-background-active);
-  font-weight: var(--nav-item-weight-active);
+  color: var(--text-accent);
+  background-color: var(--background-modifier-hover);
+  font-weight: 600;
 }
 .pdf-outline-view .tree-item-flair {
   white-space: nowrap;
@@ -4385,7 +4385,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
 .pdf-outline-empty {
   padding: var(--size-4-2, 8px);
   color: var(--text-muted);
-  font-size: var(--font-ui-small);
+  font-size: 13px;
 }
 
 /* Obsidian's find bar lies across the top of the pages, over everything.
@@ -4401,7 +4401,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   padding: var(--size-2-3, 6px) var(--size-4-2, 8px);
   background-color: var(--background-primary);
   border-bottom: 1px solid var(--background-modifier-border);
-  font-size: var(--font-ui-small);
+  font-size: 13px;
 }
 .pdf-findbar.mod-hidden { display: none; }
 .pdf-findbar .pdf-search-wrapper {
@@ -4414,10 +4414,9 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   flex-grow: 1;
   min-width: 0;
   height: 28px;
-  font-size: var(--font-ui-small);
+  font-size: 13px;
 }
 .pdf-findbar .pdf-toolbar-field.mod-not-found {
-  --background-modifier-border-focus: var(--text-error);
   border-color: var(--text-error);
 }
 .pdf-find-results-count {
@@ -4436,15 +4435,15 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
   position: absolute;
   z-index: 2;
   border-radius: 2px;
-  background-color: var(--color-yellow);
-  mix-blend-mode: multiply;
+  background-color: var(--text-highlight-bg);
+  mix-blend-mode: var(--highlight-mix-blend-mode, darken);
   pointer-events: none;
 }
 .pdf-find-hit.is-current {
-  background-color: var(--color-accent);
-  box-shadow: 0 0 0 2px var(--color-accent);
+  background-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
 }
-.theme-dark .pdf-find-hit { mix-blend-mode: screen; }
+
 .pdf-raster {
   position: absolute;
   inset: 0;
