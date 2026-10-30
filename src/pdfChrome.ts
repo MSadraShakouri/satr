@@ -20,7 +20,13 @@ import { openMenu, type MenuEntry } from './menu';
 import type { PdfFit, PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 
 const ICONS: Record<string, string> = {
-  panel: '<path d="M3 5.5A2.5 2.5 0 0 1 5.5 3h13A2.5 2.5 0 0 1 21 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5z"/><path d="M9 3v18"/>',
+  // Obsidian's own pair: lucide-layout-list for the toggle, a plain chevron
+  // for the options beside it. The chevron is the whole point -- two icons of
+  // equal weight read as two unrelated switches, a chevron reads as "more of
+  // the button next to me".
+  panel: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/><path d="M14 4h7"/><path d="M14 9h7"/><path d="M14 15h7"/><path d="M14 20h7"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  grid: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
   list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
   minus: '<path d="M5 12h14"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
@@ -30,6 +36,8 @@ const ICONS: Record<string, string> = {
   down: '<path d="m6 9 6 6 6-6"/>',
   close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 };
+const svg = (path: string): string => '<svg viewBox="0 0 24 24" aria-hidden="true">' + path + '</svg>';
+
 const button = (name: string, label: string): HTMLButtonElement => {
   const el = document.createElement('button');
   el.className = 'pdf-toolbar-button';
@@ -82,11 +90,14 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
 
   const toggle = button('panel', 'Toggle sidebar');
   toggle.onclick = () => setOpen(!open);
-  const picker = button('list', 'Sidebar options');
+  const picker = button('chevron', 'Sidebar options');
+  // Obsidian ticks a view only while the panel is actually open: with the
+  // panel shut, neither of them is the view you are looking at.
+  const showing = (view: SidebarView): boolean => open && sidebar.dataset.view === view;
   picker.onclick = () => {
     openMenu([
-      { title: 'Thumbnails', checked: sidebar.dataset.view === '1', action: () => setView('1') },
-      { title: 'Table of contents', checked: sidebar.dataset.view === '2', action: () => setView('2') },
+      { title: 'Thumbnails', icon: svg(ICONS.grid), checked: showing('1'), action: () => setView('1') },
+      { title: 'Table of contents', icon: svg(ICONS.list), checked: showing('2'), action: () => setView('2') },
       'separator',
       { title: 'Reveal page in table of contents', action: () => { setView('2'); revealOutline(shownPage); } },
     ] as MenuEntry[]);

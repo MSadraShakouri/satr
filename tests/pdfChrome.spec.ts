@@ -157,3 +157,28 @@ test('find marks every match and walks them', async ({ page }) => {
   await expect(page.locator('.pdf-findbar')).toBeHidden();
   await expect(page.locator('.pdf-toolbar')).toBeVisible();
 });
+
+test('the options button is a chevron, and a view is ticked only while the panel is open', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  // Obsidian's pair: lucide-layout-list to toggle, lucide-chevron-down for
+  // the options beside it. Two icons of equal weight read as two unrelated
+  // switches; the chevron reads as "more of the button next to me".
+  const paths = await page.evaluate(() => ['Toggle sidebar', 'Sidebar options'].map((label) =>
+    document.querySelector(`.pdf-toolbar-button[aria-label="${label}"] svg`)!.innerHTML));
+  expect(paths[0]).toContain('<rect'); // layout-list: two squares and four lines
+  expect(paths[1]).toBe('<path d="m6 9 6 6 6-6"></path>'); // chevron-down, nothing else
+
+  const ticks = async (): Promise<string[]> => {
+    await control(page, 'Sidebar options').click();
+    const out = await page.evaluate(() => [...document.querySelectorAll('.menu-item')]
+      .filter((el) => el.querySelector('.mod-checked')).map((el) => el.textContent!.trim()));
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    return out;
+  };
+  expect(await ticks()).toEqual([]); // panel shut: neither view is the one you are looking at
+  await control(page, 'Toggle sidebar').click();
+  await page.waitForTimeout(350);
+  expect(await ticks()).toEqual(['Thumbnails']);
+});
