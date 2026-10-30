@@ -43,6 +43,7 @@ import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
+import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
 import { DEFAULT_FOLDER, backend, base64Bytes, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
@@ -1891,6 +1892,43 @@ function focusedNoteDir(): string {
   const dir = path && !isExternalPath(path) ? dirname(path) : '';
   return dir || notesHome();
 }
+/** A file from the device's own storage becomes a file of the vault: written
+ *  into the folder being looked at, named so nothing is ever replaced, and
+ *  opened. Text is kept as text — the app's own test for it, so a .md really
+ *  is a note afterwards — and everything else as the bytes it is.
+ *
+ *  The browser only (src/importFile.ts). */
+async function importFiles(): Promise<void> {
+  const picked = await pickFiles();
+  if (!picked.length) return;
+  const dir = focusedNoteDir();
+  let first = '';
+  for (const file of picked) {
+    const { base, ext } = nameParts(file.name);
+    const path = joinPath(dir, await freeName(dir, base, ext));
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const text = new TextDecoder('utf-8').decode(bytes);
+      // What the file is decides this, not what its bytes happen to look
+      // like: a small PDF is very nearly all printable characters, and
+      // storing it as text would leave a document the viewer cannot read.
+      // The second half catches a .md that is secretly bytes.
+      if (isEditableFile(file.name) && !looksBinary(text)) await backend.write(path, text);
+      // The bytes, not the File the chooser handed over: a File is a
+      // reference to somewhere on the device, and keeping that is not
+      // importing anything — move or delete the original and the vault's
+      // copy would come back empty.
+      else if (backend.writeBytes) await backend.writeBytes(path, new Blob([bytes], { type: file.type || mimeType(path) }));
+      else throw new Error('This browser cannot keep a file of that kind');
+    } catch (error) {
+      leftSidebar.hint(error instanceof Error ? error.message : String(error), true);
+      return;
+    }
+    if (!first) first = path;
+  }
+  void leftSidebar.refresh();
+  await openFile(first);
+}
 async function newFile(dir = focusedNoteDir()): Promise<void> {
   if (!await leaveCurrent()) return;
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
@@ -2339,6 +2377,7 @@ async function renderEmptyTab(): Promise<void> {
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
         <button type="button" class="empty-state-action" data-act="files">Go to file</button>
+        ${canImportFiles() ? '<button type="button" class="empty-state-action" data-act="import">Import a file</button>' : ''}
         ${tabs.length > 1 ? '<button type="button" class="empty-state-action" data-act="close">Close</button>' : ''}
       </div>
       <div class="empty-state-results"${emptyQuery ? '' : ' hidden'}></div>
@@ -2372,6 +2411,7 @@ emptyTab.addEventListener('click', (event) => {
   if (recent) { void openFile(recent.dataset.path!); return; }
   const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (act === 'new') void newFile();
+  else if (act === 'import') void importFiles();
   else if (act === 'files') toggleFiles(true);
   else if (act === 'search') emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field')?.focus();
   else if (act === 'close') closeTab(activeTab);
