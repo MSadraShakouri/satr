@@ -1,9 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { tinyPdf } from './support/tinyPdf';
 
-// Obsidian's PDF toolbar carries a ▾ of display options: the two zoom stops
-// and "Adapt to theme". We have no toolbar and are not growing one, so they
-// live in the ⋮ a shown file already has. Its pages are A4, 595×842.
+// The display options Obsidian keeps on its PDF toolbar: the two zoom
+// stops and "Adapt to theme". The test pages are A4, 595×842.
 
 test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 2 });
 
@@ -30,7 +29,7 @@ const openDocument = async (page: Page): Promise<void> => {
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
 };
 const option = async (page: Page, title: string): Promise<void> => {
-  await page.locator('#file-actions').click();
+  await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
   await page.locator('.menu-item', { hasText: title }).click();
   await page.waitForTimeout(300);
 };
@@ -42,7 +41,7 @@ const pageBox = async (page: Page): Promise<{ width: number; height: number }> =
 test('a document carries the display options, a note has none to carry', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await openDocument(page);
-  await page.locator('#file-actions').click();
+  await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
   for (const title of ['Fit width', 'Fit height', 'Adapt to theme']) {
     await expect(page.locator('.menu-item', { hasText: title })).toBeVisible();
   }
@@ -51,10 +50,10 @@ test('a document carries the display options, a note has none to carry', async (
     await expect(page.locator('.menu-item', { hasText: title })).toHaveCount(0);
   }
   await page.keyboard.press('Escape');
-  // a note cannot reach them at all: the ⋮ they live in is the chrome of a
-  // file that is shown, and a note's chrome has no such button
+  // a note cannot reach them at all: the strip they live on belongs to a
+  // document, and a note has no strip
   await boot(page, 'note.md');
-  await expect(page.locator('#file-actions')).toBeHidden();
+  await expect(page.locator('.pdf-toolbar')).toHaveCount(0);
 });
 
 test('fit height puts a whole page on the screen, fit width fills the pane', async ({ page }) => {
@@ -83,12 +82,12 @@ test('fit height puts a whole page on the screen, fit width fills the pane', asy
 test('the stop a page is sitting at is the one that is ticked', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await openDocument(page);
-  await page.locator('#file-actions').click();
+  await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
   await expect(page.locator('.menu-item', { hasText: 'Fit width' })).toHaveClass(/mod-selected/);
   await expect(page.locator('.menu-item', { hasText: 'Fit height' })).not.toHaveClass(/mod-selected/);
   await page.keyboard.press('Escape');
   await option(page, 'Fit height');
-  await page.locator('#file-actions').click();
+  await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
   await expect(page.locator('.menu-item', { hasText: 'Fit height' })).toHaveClass(/mod-selected/);
   await expect(page.locator('.menu-item', { hasText: 'Fit width' })).not.toHaveClass(/mod-selected/);
 });

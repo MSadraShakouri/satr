@@ -477,6 +477,8 @@ body {
      alone; the topbar here is padded by max(12px, safe), so this follows the
      topbar instead and stays 8px clear of it on a phone with no notch too. */
   --view-top-spacing: calc(max(12px, var(--safe-top)) + 44px + 8px);
+  /* Obsidian's PDF strip, which sits under the file's own header. */
+  --pdf-toolbar-height: 40px;
 }
 .is-hidden-nav {
   --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 var(--safe-top));
@@ -4203,6 +4205,187 @@ textarea,
 .theme-dark body.is-pdf-themed .pdf-raster,
 .theme-dark body.is-pdf-themed .pdf-detail {
   filter: invert(1) hue-rotate(180deg);
+}
+
+/* ── Obsidian's PDF chrome ─────────────────────────────────────────────
+   Its PDF view is a strip across the top and a panel that slides in from
+   the side, and its stylesheet names every part; these are its own class
+   names and its own two panel widths. What its phone layout does, and so
+   does this: the panel lies over the pages rather than pushing them
+   aside, and the resizer between them is gone.
+   The strip is fixed under the file's header rather than in the flow,
+   because in Satr the header floats over a scrolling pane; the document
+   is pushed down by both together, and the viewer reads that inset off
+   the column itself, so its scrolling follows with nothing to tell it. */
+.pdf-toolbar {
+  position: fixed;
+  top: var(--view-top-spacing);
+  inset-inline: 0;
+  z-index: 5;
+  height: var(--pdf-toolbar-height);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--size-4-3, 12px);
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+body.is-pdf-chrome .preview-pane article.is-document {
+  padding-top: calc(var(--view-top-spacing) + var(--pdf-toolbar-height));
+}
+.pdf-toolbar-left,
+.pdf-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1, 4px);
+}
+.pdf-toolbar-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+.pdf-toolbar-button:active { background-color: var(--background-modifier-hover); }
+.pdf-toolbar-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pdf-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background-color: var(--background-modifier-border);
+}
+.pdf-page-input {
+  width: 7ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-ui-small);
+  padding: 2px 6px;
+  height: 26px;
+}
+.pdf-page-numbers {
+  white-space: nowrap;
+  margin-inline-end: var(--size-4-1, 4px);
+  font-size: var(--font-ui-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.pdf-sidebar-container {
+  --sidebar-width: 140px;
+  position: fixed;
+  top: calc(var(--view-top-spacing) + var(--pdf-toolbar-height));
+  bottom: 0;
+  inset-inline-start: calc(-1 * var(--sidebar-width));
+  width: var(--sidebar-width);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+  background-color: var(--background-secondary);
+  border-inline-end: 1px solid var(--background-modifier-border);
+  transition: inset-inline-start 275ms var(--anim-motion-swing, ease);
+}
+.pdf-sidebar-container[data-view="2"] { --sidebar-width: 275px; }
+body.is-pdf-sidebar .pdf-sidebar-container {
+  inset-inline-start: 0;
+  visibility: visible;
+}
+.pdf-sidebar-content {
+  position: relative;
+  flex-grow: 1;
+}
+.pdf-thumbnail-view,
+.pdf-outline-view {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pdf-thumbnail-view.hidden,
+.pdf-outline-view.hidden { display: none; }
+.pdf-thumbnail-view {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1, 4px);
+  justify-content: center;
+  align-content: flex-start;
+  padding: var(--size-4-3, 12px);
+}
+.pdf-thumbnail-view .thumbnail {
+  position: relative;
+  display: block;
+  border: var(--size-4-2, 8px) solid transparent;
+  border-radius: var(--radius-s);
+  box-sizing: content-box;
+}
+.pdf-thumbnail-view .thumbnail:not([data-loaded]) {
+  width: 100px;
+  height: 141px;
+  border: 1px dashed var(--background-modifier-border);
+  margin: calc(var(--size-4-2, 8px) - 1px);
+}
+.pdf-thumbnail-view .thumbnail::after {
+  content: attr(data-page-label);
+  position: absolute;
+  bottom: var(--size-4-1, 4px);
+  inset-inline-end: var(--size-4-1, 4px);
+  padding: 2px 4px;
+  border-radius: 3px;
+  background-color: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
+}
+.pdf-thumbnail-view .thumbnail.selected,
+.pdf-thumbnail-view .thumbnail:active {
+  border-color: var(--background-modifier-hover);
+}
+.pdf-thumbnail-view .thumbnailImage {
+  display: block;
+  width: 100px;
+  height: auto;
+  border: 1px solid transparent;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
+}
+.pdf-outline-view { padding: var(--size-4-2, 8px); }
+.pdf-outline-view .tree-item-self {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--size-4-2, 8px);
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+.pdf-outline-view .tree-item-self.mod-active {
+  color: var(--nav-item-color-active);
+  background-color: var(--nav-item-background-active);
+  font-weight: var(--nav-item-weight-active);
+}
+.pdf-outline-view .tree-item-flair {
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.pdf-outline-empty {
+  padding: var(--size-4-2, 8px);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
 }
 .pdf-raster {
   position: absolute;

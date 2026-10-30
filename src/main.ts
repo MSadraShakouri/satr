@@ -201,6 +201,7 @@ const picture = { path: '', url: '' };
  *  place is remembered against them. */
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
 let pdfView: PdfHandle | null = null;
+let pdfChrome: { destroy(): void } | null = null;
 /** Obsidian's "Adapt to theme" for a PDF: a flag it remembers across
  *  sessions (pdfjs-is-themed in its own storage), off by default. It only
  *  does anything while the theme is dark — adapting to a light theme means
@@ -539,6 +540,9 @@ function renderPreview(): void {
   releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
   // A document being read holds a worker and a pile of canvases: the one
   // open at a time is let go before anything else is drawn.
+  pdfChrome?.destroy();
+  pdfChrome = null;
+  document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
   pdfView?.destroy();
   pdfView = null;
   const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
@@ -609,6 +613,12 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   if (filePath !== path) return;
   const key = await pdfKey(bytes);
   if (filePath !== path) return;
+  // The strip is part of the room the column has to leave, so the class
+  // that makes room for it goes on before the viewer measures the column —
+  // it reads that inset once, on the way in, and a padding that changes
+  // underneath it afterwards would leave its scrolling measured from the
+  // wrong place.
+  document.body.classList.add('is-pdf-chrome');
   const handle = await showPdf(preview, bytes.slice().buffer, {
     scroller: previewPane,
     place: readPlace(key),
@@ -622,6 +632,11 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   });
   if (filePath !== path) { handle.destroy(); return; }
   pdfView = handle;
+  // Obsidian's chrome around it: the strip of controls and the panel of
+  // thumbnails and contents (src/pdfChrome.ts).
+  const { mountPdfChrome } = await import('./pdfChrome');
+  if (filePath !== path) { handle.destroy(); pdfView = null; return; }
+  pdfChrome = mountPdfChrome(handle, { on: () => pdfThemed, toggle: togglePdfTheme });
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -2715,18 +2730,6 @@ async function exportFilePdf(path: string): Promise<void> {
 function showFileMenu(): void {
   const path = filePath;
   const entries: MenuEntry[] = [];
-  // A document's display options, where Obsidian keeps them: a ▾ on its PDF
-  // toolbar holding the zoom stops and "Adapt to theme". We have no toolbar
-  // and are not growing one, so they go in the ⋮ the file already has.
-  // Thumbnails, the table of contents, the spread modes and the page box
-  // are not here on purpose: three are desktop panels and the fourth was
-  // taken out deliberately.
-  if (pdfView) entries.push(
-    { title: 'Fit width', checked: pdfView.fitNow() === 'width', action: () => pdfView?.fitTo('width') },
-    { title: 'Fit height', checked: pdfView.fitNow() === 'height', action: () => pdfView?.fitTo('height') },
-    { title: 'Adapt to theme', checked: pdfThemed, action: togglePdfTheme },
-    'separator',
-  );
   const external = isExternalPath(path);
   if (!external) entries.push(
     { title: 'Rename…', icon: MENU_ICONS.rename, action: () => { toggleFiles(true); void leftSidebar.renameFile(path); } },
