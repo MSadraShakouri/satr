@@ -341,6 +341,22 @@ body.is-named-file .topbar-title {
   color: var(--text-normal);
   text-align: center;
 }
+/* ...and the chrome that carries the name is a bar, not two icons left on
+   the glass. A file that is shown rather than read never hides its header,
+   so the page scrolls under a frosted strip instead of into its own title.
+   Obsidian's non-floating view header does this with a flat fill; keeping
+   the --raised surface the buttons already wear means the page is sensed
+   behind the name rather than walled off from it. The strip is exactly
+   --view-top-spacing tall (12/safe + 44 + 8), which is the room the content
+   below has been asked to leave, so the two meet with no seam. */
+body.is-named-file .topbar {
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  padding-bottom: 8px;
+  /* A bar takes the taps that land on it; the content is below it now. */
+  pointer-events: auto;
+}
 #file-actions {
   display: none;
 }

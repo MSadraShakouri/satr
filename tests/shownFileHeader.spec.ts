@@ -85,3 +85,18 @@ test('a document starts below the header, not behind it', async ({ page }) => {
   // the page's own top edge is at or below the bar's bottom edge
   expect(first!.y).toBeGreaterThanOrEqual((bar!.y + bar!.height) - 1);
 });
+
+test('the chrome is a bar when it carries the name, and nothing when it does not', async ({ page }) => {
+  const surface = () => page.evaluate(() => {
+    const el = document.querySelector('.topbar');
+    return el ? getComputedStyle(el).backgroundColor : '';
+  });
+  await boot(page, { 'note.md': LONG, 'handout.pdf': PDF }, 'note.md');
+  // a note draws its own title, so the chrome stays out of the way
+  expect(await surface()).toBe('rgba(0, 0, 0, 0)');
+  await page.locator('#files').click();
+  await page.locator('.nav-file-title', { hasText: 'handout.pdf' }).click();
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('body')).toHaveClass(/is-named-file/);
+  expect(await surface()).not.toBe('rgba(0, 0, 0, 0)');
+});
