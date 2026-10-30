@@ -512,6 +512,7 @@ Print
 - [ ] Mermaid export support postponed with Mermaid itself
 - [x] Images as data URIs
 - [ ] No HTML export — print/PDF is the only export path
+- [ ] **No table of contents in an exported PDF, and not because of the export.** No browser's print-to-PDF writes an `/Outlines` dictionary at all, so nothing Satr hands the print dialog can come back carrying one. Measured: the one PDF in the author's vault, produced by `Skia/PDF m149` (Chrome's own printing pipeline), has **zero `/Outlines` objects** against 282 `/Dest` links — and Obsidian shows no contents for a Markor export for the same reason. Satr's PDF viewer reads an outline correctly when a document has one (tests/pdfChrome.spec.ts, against a fixture built with a real outline tree). Giving the export one means writing the PDF ourselves — authoring the outline from the note's headings — instead of handing the page to the browser, which is a separate job and not planned yet.
 
 App
 
