@@ -17,7 +17,7 @@
 // part of it being looked at at whatever zoom the reader has actually
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
-import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask } from '@embedpdf/models';
+import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun } from '@embedpdf/models';
 import type { Rect as PageRect } from '@embedpdf/models';
 import { pdfium } from './pdfiumEngine';
 
@@ -74,6 +74,9 @@ export interface PdfHandle {
   /** A page as a small picture, for the sidebar. */
   thumbnail(page: number, width: number): Promise<string | null>;
   outline(): Promise<PdfOutlineItem[]>;
+  /** The contents of a document that carries none, read back off the type.
+   *  Scanned once, on demand, because it reads every page. */
+  derivedOutline(): Promise<PdfOutlineItem[]>;
   /** Told whenever the page at the top of the screen changes, so the
    *  toolbar's number and the sidebar's highlight follow the reader. */
   onPage(listen: (page: number) => void): () => void;
@@ -83,6 +86,145 @@ export interface PdfHandle {
   /** Mark them all, and put the one being looked at on the screen. */
   showHits(hits: PdfHit[], current: number): void;
   destroy(): void;
+}
+
+// ---- a table of contents read off the type --------------------------------
+//
+// No browser's print-to-PDF writes bookmarks, so every PDF the app exports —
+// and every one Markor exports, through the same WebView printer — arrives
+// with nothing for the contents panel to show (ROADMAP). The headings did
+// not go anywhere, though: they are the lines set larger than the body, and
+// PDFium gives back the font size of every run. So the outline is read back
+// off the type. It is an approximation and says so by what it is: whatever
+// the document's own bookmarks say wins whenever there are any.
+//
+// The numbers below are the ones that read his own 52-page handout: body
+// 15.2pt, sessions 30.4, sections 22.8, subsections 17.8.
+
+/** Bigger than the body by this much, and it is a heading. Below it sit the
+ *  half-point wobbles between runs of ordinary text. */
+const BODY_RATIO = 1.12;
+/** A paragraph is not a heading, however large it is set. */
+const MAX_TITLE = 120;
+/** Only a line that filled its own measure can be the top half of a wrapped
+ *  heading; a short line that happens to sit above another is two headings. */
+const WRAP_MIN = 45;
+/** Obsidian's contents tree indents by level; three is as deep as it reads
+ *  on a phone, and he did not mind which number it was. */
+const MAX_DEPTH = 3;
+/** A ceiling, so that opening the panel on something enormous cannot run
+ *  away with the thread. */
+const SCAN_PAGES = 500;
+/** Less of a page than this is ordinary text, and the page is not a page
+ *  of the document: it is a cover, or a divider. Measured on his own
+ *  cover, where a line of small print under the title still leaves three
+ *  characters in four set large; a page of prose is the other way round
+ *  by a mile. */
+const BODILESS = 0.5;
+/** A line that ends on one of these ended on purpose, so the line under it
+ *  is the next heading rather than the rest of this one. */
+const SENTENCE_END = /[.?!:;\u061b\u061f\u06d4\u2026]$/;
+/** PDFium hands the lam-alef ligature back as its two letters in the wrong
+ *  order: the single glyph decodes to alef + lam, which turns انقلاب into
+ *  انقالب. In these files every other letter arrives in a run of its own,
+ *  so a two-character run ending in lam is that ligature and nothing else. */
+const LAM = '\u0644';
+const ALEFS = '\u0627\u0623\u0625\u0622';
+const unligature = (text: string): string =>
+  (text.length === 2 && text[1] === LAM && ALEFS.includes(text[0]) ? LAM + text[0] : text);
+/** Enough letters to be a word rather than a stray mark left by a decoder. */
+const wordy = (text: string): boolean => (text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 2;
+
+/** One line of the document as the type describes it. */
+interface TypeLine { page: number; size: number; top: number; text: string }
+
+/** The runs of a page, stitched back into lines. A browser's printer writes
+ *  one text object per glyph for a complex script, so the runs arrive a
+ *  letter at a time; what holds a line together is a shared font size and a
+ *  shared baseline, and what ends one is the newline PDFium puts in the run
+ *  that carries it. */
+function linesOfPage(runs: PdfTextRun[], page: number): TypeLine[] {
+  const lines: TypeLine[] = [];
+  let open: TypeLine | null = null;
+  for (const run of runs) {
+    const text = unligature(String(run.text ?? ''));
+    const size = Math.round(run.fontSize * 10) / 10;
+    const top = run.rect.origin.y;
+    if (open && open.size === size && Math.abs(open.top - top) <= size * 0.6) open.text += text;
+    else {
+      if (open) lines.push(open);
+      open = { page, size, top, text };
+    }
+    if (/[\r\n]/.test(text)) { lines.push(open); open = null; }
+  }
+  if (open) lines.push(open);
+  for (const line of lines) line.text = line.text.replace(/\s+/g, ' ').trim();
+  return lines.filter((line) => line.text);
+}
+
+/** The lines of a whole document, as a contents tree. */
+function outlineFromType(lines: TypeLine[], pages: number): PdfOutlineItem[] {
+  // The body is the size the most of the document is set in — by character,
+  // not by line, or a title page would outvote a chapter.
+  const weight = new Map<number, number>();
+  for (const line of lines) weight.set(line.size, (weight.get(line.size) ?? 0) + line.text.length);
+  const body = [...weight.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (body === undefined) return [];
+  const big = lines.filter((line) => line.size > body * BODY_RATIO
+    && line.text.length <= MAX_TITLE && wordy(line.text));
+  // A cover has no body text on it: the title, who wrote it, where, and
+  // when are all set large, and all of it would otherwise arrive in the
+  // contents as headings. A page with nothing ordinary on it gets one
+  // line — its largest — which on a cover is the title and on a divider
+  // is the part it divides.
+  const plain = new Map<number, number>();
+  const all = new Map<number, number>();
+  for (const line of lines) {
+    all.set(line.page, (all.get(line.page) ?? 0) + line.text.length);
+    if (line.size > body * BODY_RATIO) continue;
+    plain.set(line.page, (plain.get(line.page) ?? 0) + line.text.length);
+  }
+  const cover = (page: number): boolean =>
+    (plain.get(page) ?? 0) < (all.get(page) ?? 0) * BODILESS;
+  const alone = new Map<number, TypeLine>();
+  for (const line of big) {
+    if (!cover(line.page)) continue;
+    const best = alone.get(line.page);
+    if (!best || line.size > best.size) alone.set(line.page, line);
+  }
+  const kept = big.filter((line) => (alone.get(line.page) ?? line) === line);
+  // A heading too long for one line wraps; the half above it ends mid-phrase.
+  const joined: TypeLine[] = [];
+  for (const line of kept) {
+    const last = joined[joined.length - 1];
+    if (last && last.page === line.page && last.size === line.size
+      && Math.abs(last.top - line.top) < line.size * 2.2
+      && last.text.length >= WRAP_MIN && !SENTENCE_END.test(last.text)) last.text += ` ${line.text}`;
+    else joined.push({ ...line });
+  }
+  // A running head is not a heading: it is the same words on page after page.
+  const times = new Map<string, number>();
+  for (const line of joined) times.set(line.text, (times.get(line.text) ?? 0) + 1);
+  const repeats = Math.max(3, pages * 0.25);
+  const heads = joined.filter((line) => (times.get(line.text) ?? 0) <= repeats);
+  // The ladder is built from the sizes that are used more than once: a size
+  // only one line is set in — a cover, a date — has not earned a level of
+  // its own, and joins the band it falls into.
+  const used = new Map<number, number>();
+  for (const line of heads) used.set(line.size, (used.get(line.size) ?? 0) + 1);
+  const ladder = [...used.entries()].filter(([, n]) => n > 1)
+    .map(([size]) => size).sort((a, b) => b - a);
+  const root: PdfOutlineItem[] = [];
+  const stack: PdfOutlineItem[] = [];
+  for (const head of heads) {
+    const rank = Math.min(ladder.filter((step) => step > head.size).length, MAX_DEPTH - 1);
+    const depth = Math.min(rank, stack.length);
+    const item: PdfOutlineItem = { title: head.text, page: head.page, children: [] };
+    stack.length = depth;
+    (depth ? stack[depth - 1].children : root).push(item);
+    stack.push(item);
+  }
+  return root;
 }
 
 /** His floor, measured on a 52-page handout at 390px: about five pages of it
@@ -225,6 +367,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   overlay.prepend(counter); // above the navbar pill, which is the layer's own child
 
   let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
+  /** The document has been closed: a scan still running stops where it is. */
+  let shut = false;
+  let derived: PdfOutlineItem[] | null = null;
+  let deriving: Promise<PdfOutlineItem[]> | null = null;
   let fit = 1; // the scale at which a page fills the pane's width
   const slabs: Slab[] = [];
 
@@ -757,6 +903,30 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         return canvas.toDataURL('image/png');
       } catch { return null; }
     },
+    derivedOutline: async () => {
+      if (derived) return derived;
+      if (!deriving) {
+        deriving = (async (): Promise<PdfOutlineItem[]> => {
+          const lines: TypeLine[] = [];
+          const count = Math.min(slabs.length, SCAN_PAGES);
+          for (let i = 0; i < count && !shut; i += 1) {
+            const slab = slabs[i];
+            if (!slab?.proxy) continue;
+            try {
+              const read = await engine.getPageTextRuns(document_, slab.proxy).toPromise();
+              lines.push(...linesOfPage(read.runs ?? [], i + 1));
+            } catch { /* a page that will not give up its text is not the end of the scan */ }
+            // The engine runs on this thread. Without a breath every few
+            // pages a long document would hold on to the tap that opened
+            // the panel until the whole of it had been read.
+            if (i % 4 === 3) await new Promise<void>((done) => { setTimeout(done, 0); });
+          }
+          derived = shut ? [] : outlineFromType(lines, count);
+          return derived;
+        })();
+      }
+      return deriving;
+    },
     outline: async () => {
       const read = (items: PdfBookmarkObject[]): PdfOutlineItem[] => items.map((item) => ({
         title: item.title,
@@ -809,6 +979,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       watchers.clear();
       window.clearTimeout(settleTimer);
       window.clearTimeout(placeTimer);
+      shut = true;
       watcher.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       scroller.removeEventListener('pointerdown', letGo);

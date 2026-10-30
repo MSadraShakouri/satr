@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { tinyPdf } from './support/tinyPdf';
+import { tinyPdf, typesetPdf } from './support/tinyPdf';
 
 // Obsidian's PDF chrome: a strip of controls across the top and a panel
 // that slides in over the pages. Its own class names, its own control
@@ -202,6 +202,69 @@ test('the contents are read from the document, when the document has any', async
   await expect(page.locator('.pdf-outline-view')).toContainText('Opening');
   await expect(page.locator('.pdf-outline-view')).toContainText('The end');
   await expect(page.locator('.pdf-outline-empty')).toHaveCount(0);
+});
+
+/** A document with no bookmarks in it, opened on its own. */
+async function bootTypeset(page: Page, pdf: string): Promise<void> {
+  await page.addInitScript((bytes) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/export.pdf': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/export.pdf', bytes as string);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/export.pdf' }], active: 0 }));
+  }, pdf);
+  await page.goto('/');
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
+  await ready(page);
+}
+
+test('a document with no bookmarks gets a contents list read off its type', async ({ page }) => {
+  // The case that matters: nothing a browser prints carries an outline, so
+  // every PDF this app and Markor export arrives without one. The headings
+  // are still on the pages, set larger than the body.
+  await bootTypeset(page, typesetPdf([
+    { chapter: 'Chapter One', section: 'Why it happened' },
+    { section: 'What came next' },
+    { chapter: 'Chapter Two', section: 'The argument' },
+    {},
+  ]));
+  await control(page, 'Table of contents').click();
+  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await expect(rows).toHaveCount(5, { timeout: 15000 });
+  await expect(rows.nth(0)).toContainText('Chapter One');
+  await expect(rows.nth(1)).toContainText('Why it happened');
+  await expect(rows.nth(2)).toContainText('What came next');
+  await expect(rows.nth(3)).toContainText('Chapter Two');
+  await expect(page.locator('.pdf-outline-empty')).toHaveCount(0);
+  // the body text is not in it, however many lines of it there are
+  await expect(page.locator('.pdf-outline-view')).not.toContainText('the body of the page');
+});
+
+test('a derived heading is indented under the one above it and names its page', async ({ page }) => {
+  await bootTypeset(page, typesetPdf([
+    { chapter: 'Chapter One', section: 'Why it happened' },
+    { section: 'What came next' },
+    { chapter: 'Chapter Two', section: 'The argument' },
+  ]));
+  await control(page, 'Table of contents').click();
+  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await expect(rows).toHaveCount(5, { timeout: 15000 });
+  // the chapters sit flush and the sections sit in from them, the way the
+  // tree draws a document's own bookmarks: 8px, then 8 + 17
+  const indents = await rows.evaluateAll((list) =>
+    list.map((row) => parseInt(getComputedStyle(row).paddingInlineStart, 10)));
+  expect(indents).toEqual([8, 25, 25, 8, 25]);
+  // each one knows the page it is on, and goes there
+  await expect(rows.nth(3).locator('.tree-item-flair')).toHaveText('3');
+  await rows.nth(3).click();
+  await page.waitForTimeout(700);
+  await expect(page.locator('.pdf-counter')).toHaveText('3 / 3');
+});
+
+test('a document with nothing set larger than its body still says so', async ({ page }) => {
+  // One size all the way down: there is no heading to find, and the panel
+  // says that rather than inventing a list out of the body text.
+  await bootTypeset(page, typesetPdf([{}, {}, {}]));
+  await control(page, 'Table of contents').click();
+  await expect(page.locator('.pdf-outline-empty')).toHaveText('No table of contents', { timeout: 15000 });
 });
 
 test('the thumbnails do not slide sideways under a thumb', async ({ page }) => {

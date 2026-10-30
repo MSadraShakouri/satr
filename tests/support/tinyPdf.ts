@@ -36,6 +36,13 @@ export function tinyPdf(pages: number, darkPages: number[] = [], outline: string
         + ` /Dest [${pageIds[Math.min(index, pages - 1)]} 0 R /Fit] >>`;
     });
   }
+  return assemble(objects);
+}
+
+/** The numbered objects, the cross-reference table under them and the
+ *  trailer that points at it — the part of a PDF that is the same whatever
+ *  is on the pages. */
+function assemble(objects: string[]): string {
   let out = '%PDF-1.4\n';
   const offsets: number[] = [];
   for (let id = 1; id < objects.length; id += 1) {
@@ -47,6 +54,35 @@ export function tinyPdf(pages: number, darkPages: number[] = [], outline: string
   for (let id = 1; id < objects.length; id += 1) out += `${String(offsets[id]).padStart(10, '0')} 00000 n \n`;
   out += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return `data:application/pdf;base64,${Buffer.from(out, 'latin1').toString('base64')}`;
+}
+
+/** A document that is actually typeset: body text in the size most of the
+ *  page is set in, and above it the headings that are set larger — a
+ *  chapter at 30pt, a section under it at 22pt. This is the shape every
+ *  exported note has, and the only kind of document a contents list read
+ *  off the type has anything to find. No outline dictionary is written,
+ *  because no browser's printer writes one. */
+export function typesetPdf(pages: Array<{ chapter?: string; section?: string }>): string {
+  const objects: string[] = [];
+  const pageIds: number[] = [];
+  for (let index = 0, id = 3; index < pages.length; index += 1, id += 2) pageIds.push(id);
+  const fontId = 3 + pages.length * 2;
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;
+  const line = 'the body of the page, set in the size most of it is set in';
+  pageIds.forEach((id, index) => {
+    objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
+    const parts: string[] = [];
+    const { chapter, section } = pages[index];
+    if (chapter) parts.push(`BT /F1 30 Tf 60 780 Td (${chapter}) Tj ET`);
+    if (section) parts.push(`BT /F1 22 Tf 60 730 Td (${section}) Tj ET`);
+    // Enough body for the body to win the count, as it does on a real page.
+    for (let row = 0; row < 14; row += 1) parts.push(`BT /F1 12 Tf 60 ${690 - row * 20} Td (${line}) Tj ET`);
+    const stream = parts.join('\n');
+    objects[id + 1] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  });
+  objects[fontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+  return assemble(objects);
 }
 
 /** The same document as the bytes a file chooser would hand over. */

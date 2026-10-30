@@ -262,7 +262,18 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
   async function fillOutline(): Promise<void> {
     if (drewOutline) return;
     drewOutline = true;
-    const items = await handle.outline();
+    // What the document says about itself wins. Only when it says nothing
+    // is one read off the type — every PDF printed by a browser, which is
+    // every PDF this app and Markor export, carries no bookmarks at all.
+    let items = await handle.outline();
+    if (!items.length) {
+      const scanning = document.createElement('div');
+      scanning.className = 'pdf-outline-empty';
+      scanning.textContent = 'Reading the document…';
+      outline.append(scanning);
+      items = await handle.derivedOutline();
+      scanning.remove();
+    }
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'pdf-outline-empty';
@@ -289,6 +300,9 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
       }
     };
     draw(items, 0, outline);
+    // The scan outlives the tap that opened the panel, so the row for the
+    // page being read is found once there are rows to find it among.
+    if (sidebar.dataset.view === '2') revealOutline(shownPage);
   }
   /** Obsidian's "Reveal page in table of contents": the last heading at or
    *  before the page being read is the one you are inside. */
