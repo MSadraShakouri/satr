@@ -4284,6 +4284,11 @@ body.is-pdf-chrome .preview-pane article.is-document {
   box-shadow: none;
 }
 .pdf-toolbar-button:active { background-color: var(--background-modifier-hover); }
+/* The view this button opens is the one on screen. */
+.pdf-toolbar-button.is-active {
+  color: var(--text-accent);
+  background-color: var(--background-modifier-hover);
+}
 .pdf-toolbar-button svg {
   width: 18px;
   height: 18px;

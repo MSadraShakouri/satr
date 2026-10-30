@@ -34,14 +34,14 @@ test('a document gets the strip of controls, in Obsidian\'s own order', async ({
   await boot(page, 'handout.pdf');
   await ready(page);
   await expect(page.locator('.pdf-toolbar')).toBeVisible();
-  for (const label of ['Toggle sidebar', 'Sidebar options', 'Zoom out', 'Zoom in', 'Display options']) {
+  for (const label of ['Thumbnails', 'Table of contents', 'Zoom out', 'Zoom in', 'Display options']) {
     await expect(control(page, label)).toBeVisible();
   }
   await expect(page.locator('.pdf-page-numbers')).toHaveText('of 8');
   // left group is the panel, right group is zoom and the page
   const order = await page.evaluate(() => [...document.querySelectorAll('.pdf-toolbar [aria-label], .pdf-toolbar input, .pdf-toolbar span')]
     .map((el) => el.getAttribute('aria-label') ?? el.className));
-  expect(order).toEqual(['Toggle sidebar', 'Sidebar options', 'Find in document', 'Zoom out', 'Zoom in',
+  expect(order).toEqual(['Thumbnails', 'Table of contents', 'Find in document', 'Zoom out', 'Zoom in',
     'Display options', 'Page', 'pdf-page-numbers']);
 
   await boot(page, 'note.md');
@@ -62,7 +62,7 @@ test('the panel lies over the pages, with a thumbnail for every page', async ({ 
   await boot(page, 'handout.pdf');
   await ready(page);
   await expect(page.locator('.pdf-sidebar-container')).toBeHidden();
-  await control(page, 'Toggle sidebar').click();
+  await control(page, 'Thumbnails').click();
   await expect(page.locator('.pdf-sidebar-container')).toBeVisible();
   await expect(page.locator('.thumbnail')).toHaveCount(8);
   await expect(page.locator('.thumbnail[data-loaded]')).toHaveCount(8, { timeout: 20000 });
@@ -83,8 +83,7 @@ test('the panel lies over the pages, with a thumbnail for every page', async ({ 
 test('the panel\'s second view is the table of contents', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
-  await control(page, 'Sidebar options').click();
-  await page.locator('.menu-item', { hasText: /^Table of contents$/ }).click();
+  await control(page, 'Table of contents').click();
   await expect(page.locator('.pdf-outline-view')).toBeVisible();
   await expect(page.locator('.pdf-thumbnail-view')).toBeHidden();
   // Obsidian widens the panel for it: 275px against the thumbnails' 140px
@@ -158,50 +157,50 @@ test('find marks every match and walks them', async ({ page }) => {
   await expect(page.locator('.pdf-toolbar')).toBeVisible();
 });
 
-test('the options button is a chevron, and a view is ticked only while the panel is open', async ({ page }) => {
+test('the two left buttons are two buttons, each saying whether its view is up', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
-  // Obsidian's pair: lucide-layout-list to toggle, lucide-chevron-down for
-  // the options beside it. Two icons of equal weight read as two unrelated
-  // switches; the chevron reads as "more of the button next to me".
-  const paths = await page.evaluate(() => ['Toggle sidebar', 'Sidebar options'].map((label) =>
-    document.querySelector(`.pdf-toolbar-button[aria-label="${label}"] svg`)!.innerHTML));
-  expect(paths[0]).toContain('<rect'); // layout-list: two squares and four lines
-  expect(paths[1]).toBe('<path d="m6 9 6 6 6-6"></path>'); // chevron-down, nothing else
+  const lit = () => page.evaluate(() => ['Thumbnails', 'Table of contents'].map((label) =>
+    document.querySelector(`.pdf-toolbar-button[aria-label="${label}"]`)!.classList.contains('is-active')));
+  expect(await lit()).toEqual([false, false]); // panel shut: neither view is up
 
-  const ticks = async (): Promise<string[]> => {
-    await control(page, 'Sidebar options').click();
-    const out = await page.evaluate(() => [...document.querySelectorAll('.menu-item')]
-      .filter((el) => el.querySelector('.mod-checked')).map((el) => el.textContent!.trim()));
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(250);
-    return out;
-  };
-  expect(await ticks()).toEqual([]); // panel shut: neither view is the one you are looking at
-  await control(page, 'Toggle sidebar').click();
+  await control(page, 'Thumbnails').click();
   await page.waitForTimeout(350);
-  expect(await ticks()).toEqual(['Thumbnails']);
+  await expect(page.locator('.pdf-thumbnail-view')).toBeVisible();
+  expect(await lit()).toEqual([true, false]);
+
+  // the other button swaps the view rather than shutting anything
+  await control(page, 'Table of contents').click();
+  await page.waitForTimeout(350);
+  await expect(page.locator('.pdf-outline-view')).toBeVisible();
+  expect(await lit()).toEqual([false, true]);
+
+  // and the button for the view already up puts it away
+  await control(page, 'Table of contents').click();
+  await page.waitForTimeout(350);
+  await expect(page.locator('.pdf-sidebar-container')).toBeHidden();
+  expect(await lit()).toEqual([false, false]);
 });
 
 test('the strip and the panel ride the drawer, and the switcher comes up over them', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
-  await control(page, 'Toggle sidebar').click();
+  await control(page, 'Thumbnails').click();
   await page.waitForTimeout(350);
-  // the chrome lives inside .workspace, which is what the drawers translate
-  const home = await page.evaluate(() => Math.round(document.querySelector('.pdf-toolbar')!.getBoundingClientRect().x));
-  expect(home).toBe(0);
+  const where = () => page.evaluate(() => ['.topbar', '.pdf-toolbar', '.pdf-sidebar-container']
+    .map((sel) => Math.round(document.querySelector(sel)!.getBoundingClientRect().x)));
+  const home = await where();
   await page.locator('#files').dispatchEvent('click');
   await page.waitForTimeout(700);
-  const moved = await page.evaluate(() => ['.topbar', '.pdf-toolbar', '.pdf-sidebar-container']
-    .map((sel) => Math.round(document.querySelector(sel)!.getBoundingClientRect().x)));
-  expect(moved[0]).toBeGreaterThan(0);        // the header slid
-  expect(moved[1]).toBe(moved[0]);            // and the strip went with it
-  expect(moved[2]).toBe(moved[0]);            // and so did the panel
+  const moved = await where();
+  const slid = moved[0] - home[0];
+  expect(slid).toBeGreaterThan(0);                   // the header slid
+  expect(moved[1] - home[1]).toBe(slid);             // the strip is part of it
+  expect(moved[2] - home[2]).toBe(slid);             // and the panel went too
 
   await page.locator('#backdrop').dispatchEvent('click');
   await page.waitForTimeout(700);
-  await control(page, 'Sidebar options').click();
+  await control(page, 'Display options').click();
   await page.waitForTimeout(350);
   // the sheet used to open underneath the panel, which left half of it
   // unreachable: the panel sat at z-index 100 and the sheet at 41.

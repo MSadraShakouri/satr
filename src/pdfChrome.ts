@@ -80,29 +80,38 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
     open = next;
     document.body.classList.toggle('is-pdf-sidebar', open);
     if (open) { void fillThumbs(); void fillOutline(); }
+    markButtons();
   };
   const setView = (view: SidebarView): void => {
     sidebar.dataset.view = view;
     thumbs.classList.toggle('hidden', view !== '1');
     outline.classList.toggle('hidden', view !== '2');
     if (!open) setOpen(true);
+    markButtons();
   };
 
-  const toggle = button('panel', 'Toggle sidebar');
-  toggle.onclick = () => setOpen(!open);
-  const picker = button('chevron', 'Sidebar options');
-  // Obsidian ticks a view only while the panel is actually open: with the
-  // panel shut, neither of them is the view you are looking at.
+  // Two buttons, not a button and a menu behind it. Obsidian ships a
+  // toggle plus a chevron that opens a switcher, which is a tap and a
+  // read to do what the panel has only two of: each view gets its own
+  // button, each button says whether its view is the one on screen, and
+  // tapping the view that is already up shuts the panel.
   const showing = (view: SidebarView): boolean => open && sidebar.dataset.view === view;
-  picker.onclick = () => {
-    openMenu([
-      { title: 'Thumbnails', icon: svg(ICONS.grid), checked: showing('1'), action: () => setView('1') },
-      { title: 'Table of contents', icon: svg(ICONS.list), checked: showing('2'), action: () => setView('2') },
-      'separator',
-      { title: 'Reveal page in table of contents', action: () => { setView('2'); revealOutline(shownPage); } },
-    ] as MenuEntry[]);
+  const pick = (view: SidebarView): void => {
+    if (showing(view)) { setOpen(false); return; }
+    setView(view);
+    if (view === '2') revealOutline(shownPage); // the contents open at where you are
   };
-  left.append(toggle, picker);
+  const toThumbs = button('grid', 'Thumbnails');
+  toThumbs.onclick = () => pick('1');
+  const toOutline = button('list', 'Table of contents');
+  toOutline.onclick = () => pick('2');
+  const markButtons = (): void => {
+    toThumbs.classList.toggle('is-active', showing('1'));
+    toThumbs.setAttribute('aria-pressed', String(showing('1')));
+    toOutline.classList.toggle('is-active', showing('2'));
+    toOutline.setAttribute('aria-pressed', String(showing('2')));
+  };
+  left.append(toThumbs, toOutline);
 
   // ---- zoom, display options, the page box ---------------------------
   const out = button('minus', 'Zoom out');
