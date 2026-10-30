@@ -2672,6 +2672,7 @@ const MENU_ICONS = {
   trash: svg('<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   settings: svg('<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>'),
   normalize: svg('<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>'), // arrows-left-right
+  contrast: svg('<circle cx="12" cy="12" r="10"/><path d="M12 18a6 6 0 0 0 0-12"/>'), // contrast
   move: svg('<path d="M4 20V7a2 2 0 0 1 2-2h3.5l2 2.5H18a2 2 0 0 1 2 2V20"/><path d="M12 11v6"/><path d="m9 14 3-3 3 3"/>'), // folder-up
 };
 const FLAIR = '<span class="mobile-navbar-action-flair"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';
@@ -2756,6 +2757,14 @@ function showFileMenu(): void {
     'separator',
     { title: 'Delete', icon: MENU_ICONS.trash, warning: true, action: () => leftSidebar.deleteFile(path) },
     'separator',
+  );
+  // Adapt to theme lives in the toolbar's display options, with the two
+  // zoom stops it belongs beside. That is one menu deep behind an icon,
+  // which is one too many for the only setting a reader actually looks
+  // for, so the ⋮ carries it as well — next to Settings, where someone
+  // hunting for a setting opens first.
+  if (documentOpen()) entries.push(
+    { title: 'Adapt to theme', icon: MENU_ICONS.contrast, checked: pdfThemed, action: togglePdfTheme },
   );
   entries.push({ title: 'Settings', icon: MENU_ICONS.settings, action: showSettings });
   openMenu(entries, { title: fileBase || fileName(path) });

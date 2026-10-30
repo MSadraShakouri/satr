@@ -118,6 +118,28 @@ test('adapt to theme turns the paper over, and only in the dark', async ({ page 
   expect(await inked()).toBe('none');
 });
 
+test('the ⋮ carries adapt to theme as well, beside settings', async ({ page }) => {
+  // The one setting a reader of a PDF actually goes looking for was a menu
+  // deep behind an icon on the toolbar. It is still there, and it is also
+  // where someone hunting for a setting opens first.
+  await boot(page, 'handout.pdf', 'dark');
+  await openDocument(page);
+  await page.locator('#file-actions').click();
+  const items = await page.locator('[role="menuitem"]').allInnerTexts();
+  expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Adapt to theme', 'Settings']);
+  // on by default in the dark, and the menu says so
+  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Adapt to theme');
+
+  // and it is the same switch, not a second one
+  const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
+  expect(await inked()).toContain('invert');
+  await page.locator('.menu-item', { hasText: 'Adapt to theme' }).click();
+  await page.waitForTimeout(300);
+  expect(await inked()).toBe('none');
+  await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
+  await expect(page.locator('.menu-item', { hasText: 'Adapt to theme' })).not.toHaveClass(/mod-selected/);
+});
+
 test('the inversion is softened, so paper is not pitch and ink is not glare', async ({ page }) => {
   await boot(page, 'handout.pdf', 'dark');
   await openDocument(page);
