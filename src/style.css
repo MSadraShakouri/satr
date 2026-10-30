@@ -4188,6 +4188,22 @@ textarea,
   background: #fff;
   box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
 }
+/* "Adapt to theme". Obsidian hands pdf.js a page colour and an invert flag
+   and the page comes back out of the renderer already in the theme's own
+   paper. PDFium's render options have no such flag — transparent or white
+   is the whole choice — so the swap happens at the canvas instead. The hue
+   rotation turns colours back the right way round after the inversion, so
+   a blue diagram stays blue instead of going orange and only the paper and
+   the ink trade places. The page's own box goes dark with them, because it
+   is what shows through before a page has been drawn. */
+.theme-dark body.is-pdf-themed .pdf-page {
+  background: #000;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 60%);
+}
+.theme-dark body.is-pdf-themed .pdf-raster,
+.theme-dark body.is-pdf-themed .pdf-detail {
+  filter: invert(1) hue-rotate(180deg);
+}
 .pdf-raster {
   position: absolute;
   inset: 0;

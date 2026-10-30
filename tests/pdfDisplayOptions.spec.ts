@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { tinyPdf } from './support/tinyPdf';
 
-// Obsidian's PDF toolbar carries a ▾ of display options, the zoom stops
-// among them. We have no toolbar and are not growing one, so they live in
-// the ⋮ a shown file already has. The test pages are A4, 595×842.
+// Obsidian's PDF toolbar carries a ▾ of display options: the two zoom stops
+// and "Adapt to theme". We have no toolbar and are not growing one, so they
+// live in the ⋮ a shown file already has. Its pages are A4, 595×842.
 
 test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 2 });
 
@@ -43,7 +43,7 @@ test('a document carries the display options, a note has none to carry', async (
   await boot(page, 'handout.pdf');
   await openDocument(page);
   await page.locator('#file-actions').click();
-  for (const title of ['Fit width', 'Fit height']) {
+  for (const title of ['Fit width', 'Fit height', 'Adapt to theme']) {
     await expect(page.locator('.menu-item', { hasText: title })).toBeVisible();
   }
   // and the things Obsidian has that we decided against are not smuggled in
@@ -91,4 +91,22 @@ test('the stop a page is sitting at is the one that is ticked', async ({ page })
   await page.locator('#file-actions').click();
   await expect(page.locator('.menu-item', { hasText: 'Fit height' })).toHaveClass(/mod-selected/);
   await expect(page.locator('.menu-item', { hasText: 'Fit width' })).not.toHaveClass(/mod-selected/);
+});
+
+test('adapt to theme turns the paper over, and only in the dark', async ({ page }) => {
+  const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
+  await boot(page, 'handout.pdf'); // light
+  await openDocument(page);
+  expect(await inked()).toBe('none');
+  await option(page, 'Adapt to theme');
+  expect(await inked()).toBe('none'); // adapting to a light theme leaves the paper alone
+  await expect(page.locator('body')).toHaveClass(/is-pdf-themed/);
+
+  await boot(page, 'handout.pdf', 'dark');
+  await openDocument(page);
+  // the flag was remembered, the way Obsidian remembers its own
+  await expect(page.locator('body')).toHaveClass(/is-pdf-themed/);
+  expect(await inked()).toContain('invert');
+  await option(page, 'Adapt to theme');
+  expect(await inked()).toBe('none');
 });

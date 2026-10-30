@@ -201,6 +201,21 @@ const picture = { path: '', url: '' };
  *  place is remembered against them. */
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
 let pdfView: PdfHandle | null = null;
+/** Obsidian's "Adapt to theme" for a PDF: a flag it remembers across
+ *  sessions (pdfjs-is-themed in its own storage), off by default. It only
+ *  does anything while the theme is dark — adapting to a light theme means
+ *  leaving the paper alone. */
+const PDF_THEME_KEY = 'satr:pdf-theme';
+let pdfThemed = localStorage.getItem(PDF_THEME_KEY) === '1';
+function applyPdfTheme(): void {
+  document.body.classList.toggle('is-pdf-themed', pdfThemed);
+}
+function togglePdfTheme(): void {
+  pdfThemed = !pdfThemed;
+  localStorage.setItem(PDF_THEME_KEY, pdfThemed ? '1' : '0');
+  applyPdfTheme();
+}
+applyPdfTheme();
 /** A PDF is being read in the pane. It keeps its own place, by its own
  *  bytes, and has no lines for the note machinery to scroll to: everything
  *  that would move the reading view for a note leaves this one alone, or it
@@ -2709,6 +2724,7 @@ function showFileMenu(): void {
   if (pdfView) entries.push(
     { title: 'Fit width', checked: pdfView.fitNow() === 'width', action: () => pdfView?.fitTo('width') },
     { title: 'Fit height', checked: pdfView.fitNow() === 'height', action: () => pdfView?.fitTo('height') },
+    { title: 'Adapt to theme', checked: pdfThemed, action: togglePdfTheme },
     'separator',
   );
   const external = isExternalPath(path);
