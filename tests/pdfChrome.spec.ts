@@ -182,3 +182,72 @@ test('the options button is a chevron, and a view is ticked only while the panel
   await page.waitForTimeout(350);
   expect(await ticks()).toEqual(['Thumbnails']);
 });
+
+test('the strip and the panel ride the drawer, and the switcher comes up over them', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  await control(page, 'Toggle sidebar').click();
+  await page.waitForTimeout(350);
+  // the chrome lives inside .workspace, which is what the drawers translate
+  const home = await page.evaluate(() => Math.round(document.querySelector('.pdf-toolbar')!.getBoundingClientRect().x));
+  expect(home).toBe(0);
+  await page.locator('#files').dispatchEvent('click');
+  await page.waitForTimeout(700);
+  const moved = await page.evaluate(() => ['.topbar', '.pdf-toolbar', '.pdf-sidebar-container']
+    .map((sel) => Math.round(document.querySelector(sel)!.getBoundingClientRect().x)));
+  expect(moved[0]).toBeGreaterThan(0);        // the header slid
+  expect(moved[1]).toBe(moved[0]);            // and the strip went with it
+  expect(moved[2]).toBe(moved[0]);            // and so did the panel
+
+  await page.locator('#backdrop').dispatchEvent('click');
+  await page.waitForTimeout(700);
+  await control(page, 'Sidebar options').click();
+  await page.waitForTimeout(350);
+  // the sheet used to open underneath the panel, which left half of it
+  // unreachable: the panel sat at z-index 100 and the sheet at 41.
+  const top = await page.evaluate(() => {
+    const menu = document.querySelector<HTMLElement>('.menu')!;
+    const at = menu.getBoundingClientRect();
+    const hit = document.elementsFromPoint(at.x + at.width / 2, at.y + 20)[0];
+    return { inMenu: !!hit.closest('.menu'), what: hit.className };
+  });
+  expect(top.inMenu).toBe(true); // nothing of the panel is in front of it
+});
+
+test('the strip carries on the header\'s frosting instead of restarting it', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  const look = await page.evaluate(() => {
+    const bar = getComputedStyle(document.querySelector('.topbar')!);
+    const strip = getComputedStyle(document.querySelector('.pdf-toolbar')!);
+    return { blur: [bar.backdropFilter, strip.backdropFilter], tint: [bar.backgroundColor, strip.backgroundColor],
+      gradient: strip.backgroundImage, border: strip.borderBottomWidth };
+  });
+  expect(look.blur[1]).toBe(look.blur[0]);   // the same glass
+  expect(look.tint[1]).toBe(look.tint[0]);   // the same colour
+  // --raised-background fades from solid to 65%; a second copy of it under
+  // the first is a dark step at the seam, so the strip holds the colour the
+  // header's fade ends on and adds no rule of its own.
+  expect(look.gradient).toBe('none');
+  expect(look.border).toBe('0px');
+
+  // and the page really is visible through it: scrolled, the strip sits over
+  // white paper and must lighten, not stay the colour of the app behind it.
+  await page.mouse.move(195, 400);
+  for (let i = 0; i < 6; i += 1) { await page.mouse.wheel(0, 200); await page.waitForTimeout(80); }
+  await page.waitForTimeout(800);
+  const shot = await page.screenshot();
+  const read = await page.evaluate(async (b64) => {
+    const img = new Image(); img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width; canvas.height = img.height;
+    const ink = canvas.getContext('2d')!;
+    ink.drawImage(img, 0, 0);
+    const grey = (y: number): number => ink.getImageData(700, y * 2, 1, 1).data[0];
+    return { header: grey(58), strip: grey(70), page: grey(130) };
+  }, shot.toString('base64'));
+  expect(read.page).toBeGreaterThan(240);              // white paper under it all
+  expect(read.strip).toBeGreaterThan(read.header);     // no dark step at the seam
+  expect(read.strip).toBeGreaterThan(100);             // the paper shows through
+});

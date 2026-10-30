@@ -208,6 +208,12 @@
      pill there. */
   --raised-background: color-mix(in srgb, var(--raised-base) 65%, transparent)
     linear-gradient(var(--raised-base), color-mix(in srgb, var(--raised-base) 65%, transparent));
+  /* Where that gradient ends. A bar stacked directly under another one
+     takes this instead, so the fade runs once across the pair rather than
+     restarting -- two gradients meeting mid-air is a dark step at the seam,
+     and the lower bar reads as a slab bolted on rather than more of the
+     same frosted glass. */
+  --raised-background-continued: color-mix(in srgb, var(--raised-base) 65%, transparent);
   --raised-blur: blur(6px) saturate(1.5) brightness(1.15);
   --scrollbar-thumb-bg: rgba(var(--mono-rgb-100), 0.1);
   --scrollbar-active-thumb-bg: rgba(var(--mono-rgb-100), 0.2);
@@ -4221,17 +4227,25 @@ textarea,
   position: fixed;
   top: var(--view-top-spacing);
   inset-inline: 0;
-  z-index: 5;
+  z-index: 6;
   height: var(--pdf-toolbar-height);
   box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--size-4-3, 12px);
-  background: var(--raised-background);
+  /* The header's own blur, and the colour its gradient ends on: the two
+     are one frosted surface, not a pane with a slab bolted under it. */
+  background: var(--raised-background-continued);
   backdrop-filter: var(--raised-blur);
   -webkit-backdrop-filter: var(--raised-blur);
-  border-bottom: 1px solid var(--background-modifier-border);
+  pointer-events: auto;
+}
+/* With the strip under it the header stops fading: one flat pane of glass
+   104px deep rather than a gradient that ends mid-air and a second surface
+   carrying on from it at a different tone. */
+body.is-pdf-chrome .topbar {
+  background: var(--raised-background-continued);
 }
 body.is-pdf-chrome .preview-pane article.is-document {
   padding-top: calc(var(--view-top-spacing) + var(--pdf-toolbar-height));
@@ -4292,7 +4306,10 @@ body.is-pdf-chrome .preview-pane article.is-document {
   bottom: 0;
   inset-inline-start: calc(-1 * var(--sidebar-width));
   width: var(--sidebar-width);
-  z-index: 100;
+  /* Below the bottom sheet (.menu-backdrop 40, .menu 41) and below the
+     strip that opened it: the panel used to be 100, so the switcher came
+     up underneath it and half the menu was unreachable. */
+  z-index: 4;
   display: flex;
   flex-direction: column;
   visibility: hidden;
@@ -4396,7 +4413,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   position: fixed;
   top: var(--view-top-spacing);
   inset-inline: 0;
-  z-index: 101;
+  z-index: 7;
   display: flex;
   padding: var(--size-2-3, 6px) var(--size-4-2, 8px);
   background-color: var(--background-primary);

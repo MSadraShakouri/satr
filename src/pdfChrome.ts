@@ -291,7 +291,12 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
   };
 
   box.value = String(shownPage);
-  document.body.append(toolbar, sidebar, findbar);
+  // Inside the workspace, not on the body: the workspace is what the
+  // drawers translate (src/drawers.ts movers), so the strip rides the
+  // finger with the note instead of hanging over the opening drawer, and
+  // the bottom sheet -- a body child -- comes up over the panel rather
+  // than under it.
+  (document.querySelector<HTMLElement>('.workspace') ?? document.body).append(toolbar, sidebar, findbar);
 
   return {
     destroy: () => {
