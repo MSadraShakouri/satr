@@ -100,3 +100,21 @@ test('the chrome is a bar when it carries the name, and nothing when it does not
   await expect(page.locator('body')).toHaveClass(/is-named-file/);
   expect(await surface()).not.toBe('rgba(0, 0, 0, 0)');
 });
+
+test('a new tab opened from a document takes the document\'s chrome away with it', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('body')).toHaveClass(/is-named-file/);
+  await expect(page.locator('.pdf-toolbar')).toBeVisible();
+
+  // The teardown used to live in the reading view's own render, and a new
+  // tab never renders one: the header, the strip and the thumbnails stayed
+  // on screen over the empty tab, still naming a file that was not open.
+  await page.locator('#nav-new').dispatchEvent('click');
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  await expect(page.locator('.pdf-toolbar')).toHaveCount(0);
+  await expect(page.locator('.pdf-sidebar-container')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/is-pdf-chrome/);
+  await expect(page.locator('body')).not.toHaveClass(/is-named-file/);
+  await expect(page.locator('#topbar-title')).toHaveText('');
+});

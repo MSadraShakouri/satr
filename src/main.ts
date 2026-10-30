@@ -204,8 +204,8 @@ let pdfView: PdfHandle | null = null;
 let pdfChrome: { destroy(): void } | null = null;
 /** Obsidian's "Adapt to theme" for a PDF: a flag it remembers across
  *  sessions (pdfjs-is-themed in its own storage), off by default. It only
- *  does anything while the theme is dark — adapting to a light theme means
- *  leaving the paper alone. */
+ *  does anything while the theme is dark —
+ *  adapting to a light theme means leaving the paper alone. */
 const PDF_THEME_KEY = 'satr:pdf-theme';
 let pdfThemed = localStorage.getItem(PDF_THEME_KEY) === '1';
 function applyPdfTheme(): void {
@@ -533,6 +533,18 @@ function watchSections(): void {
   // gives, instead of a frame later, after the observer has said so.
   for (const section of sections) measureSection(section);
 }
+/** Everything a document holds, let go: its chrome, its worker and its
+ *  canvases. The reading view does this before it draws whatever comes
+ *  next, but a new tab never draws a reading view -- so leaving a PDF that
+ *  way kept its header, its strip and its thumbnails on the screen over an
+ *  empty tab, still naming a file that was no longer open. */
+function closeDocument(): void {
+  pdfChrome?.destroy();
+  pdfChrome = null;
+  pdfView?.destroy();
+  pdfView = null;
+  document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
+}
 function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
@@ -540,11 +552,7 @@ function renderPreview(): void {
   releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
   // A document being read holds a worker and a pile of canvases: the one
   // open at a time is let go before anything else is drawn.
-  pdfChrome?.destroy();
-  pdfChrome = null;
-  document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
-  pdfView?.destroy();
-  pdfView = null;
+  closeDocument();
   const title = `<div class="inline-title" dir="auto">${escapeText(fileBase)}</div>`;
   if (!isDocument(filePath)) {
     preview.classList.remove('is-document');
@@ -2394,6 +2402,14 @@ function showEmptyTab(): void {
   picture.url = '';
   editor.setReadOnly(false);
   editor.setTitleEditable(true);
+  // An empty tab is not a document and is not named: both have to be said
+  // out loud here, because nothing else on this path says them.
+  closeDocument();
+  openedDocument.path = '';
+  openedDocument.bytes = null;
+  preview.classList.remove('is-document');
+  previewPane.classList.remove('is-document');
+  setViewOnly(false);
   restoringView = true;
   editor.setValue('');
   editor.setTitle('');
