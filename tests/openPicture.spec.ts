@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { vaultText } from './support/vaultText';
 
 // A picture is not text.
 //
@@ -88,8 +89,7 @@ async function openFromTree(page: Page, path: string): Promise<void> {
   await expect(page.locator('body')).not.toHaveClass(/files-open/);
 }
 
-const stored = (page: Page, path: string): Promise<string | null> =>
-  page.evaluate((path) => localStorage.getItem(`satr:fs:file:${path}`), path);
+const stored = (page: Page, path: string): Promise<string | null> => vaultText(page, path);
 
 test('a picture opens as the picture: the editor holds none of it, the reading view shows it', async ({ page }) => {
   await boot(page);

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { vaultText } from './support/vaultText';
 
 /** A live block: code a note brought, running in a frame that can draw and
  *  cannot reach anything. The two halves are tested apart — that it really
@@ -60,7 +61,7 @@ test('a live block cannot reach the notes, the app, or the window', async ({ pag
   await expect.poll(async () => frame.evaluate((el) => Math.round(el.getBoundingClientRect().height)), { timeout: 4000 }).toBe(107);
   // And the app is where it was: the note unharmed, the page untouched, the
   // editor still open on it.
-  expect(await page.evaluate(() => localStorage.getItem('satr:fs:file:Notes/live.md'))).toContain('```live');
+  expect(await vaultText(page, 'Notes/live.md')).toContain('```live');
   expect(await page.evaluate(() => document.body.getAttribute('data-taken'))).toBeNull();
   await expect(page.locator('#app .cm-file-name')).toHaveText('live');
 });

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { vaultText } from './support/vaultText';
 
 async function open(page: Page, notePath?: string) {
   await page.evaluate(async (notePath) => {
@@ -70,10 +71,10 @@ for (const quickAction of ['', 'pdf']) {
       return {
         columns: Boolean(doc.querySelector('.satr-print-sheet')),
         direction: doc.querySelector('.satr-print-sheet')?.getAttribute('data-direction'),
-        source: localStorage.getItem('satr:fs:file:Notes/Layout.md'),
       };
     });
-    expect(result).toEqual({ columns: true, direction: 'rtl', source: '# Layout test\n\n$$x+y$$' });
+    expect({ ...result, source: await vaultText(page, 'Notes/Layout.md') })
+      .toEqual({ columns: true, direction: 'rtl', source: '# Layout test\n\n$$x+y$$' });
   });
 }
 
