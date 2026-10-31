@@ -263,6 +263,41 @@ test('a derived heading is indented under the one above it and names its page', 
   await expect(page.locator('.pdf-counter')).toHaveText('3 / 3');
 });
 
+test('a formula is not a heading, however large it is set', async ({ page }) => {
+  // Satr prints display maths at more than the size of the body text, so
+  // on a page of lecture notes every equation used to arrive in the
+  // contents and bury the headings — 92 entries off a seven-page handout
+  // that has six. Maths and code never vote and are never a heading, the
+  // same rule the note itself is read by (src/direction.ts).
+  await bootTypeset(page, typesetPdf([
+    { chapter: 'Counting', formula: 'n! / (r! (n-r)!)', digits: '1' },
+    { section: 'Permutations', formula: '5 x 4 x 3 = 60', digits: '2' },
+  ]));
+  await control(page, 'Table of contents').click();
+  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await expect(rows).toHaveCount(2, { timeout: 15000 });
+  // exactly the two headings: no equation, and no page number either —
+  // a line of nothing but figures is not a heading whatever size it is set
+  const titles = await rows.locator('.tree-item-inner').allInnerTexts();
+  expect(titles).toEqual(['Counting', 'Permutations']);
+});
+
+test('the smallest heading a note can be printed with is still found', async ({ page }) => {
+  // print.css sets h4 at 1.1 times the body. A cut at 1.12 — which is
+  // where this started — threw that whole level away: 27 headings came
+  // back as 20. (h5 and h6 are set at 1em, the body's own size, and
+  // nothing can find those.)
+  await bootTypeset(page, typesetPdf([
+    { chapter: 'Integrals', minor: 'A worked example' },
+    { minor: 'Another one' },
+  ]));
+  await control(page, 'Table of contents').click();
+  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await expect(rows).toHaveCount(3, { timeout: 15000 });
+  await expect(rows.nth(1)).toContainText('A worked example');
+  await expect(rows.nth(2)).toContainText('Another one');
+});
+
 test('a document written in Persian turns the whole tree around', async ({ page }) => {
   // The right sidebar's outline takes the note's own direction and mirrors
   // itself: the indent and its guide line come in from the right, and the

@@ -17,7 +17,7 @@
 // part of it being looked at at whatever zoom the reader has actually
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
-import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun } from '@embedpdf/models';
+import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
 import type { Rect as PageRect } from '@embedpdf/models';
 import { pdfium } from './pdfiumEngine';
 
@@ -101,9 +101,13 @@ export interface PdfHandle {
 // The numbers below are the ones that read his own 52-page handout: body
 // 15.2pt, sessions 30.4, sections 22.8, subsections 17.8.
 
-/** Bigger than the body by this much, and it is a heading. Below it sit the
- *  half-point wobbles between runs of ordinary text. */
-const BODY_RATIO = 1.12;
+/** Bigger than the body by this much, and it is a heading. The app's own
+ *  print stylesheet sets h1 to h4 at 1.6, 1.4, 1.25 and 1.1 times the
+ *  body, so the line has to sit under 1.1 or a whole level of headings is
+ *  invisible; what it has to clear is the half-point wobble between runs
+ *  of ordinary text. (h5 and h6 are set at 1em — the same size as the
+ *  body — and nothing can recover those from the type alone.) */
+const BODY_RATIO = 1.05;
 /** A paragraph is not a heading, however large it is set. */
 const MAX_TITLE = 120;
 /** Only a line that filled its own measure can be the top half of a wrapped
@@ -132,11 +136,23 @@ const LAM = '\u0644';
 const ALEFS = '\u0627\u0623\u0625\u0622';
 const unligature = (text: string): string =>
   (text.length === 2 && text[1] === LAM && ALEFS.includes(text[0]) ? LAM + text[0] : text);
-/** Enough letters to be a word rather than a stray mark left by a decoder. */
-const wordy = (text: string): boolean => (text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 2;
+/** Enough letters to be a heading rather than a stray mark left by a
+ *  decoder, a page number, or what is left of a formula once its symbols
+ *  are taken away. Digits do not count: a heading is words. */
+const wordy = (text: string): boolean => (text.match(/\p{L}/gu) ?? []).length >= 2;
+/** The fonts a formula is set in. Satr prints maths with KaTeX, whose
+ *  faces keep their names into the PDF (KaTeX_Main, KaTeX_Math,
+ *  KaTeX_Size1…, KaTeX_AMS) and whose Persian runs inside \text{} are set
+ *  in XB Zar, embedded only when a note has maths in it (embedFonts.ts).
+ *  The rest are what other writers use: TeX's Computer Modern, MathJax,
+ *  and the OpenType maths faces. */
+const MATH_FONT = /katex|xbzar|xb ?zar|mathjax|stix|xits|asana|\bcm(mi|sy|ex|r)\b|math/i;
+const mathFont = (font: PdfFontInfo | undefined): boolean =>
+  MATH_FONT.test(font?.name ?? '') || MATH_FONT.test(font?.familyName ?? '');
 
-/** One line of the document as the type describes it. */
-interface TypeLine { page: number; size: number; top: number; text: string }
+/** One line of the document as the type describes it, and how much of it
+ *  was set in a formula or in code. */
+interface TypeLine { page: number; size: number; top: number; text: string; apart: number }
 
 /** The runs of a page, stitched back into lines. A browser's printer writes
  *  one text object per glyph for a complex script, so the runs arrive a
@@ -150,10 +166,17 @@ function linesOfPage(runs: PdfTextRun[], page: number): TypeLine[] {
     const text = unligature(String(run.text ?? ''));
     const size = Math.round(run.fontSize * 10) / 10;
     const top = run.rect.origin.y;
-    if (open && open.size === size && Math.abs(open.top - top) <= size * 0.6) open.text += text;
-    else {
+    // Maths and code never vote and are never a heading, which is the rule
+    // the note itself is read by (src/direction.ts). They are marked here,
+    // one run at a time, because a formula and the sentence it sits in
+    // share a line.
+    const apart = mathFont(run.font) || run.font?.monospaced ? text.trim().length : 0;
+    if (open && open.size === size && Math.abs(open.top - top) <= size * 0.6) {
+      open.text += text;
+      open.apart += apart;
+    } else {
       if (open) lines.push(open);
-      open = { page, size, top, text };
+      open = { page, size, top, text, apart };
     }
     if (/[\r\n]/.test(text)) { lines.push(open); open = null; }
   }
@@ -163,7 +186,16 @@ function linesOfPage(runs: PdfTextRun[], page: number): TypeLine[] {
 }
 
 /** The lines of a whole document, as a contents tree. */
-function outlineFromType(lines: TypeLine[], pages: number): PdfOutlineItem[] {
+function outlineFromType(scanned: TypeLine[], pages: number): PdfOutlineItem[] {
+  // A line that is mostly formula is a formula, whatever is wrapped around
+  // it. Satr sets display maths at 1.21 times the body, so without this
+  // every equation in a set of lecture notes is larger than the text and
+  // arrives in the contents as a heading — and the real headings of a
+  // maths-heavy page are outnumbered by them.
+  // Measured without the spaces, or the gaps in "( x y + " vote for it
+  // being prose. A heading that carries one symbol of its own stays a
+  // heading: five of his are written that way.
+  const lines = scanned.filter((line) => line.apart * 2 <= line.text.replace(/\s+/gu, '').length);
   // The body is the size the most of the document is set in — by character,
   // not by line, or a title page would outvote a chapter.
   const weight = new Map<number, number>();
@@ -179,9 +211,14 @@ function outlineFromType(lines: TypeLine[], pages: number): PdfOutlineItem[] {
   // is the part it divides.
   const plain = new Map<number, number>();
   const all = new Map<number, number>();
-  for (const line of lines) {
+  const prose = new Set(lines);
+  for (const line of scanned) {
     all.set(line.page, (all.get(line.page) ?? 0) + line.text.length);
-    if (line.size > body * BODY_RATIO) continue;
+    // A formula counts as text the page is about, not as display type: a
+    // page of equations is a page of the document however little prose is
+    // left standing between them. Reading it as a cover — which is what
+    // counting only the prose did — threw away every heading on it but one.
+    if (prose.has(line) && line.size > body * BODY_RATIO) continue;
     plain.set(line.page, (plain.get(line.page) ?? 0) + line.text.length);
   }
   const cover = (page: number): boolean =>

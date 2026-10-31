@@ -72,26 +72,45 @@ function assemble(objects: string[]): string {
  *  exported note has, and the only kind of document a contents list read
  *  off the type has anything to find. No outline dictionary is written,
  *  because no browser's printer writes one. */
-export function typesetPdf(pages: Array<{ chapter?: string; section?: string }>): string {
+export function typesetPdf(pages: Array<{
+  chapter?: string; section?: string;
+  /** A heading one tenth larger than the body — print.css's h4, the
+   *  smallest size a heading is ever set in. */
+  minor?: string;
+  /** A line of maths: larger than the body, and set in the font KaTeX
+   *  prints formulas in, which is how the reader can tell it is one. */
+  formula?: string;
+  /** A line of nothing but figures, set large — a page number. */
+  digits?: string;
+}>): string {
   const objects: string[] = [];
   const pageIds: number[] = [];
   for (let index = 0, id = 3; index < pages.length; index += 1, id += 2) pageIds.push(id);
   const fontId = 3 + pages.length * 2;
+  const mathId = fontId + 1;
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;
   const line = 'the body of the page, set in the size most of it is set in';
   pageIds.forEach((id, index) => {
-    objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
+    objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources`
+      + ` << /Font << /F1 ${fontId} 0 R /F2 ${mathId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
     const parts: string[] = [];
-    const { chapter, section } = pages[index];
+    const { chapter, section, minor, formula, digits } = pages[index];
     if (chapter) parts.push(`BT /F1 30 Tf 60 780 Td (${chapter}) Tj ET`);
     if (section) parts.push(`BT /F1 22 Tf 60 730 Td (${section}) Tj ET`);
+    if (minor) parts.push(`BT /F1 13.2 Tf 60 712 Td (${minor}) Tj ET`);
+    if (formula) parts.push(`BT /F2 18 Tf 60 700 Td (${formula}) Tj ET`);
+    if (digits) parts.push(`BT /F1 16 Tf 300 60 Td (${digits}) Tj ET`);
     // Enough body for the body to win the count, as it does on a real page.
     for (let row = 0; row < 14; row += 1) parts.push(`BT /F1 12 Tf 60 ${690 - row * 20} Td (${line}) Tj ET`);
     const stream = parts.join('\n');
     objects[id + 1] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
   });
   objects[fontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+  // Named the way KaTeX's faces are named in a PDF Satr prints, which is
+  // what marks its runs as maths. The glyphs themselves are a substitute:
+  // the name is the whole of what is being tested.
+  objects[mathId] = '<< /Type /Font /Subtype /Type1 /BaseFont /AAAAAA+KaTeX_Main-Regular >>';
   return assemble(objects);
 }
 
