@@ -111,7 +111,7 @@ app.innerHTML = `
           <div class="mobile-navbar-action"><button type="button" id="nav-forward" aria-label="Next tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-find" aria-label="Find in note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-new" aria-label="New tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
-          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/></svg><span class="mobile-navbar-tabs-number"><span class="mobile-navbar-tabs-digit">1</span></span></button></div>
+          <div class="mobile-navbar-action"><button type="button" id="nav-tabs" class="mobile-navbar-action-tabs" aria-label="Tabs (hold for the menu)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="4.5"/></svg><span class="mobile-navbar-tabs-number"><span class="mobile-navbar-tabs-digit">1</span></span></button></div>
           <div class="mobile-navbar-action"><button type="button" id="nav-menu" aria-label="Menu"></button></div>
         </div>
         </div>
@@ -2876,7 +2876,18 @@ function renderNavButtons(): void {
   syncFindButton();
   navBack.disabled = activeTab <= 0;
   navForward.disabled = activeTab >= tabs.length - 1;
-  navTabsCount.textContent = String(tabs.length);
+  // The number has to fit the square it is drawn in. One digit had room to
+  // spare, two were wider than the square's inside and welded themselves to
+  // the frame, three spilled out past it altogether. The square is a little
+  // bigger now and the figures are set to the number of them, so 1, 12 and
+  // 128 all sit inside it with air around them. Past 999 there is no
+  // honest number small enough to read, and the count stops being the
+  // point: it says 999+.
+  const open = tabs.length;
+  const said = open > 999 ? '999+' : String(open);
+  navTabsCount.textContent = said;
+  navTabsCount.dataset.figures = String(said.length);
+  navTabs.setAttribute('aria-label', `Tabs: ${open} open (hold for the menu)`);
   saveTabs();
   renderMenuButton();
 }

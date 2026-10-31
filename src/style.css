@@ -3366,6 +3366,11 @@ input.mod-no-match {
   line-height: 1;
   pointer-events: none;
 }
+/* Set to the number of figures, so they always have air inside the square:
+   the ratios are of the 26px icon, as the one-figure size always was. */
+.mobile-navbar-tabs-digit[data-figures="2"] { font-size: calc(1.625rem * 0.46); }
+.mobile-navbar-tabs-digit[data-figures="3"] { font-size: calc(1.625rem * 0.365); }
+.mobile-navbar-tabs-digit[data-figures="4"] { font-size: calc(1.625rem * 0.3); }
 .mobile-navbar-tabs-digit {
   /* Centring the digit means centring the digit, not the line box it is drawn
      in: a line box is as tall as the font's ascent and descent, the digits sit
