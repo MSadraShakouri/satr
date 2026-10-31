@@ -422,3 +422,33 @@ test('a formula is measured at its written size, not at the size it was given', 
   expect(again.size).toBe(first[0].size);
   expect(again.overflow).toBeLessThanOrEqual(1);
 });
+
+// What is still too wide once it has been broken and set to the floor can be
+// scrolled sideways, as it could before the units replaced the .katex-display
+// box the scroll used to hang off. Reported: "the scrolling for math got
+// completely disabled, back then I could scroll a tiny bit if it overflowed
+// and now I can't".
+test('a formula too wide even at the floor can still be scrolled sideways', async ({ page }) => {
+  await page.goto('/');
+  const scroll = await page.evaluate(async (tex) => {
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
+    const host = document.createElement('article');
+    host.className = 'preview-pane';
+    host.style.cssText = 'width:240px;position:fixed;inset:0 auto auto 0;background:white;z-index:5;font-size:16px';
+    host.innerHTML = renderMath(tex, true);
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    layoutMath(host);
+    const box = host.querySelector<HTMLElement>('.math-display')!;
+    const style = getComputedStyle(box);
+    box.scrollLeft = 9999;
+    const moved = box.scrollLeft;
+    const out = { overflowX: style.overflowX, hidden: Math.round(box.scrollWidth - box.clientWidth), moved: Math.round(moved) };
+    host.remove();
+    return out;
+  }, NAVIER);
+  expect(scroll.overflowX).toBe('auto');
+  expect(scroll.hidden).toBeGreaterThan(8); // there is something past the edge
+  expect(scroll.moved).toBeGreaterThan(8);  // and the reader can reach it
+});

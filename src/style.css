@@ -782,14 +782,20 @@ body {
      that, and src/mathLayout.ts grows the box (min-height) to match. */
   line-height: 2.1;
 }
-.math-display > .katex-display {
-  margin: 0;
-  /* Sideways scroll for a formula that still won't fit. overflow-y is hidden
-     only so that scroll doesn't grow a vertical bar. On Android the strut is
-     short of the glyphs; src/mathLayout.ts grows this box to the content
-     first, so the clip does not eat a large fraction. */
+/* Sideways scroll for a formula that still won't fit, once it has been
+   broken into lines and set as small as it is allowed to be. It belongs on
+   the box itself: a formula split into units has no .katex-display inside it
+   to carry it (src/math.ts), which is how the scroll came to be lost. The
+   inline boxes cannot scroll, so the block does. overflow-y is hidden only so
+   that the sideways scroll doesn't grow a vertical bar; on Android the strut
+   is short of the glyphs, and src/mathLayout.ts grows the content's box to
+   match first, so the clip never eats a large fraction. */
+.math-display {
   overflow-x: auto;
   overflow-y: hidden;
+}
+.math-display > .katex-display {
+  margin: 0;
 }
 /* Code blocks and inline code, as Obsidian's .markdown-rendered: no border,
    4px corners, 12px 16px padding, 0.875em monospace, wrapping lines, and a
