@@ -82,6 +82,11 @@ export function typesetPdf(pages: Array<{
   formula?: string;
   /** A line of nothing but figures, set large — a page number. */
   digits?: string;
+  /** A second body: so many lines of ordinary prose, set a size above the
+   *  rest of the page, the way a long quotation or an imported section
+   *  comes out. Every line of it is larger than the body and short enough
+   *  to pass for a title. */
+  aside?: number;
 }>): string {
   const objects: string[] = [];
   const pageIds: number[] = [];
@@ -95,12 +100,15 @@ export function typesetPdf(pages: Array<{
     objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources`
       + ` << /Font << /F1 ${fontId} 0 R /F2 ${mathId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
     const parts: string[] = [];
-    const { chapter, section, minor, formula, digits } = pages[index];
+    const { chapter, section, minor, formula, digits, aside } = pages[index];
     if (chapter) parts.push(`BT /F1 30 Tf 60 780 Td (${chapter}) Tj ET`);
     if (section) parts.push(`BT /F1 22 Tf 60 730 Td (${section}) Tj ET`);
     if (minor) parts.push(`BT /F1 13.2 Tf 60 712 Td (${minor}) Tj ET`);
     if (formula) parts.push(`BT /F2 18 Tf 60 700 Td (${formula}) Tj ET`);
     if (digits) parts.push(`BT /F1 16 Tf 300 60 Td (${digits}) Tj ET`);
+    for (let row = 0; row < (aside ?? 0); row += 1) {
+      parts.push(`BT /F1 14 Tf 60 ${660 - row * 18} Td (quoted line ${row + 1} of page ${index + 1}) Tj ET`);
+    }
     // Enough body for the body to win the count, as it does on a real page.
     for (let row = 0; row < 14; row += 1) parts.push(`BT /F1 12 Tf 60 ${690 - row * 20} Td (${line}) Tj ET`);
     const stream = parts.join('\n');

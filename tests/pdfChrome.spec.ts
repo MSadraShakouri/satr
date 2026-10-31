@@ -334,6 +334,19 @@ test('a formula is not a heading, however large it is set', async ({ page }) => 
   expect(titles).toEqual(['Counting', 'Permutations']);
 });
 
+test('the text of a page is not its contents, however it is set', async ({ page }) => {
+  // A document set in two sizes: ordinary prose a size above the rest of
+  // the page, which is what a long quotation or an imported section comes
+  // out as. Every one of those lines is larger than the body and short
+  // enough to be a title, so all sixty of them used to arrive in the
+  // contents and bury the six real headings.
+  const pdf = typesetPdf(Array.from({ length: 6 }, (_, i) => ({ chapter: `Part ${i + 1}`, aside: 10 })));
+  await bootTypeset(page, pdf);
+  await control(page, 'Table of contents').click();
+  const titles = await page.locator('.pdf-outline-view .tree-item-inner').allInnerTexts();
+  expect(titles).toEqual(['Part 1', 'Part 2', 'Part 3', 'Part 4', 'Part 5', 'Part 6']);
+});
+
 test('the smallest heading a note can be printed with is still found', async ({ page }) => {
   // print.css sets h4 at 1.1 times the body. A cut at 1.12 — which is
   // where this started — threw that whole level away: 27 headings came

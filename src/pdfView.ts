@@ -108,6 +108,10 @@ export interface PdfHandle {
  *  of ordinary text. (h5 and h6 are set at 1em — the same size as the
  *  body — and nothing can recover those from the type alone.) */
 const BODY_RATIO = 1.05;
+/** How thick a size has to be before it is read as text rather than as a
+ *  heading: more than three lines a page, and at least seven of them. */
+const BODY_PER_PAGE = 3;
+const BODY_FLOOR = 6;
 /** A paragraph is not a heading, however large it is set. */
 const MAX_TITLE = 120;
 /** Only a line that filled its own measure can be the top half of a wrapped
@@ -202,8 +206,23 @@ function outlineFromType(scanned: TypeLine[], pages: number): PdfOutlineItem[] {
   for (const line of lines) weight.set(line.size, (weight.get(line.size) ?? 0) + line.text.length);
   const body = [...weight.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   if (body === undefined) return [];
-  const big = lines.filter((line) => line.size > body * BODY_RATIO
+  let big = lines.filter((line) => line.size > body * BODY_RATIO
     && line.text.length <= MAX_TITLE && wordy(line.text));
+  // Headings are sparse, and that is the only thing that separates a
+  // heading from a second body. Measured on his 52-page handout: the body
+  // is 92.7% of the characters at 35 lines a page, and every size above it
+  // is under 3.5% at about one line a page. A document whose text is set
+  // in two sizes -- a long quotation, an imported section, a note written
+  // half in one font -- has a second one of those bodies sitting just
+  // above the first, and every paragraph of it used to arrive as a
+  // heading. A size cannot be a level of the contents if it is used more
+  // than three times a page; the floor of seven is there so that a short
+  // note, where four headings on two pages is normal, keeps all of them.
+  const often = new Map<number, number>();
+  for (const line of big) often.set(line.size, (often.get(line.size) ?? 0) + 1);
+  const flood = Math.max(BODY_FLOOR, pages * BODY_PER_PAGE);
+  const prosy = new Set([...often.entries()].filter(([, n]) => n > flood).map(([size]) => size));
+  if (prosy.size) big = big.filter((line) => !prosy.has(line.size));
   // A cover has no body text on it: the title, who wrote it, where, and
   // when are all set large, and all of it would otherwise arrive in the
   // contents as headings. A page with nothing ordinary on it gets one
