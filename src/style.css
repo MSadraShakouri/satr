@@ -4504,9 +4504,18 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+/* The rough picture a page is shown as until its own is drawn: a hundred
+   pixels of it stretched over the whole box. It sits under the sharp
+   pictures, which are opaque, so it is seen only where there is nothing
+   better yet. */
+.pdf-raster.is-rough {
+  z-index: 0;
+  filter: blur(0.3px);
+}
 .pdf-raster {
   position: absolute;
   inset: 0;
+  z-index: 1;
   /* A canvas is a replaced element: inset alone does not stretch it, it
      keeps the size of its own pixels. The page's picture is drawn once and
      has to fill whatever the zoom makes the box, so it is sized in the
@@ -4557,6 +4566,7 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
 /* A sharp picture of the part of a page on screen, laid over the stretched
    whole-page one. Placed by the viewer, in the page's own coordinates. */
 .pdf-detail {
+  z-index: 2;
   inset: auto;
 }
 /* A file that says .pdf and is not one, or one the engine will not read. */

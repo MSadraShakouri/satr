@@ -434,6 +434,11 @@ const maxCanvasPixels = (): number => (Math.min(window.innerWidth, window.innerH
  *  costs nothing. Gander draws 3 and keeps 5 — of pages, not screens. */
 const DRAW_SCREENS = 1;
 const KEEP_SCREENS = 2.5;
+/** How far out the rough pictures go, and how wide one is. Eight screens
+ *  either way is about as far as a fast flick carries before it settles,
+ *  and a hundred pixels of a page is 40KB where a sharp one is megabytes. */
+const ROUGH_SCREENS = 8;
+const ROUGH_PX = 100;
 /** After the reader stops, before the band is drawn again. */
 const SETTLE_MS = 120;
 /** A step of zoom from the chrome — a button, a fit stop, a double tap —
@@ -461,6 +466,17 @@ interface Slab {
   base: HTMLCanvasElement | null;
   baseFit: number;
   baseTask: PdfTask<Blob> | null;
+  /**
+   * A rough picture of the whole page, a hundred pixels wide, drawn for a
+   * band far wider than the sharp one and kept when the sharp one is given
+   * back. Scrolling fast outruns the sharp pictures -- they are a page of
+   * the screen's own pixels each -- and what the reader saw was empty
+   * boxes going past. This costs about a fiftieth of one of those and is
+   * stretched over the whole page, so what goes past is a soft version of
+   * the page, and the sharp one lands on top of it when it arrives.
+   */
+  rough: HTMLCanvasElement | null;
+  roughTask: PdfTask<Blob> | null;
   /**
    * The part of the page actually on screen, drawn at the screen's own
    * pixels and laid over the stretched base. Zoomed in, this is the only
@@ -593,6 +609,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     box.dataset.page = String(index + 1);
     doc.append(box);
     slabs.push({ page: index + 1, box, proxy: page, base: null, baseFit: 0, baseTask: null,
+      rough: null, roughTask: null,
       detail: null, detailRect: null, detailZoom: 0, detailTask: null, width, height, laid: height });
   });
 
@@ -712,9 +729,56 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const forget = (slab: Slab): void => {
     stop(slab.baseTask); stop(slab.detailTask);
     slab.baseTask = null; slab.detailTask = null;
+    // The sharp picture goes, but not the page: what it knew is kept as the
+    // rough one, shrunk out of the picture already drawn rather than asked
+    // of the engine again, so coming back up a document shows the page
+    // immediately.
+    if (slab.base && !slab.rough) keepRough(slab, slab.base);
     slab.base?.remove(); slab.base = null; slab.baseFit = 0;
     slab.detail?.remove(); slab.detail = null; slab.detailRect = null; slab.detailZoom = 0;
   };
+  /** Forget a page altogether, rough picture and all: it is far enough away
+   *  that even a hundred pixels of it is not worth the memory. */
+  const forgetWhole = (slab: Slab): void => {
+    forget(slab);
+    stop(slab.roughTask); slab.roughTask = null;
+    slab.rough?.remove(); slab.rough = null;
+  };
+  /** Shrink a picture already drawn into the rough one. */
+  const keepRough = (slab: Slab, from: HTMLCanvasElement): void => {
+    const width = ROUGH_PX;
+    const height = Math.max(1, Math.round(width * (slab.height / Math.max(1, slab.width))));
+    const made = sheet(width, height, 1);
+    if (!made) return;
+    try { made.context.drawImage(from, 0, 0, width, height); } catch { return; }
+    showRough(slab, made.canvas);
+  };
+  /** Put a rough picture up, underneath whatever sharp one there is. */
+  const showRough = (slab: Slab, canvas: HTMLCanvasElement): void => {
+    canvas.className = 'pdf-raster is-rough';
+    slab.rough?.remove();
+    slab.box.prepend(canvas);
+    slab.rough = canvas;
+  };
+  /** The whole page at a hundred pixels, for the wide band. */
+  async function paintRough(slab: Slab): Promise<void> {
+    if (!slab.proxy || slab.rough || slab.roughTask) return;
+    const scale = ROUGH_PX / Math.max(1, slab.width);
+    const task = engine.renderPage(document_, slab.proxy, { scaleFactor: scale, dpr: 1, withAnnotations: false });
+    slab.roughTask = task;
+    let picture: ImageBitmap;
+    try { picture = await createImageBitmap(await task.toPromise()); }
+    catch { if (slab.roughTask === task) slab.roughTask = null; return; }
+    if (slab.roughTask !== task) { picture.close(); return; }
+    slab.roughTask = null;
+    const made = sheet(picture.width, picture.height, 1);
+    if (!made) { picture.close(); return; }
+    made.canvas.width = picture.width;
+    made.canvas.height = picture.height;
+    made.context.drawImage(picture, 0, 0);
+    picture.close();
+    showRough(slab, made.canvas);
+  }
 
   /**
    * Two pictures per page, not one.
@@ -744,8 +808,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       edge += height + GAP;
       const near = to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen;
       const keep = to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen;
-      if (!keep) { forget(slab); continue; } // far from the screen: its memory back
-      if (!near || !slab.proxy) continue;
+      const rough = to > top - ROUGH_SCREENS * screen && from < top + (1 + ROUGH_SCREENS) * screen;
+      if (!rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
+      if (!keep) { forget(slab); } // out of the sharp band: the rough picture stays
+      if (!slab.proxy) continue;
+      // A page anywhere in the wide band gets its rough picture, so a fast
+      // scroll runs into soft pages rather than empty ones.
+      if (!slab.rough && !slab.base) void paintRough(slab);
+      if (!near) continue;
       if (slab.baseFit !== fit) void paintBase(slab);
       const want = detailWanted(slab);
       if (!want) {

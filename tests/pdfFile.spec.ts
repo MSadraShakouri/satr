@@ -107,6 +107,31 @@ test('the counter names the page being read, not the one just left', async ({ pa
   await expect(page.locator('.pdf-counter')).toHaveText('2 / 6');
 });
 
+test.describe('on a phone-sized screen, where the wide band holds the whole document', () => {
+  test.use({ viewport: { width: 390, height: 700 } });
+
+  test('a page ahead of the sharp ones is already there, roughly', async ({ page }) => {
+    // Scrolling fast outruns the sharp pictures. Every page in a far wider
+    // band carries a hundred-pixel one, stretched over the box, so what goes
+    // past is a soft page rather than an empty one.
+    await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+    await readThis(page, 'handout.pdf');
+    await page.waitForTimeout(1200);
+    const far = page.locator('.pdf-page[data-page="5"]');
+    await expect(far.locator('canvas.is-rough')).toHaveCount(1, { timeout: 15000 });
+    // It is a hundred pixels wide, not a page of them.
+    const width = await far.locator('canvas.is-rough').evaluate((el) => (el as HTMLCanvasElement).width);
+    expect(width).toBeLessThanOrEqual(110);
+    // A fast flick to the end: the page it lands on is never an empty box.
+    await page.locator('#preview-pane').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(page.locator('.pdf-page[data-page="6"] canvas')).not.toHaveCount(0);
+    // Coming back, the page left behind kept its rough picture rather than
+    // becoming a blank box again.
+    await page.waitForTimeout(600);
+    await expect(page.locator('.pdf-page[data-page="1"] canvas.is-rough')).toHaveCount(1);
+  });
+});
+
 test('the last page is named as the last page', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
