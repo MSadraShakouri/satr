@@ -53,6 +53,9 @@ export interface SidebarDeps {
   findInDocument?(query: string): Promise<{ page: number; at: number; before: string; match: string; after: string }[]>;
   /** Show the hit a result row names. */
   onDocumentHit?(index: number): void;
+  /** What the panel is looking for, whenever that changes: a document's
+   *  find bar shows the same word. */
+  onQuery?(query: string): void;
   /** The name of a note another app handed over — its path is a token
    *  (satr-open://…), so the rows cannot read a name out of it. Null for an
    *  ordinary note, which is named by its path as always. */
@@ -105,7 +108,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         </div>
         <button type="button" class="clickable-icon drawer-recursive-toggle" data-recursive-toggle aria-label="Include subfolders" title="Include subfolders">${ICONS.recursive}</button>
       </div>
-      <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button type="button" class="search-input-clear-button" aria-label="Clear search" hidden></button></div>
       <div class="segmented-control search-scope" role="radiogroup" aria-label="Search in">
         <div class="segmented-control-thumb"></div>
         <button type="button" class="segmented-control-option" data-scope="note" role="radio">This note</button>
@@ -529,8 +532,31 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   }
 
   let timer: number | undefined;
-  input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(render, scope === 'note' ? 60 : 180); });
-  input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); window.clearTimeout(timer); render(); input.blur(); } });
+  // A search has to be cancellable from where it is: there was no way back
+  // out of one but selecting the text and deleting it, because a phone
+  // keyboard draws no clear button of its own inside a search field.
+  const clearButton = root.querySelector<HTMLButtonElement>('.search-input-clear-button')!;
+  const showClear = (): void => { clearButton.hidden = input.value === ''; };
+  const clearSearch = (focus: boolean): void => {
+    if (!input.value) return;
+    input.value = '';
+    showClear();
+    window.clearTimeout(timer);
+    render();
+    deps.onQuery?.('');
+    if (focus) input.focus();
+  };
+  clearButton.addEventListener('click', () => clearSearch(true));
+  input.addEventListener('input', () => {
+    showClear();
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => { render(); deps.onQuery?.(input.value); }, scope === 'note' ? 60 : 180);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); window.clearTimeout(timer); render(); deps.onQuery?.(input.value); input.blur(); return; }
+    // Escape empties it first and gives the panel up only when it is empty.
+    if (event.key === 'Escape' && input.value) { event.preventDefault(); clearSearch(true); }
+  });
   segmented.addEventListener('click', (event) => {
     const option = (event.target as HTMLElement).closest<HTMLElement>('[data-scope]');
     if (option) setScope(option.dataset.scope as SearchScope);
@@ -590,6 +616,16 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   return {
     /** Refresh for the current note (on open, after edits). */
     refresh(): void { render(); },
+    /** The same words the find bar is looking for, so the two searches of
+     *  one document are one search. */
+    setQuery(query: string): void {
+      if (input.value === query) return;
+      input.value = query;
+      showClear();
+      window.clearTimeout(timer);
+      render();
+    },
+    query: () => input.value,
     markCurrent,
     setScope,
     focusSearch(next: SearchScope = scope): void { setScope(next); input.focus(); input.select(); },

@@ -51,6 +51,8 @@ export interface PdfChrome {
   destroy(): void;
   /** Open (or close) the find bar: the app's own find button drives this. */
   setFinding(on: boolean): void;
+  /** Look for what the outline panel is looking for. */
+  ask(query: string): void;
   finding(): boolean;
 }
 
@@ -80,7 +82,7 @@ export function openDarkPages(themed: PdfThemeControl): void {
   ], { title: 'Dark pages' });
 }
 
-export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfChrome {
+export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?: (query: string) => void): PdfChrome {
   const toolbar = document.createElement('div');
   toolbar.className = 'pdf-toolbar';
   const left = document.createElement('div');
@@ -234,6 +236,7 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfC
       if (field.value !== asked) return;
       at = hits.length ? 0 : -1;
       show();
+      told?.(asked); // the panel lists what the bar is looking for
     }, 200);
   };
   field.oninput = look;
@@ -249,7 +252,24 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfC
     at = -1;
     field.value = '';
     tally.textContent = '';
+    findbar.classList.remove('mod-no-match');
     handle.showHits([], -1);
+    told?.('');
+  }
+  /** What the panel beside it is looking for: one word for the two of them,
+   *  rather than a bar and a panel searching the same document apart. */
+  function ask(query: string): void {
+    if (field.value === query) return;
+    field.value = query;
+    if (!query) {
+      hits = [];
+      at = -1;
+      tally.textContent = '';
+      findbar.classList.remove('mod-no-match');
+      handle.showHits([], -1);
+      return;
+    }
+    look();
   }
   shut.onclick = () => setFinding(false);
 
@@ -390,6 +410,7 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfC
 
   return {
     setFinding,
+    ask,
     finding: () => !findbar.classList.contains('mod-hidden'),
     destroy: () => {
       unfollow();

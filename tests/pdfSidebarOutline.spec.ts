@@ -109,6 +109,48 @@ test('a result sits under the heading it was found under', async ({ page }) => {
   expect(flairs).toEqual(['1', '1', '4']);
 });
 
+test('a search can be called off, and the bar and the panel look for one word', async ({ page }) => {
+  // Reported: there was no way to cancel the panel's search. A phone
+  // keyboard draws no clear button inside a search field, so the only way
+  // out was to select the text and delete it.
+  await bootPdf(page, tinyPdf(6, [], ['Opening', 'Middle', 'The end']));
+  await openOutline(page);
+  const box = page.locator('#right-panel input.vault-search');
+  const clear = page.locator('#right-panel .search-input-clear-button');
+  await expect(clear).toBeHidden(); // nothing to clear yet
+  await box.fill('Page 4');
+  await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(1, { timeout: 15000 });
+  await expect(clear).toBeVisible();
+  // and the find bar is looking for the same word, with the match marked
+  await expect(page.locator('.pdf-findbar input')).toHaveValue('Page 4', { timeout: 15000 });
+  await expect(page.locator('.pdf-find-hit')).toHaveCount(1);
+  await clear.click();
+  await expect(box).toHaveValue('');
+  await expect(clear).toBeHidden();
+  await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(0);
+  // calling it off in one place calls it off in both
+  await expect(page.locator('.pdf-find-hit')).toHaveCount(0);
+  await expect(page.locator('.pdf-findbar input')).toHaveValue('');
+  // Escape empties it too
+  await box.fill('Page 2');
+  await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(1, { timeout: 15000 });
+  await box.press('Escape');
+  await expect(box).toHaveValue('');
+  await expect(page.locator('body')).toHaveClass(/outline-open/); // the panel stays
+});
+
+test('what the find bar is looking for, the panel lists', async ({ page }) => {
+  await bootPdf(page, tinyPdf(6, [], ['Opening', 'Middle', 'The end']));
+  // the bar first, the way a reader meets it: the panel is not open yet
+  await page.locator('#nav-find').click();
+  await page.locator('.pdf-findbar input').fill('Page 5');
+  await expect(page.locator('.pdf-find-hit')).toHaveCount(1, { timeout: 15000 });
+  await openOutline(page);
+  await expect(page.locator('#right-panel input.vault-search')).toHaveValue('Page 5', { timeout: 15000 });
+  await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(1);
+  await expect(page.locator('#right-panel .search-result-line-number')).toHaveText('5');
+});
+
 test('a paper written by LaTeX has contents that can be followed', async ({ page }) => {
   // hyperref writes a GoTo action rather than a destination, so these rows
   // named no page at all and went nowhere when tapped.

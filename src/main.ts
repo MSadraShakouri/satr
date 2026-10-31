@@ -684,7 +684,7 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   const { openDarkPages } = await import('./pdfChrome');
   const themed = { mode: () => pdfTheme, set: setPdfTheme };
   openPdfTheme = () => openDarkPages(themed);
-  pdfChrome = mountPdfChrome(handle, themed);
+  pdfChrome = mountPdfChrome(handle, themed, (query) => sidebar.setQuery(query));
   syncFindButton(); // the magnifier now means "find in this document"
   // The contents, into the outline panel. Whatever the document's own
   // bookmarks say wins; a document with none (everything a browser prints)
@@ -3178,6 +3178,10 @@ const sidebar = createRightSidebar(rightPanel, {
       after: hit.context?.after ?? '',
     }));
   },
+  // One word for the two of them: what the panel is looking for is what the
+  // find bar is looking for, so a reader never has to type it twice and
+  // emptying either one calls the whole search off.
+  onQuery: (query) => pdfChrome?.ask(query),
   onDocumentHit: (index) => {
     toggleOutline(false);
     pdfView?.showHits(documentHits, index);

@@ -2455,6 +2455,45 @@ body[data-mode="preview"] .workspace > .preview-pane {
   transform: translateY(-50%);
   pointer-events: none;
 }
+/* The way out of a search. A phone keyboard draws no clear button inside a
+   search field -- the one desktop Chrome puts there does not exist on
+   Android -- so the only way to call a search off was to select what was in
+   it and delete it. The cross is only there when there is something to
+   clear, and sits at the end of the field whichever way the text runs. */
+.search-input-clear-button {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 8px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  transform: translateY(-50%);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-input-clear-button::before,
+.search-input-clear-button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11px;
+  height: 1.75px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.search-input-clear-button::before { transform: translate(-50%, -50%) rotate(45deg); }
+.search-input-clear-button::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.search-input-clear-button:active { background: var(--interactive-hover, var(--background-modifier-border)); }
+/* The browser's own, which exists on desktop and not on a phone: ours is
+   the one that is always there. */
+.search-input-container input::-webkit-search-cancel-button { display: none; }
+
 .search-input-container input {
   display: block;
   width: 100%;
@@ -2462,6 +2501,7 @@ body[data-mode="preview"] .workspace > .preview-pane {
   height: auto;
   padding: 8px 16px;
   padding-inline-start: 40px;
+  padding-inline-end: 40px; /* room for the button that empties it */
   border: 0;
   border-radius: var(--input-radius); /* pill, as Obsidian mobile */
   outline: none;
