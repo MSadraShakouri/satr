@@ -707,11 +707,15 @@ function flattenPdfOutline(items: PdfOutlineItem[], level: number): Heading[] {
   const out: Heading[] = [];
   for (const item of items) {
     const page = item.page ?? 0;
-    out.push({ level, text: item.title, line: page, from: page });
+    out.push({ level, text: item.title, line: page, from: placeOnPage(page, item.top) });
     out.push(...flattenPdfOutline(item.children ?? [], level + 1));
   }
   return out;
 }
+/** A place in a document on one number, so the outline and the search
+ *  results can be put in order against each other: the page, and how far
+ *  down it. A page is at most a couple of thousand units tall. */
+export const placeOnPage = (page: number, top: number): number => page * 10000 + Math.min(9999, Math.max(0, Math.round(top)));
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
   if (title) title.textContent = fileBase;
@@ -3168,6 +3172,7 @@ const sidebar = createRightSidebar(rightPanel, {
     handle.showHits(documentHits, 0);
     return documentHits.map((hit) => ({
       page: hit.page,
+      at: placeOnPage(hit.page, hit.top ?? 0),
       before: hit.context?.before ?? '',
       match: hit.context?.match ?? query,
       after: hit.context?.after ?? '',

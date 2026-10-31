@@ -58,11 +58,18 @@ export interface PdfOutlineItem {
   title: string;
   /** Null for a bookmark that runs an action rather than naming a page. */
   page: number | null;
+  /** How far down that page the heading sits, in the page's own units, so
+   *  a search result can be filed under the heading it is actually under
+   *  rather than under whichever heading on that page happens to be last.
+   *  A bookmark names a page and not a place on it: those start at 0. */
+  top: number;
   children: PdfOutlineItem[];
 }
 /** One match: the page it is on, and the boxes to draw over it. */
 export interface PdfHit {
   page: number;
+  /** How far down the page it is, for filing it under a heading. */
+  top?: number;
   rects: PageRect[];
   /** The words either side of the match, read off the page in reading
    *  order, so a result can be shown as the line it was found in rather
@@ -402,7 +409,7 @@ function outlineFromType(scanned: TypeLine[], pages: number): PdfOutlineItem[] {
   for (const head of heads) {
     const rank = Math.min(ladder.filter((step) => step > head.size).length, MAX_DEPTH - 1);
     const depth = Math.min(rank, stack.length);
-    const item: PdfOutlineItem = { title: head.text, page: head.page, children: [] };
+    const item: PdfOutlineItem = { title: head.text, page: head.page, top: head.top, children: [] };
     stack.length = depth;
     (depth ? stack[depth - 1].children : root).push(item);
     stack.push(item);
@@ -1382,6 +1389,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const read = (items: PdfBookmarkObject[]): PdfOutlineItem[] => items.map((item) => ({
         title: item.title,
         page: pageOf(item.target),
+        top: 0,
         children: read(item.children ?? []),
       }));
       try { return read((await engine.getBookmarks(document_).toPromise()).bookmarks ?? []); }
@@ -1410,6 +1418,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         }).sort((a, b) => a.pageIndex - b.pageIndex || a.charIndex - b.charIndex);
         const out: PdfHit[] = hits.map((result) => ({
           page: result.pageIndex + 1,
+          top: result.rects[0]?.origin.y ?? 0,
           rects: result.rects,
           context: result.context
             ? { before: result.context.before ?? '', match: result.context.match ?? keyword, after: result.context.after ?? '' }

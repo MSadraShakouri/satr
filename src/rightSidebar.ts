@@ -50,7 +50,7 @@ export interface SidebarDeps {
   documentPages?(): number;
   /** Every hit for a word in the open document, in reading order, marked on
    *  the pages as well: the page it is on and the words either side of it. */
-  findInDocument?(query: string): Promise<{ page: number; before: string; match: string; after: string }[]>;
+  findInDocument?(query: string): Promise<{ page: number; at: number; before: string; match: string; after: string }[]>;
   /** Show the hit a result row names. */
   onDocumentHit?(index: number): void;
   /** The name of a note another app handed over — its path is a token
@@ -76,6 +76,11 @@ const MAX_PER_NOTE = 100;
 const MAX_NAMES = 12;
 const MAX_FOLDERS = 8;
 const MAX_TOTAL = 1000;
+/** A document's results carry the line they were found in, and reading a
+ *  page back in reading order costs a read of the page (pdfView.ts). The
+ *  engine answers with the line for this many; the rest are counted, and
+ *  the count says so. */
+const DOCUMENT_ROWS = 60;
 
 interface Hit { from: number; to: number }
 
@@ -222,7 +227,8 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
 
   // ---- A note's headings as a tree, each hit under its section ----
   // `prefix` keeps collapse keys apart between notes in the all-notes view.
-  function headingTree(path: string, text: string, headings: Heading[], re: RegExp | null, hits: Hit[], prefix: string): string {
+  function headingTree(path: string, text: string, headings: Heading[], re: RegExp | null, hits: Hit[], prefix: string,
+    rowsOf: (group: Hit[]) => string = (group) => hitRows(path, text, group)): string {
     // Each hit belongs to the section of the last heading before it.
     const own: Hit[][] = headings.map(() => []);
     const preface: Hit[] = [];
@@ -241,7 +247,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         stack.push(i);
       });
     }
-    let html = re ? hitRows(path, text, preface) : '';
+    let html = re ? rowsOf(preface) : '';
     const open: number[] = [];
     headings.forEach((heading, i) => {
       if (!keep[i]) return;
@@ -256,7 +262,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
         + (hasChildren ? `<span class="tree-item-icon collapse-icon" data-toggle="${escapeHtml(key)}">${ICONS.chevron}</span>` : '')
         + `<span class="tree-item-inner">${label}</span>`
         + (own[i].length ? `<span class="tree-item-flair">${own[i].length}</span>` : '')
-        + `</div><div class="tree-item-children">${hitRows(path, text, own[i])}`;
+        + `</div><div class="tree-item-children">${rowsOf(own[i])}`;
       open.push(heading.level);
     });
     while (open.pop() !== undefined) html += '</div></div>';
@@ -271,28 +277,42 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   async function renderDocument(re: RegExp | null, query: string): Promise<void> {
     headings = deps.headings();
     const mine = ++documentRun;
-    let html = headingTree(deps.currentPath(), '', headings, re, [], '');
     const find = deps.findInDocument;
     const found = re && query && find ? await find(query) : [];
     if (mine !== documentRun) return;
-    if (found.length) {
-      // A result reads as the line it was found in, the way a note's results
-      // do -- PDFium gives back the words either side of a match -- with the
-      // page in the column the line number stands in for a note.
-      const rows = found.slice(0, MAX_TOTAL).map((hit, i) => {
+    // A document's results read like a note's: each one under the heading
+    // whose section it falls in, the line it was found in beside the page
+    // it is on, and a count on the heading. A flat list of a hundred rows
+    // each labelled with a page number says where every match is and
+    // nothing about what any of them is part of.
+    //
+    // A heading's "from" is where it sits in the document -- its page and
+    // how far down it (main.ts, placeOnPage) -- and a match's is the same
+    // number, so a match belongs to the last heading above it, which is
+    // the arithmetic the note tree already does with character offsets.
+    // Reading the page alone would file everything on a page under
+    // whichever of that page's headings came last.
+    const shown = found.slice(0, DOCUMENT_ROWS);
+    const listed: Hit[] = shown.map((hit, i) => ({ from: hit.at, to: hit.at, at: i }));
+    const rowsOf = (group: Hit[]): string => {
+      if (!group.length) return '';
+      return `<div class="search-result-file-matches">${group.map((row) => {
+        const hit = shown[(row as Hit & { at: number }).at];
         const dir = RTL_FIRST.test(`${hit.before}${hit.match}`) ? 'rtl' : 'ltr';
-        return `<div class="search-result-file-match" data-page="${hit.page}" data-hit="${i}" dir="${dir}">`
+        return `<div class="search-result-file-match" data-page="${hit.page}" data-hit="${(row as Hit & { at: number }).at}" dir="${dir}">`
           + `<span class="search-result-line-number">${hit.page}</span>`
           + `<span class="search-result-text">${escapeHtml(hit.before)}`
           + `<span class="search-result-file-matched-text">${escapeHtml(hit.match)}</span>`
           + `${escapeHtml(hit.after)}</span></div>`;
-      }).join('');
-      html = `<div class="search-result-file-matches">${rows}</div>${html}`;
-    }
+      }).join('')}</div>`;
+    };
+    let html = headingTree(deps.currentPath(), '', headings, re, listed, '', rowsOf);
     if (!html) html = `<div class="pane-empty">${re ? 'No results' : 'No table of contents'}</div>`;
     list.innerHTML = html;
     summary.textContent = re
-      ? (found.length ? `${found.length} result${found.length === 1 ? '' : 's'}` : 'No results')
+      ? (found.length
+        ? `${found.length} result${found.length === 1 ? '' : 's'}${found.length > shown.length ? `, first ${shown.length} listed` : ''}`
+        : 'No results')
       : '';
     markCurrent();
   }

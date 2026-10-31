@@ -76,6 +76,39 @@ test('the panel searches the document, and a result turns to its page', async ({
   expect(found!.y).toBeLessThan(400);
 });
 
+test('a result sits under the heading it was found under', async ({ page }) => {
+  // A note's results sit in the tree, under the section each one is in,
+  // with a count on the heading. A document's were a flat list of rows
+  // above the contents, each labelled with a page number -- which says
+  // where every match is and nothing about what any of them is part of.
+  await bootPdf(page, tinyPdf(6, [], ['Opening', 'Middle', 'The end']));
+  await openOutline(page);
+  await page.locator('#right-panel input.vault-search').fill('Page');
+  await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(6, { timeout: 15000 });
+  // every row is inside a section of the tree, not loose above it
+  const loose = await page.locator('#right-panel .outline-tree > .search-result-file-matches .search-result-file-match').count();
+  expect(loose).toBe(0);
+  // and the heading above a row is the one whose pages it falls in
+  const filed = await page.evaluate(() => {
+    const out: string[] = [];
+    for (const row of document.querySelectorAll('#right-panel .search-result-file-match')) {
+      const under = row.closest('.tree-item-children')?.previousElementSibling;
+      out.push(`${under?.querySelector('.tree-item-inner')?.textContent} <- page ${row.querySelector('.search-result-line-number')?.textContent}`);
+    }
+    return out;
+  });
+  // this document's three bookmarks name pages 1, 2 and 3, so everything
+  // from page three on belongs to the last of them
+  expect(filed).toEqual([
+    'Opening <- page 1',
+    'Middle <- page 2',
+    'The end <- page 3', 'The end <- page 4', 'The end <- page 5', 'The end <- page 6',
+  ]);
+  // a heading says how many are under it, as a note's does
+  const flairs = await page.locator('#right-panel .tree-item-flair').allTextContents();
+  expect(flairs).toEqual(['1', '1', '4']);
+});
+
 test('a paper written by LaTeX has contents that can be followed', async ({ page }) => {
   // hyperref writes a GoTo action rather than a destination, so these rows
   // named no page at all and went nowhere when tapped.
