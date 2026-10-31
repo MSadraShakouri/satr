@@ -426,6 +426,8 @@ const MAX_ZOOM = 8;
  *  than back out (Gander's rule: the geometric middle of the two). */
 const DOUBLE_TAP_ZOOM = 2.5;
 const DOUBLE_TAP_MS = 300;
+/** Zoom is a float: a page sitting at its own width reads as 0.9999. */
+const ZOOM_EPSILON = 0.005;
 /** How far the second tap may land from the first. 24px was this app's own
  *  guess and it was too strict to rely on: measured here, a second tap 20px
  *  away still zoomed and one 30px away did nothing at all, which is well
@@ -590,6 +592,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const { scroller } = options;
   const doc = window.document.createElement('div');
   doc.className = 'pdf-doc';
+  // The pages own sideways drags, both ways, the moment there are pages
+  // wider than the screen -- the same mark a pannable table carries
+  // (src/markdown.ts) and for the same reason, written down there as "a
+  // reader pulling the table back to its first column had the whole page
+  // slide out from under the finger". A zoomed document meets its
+  // horizontal edge every few centimetres, and at the edge the drawer took
+  // the drag: pushing a page to see its margin opened the files instead.
+  // Only a pane with something to pan claims it, so with the pages at
+  // their own width a swipe still opens a drawer as everywhere else.
+  scroller.setAttribute('data-pan-x', '');
   // A reading of where the reader is, and nothing else: it is not tapped and
   // not dragged. The way through a long document is the scrollbar.
   const counter = window.document.createElement('div');
@@ -1126,9 +1138,24 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const motion = smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (motion) {
       const box = doc.getBoundingClientRect();
-      doc.style.transformOrigin = `${acrossAt - box.left}px ${anchorY - box.top}px`;
-      gliding = doc.animate([{ transform: `scale(${was / zoom})` }, { transform: 'scale(1)' }],
-        { duration: GLIDE_MS, easing: GLIDE_EASE });
+      // Where the point the zoom was asked about actually landed. The
+      // scroll above cannot always be honoured: at the top of a document,
+      // at its foot, and above all on the way back to fit -- where the
+      // column stops overflowing and the page is centred whatever the
+      // scroll says. The motion below scales the new layout back into the
+      // old view, so if it scaled about the finger alone the reader would
+      // see the page jump to the middle and only then zoom out of it.
+      // The distance it could not scroll is carried by the first frame
+      // instead, and given back over the same motion: the page leaves the
+      // corner and leaves the zoom together.
+      const sheetNow = anchored.box.getBoundingClientRect();
+      const nowX = sheetNow.left + across * sheetNow.width;
+      const nowY = sheetNow.top + found.into * sheetNow.height;
+      doc.style.transformOrigin = `${nowX - box.left}px ${nowY - box.top}px`;
+      gliding = doc.animate([
+        { transform: `translate(${acrossAt - nowX}px, ${anchorY - nowY}px) scale(${was / zoom})` },
+        { transform: 'none' },
+      ], { duration: GLIDE_MS, easing: GLIDE_EASE });
       // The move first, then the work. Drawing a band of pages at a new
       // size is the most expensive thing this view does -- it is PDFium,
       // on this thread -- and starting it on the same frame as the motion
@@ -1278,7 +1305,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // down is a pinch, and a pinch is not a tap.
     if (!quick || !near || touches.size > 1) return;
     lastTap.time = 0;
-    zoomTo(zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1, event.clientY, event.clientX, true);
+    // Below the page's own width a double tap brings it back to it, rather
+    // than past it into a zoom: a reader who has pushed the pages out to
+    // see several at once wants the one they tapped, at its own size.
+    // Above it, the pair is the page's width and DOUBLE_TAP_ZOOM, and the
+    // geometric middle of the two decides which one a tap means.
+    const next = zoom < 1 - ZOOM_EPSILON ? 1
+      : zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1;
+    zoomTo(next, event.clientY, event.clientX, true);
   };
   doc.addEventListener('pointerup', onTap);
 
@@ -1509,6 +1543,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // the app's and stays up, because compiling the wasm again for the
       // next document would be felt.
       void engine.closeDocument(document_).toPromise().catch(() => undefined);
+      scroller.removeAttribute('data-pan-x');
       doc.remove();
       counter.remove();
     },

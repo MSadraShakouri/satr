@@ -375,6 +375,99 @@ async function pinch(page: Page, factor: number, atX?: number): Promise<void> {
   }, [factor, atX] as [number, number | undefined]);
 }
 
+test('a page pushed sideways moves, and does not drag the app with it', async ({ page }) => {
+  // Reported as a restricting feeling in every direction. A zoomed page
+  // meets its horizontal edge every few centimetres, and at the edge the
+  // drawer swipe took the drag -- pushing a page to see its margin slid
+  // the whole app aside. A pannable table already owns both directions
+  // (src/drawers.ts); the pages say so the same way.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await dragZoom(page, 240); // well past the pane's width
+  await page.waitForTimeout(500);
+  const reach = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    return pane.scrollWidth - pane.clientWidth;
+  });
+  expect(reach).toBeGreaterThan(50);
+  await page.evaluate(() => { (document.querySelector('#preview-pane') as HTMLElement).scrollLeft = 0; });
+  // a finger pushing the page to the right, from its left edge
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 420 }] });
+  for (let step = 1; step <= 10; step += 1) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 120 + 12 * step, y: 420 }] });
+    await page.waitForTimeout(16);
+  }
+  const held = await page.evaluate(() => getComputedStyle(document.querySelector('.workspace') as HTMLElement).transform);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(400);
+  // the app stayed where it was, drawer and all
+  expect(held === 'none' || held === 'matrix(1, 0, 0, 1, 0, 0)').toBeTruthy();
+  await expect(page.locator('body')).not.toHaveClass(/files-open/);
+});
+
+test('zooming back out of a corner does not jump to the middle first', async ({ page }) => {
+  // Reported: "double tap to zoom out when I'm at a corner of a page
+  // centers it first before going out". The motion scales the new layout
+  // back into the old view, and at a corner the scroll it is measured
+  // against cannot be placed -- so the page was centred before the motion
+  // had started, and the reader saw the jump.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await dragZoom(page, 240);
+  await page.waitForTimeout(600);
+  // into the top left corner of the page
+  await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    pane.scrollLeft = 0;
+    pane.scrollTop = 0;
+  });
+  await page.waitForTimeout(400);
+  const corner = async (): Promise<{ x: number; y: number }> => {
+    const box = await pageBox(page, 1).boundingBox();
+    return { x: box?.x ?? 0, y: box?.y ?? 0 };
+  };
+  const was = await corner();
+  // a double tap near that corner, and the very next frame after it
+  await pageBox(page, 1).evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + 60;
+    const y = box.top + 120;
+    const fire = (type: string): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown'); fire('pointerup'); fire('pointerdown'); fire('pointerup');
+  });
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  const first = await corner();
+  // the first frame of the motion still shows the reader's own view
+  expect(Math.abs(first.x - was.x)).toBeLessThan(24);
+  expect(Math.abs(first.y - was.y)).toBeLessThan(24);
+});
+
+test('below the page width, a double tap comes back to it', async ({ page }) => {
+  // Reported: "when the zoom is less than default, double tap should zoom
+  // to default rather than zooming in".
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  await dragZoom(page, -150); // up is out: the pages shrink past their own width
+  await page.waitForTimeout(500);
+  const small = await widthOf(page, 1);
+  expect(small).toBeLessThan(fit * 0.9);
+  await pageBox(page, 1).evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const fire = (type: string): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown'); fire('pointerup'); fire('pointerdown'); fire('pointerup');
+  });
+  await page.waitForTimeout(600);
+  expect(await widthOf(page, 1)).toBeCloseTo(fit, -1); // the page's own width, not past it
+});
+
 test('a thumb that lands a little to one side still zooms', async ({ page }) => {
   // Reported: "single finger zoom, I think it didn't work once for me".
   // Measured here, the second tap of the gesture had to land within 24px of
