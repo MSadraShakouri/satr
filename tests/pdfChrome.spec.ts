@@ -139,6 +139,10 @@ test('a step of zoom travels, and the pages are drawn for where it lands', async
       shown: Math.round(first.getBoundingClientRect().width),
       laid: first.offsetWidth,
       moving: (document.querySelector('.pdf-doc') as HTMLElement).getAnimations().length,
+      // The sharp picture for the size the pages have landed at. Drawing
+      // it is the expensive half of a zoom, and it is deliberately not
+      // done while they are moving.
+      sharp: (first.querySelector('.pdf-detail') as HTMLCanvasElement | null)?.width ?? 0,
     };
   });
   const still = await look();
@@ -151,11 +155,13 @@ test('a step of zoom travels, and the pages are drawn for where it lands', async
   expect(frames[0].shown).toBeLessThan(landed); // what is seen starts where it was
   expect(frames[0].moving).toBe(1);
   expect(new Set(frames.map((frame) => frame.shown)).size).toBeGreaterThan(2); // and passes through
+  for (const frame of frames) expect(frame.sharp).toBe(0); // the move first, with the work held back
 
   await page.waitForTimeout(600);
   const rest = await look();
   expect(rest.shown).toBe(landed); // arriving exactly where the layout already was
   expect(rest.moving).toBe(0);
+  expect(rest.sharp).toBeGreaterThan(landed); // and the work done the moment it lands
   // nothing is left on the element afterwards, so a pinch starts clean
   expect(await page.evaluate(() => (document.querySelector('.pdf-doc') as HTMLElement).style.transformOrigin)).toBe('');
 });

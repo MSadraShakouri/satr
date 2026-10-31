@@ -418,11 +418,19 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   let shut = false;
   /** The zoom the reader asked for, on its way in. */
   let gliding: Animation | null = null;
-  const endGlide = (): void => {
-    gliding?.cancel();
+  /** Take the motion off the column, leaving it where the layout already
+   *  is. Says whether there was one, so that it is wound up exactly once. */
+  const stopGlide = (): boolean => {
+    const running = gliding;
+    if (!running) return false;
     gliding = null;
     doc.style.transformOrigin = '';
+    running.cancel();
+    return true;
   };
+  /** However the motion ends — arriving, or a hand landing on the page —
+   *  the pages are drawn for the size they are at by the time it has. */
+  const endGlide = (): void => { if (stopGlide()) drawBand(); };
   let derived: PdfOutlineItem[] | null = null;
   let deriving: Promise<PdfOutlineItem[]> | null = null;
   let fit = 1; // the scale at which a page fills the pane's width
@@ -812,6 +820,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const zoomTo = (next: number, anchorY: number, anchorX?: number, smooth = false): void => {
     const limited = clamp(next, MIN_ZOOM, MAX_ZOOM);
     if (limited === zoom) return;
+    stopGlide(); // a step on top of a step: this one's band covers both
     const was = zoom;
     const pane = scroller.getBoundingClientRect();
     const paneTop = pane.top;
@@ -838,15 +847,24 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // the scroll above just pinned: the view the reader had, landing on
     // the view they asked for. Measured after the scrolling, so the two
     // agree to the pixel.
-    if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const motion = smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (motion) {
       const box = doc.getBoundingClientRect();
       doc.style.transformOrigin = `${acrossAt - box.left}px ${anchorY - box.top}px`;
       gliding = doc.animate([{ transform: `scale(${was / zoom})` }, { transform: 'scale(1)' }],
         { duration: GLIDE_MS, easing: GLIDE_EASE });
+      // The move first, then the work. Drawing a band of pages at a new
+      // size is the most expensive thing this view does -- it is PDFium,
+      // on this thread -- and starting it on the same frame as the motion
+      // is what made a zoom stutter and then arrive. The pages travel on
+      // the pictures already drawn, stretched, and are redrawn the moment
+      // they land. Nothing is waited for twice: the band is a fifth of a
+      // second later than it was, and the motion it would have blocked is
+      // the whole of what the reader is looking at.
       gliding.addEventListener('finish', endGlide);
     }
     showCounter();
-    drawBand();
+    if (!motion) drawBand();
     remember();
   };
 
@@ -1047,7 +1065,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       window.clearTimeout(settleTimer);
       window.clearTimeout(placeTimer);
       shut = true;
-      endGlide();
+      stopGlide();
       watcher.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       scroller.removeEventListener('pointerdown', endGlide);
