@@ -1,6 +1,7 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
-import type { PdfHandle } from './pdfView';
+import type { PdfHandle, PdfOutlineItem } from './pdfView';
+import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
 import { setTimestampChipTap } from './livePreview';
@@ -204,6 +205,13 @@ const picture = { path: '', url: '' };
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
 let pdfView: PdfHandle | null = null;
 let pdfChrome: { destroy(): void } | null = null;
+/** The contents of the PDF in the tab, in the shape the outline panel reads
+ *  notes in: a document has no lines, so what a row carries is the page it
+ *  turns to. The viewer keeps its own contents button; this is the same list
+ *  in the place the outline always lives, so one panel answers "where am I"
+ *  whatever the tab holds. */
+let pdfHeadings: Heading[] = [];
+let pdfPage = 1;
 /** Whether a PDF's pages are turned over, in the same three states the
  *  app's own theme has (src/theme.ts): Automatic follows the app, and the
  *  other two are the reader overruling it. Obsidian ships one checkbox
@@ -565,6 +573,8 @@ function closeDocument(): void {
   pdfChrome = null;
   pdfView?.destroy();
   pdfView = null;
+  pdfHeadings = [];
+  pdfPage = 1;
   document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
 }
 function renderPreview(): void {
@@ -670,6 +680,31 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   const themed = { mode: () => pdfTheme, set: setPdfTheme };
   openPdfTheme = () => openDarkPages(themed);
   pdfChrome = mountPdfChrome(handle, themed);
+  // The contents, into the outline panel. Whatever the document's own
+  // bookmarks say wins; a document with none (everything a browser prints)
+  // falls back to the contents read off the type, which costs a scan of
+  // every page and so is asked for only once the first list comes back
+  // empty.
+  pdfPage = handle.place().page || 1;
+  handle.onPage((page) => { pdfPage = page; if (outlineOpen()) sidebar.markCurrent(); });
+  void (async () => {
+    const own = await handle.outline();
+    const items = own.length ? own : await handle.derivedOutline();
+    if (pdfView !== handle) return;
+    pdfHeadings = flattenPdfOutline(items, 1);
+    sidebar.refresh();
+  })();
+}
+/** The contents of a document, as outline rows: a row's "line" is the page
+ *  it turns to, and how deep it sits is its level. */
+function flattenPdfOutline(items: PdfOutlineItem[], level: number): Heading[] {
+  const out: Heading[] = [];
+  for (const item of items) {
+    const page = item.page ?? 0;
+    out.push({ level, text: item.title, line: page, from: page });
+    out.push(...flattenPdfOutline(item.children ?? [], level + 1));
+  }
+  return out;
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -3083,17 +3118,22 @@ function sidebarGoToLine(line: number): void {
   }
 }
 const sidebar = createRightSidebar(rightPanel, {
-  headings: () => editor.headings(),
+  headings: () => (pdfView ? pdfHeadings : editor.headings()),
   // The outline follows the line two thirds down the page, not the line at the
   // very top: the heading you are reading is the one around the middle of the
   // screen, not the one that has just left it (21).
   currentLine: () => {
+    // A document is read by the page, so the row to mark is the page on the
+    // screen rather than a line in a note.
+    if (pdfView) return pdfPage;
     const pane = mode === 'preview' ? previewPane : editor.view.scrollDOM;
     const anchor = pane.clientHeight * (2 / 3);
     return (mode === 'preview' ? previewScroll(previewPane, preview, anchor) : editorScroll(editor.view, anchor)) ?? 0;
   },
   onHeading: (line, path) => {
     toggleOutline(false);
+    // In a document a row's line is the page it turns to.
+    if (pdfView && (!path || path === filePath)) { if (line >= 1) pdfView.goTo(line); return; }
     if (path && path !== filePath) {
       // Another note: open it, then go to the heading (in whatever mode the
       // note was left in).
