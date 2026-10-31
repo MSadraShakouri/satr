@@ -2871,6 +2871,86 @@ findButton.addEventListener('click', () => {
   find(false);
 });
 
+// Put the figures of the tab count in the middle of the square drawn around
+// them. Every box the layout engine knows about — the line box, the line box
+// trimmed to cap height and baseline — is a box about the font, not about the
+// figures, and in Vazirmatn none of them is centred on the figures: they sat
+// about a pixel low and up to half a pixel off sideways.
+//
+// So the ink is measured rather than inferred, in two steps, because each
+// step has exactly one honest source. Where the baseline falls inside the
+// span is a layout question, and layout answers it: an empty inline-block
+// sits its bottom on the baseline. Where the ink falls either side of that
+// baseline is a rasterising question, and only drawing it answers it —
+// measureText cannot, because Chromium rounds every bound it reports to a
+// whole pixel, which is larger than the error being chased.
+let inkPen: CanvasRenderingContext2D | null | undefined;
+const SAMPLE = 4; // draw at four times the size, so a quarter pixel shows
+/** Where the ink of `said` sits, in pixels from the text origin: the middle
+ *  of it sideways, and the middle of it up and down from the baseline. */
+function inkMiddle(said: string, font: string, size: number): { x: number; y: number } | null {
+  if (inkPen === undefined) inkPen = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const pen = inkPen;
+  if (!pen) return null;
+  const wide = Math.ceil(size * 6);
+  const tall = Math.ceil(size * 3);
+  pen.canvas.width = wide * SAMPLE;
+  pen.canvas.height = tall * SAMPLE;
+  pen.setTransform(SAMPLE, 0, 0, SAMPLE, 0, 0);
+  pen.clearRect(0, 0, wide, tall);
+  pen.font = font;
+  pen.textBaseline = 'alphabetic';
+  pen.fillStyle = '#000';
+  const originX = size;
+  const originY = size * 2;
+  pen.fillText(said, originX, originY);
+  const px = pen.getImageData(0, 0, pen.canvas.width, pen.canvas.height).data;
+  let top = Infinity; let bottom = -Infinity; let left = Infinity; let right = -Infinity;
+  for (let y = 0; y < pen.canvas.height; y += 1) {
+    for (let x = 0; x < pen.canvas.width; x += 1) {
+      if (px[(y * pen.canvas.width + x) * 4 + 3] > 32) { // any ink at all
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+        if (x < left) left = x;
+        if (x > right) right = x;
+      }
+    }
+  }
+  if (!Number.isFinite(top)) return null; // nothing drawn: a font that has no figures
+  return {
+    x: (left + right + 1) / 2 / SAMPLE - originX,
+    y: (top + bottom + 1) / 2 / SAMPLE - originY,
+  };
+}
+let centred = '';
+function centreFigures(): void {
+  const said = navTabsCount.textContent ?? '';
+  if (!said) return;
+  const style = getComputedStyle(navTabsCount);
+  const size = parseFloat(style.fontSize);
+  // Drawing and reading back a few thousand pixels is cheap, but this runs
+  // on every tab opened, closed or switched: only do it when the answer can
+  // have changed.
+  const asked = `${said} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  if (asked === centred) return;
+  centred = asked;
+  const square = navTabsCount.parentElement?.getBoundingClientRect().width || 26;
+  navTabsCount.style.transform = ''; // measure where it lands untouched
+  const strut = document.createElement('span');
+  strut.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+  navTabsCount.appendChild(strut);
+  const baseline = strut.getBoundingClientRect().top - navTabsCount.getBoundingClientRect().top;
+  strut.remove();
+  const middle = inkMiddle(said, `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`, size);
+  if (!middle) return;
+  const to = (n: number): string => `${Math.round(n * 100) / 100}px`;
+  navTabsCount.style.transform =
+    `translate(${to(square / 2 - middle.x)}, ${to(square / 2 - baseline - middle.y)})`;
+}
+// The real font arrives after the first paint, and it is not the fallback's
+// shape: measure again once it is in.
+if (document.fonts?.ready) void document.fonts.ready.then(() => { centred = ''; centreFigures(); });
+
 function renderNavButtons(): void {
   syncFindButton();
   navBack.disabled = activeTab <= 0;
@@ -2886,6 +2966,7 @@ function renderNavButtons(): void {
   const said = open > 999 ? '999+' : String(open);
   navTabsCount.textContent = said;
   navTabsCount.dataset.figures = String(said.length);
+  centreFigures();
   navTabs.setAttribute('aria-label', `Tabs: ${open} open (hold for the menu)`);
   saveTabs();
   renderMenuButton();

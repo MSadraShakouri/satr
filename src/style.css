@@ -3340,12 +3340,8 @@ input.mod-no-match {
   transform: translate(-50%, -50%);
   width: 26px;
   height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   font-size: calc(1.625rem * 0.55);
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
   line-height: 1;
   pointer-events: none;
 }
@@ -3355,16 +3351,20 @@ input.mod-no-match {
 .mobile-navbar-tabs-digit[data-figures="3"] { font-size: calc(1.625rem * 0.365); }
 .mobile-navbar-tabs-digit[data-figures="4"] { font-size: calc(1.625rem * 0.3); }
 .mobile-navbar-tabs-digit {
-  /* Centring the digit means centring the digit, not the line box it is drawn
-     in: a line box is as tall as the font's ascent and descent, the digits sit
-     on the baseline with nothing under them, and where that leaves them inside
-     the box depends on the font — 3px high, for the font the app uses, which
-     is what the writer saw. Trimming the line box to the cap height and the
-     baseline is exactly the box the digits are drawn in, so centring that box
-     centres them, in any font at any size. (A browser without text-box support
-     ignores both lines and centres the line box, as before.) */
-  text-box-trim: trim-both;
-  text-box-edge: cap alphabetic;
+  /* Centring the figures means centring the figures, and nothing the box
+     model offers is the figures. A line box is the font's ascent and descent,
+     which in Vazirmatn is far taller than a digit and not symmetric about it.
+     Trimming the line box to cap height and baseline (text-box-trim) is a
+     closer box, but still not the right one: this font draws its figures
+     taller than its caps, and they landed about a pixel low and up to half a
+     pixel off sideways. So the ink is measured with the engine that draws it
+     and the span is moved by the difference — see centreFigures() in
+     src/main.ts. Nothing here may set the position; that is its job. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  direction: ltr;
+  white-space: pre;
 }
 .mobile-tab-switcher {
   position: fixed;
