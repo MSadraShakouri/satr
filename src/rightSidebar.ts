@@ -45,6 +45,14 @@ export interface SidebarDeps {
   onFolder(path: string): void;
   /** The current note's majority direction; the whole tree flips for it. */
   noteDir(): 'ltr' | 'rtl';
+  /** How many pages the open tab holds, where it holds a document rather
+   *  than a note; 0 for a note. */
+  documentPages?(): number;
+  /** Every page of the open document a word is on, marked on the pages as
+   *  well. The page of each hit, in reading order. */
+  findInDocument?(query: string): Promise<number[]>;
+  /** Show the hit a result row names. */
+  onDocumentHit?(index: number): void;
   /** The name of a note another app handed over — its path is a token
    *  (satr-open://…), so the rows cannot read a name out of it. Null for an
    *  ordinary note, which is named by its path as always. */
@@ -138,7 +146,11 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     // note, which moved the search field, the scope switch and every result
     // under the reader's finger each time they changed scope.
     const path = deps.currentPath();
-    if (scope === 'note' && path) {
+    const pages = deps.documentPages?.() ?? 0;
+    if (scope === 'note' && path && pages) {
+      // A document is not counted in words: it is counted in pages.
+      noteCount.textContent = `${pages} page${pages === 1 ? '' : 's'}`;
+    } else if (scope === 'note' && path) {
       const text = deps.currentText();
       const words = text.match(/\S+/g)?.length ?? 0;
       noteCount.textContent = `${words} ${words === 1 ? 'word' : 'words'}, ${text.length} ${text.length === 1 ? 'character' : 'characters'}`;
@@ -148,7 +160,11 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     segmented.dataset.value = scope;
     segmented.style.setProperty('--index', scope === 'all' ? '1' : '0');
     segmented.querySelectorAll<HTMLElement>('[data-scope]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.scope === scope)));
-    input.placeholder = scope === 'note' ? 'Search this note' : 'Search all notes';
+    const document_ = (deps.documentPages?.() ?? 0) > 0;
+    input.placeholder = scope === 'all' ? 'Search all notes'
+      : document_ ? 'Search this document' : 'Search this note';
+    const here = segmented.querySelector<HTMLElement>('[data-scope="note"]');
+    if (here) here.textContent = document_ ? 'This document' : 'This note';
     const any = [...list.querySelectorAll<HTMLElement>('.tree-item[data-key]')].some((el) => collapsed.has(el.dataset.key!));
     collapseButton.innerHTML = any ? ICONS.expandAll : ICONS.collapseAll;
     collapseButton.setAttribute('aria-label', any ? 'Expand all' : 'Collapse all');
@@ -245,6 +261,37 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     });
     while (open.pop() !== undefined) html += '</div></div>';
     return html;
+  }
+
+  // ---- A document: the contents, and what a word finds in the pages ----
+  // PDFium searches the file itself, so a document answers the same box the
+  // note does. What it gives back is pages, not lines of text: a row names
+  // the page and turns to it, and the hits are marked on the pages too.
+  let documentRun = 0;
+  async function renderDocument(re: RegExp | null, query: string): Promise<void> {
+    headings = deps.headings();
+    const mine = ++documentRun;
+    let html = headingTree(deps.currentPath(), '', headings, re, [], '');
+    const find = deps.findInDocument;
+    const found = re && query && find ? await find(query) : [];
+    if (mine !== documentRun) return;
+    if (found.length) {
+      // One row per hit, named by its page; a page with several hits says so
+      // once, with how many.
+      const perPage = new Map<number, number[]>();
+      found.forEach((page, i) => perPage.set(page, [...(perPage.get(page) ?? []), i]));
+      const rows = [...perPage].map(([page, hits]) => `<div class="search-result-file-match" data-page="${page}" data-hit="${hits[0]}">`
+        + `<span class="search-result-text">Page ${page}</span>`
+        + (hits.length > 1 ? `<span class="tree-item-flair">${hits.length}</span>` : '')
+        + `</div>`).join('');
+      html = `<div class="search-result-file-matches">${rows}</div>${html}`;
+    }
+    if (!html) html = `<div class="pane-empty">${re ? 'No results' : 'No table of contents'}</div>`;
+    list.innerHTML = html;
+    summary.textContent = re
+      ? (found.length ? `${found.length} result${found.length === 1 ? '' : 's'}` : 'No results')
+      : '';
+    markCurrent();
   }
 
   // ---- This note: the outline, filtered by the query ----
@@ -435,7 +482,8 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       run += 1;
       summary.textContent = 'Invalid regular expression';
       list.innerHTML = '';
-    } else if (scope === 'note') { run += 1; renderNote(re); }
+    } else if (scope === 'note' && (deps.documentPages?.() ?? 0)) { run += 1; void renderDocument(re, query); }
+    else if (scope === 'note') { run += 1; renderNote(re); }
     else void renderAll(re);
     renderChrome();
   }
@@ -467,6 +515,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   list.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
     const match = target.closest<HTMLElement>('.search-result-file-match');
+    if (match && match.dataset.hit !== undefined) { deps.onDocumentHit?.(Number(match.dataset.hit)); return; }
     if (match) { deps.onResult(match.dataset.path!, Number(match.dataset.from), Number(match.dataset.to)); return; }
     const folder = target.closest<HTMLElement>('[data-folder]');
     if (folder) { deps.onFolder(folder.dataset.folder!); return; }

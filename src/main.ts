@@ -1,6 +1,6 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
-import type { PdfHandle, PdfOutlineItem } from './pdfView';
+import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
 import '@codemirror/view';
@@ -212,6 +212,9 @@ let pdfChrome: { destroy(): void } | null = null;
  *  whatever the tab holds. */
 let pdfHeadings: Heading[] = [];
 let pdfPage = 1;
+/** What the outline panel's search last found in the open document, so a
+ *  result row can show the hit it names rather than search again. */
+let documentHits: PdfHit[] = [];
 /** Whether a PDF's pages are turned over, in the same three states the
  *  app's own theme has (src/theme.ts): Automatic follows the app, and the
  *  other two are the reader overruling it. Obsidian ships one checkbox
@@ -575,6 +578,7 @@ function closeDocument(): void {
   pdfView = null;
   pdfHeadings = [];
   pdfPage = 1;
+  documentHits = [];
   document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
 }
 function renderPreview(): void {
@@ -3145,6 +3149,19 @@ const sidebar = createRightSidebar(rightPanel, {
   notes: allNotes,
   currentPath: () => filePath,
   currentText: () => editor.getValue(),
+  documentPages: () => pdfView?.pages ?? 0,
+  findInDocument: async (query) => {
+    const handle = pdfView;
+    if (!handle) return [];
+    documentHits = await handle.find(query);
+    if (pdfView !== handle) return [];
+    handle.showHits(documentHits, 0);
+    return documentHits.map((hit) => hit.page + 1);
+  },
+  onDocumentHit: (index) => {
+    toggleOutline(false);
+    pdfView?.showHits(documentHits, index);
+  },
   // A note another app handed over is open at a token, not at a path: the
   // rows ask for its real name rather than reading "satr-open" out of it.
   externalName: (path) => (isExternalPath(path) ? displayNameForPath(path) : null),

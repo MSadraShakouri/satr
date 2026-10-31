@@ -28,6 +28,9 @@ test('the contents of a document fill the outline panel', async ({ page }) => {
   const rows = page.locator('.outline-pane .tree-item-self, #right-panel .tree-item-self');
   await expect(rows).toHaveCount(3, { timeout: 15000 });
   await expect(rows.nth(0)).toContainText('Opening');
+  // A document is counted in pages, not in words.
+  await expect(page.locator('#right-panel')).toContainText('6 pages');
+  await expect(page.locator('#right-panel')).not.toContainText('0 words');
   await expect(rows.nth(2)).toContainText('The end');
 });
 
@@ -53,4 +56,19 @@ test('a document with no bookmarks shows the contents read off its type', async 
   await openOutline(page);
   await expect(page.locator('#right-panel')).toContainText('First chapter', { timeout: 20000 });
   await expect(page.locator('#right-panel')).toContainText('A section');
+});
+
+test('the panel searches the document, and a result turns to its page', async ({ page }) => {
+  await bootPdf(page, tinyPdf(6, [], ['Opening', 'Middle', 'The end']));
+  await openOutline(page);
+  const box = page.locator('#right-panel input.vault-search');
+  await expect(box).toHaveAttribute('placeholder', 'Search this document');
+  await box.fill('Page 4');
+  await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(1, { timeout: 15000 });
+  await expect(page.locator('#right-panel')).toContainText('1 result');
+  await expect(page.locator('#right-panel [data-scope="note"]')).toHaveText('This document');
+  await page.locator('#right-panel .search-result-file-match').first().click();
+  await page.waitForTimeout(900);
+  const found = await page.locator('.pdf-page[data-page="4"]').boundingBox();
+  expect(found!.y).toBeLessThan(400);
 });
