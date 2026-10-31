@@ -32,6 +32,13 @@ export interface PdfPlace {
   into: number;
   /** Multiples of the width that fits the pane: 1 is a page edge to edge. */
   zoom: number;
+  /** How far across the sheet the middle of the screen is, 0 to 1: the left
+   *  margin is 0, the right one 1. A fraction of the sheet rather than a
+   *  scroll offset for the same reason as `into` -- a zoomed-in reader who
+   *  is looking at the right-hand column is looking at it at any zoom and
+   *  on any screen. Missing on a place written down before this was kept,
+   *  which reads as the middle, where a document opens anyway. */
+  across?: number;
 }
 
 export interface PdfOptions {
@@ -731,11 +738,32 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // it: scroll offsets are not exact and a reader who asked for page
       // thirty is on page thirty.
       if (top < edge + height + GAP - 1 || slab.page === slabs.length) {
-        return { page: slab.page, into: clamp((top - edge) / Math.max(1, height), 0, 1), zoom };
+        return { page: slab.page, into: clamp((top - edge) / Math.max(1, height), 0, 1), zoom, across: acrossNow() };
       }
       edge += height + GAP;
     }
-    return { page: 1, into: 0, zoom };
+    return { page: 1, into: 0, zoom, across: acrossNow() };
+  };
+  /** The sheet's left edge in the pane's own scrolling coordinates, which
+   *  is not zero: a sheet narrower than the pane is centred in it. */
+  const sheetLeft = (): number =>
+    doc.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
+  /** Where the middle of the screen is across the sheet, 0 to 1. */
+  const acrossNow = (): number => {
+    const width = doc.getBoundingClientRect().width;
+    if (width < 1) return 0.5;
+    return clamp((scroller.scrollLeft + scroller.clientWidth / 2 - sheetLeft()) / width, 0, 1);
+  };
+  /** The scroll offset that puts a place's sideways fraction back under the
+   *  middle of the screen. A sheet that fits has nowhere to go, and a place
+   *  from before this was written down lands in the middle. */
+  const leftFor = (place: { across?: number }): number => {
+    const reach = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    if (!reach) return 0;
+    if (place.across == null) return reach / 2;
+    const width = doc.getBoundingClientRect().width;
+    if (width < 1) return reach / 2;
+    return clamp(sheetLeft() + place.across * width - scroller.clientWidth / 2, 0, reach);
   };
   /** The scroll offset that puts a place at the top of the screen. */
   const offsetOf = (place: { page: number; into: number }): number => {
@@ -766,6 +794,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!scroller.clientWidth || !scroller.clientHeight) return true; // nowhere to put it yet
     options.ownScroll?.();
     scroller.scrollTop = topFor(pending);
+    scroller.scrollLeft = leftFor(pending);
     return true;
   };
   const letGo = (): void => { pending = null; };
@@ -1323,7 +1352,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const held = placeNow();
     measureFit();
     layout();
-    if (!applyPending()) scroller.scrollTop = topFor(held);
+    if (!applyPending()) {
+      scroller.scrollTop = topFor(held);
+      scroller.scrollLeft = leftFor(held);
+    }
     showCounter();
     drawBand();
   };

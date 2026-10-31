@@ -349,6 +349,33 @@ test('the zoom comes back with the place', async ({ page }) => {
   expect(await widthOf(page, 1)).toBeCloseTo(zoomed, -1);
 });
 
+test('the place across a zoomed page comes back too', async ({ page }) => {
+  // Reported: "we save height and zoom but we don't save horizontal
+  // position, a tab switch clings to the left". A reader zoomed into the
+  // right-hand side of a sheet comes back to the left margin.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await dragZoom(page, 240); // well past the pane's width
+  await page.waitForTimeout(500);
+  const parked = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const reach = pane.scrollWidth - pane.clientWidth;
+    pane.scrollLeft = reach; // all the way to the right margin
+    return { reach, left: pane.scrollLeft };
+  });
+  expect(parked.reach).toBeGreaterThan(50);
+  await page.waitForTimeout(700); // the place is written down after 400ms
+  await reopen(page, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await page.waitForTimeout(500);
+  const back = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    return { left: pane.scrollLeft, reach: pane.scrollWidth - pane.clientWidth };
+  });
+  expect(back.reach).toBeGreaterThan(50);
+  expect(back.left).toBeGreaterThan(parked.left * 0.8);
+});
+
 test('a file that says .pdf and is not one says so where the pages would be', async ({ page }) => {
   await boot(page, { 'broken.pdf': 'data:application/pdf;base64,bm90IGEgUERGIGF0IGFsbA==' }, 'broken.pdf');
   await expect(page.locator('.pdf-unreadable')).toHaveText('“broken.pdf” could not be opened.', { timeout: 15000 });

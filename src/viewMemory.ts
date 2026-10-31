@@ -40,6 +40,10 @@ export interface SavedPlace {
   page: number;
   into: number;
   zoom: number;
+  /** How far across the sheet the middle of the screen is, 0 to 1. Absent
+   *  on a place written down before a zoomed reader's sideways position
+   *  was kept, and absent while a document sits unzoomed at its own width. */
+  across?: number;
 }
 const placeKey = (key: string): string => `satr:place:${key}`;
 
@@ -51,6 +55,7 @@ export function readPlace(key: string): SavedPlace | null {
       page: Math.max(1, Math.round(value.page as number)),
       into: Math.min(1, Math.max(0, Number(value.into) || 0)),
       zoom: Math.min(8, Math.max(0.25, value.zoom as number)),
+      ...(Number.isFinite(value.across) ? { across: Math.min(1, Math.max(0, value.across as number)) } : {}),
     };
   } catch { return null; }
 }
@@ -58,7 +63,8 @@ export function readPlace(key: string): SavedPlace | null {
 export function writePlace(key: string, place: SavedPlace): void {
   // The first page at the width it opens at is where a document opens
   // anyway: storing that is a line of storage for nothing.
-  if (place.page === 1 && place.into < 0.01 && Math.abs(place.zoom - 1) < 0.01) {
+  const middling = place.across == null || Math.abs(place.across - 0.5) < 0.01;
+  if (place.page === 1 && place.into < 0.01 && Math.abs(place.zoom - 1) < 0.01 && middling) {
     localStorage.removeItem(placeKey(key));
     return;
   }
