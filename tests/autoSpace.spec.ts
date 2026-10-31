@@ -123,6 +123,56 @@ test('the setting turns the whole rule off', async ({ page }) => {
 // A space inserted into the document from underneath a live composition is
 // what a WebView shows as spaces breaking and words repeating, and the space
 // the keyboard owes is already in the text the keyboard commits.
+// The same lazy space, after a heading's mark. Asked for: "when writing
+// something that's a header, if the caret is exactly after it and not a space
+// after it, insert one when typing. Simple thing to improve UX".
+test('a heading mark and the word after it get their space', async ({ page }) => {
+  await mount(page);
+  await page.keyboard.type('##Title');
+  expect(await value(page)).toBe('## Title');
+});
+
+test('the space lands for one hash and for six, and nothing beyond six is a heading', async ({ page }) => {
+  await mount(page);
+  await page.keyboard.type('#One');
+  expect(await value(page)).toBe('# One');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('######Six');
+  expect(await value(page)).toBe('# One\n###### Six');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('#######Seven');
+  expect(await value(page)).toBe('# One\n###### Six\n#######Seven');
+});
+
+test('a hash that is not a heading mark is left alone', async ({ page }) => {
+  await mount(page);
+  // mid-line: a hash in prose is prose
+  await page.keyboard.type('number#4');
+  expect(await value(page)).toBe('number#4');
+  await page.keyboard.press('Enter');
+  // the mark already has its space: the writer's own space is not doubled
+  await page.keyboard.type('## Two');
+  expect(await value(page)).toBe('number#4\n## Two');
+});
+
+test('a heading mark inside a quote gets it too; a hash in code does not', async ({ page }) => {
+  await mount(page);
+  await page.keyboard.type('> ##Quoted');
+  expect(await value(page)).toBe('> ## Quoted');
+  await mount(page, '```py\n\n```', 6);
+  await page.keyboard.type('#comment');
+  expect(await value(page)).toBe('```py\n#comment\n```');
+});
+
+test('a mark that has its space already is left alone', async ({ page }) => {
+  // caret between the hashes and the space of a heading that is already one:
+  // the rule is "the caret exactly after the mark and no space after it", and
+  // there is a space after it
+  await mount(page, '## Title', 2);
+  await page.keyboard.type('a');
+  expect(await value(page)).toBe('##a Title');
+});
+
 test('nothing is inserted while the keyboard is holding a word', async ({ page }) => {
   await mount(page, 'hello,', 6);
   await page.evaluate(() => window.testEditor.view.contentDOM.dispatchEvent(new CompositionEvent('compositionstart')));

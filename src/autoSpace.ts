@@ -101,6 +101,36 @@ export function spaceAfterSign(state: EditorState, at: number, typed: string): b
   return true;
 }
 
+/** A line that is nothing but a heading's mark, with at most the three
+ *  spaces CommonMark allows in front of it and any number of quote marks:
+ *  `###`, `> ##`, `   #`. Seven hashes are not a heading, so six is the end.
+ *  A `#` anywhere else on the line is left alone — this is the mark the
+ *  writer has just typed at the start of a line, nothing else. */
+const HEADING_MARK = /^[ \t]{0,3}(?:>[ \t]{0,3})*#{1,6}$/;
+
+/** Whether a letter typed at `at` should get a space in front of it because
+ *  what stands before it is a heading's mark. `###x` is not a heading at all
+ *  — the space is the difference between a heading and a line that begins
+ *  with three hashes — so the writer who typed the hashes and went straight
+ *  on meant the heading, and the space they would have had to type is the
+ *  same lazy one this file puts after a sign. */
+export function spaceAfterHeadingMark(state: EditorState, at: number, typed: string): boolean {
+  if (at < 1 || at > state.doc.length) return false;
+  if (!WORD.test(typed)) return false; // a space answers for itself; a sign is the writer's
+  const line = state.doc.lineAt(at);
+  if (!HEADING_MARK.test(state.sliceDoc(line.from, at))) return false;
+  // "if the caret is exactly after it and not a space after it": a mark that
+  // has its space already is a heading being edited, not one being written,
+  // and the writer typing there is putting a word of their own in front of
+  // the title — not asking for a second space.
+  if (at < state.doc.length && /[ \t]/.test(state.sliceDoc(at, at + 1))) return false;
+  // `#` opens a comment in most of the languages a fenced block holds, and a
+  // formula has its own meaning for everything.
+  if (inCode(state, at - 1)) return false;
+  if (inMath(state, at - 1)) return false;
+  return true;
+}
+
 /** Whether an IME is composing right now. `compositionstart` fires before the
  *  first composed character reaches the document and `compositionend` after
  *  the last one, so the window between them is exactly "the keyboard is holding
@@ -143,7 +173,8 @@ export function autoSpace(on: () => boolean): Extension {
       at = fromA;
       typed = insert.toString();
     });
-    if (at < 0 || !spaceAfterSign(tr.startState, at, typed)) return tr;
+    if (at < 0) return tr;
+    if (!spaceAfterSign(tr.startState, at, typed) && !spaceAfterHeadingMark(tr.startState, at, typed)) return tr;
     // The space goes in front of the letter that was just typed (the letter's
     // own transaction has already put it at `at`); the caret follows the
     // letter, so it ends up after the space without being moved by hand.

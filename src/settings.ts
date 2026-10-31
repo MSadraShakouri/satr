@@ -178,7 +178,7 @@ export function openSettings(deps: SettingsDeps): void {
           ${toggle('highlightAll', settings.highlightAll)}
         </div>
         <div class="setting-item">
-          <div class="setting-item-info"><div class="setting-item-name">Space after a sign</div><div class="setting-item-description">Typing , . ! ? : ; or ، ؟ ؛ and then the next word puts one space in between — what Android's keyboards call auto-space. The space never lands in a number (3.14), a web address (example.com, https://…) or code.</div></div>
+          <div class="setting-item-info"><div class="setting-item-name">Space after a sign</div><div class="setting-item-description">Typing , . ! ? : ; or ، ؟ ؛ and then the next word puts one space in between — what Android's keyboards call auto-space. Writing straight on after a heading's # gets the same space, since ##Title is not a heading. The space never lands in a number (3.14), a web address (example.com, https://…) or code.</div></div>
           ${toggle('spaceAfterPunctuation', settings.spaceAfterPunctuation)}
         </div>
         <div class="setting-item">
