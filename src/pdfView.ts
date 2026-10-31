@@ -291,6 +291,16 @@ const DRAW_SCREENS = 1;
 const KEEP_SCREENS = 2.5;
 /** After the reader stops, before the band is drawn again. */
 const SETTLE_MS = 120;
+/** A step of zoom from the chrome — a button, a fit stop, a double tap —
+ *  used to arrive as a jump: the pages were suddenly bigger and the view
+ *  was suddenly somewhere else, with no way to see where it had gone. The
+ *  layout still goes to its new size at once, so the sharp pictures are
+ *  drawn for the size the pages are about to be rather than after they
+ *  get there; what is animated is the view the reader already had,
+ *  scaled and slid into the new one. A pinch needs none of this: it is
+ *  already following a finger. */
+const GLIDE_MS = 200;
+const GLIDE_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 interface Slab {
   page: number;
@@ -406,6 +416,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
   /** The document has been closed: a scan still running stops where it is. */
   let shut = false;
+  /** The zoom the reader asked for, on its way in. */
+  let gliding: Animation | null = null;
+  const endGlide = (): void => {
+    gliding?.cancel();
+    gliding = null;
+    doc.style.transformOrigin = '';
+  };
   let derived: PdfOutlineItem[] | null = null;
   let deriving: Promise<PdfOutlineItem[]> | null = null;
   let fit = 1; // the scale at which a page fills the pane's width
@@ -768,6 +785,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   };
   scroller.addEventListener('scroll', onScroll, { passive: true });
   // A hand on the document: it is the reader's now.
+  scroller.addEventListener('pointerdown', endGlide, { passive: true });
   scroller.addEventListener('pointerdown', letGo, { passive: true });
   scroller.addEventListener('wheel', letGo, { passive: true });
   scroller.addEventListener('keydown', letGo);
@@ -791,9 +809,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     return room > 0 && fit > 0 ? (room / tallest) / fit : 1;
   };
 
-  const zoomTo = (next: number, anchorY: number, anchorX?: number): void => {
+  const zoomTo = (next: number, anchorY: number, anchorX?: number, smooth = false): void => {
     const limited = clamp(next, MIN_ZOOM, MAX_ZOOM);
     if (limited === zoom) return;
+    const was = zoom;
     const pane = scroller.getBoundingClientRect();
     const paneTop = pane.top;
     const column = doc.getBoundingClientRect();
@@ -815,6 +834,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // the same slice of the page stays under the finger across as well as down
     const reach = scroller.scrollWidth - scroller.clientWidth;
     if (reach > 0) scroller.scrollLeft = clamp(doc.offsetLeft + across * doc.offsetWidth - (acrossAt - pane.left), 0, reach);
+    // Scaled about the point the zoom was asked for, which is the point
+    // the scroll above just pinned: the view the reader had, landing on
+    // the view they asked for. Measured after the scrolling, so the two
+    // agree to the pixel.
+    if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const box = doc.getBoundingClientRect();
+      doc.style.transformOrigin = `${acrossAt - box.left}px ${anchorY - box.top}px`;
+      gliding = doc.animate([{ transform: `scale(${was / zoom})` }, { transform: 'scale(1)' }],
+        { duration: GLIDE_MS, easing: GLIDE_EASE });
+      gliding.addEventListener('finish', endGlide);
+    }
     showCounter();
     drawBand();
     remember();
@@ -884,7 +914,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // down is a pinch, and a pinch is not a tap.
     if (!quick || !near || touches.size > 1) return;
     lastTap.time = 0;
-    zoomTo(zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1, event.clientY, event.clientX);
+    zoomTo(zoom < Math.sqrt(DOUBLE_TAP_ZOOM) ? DOUBLE_TAP_ZOOM : 1, event.clientY, event.clientX, true);
   };
   doc.addEventListener('pointerup', onTap);
 
@@ -913,7 +943,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const pane = scroller.getBoundingClientRect();
       // anchored at the top of the readable area, not the middle: a fit is
       // a request to see this page, from its top
-      zoomTo(mode === 'height' ? heightStop() : 1, pane.top + chromeTop(), pane.left + pane.width / 2);
+      zoomTo(mode === 'height' ? heightStop() : 1, pane.top + chromeTop(), pane.left + pane.width / 2, true);
     },
     fitNow: () => {
       if (Math.abs(zoom - 1) < 0.01) return 'width';
@@ -922,7 +952,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     zoomBy: (step: number) => {
       const pane = scroller.getBoundingClientRect();
       const top = pane.top + chromeTop();
-      zoomTo(zoom * step, top + (pane.bottom - top) / 2, pane.left + pane.width / 2);
+      zoomTo(zoom * step, top + (pane.bottom - top) / 2, pane.left + pane.width / 2, true);
     },
     zoomNow: () => zoom,
     thumbnail: async (page: number, width: number) => {
@@ -1017,8 +1047,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       window.clearTimeout(settleTimer);
       window.clearTimeout(placeTimer);
       shut = true;
+      endGlide();
       watcher.disconnect();
       scroller.removeEventListener('scroll', onScroll);
+      scroller.removeEventListener('pointerdown', endGlide);
       scroller.removeEventListener('pointerdown', letGo);
       scroller.removeEventListener('wheel', letGo);
       scroller.removeEventListener('keydown', letGo);

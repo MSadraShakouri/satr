@@ -125,6 +125,52 @@ test('zoom out and zoom in step the page', async ({ page }) => {
   expect(await pageWidth(page)).toBe(fit); // a step out undoes a step in
 });
 
+test('a step of zoom travels, and the pages are drawn for where it lands', async ({ page }) => {
+  // A tap on + used to swap one view for another with nothing in between.
+  // Now the view the reader had is scaled into the one they asked for.
+  // The layout is not what moves: it goes to its final size on the first
+  // frame, so the sharp pictures are being drawn for the size the pages
+  // are about to be rather than after they arrive.
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  const look = () => page.evaluate(() => {
+    const first = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    return {
+      shown: Math.round(first.getBoundingClientRect().width),
+      laid: first.offsetWidth,
+      moving: (document.querySelector('.pdf-doc') as HTMLElement).getAnimations().length,
+    };
+  });
+  const still = await look();
+  await control(page, 'Zoom in').click();
+  const frames = [];
+  for (let i = 0; i < 4; i += 1) { frames.push(await look()); await page.waitForTimeout(45); }
+  const landed = frames[0].laid;
+  expect(landed).toBeGreaterThan(still.laid);
+  for (const frame of frames) expect(frame.laid).toBe(landed); // the layout never travels
+  expect(frames[0].shown).toBeLessThan(landed); // what is seen starts where it was
+  expect(frames[0].moving).toBe(1);
+  expect(new Set(frames.map((frame) => frame.shown)).size).toBeGreaterThan(2); // and passes through
+
+  await page.waitForTimeout(600);
+  const rest = await look();
+  expect(rest.shown).toBe(landed); // arriving exactly where the layout already was
+  expect(rest.moving).toBe(0);
+  // nothing is left on the element afterwards, so a pinch starts clean
+  expect(await page.evaluate(() => (document.querySelector('.pdf-doc') as HTMLElement).style.transformOrigin)).toBe('');
+});
+
+test('a reader who does not want motion does not get it', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  const fit = await pageWidth(page);
+  await control(page, 'Zoom in').click();
+  await page.waitForTimeout(30);
+  expect(await pageWidth(page)).toBeGreaterThan(fit); // there at once, no travelling
+  expect(await page.evaluate(() => (document.querySelector('.pdf-doc') as HTMLElement).getAnimations().length)).toBe(0);
+});
+
 test('find marks every match and walks them', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
