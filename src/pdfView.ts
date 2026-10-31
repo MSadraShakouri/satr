@@ -154,15 +154,96 @@ const MATH_FONT = /katex|xbzar|xb ?zar|mathjax|stix|xits|asana|\bcm(mi|sy|ex|r)\
 const mathFont = (font: PdfFontInfo | undefined): boolean =>
   MATH_FONT.test(font?.name ?? '') || MATH_FONT.test(font?.familyName ?? '');
 
+/** The pairs bidi mirrors when it draws them in a right-to-left run. A PDF
+ *  stores the glyph that was drawn, so a parenthesis typed before a Persian
+ *  word comes back out of the file as the one that closes it: "(افراز)" is
+ *  read as ")افراز(". Which way a bracket faces is decided by the text it
+ *  belongs to, and that is the nearest letter with a direction of its own
+ *  before it — "TNB (کنج" keeps its bracket, "فرنه)" turns its round. */
+const MIRRORED: Record<string, string> = {
+  '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{', '<': '>', '>': '<',
+  '«': '»', '»': '«', '‹': '›', '›': '‹',
+};
+const RTL_LETTER = /[\u0590-\u05ff\u0600-\u06ff\u0700-\u074f\u0750-\u077f\u08a0-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/;
+const LTR_LETTER = /[A-Za-z\u00c0-\u024f\u0370-\u03ff\u0400-\u04ff\u1e00-\u1eff]/;
+
+/** Put the brackets of a right-to-left line back the way they were typed.
+ *  Whether a bracket was drawn mirrored is decided by the text it was
+ *  printed among, so this is settled before a formula is put back into the
+ *  line: "انحنا (Curvature)" keeps its brackets, because a bracket beside
+ *  Latin words belongs to them, while "یکه ( )" turns its round. */
+function unmirrorPieces(pieces: Piece[]): void {
+  const chars: string[] = [];
+  const owner: Piece[] = [];
+  for (const piece of pieces) for (const char of piece.text) { chars.push(char); owner.push(piece); }
+  if (!chars.some((char) => RTL_LETTER.test(char))) return;
+  const strongAt = (i: number): 'rtl' | 'ltr' | null =>
+    (RTL_LETTER.test(chars[i]) ? 'rtl' : LTR_LETTER.test(chars[i]) ? 'ltr' : null);
+  let changed = false;
+  const out = chars.map((char, i) => {
+    const flipped = MIRRORED[char];
+    if (!flipped) return char;
+    let side: 'rtl' | 'ltr' | null = null;
+    for (let j = i - 1; j >= 0 && !side; j -= 1) side = strongAt(j);
+    for (let j = i + 1; j < chars.length && !side; j += 1) side = strongAt(j);
+    if (side !== 'rtl') return char;
+    changed = true;
+    return flipped;
+  });
+  if (!changed) return;
+  const texts = new Map<Piece, string>();
+  out.forEach((char, i) => texts.set(owner[i], (texts.get(owner[i]) ?? '') + char));
+  for (const piece of pieces) piece.text = texts.get(piece) ?? piece.text;
+}
+
+/** Glyphs a file gives no reading for: control codes, the private-use area
+ *  a maths font parks its pieces in, and the replacement character. A
+ *  formula whose letters cannot be read is still a formula, and the
+ *  contents say so rather than leaving the gap it stood in empty. */
+const UNREADABLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ue000-\uf8ff\ufffd]+/gu;
+export const readableMath = (text: string): string => text.replace(UNREADABLE, '…');
+
+/** A bracket in a right-to-left line is printed away from the words it
+ *  holds — "TNB( کنج فرنه)", "یکه ( N )" — because the space beside it was
+ *  written on the other side. The space belongs outside the bracket. */
+function tidyBrackets(text: string): string {
+  if (!RTL_LETTER.test(text)) return text;
+  return text
+    .replace(/(\S)([([{«‹]) +/gu, '$1 $2')
+    .replace(/([([{«‹]) +/gu, '$1')
+    .replace(/ +([)\]}»›])/gu, '$1');
+}
+
 /** One line of the document as the type describes it, and how much of it
- *  was set in a formula or in code. */
-interface TypeLine { page: number; size: number; top: number; text: string; apart: number }
+ *  was set in a formula or in code. A line is held as the pieces it was
+ *  written in, each with the place it was written at, because the order the
+ *  pieces arrive in is the order the printer painted them, not the order
+ *  they are read in. */
+interface Piece { text: string; left: number; right: number; apart: number }
+interface TypeLine { page: number; size: number; top: number; text: string; apart: number; pieces: Piece[] }
+
+/** Does this line read right to left? Its letters decide. */
+function rightToLeft(pieces: Piece[]): boolean {
+  let rtl = 0;
+  let ltr = 0;
+  for (const piece of pieces) {
+    for (const char of piece.text) {
+      if (RTL_LETTER.test(char)) rtl += 1;
+      else if (LTR_LETTER.test(char)) ltr += 1;
+    }
+  }
+  return rtl > ltr;
+}
 
 /** The runs of a page, stitched back into lines. A browser's printer writes
  *  one text object per glyph for a complex script, so the runs arrive a
  *  letter at a time; what holds a line together is a shared font size and a
  *  shared baseline, and what ends one is the newline PDFium puts in the run
- *  that carries it. */
+ *  that carries it. A formula is painted in a pass of its own — the words of
+ *  a heading can arrive as run 310 and the formula standing between its
+ *  brackets as run 498 — so once the lines are built, a line that is nothing
+ *  but formula is put back into the line it shares a baseline with, at the
+ *  place along that line it was printed at. */
 function linesOfPage(runs: PdfTextRun[], page: number): TypeLine[] {
   const lines: TypeLine[] = [];
   let open: TypeLine | null = null;
@@ -170,23 +251,61 @@ function linesOfPage(runs: PdfTextRun[], page: number): TypeLine[] {
     const text = unligature(String(run.text ?? ''));
     const size = Math.round(run.fontSize * 10) / 10;
     const top = run.rect.origin.y;
+    const left = run.rect.origin.x;
+    const right = left + (run.rect.size?.width ?? 0);
     // Maths and code never vote and are never a heading, which is the rule
     // the note itself is read by (src/direction.ts). They are marked here,
     // one run at a time, because a formula and the sentence it sits in
     // share a line.
-    const apart = mathFont(run.font) || run.font?.monospaced ? text.trim().length : 0;
+    const maths = mathFont(run.font);
+    const apart = maths || run.font?.monospaced ? text.trim().length : 0;
+    const piece: Piece = { text: maths ? readableMath(text) : text, left, right, apart };
     if (open && open.size === size && Math.abs(open.top - top) <= size * 0.6) {
-      open.text += text;
+      open.text += piece.text;
       open.apart += apart;
+      open.pieces.push(piece);
     } else {
       if (open) lines.push(open);
-      open = { page, size, top, text, apart };
+      open = { page, size, top, text: piece.text, apart, pieces: [piece] };
     }
     if (/[\r\n]/.test(text)) { lines.push(open); open = null; }
   }
   if (open) lines.push(open);
-  for (const line of lines) line.text = line.text.replace(/\s+/g, ' ').trim();
+  for (const line of lines) {
+    unmirrorPieces(line.pieces);
+    line.text = line.pieces.map((piece) => piece.text).join('').replace(/\s+/g, ' ').trim();
+  }
+  rejoinFormulas(lines);
+  for (const line of lines) line.text = tidyBrackets(line.text);
   return lines.filter((line) => line.text);
+}
+
+/** A line of nothing but formula, standing on the baseline of a line of
+ *  words and within its span, is part of that line: "بردار نرمال یکه (N)"
+ *  reached the contents as "بردار نرمال یکه ( )" until the two were put back
+ *  together. Where it belongs along the line is where it was printed: in a
+ *  line read right to left, what is further right is read first. The span
+ *  test is what keeps a formula in one column of a two-column page out of a
+ *  heading in the other. */
+function rejoinFormulas(lines: TypeLine[]): void {
+  const whole = (line: TypeLine): number => line.text.replace(/\s+/gu, '').length;
+  const formulas = lines.filter((line) => line.apart >= whole(line) && whole(line) > 0);
+  for (const formula of formulas) {
+    const host = lines.find((line) => line !== formula && !formulas.includes(line)
+      && line.page === formula.page
+      && Math.abs(line.top - formula.top) <= Math.max(line.size, formula.size) * 0.6
+      && formula.pieces[0].left >= Math.min(...line.pieces.map((p) => p.left)) - 24
+      && formula.pieces[0].right <= Math.max(...line.pieces.map((p) => p.right)) + 24);
+    if (!host) continue;
+    const backwards = rightToLeft(host.pieces);
+    const after = host.pieces.findIndex((piece) => (backwards
+      ? piece.right < formula.pieces[0].right
+      : piece.left > formula.pieces[0].left));
+    host.pieces.splice(after < 0 ? host.pieces.length : after, 0, ...formula.pieces);
+    host.apart += formula.apart;
+    host.text = host.pieces.map((piece) => piece.text).join('').replace(/\s+/g, ' ').trim();
+    lines.splice(lines.indexOf(formula), 1);
+  }
 }
 
 /** The lines of a whole document, as a contents tree. */
