@@ -4190,7 +4190,7 @@ textarea,
   background: #fff;
   box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
 }
-/* "Adapt to theme". Obsidian hands pdf.js a page colour and an invert flag
+/* "Dark pages". Obsidian hands pdf.js a page colour and an invert flag
    and the page comes back out of the renderer already in the theme's own
    paper. PDFium's render options have no such flag — transparent or white
    is the whole choice — so the swap happens at the canvas instead. The hue

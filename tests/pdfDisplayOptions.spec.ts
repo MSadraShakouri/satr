@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { tinyPdf } from './support/tinyPdf';
 
 // The display options Obsidian keeps on its PDF toolbar: the two zoom
-// stops and "Adapt to theme". The test pages are A4, 595×842.
+// stops and "Dark pages". The test pages are A4, 595×842.
 
 test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 2 });
 
@@ -44,7 +44,7 @@ test('a document carries the display options, a note has none to carry', async (
   await boot(page, 'handout.pdf');
   await openDocument(page);
   await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
-  for (const title of ['Fit width', 'Fit height', 'Adapt to theme']) {
+  for (const title of ['Fit width', 'Fit height', 'Dark pages']) {
     await expect(page.locator('.menu-item', { hasText: title })).toBeVisible();
   }
   // and the things Obsidian has that we decided against are not smuggled in
@@ -94,12 +94,12 @@ test('the stop a page is sitting at is the one that is ticked', async ({ page })
   await expect(page.locator('.menu-item', { hasText: 'Fit width' })).not.toHaveClass(/mod-selected/);
 });
 
-test('adapt to theme turns the paper over, and only in the dark', async ({ page }) => {
+test('dark pages turns the paper over, and only in the dark', async ({ page }) => {
   const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
   await boot(page, 'handout.pdf'); // light
   await openDocument(page);
   expect(await inked()).toBe('none');
-  await option(page, 'Adapt to theme');
+  await option(page, 'Dark pages');
   expect(await inked()).toBe('none'); // adapting to a light theme leaves the paper alone
 
   // Dark, and nothing chosen yet: the paper is turned over without being
@@ -111,14 +111,14 @@ test('adapt to theme turns the paper over, and only in the dark', async ({ page 
   await expect(page.locator('body')).toHaveClass(/is-pdf-themed/);
   expect(await inked()).toContain('invert');
   // and turning it off is remembered, the way Obsidian remembers its own
-  await option(page, 'Adapt to theme');
+  await option(page, 'Dark pages');
   expect(await inked()).toBe('none');
   await boot(page, 'handout.pdf', 'dark');
   await openDocument(page);
   expect(await inked()).toBe('none');
 });
 
-test('the ⋮ carries adapt to theme as well, beside settings', async ({ page }) => {
+test('the ⋮ carries dark pages as well, beside settings', async ({ page }) => {
   // The one setting a reader of a PDF actually goes looking for was a menu
   // deep behind an icon on the toolbar. It is still there, and it is also
   // where someone hunting for a setting opens first.
@@ -126,18 +126,18 @@ test('the ⋮ carries adapt to theme as well, beside settings', async ({ page })
   await openDocument(page);
   await page.locator('#file-actions').click();
   const items = await page.locator('[role="menuitem"]').allInnerTexts();
-  expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Adapt to theme', 'Settings']);
+  expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Dark pages', 'Settings']);
   // on by default in the dark, and the menu says so
-  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Adapt to theme');
+  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Dark pages');
 
   // and it is the same switch, not a second one
   const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
   expect(await inked()).toContain('invert');
-  await page.locator('.menu-item', { hasText: 'Adapt to theme' }).click();
+  await page.locator('.menu-item', { hasText: 'Dark pages' }).click();
   await page.waitForTimeout(300);
   expect(await inked()).toBe('none');
   await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
-  await expect(page.locator('.menu-item', { hasText: 'Adapt to theme' })).not.toHaveClass(/mod-selected/);
+  await expect(page.locator('.menu-item', { hasText: 'Dark pages' })).not.toHaveClass(/mod-selected/);
 });
 
 test('the inversion is softened, so paper is not pitch and ink is not glare', async ({ page }) => {

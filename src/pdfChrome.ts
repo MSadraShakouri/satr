@@ -129,7 +129,7 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
     openMenu([
       stop('Fit width', 'width'), stop('Fit height', 'height'),
       'separator',
-      { title: 'Adapt to theme', checked: themed.on(), action: () => themed.toggle() },
+      { title: 'Dark pages', checked: themed.on(), action: () => themed.toggle() },
     ]);
   };
 
