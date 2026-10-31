@@ -376,6 +376,92 @@ test('the place across a zoomed page comes back too', async ({ page }) => {
   expect(back.left).toBeGreaterThan(parked.left * 0.8);
 });
 
+test('a zoomed page follows a drag at an angle instead of clipping to an axis', async ({ page }) => {
+  // Reported as a restricting feeling: "moving in a 30 degree downwards
+  // angle prefers only vertical movement rather than free moving... it
+  // clips to a specific direction of the 4 main". The browser rails a
+  // touch scroll to one axis once the gesture leans one way; the pane
+  // turns the rail off and the scrolling stays the browser's own.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const known = await page.evaluate(() => CSS.supports('scroll-axis-lock', 'none'));
+  test.skip(!known, 'this browser has no say over scroll axis locking');
+  const pane = await page.locator('#preview-pane').evaluate((el) => ({
+    lock: getComputedStyle(el).getPropertyValue('scroll-axis-lock'),
+    hand: getComputedStyle(el).touchAction,
+  }));
+  expect(pane.lock).toBe('none');
+  expect(pane.hand).not.toBe('none'); // the scrolling is still the browser's
+  await dragZoom(page, 240); // well past the pane's width
+  await page.waitForTimeout(500);
+  const reach = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    return pane.scrollWidth - pane.clientWidth;
+  });
+  expect(reach).toBeGreaterThan(100);
+  const cdp = await page.context().newCDPSession(page);
+  for (const angle of [20, 30, 60, 70]) {
+    const was = await page.evaluate((start) => {
+      const pane = document.querySelector('#preview-pane') as HTMLElement;
+      pane.scrollTop = 1200;
+      pane.scrollLeft = start;
+      return { x: pane.scrollLeft, y: pane.scrollTop };
+    }, Math.round(reach * 0.3));
+    await page.waitForTimeout(250);
+    const dist = 140;
+    const dx = -Math.cos((angle * Math.PI) / 180) * dist;
+    const dy = -Math.sin((angle * Math.PI) / 180) * dist;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 450 }] });
+    for (let step = 1; step <= 12; step += 1) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 200 + (dx * step) / 12, y: 450 + (dy * step) / 12 }] });
+      await page.waitForTimeout(14);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(900); // the throw lands
+    const now = await page.evaluate(() => {
+      const pane = document.querySelector('#preview-pane') as HTMLElement;
+      return { x: pane.scrollLeft, y: pane.scrollTop, reach: pane.scrollWidth - pane.clientWidth };
+    });
+    // nothing was measured against a wall
+    expect(now.x).toBeGreaterThan(1);
+    expect(now.x).toBeLessThan(now.reach - 1);
+    const moved = { x: now.x - was.x, y: now.y - was.y };
+    expect(moved.x).toBeGreaterThan(20);
+    expect(moved.y).toBeGreaterThan(20);
+    const went = (Math.atan2(moved.y, moved.x) * 180) / Math.PI;
+    expect(Math.abs(went - angle)).toBeLessThan(12);
+  }
+});
+
+test('a page at its own width does not drift sideways', async ({ page }) => {
+  // The other half of turning the rail off: an unzoomed page has nothing
+  // to either side, so a thumb that wanders while scrolling down must not
+  // take the page with it. Nothing about ordinary reading changes.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const room = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    return pane.scrollWidth - pane.clientWidth;
+  });
+  expect(room).toBeLessThan(2); // the page is at the pane's own width
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 600 }] });
+  for (let step = 1; step <= 12; step += 1) {
+    // a thumb going down and wandering 3px to the side as it goes
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 200 + step * 3, y: 600 - step * 20 }] });
+    await page.waitForTimeout(14);
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(700);
+  const now = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    return { left: pane.scrollLeft, top: pane.scrollTop, hand: getComputedStyle(pane).touchAction };
+  });
+  expect(now.top).toBeGreaterThan(100); // it scrolled down
+  expect(now.left).toBe(0); // and not a pixel sideways
+  expect(now.hand).not.toBe('none'); // nothing of the pane's own scrolling was taken away
+});
+
 test('a file that says .pdf and is not one says so where the pages would be', async ({ page }) => {
   await boot(page, { 'broken.pdf': 'data:application/pdf;base64,bm90IGEgUERGIGF0IGFsbA==' }, 'broken.pdf');
   await expect(page.locator('.pdf-unreadable')).toHaveText('“broken.pdf” could not be opened.', { timeout: 15000 });

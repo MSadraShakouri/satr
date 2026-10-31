@@ -4220,6 +4220,17 @@ textarea,
 .preview-pane.is-document {
   -webkit-mask-image: none;
   mask-image: none;
+  /* A zoomed page is moved about freely, diagonally included. Browsers
+     rail a touch scroll to one axis as soon as the gesture leans one way
+     -- Chromium's recogniser latches as soon as one direction leads the
+     other by a quarter, and the rail holds for the rest of the gesture --
+     so a drag at thirty degrees travelled in a straight line sideways and
+     the page felt restricted. This is the property made for the case (CSS
+     Overflow 5, "maps, image zoom"), and it is the scroller's own: a
+     browser that does not know it ignores it and rails as before. It only
+     has an effect where there is something to the sides to scroll to, so
+     a page at its own width reads exactly as it did. */
+  scroll-axis-lock: none;
 }
 .preview-pane article.is-document {
   display: flex;
