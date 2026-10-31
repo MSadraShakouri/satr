@@ -356,11 +356,11 @@ test('a file that says .pdf and is not one says so where the pages would be', as
 });
 
 /** Two fingers, apart or together, as the pane sees them. */
-async function pinch(page: Page, factor: number): Promise<void> {
-  await page.locator('#preview-pane').evaluate((pane, by: number) => {
+async function pinch(page: Page, factor: number, atX?: number): Promise<void> {
+  await page.locator('#preview-pane').evaluate((pane, [by, x]: [number, number | undefined]) => {
     const box = pane.getBoundingClientRect();
     const middleY = box.top + box.height / 2;
-    const middleX = box.left + box.width / 2;
+    const middleX = x ?? box.left + box.width / 2;
     const fire = (type: string, id: number, x: number, y: number): void => {
       pane.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
     };
@@ -372,8 +372,31 @@ async function pinch(page: Page, factor: number): Promise<void> {
     fire('pointermove', 2, middleX, middleY + moved);
     fire('pointerup', 1, middleX, middleY - moved);
     fire('pointerup', 2, middleX, middleY + moved);
-  }, factor);
+  }, [factor, atX] as [number, number | undefined]);
 }
+
+test('the page stays under the fingers, across as well as down', async ({ page }) => {
+  // Reported: zooming shifts the page sideways a little. It did. The point
+  // to hold was taken as a fraction of the *column*, and the column is the
+  // page plus padding, with the page centred in what is left -- neither of
+  // which grows with the zoom. So the fraction named a different place on
+  // the page at every size, and the page crept sideways under the fingers.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const spot = async (x: number): Promise<number> => page.evaluate((at) => {
+    const box = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    const rect = box.getBoundingClientRect();
+    return (at - rect.left) / rect.width;
+  }, x);
+  // off to one side, where the error is largest; the middle hides it
+  const held = 100;
+  const before = await spot(held);
+  await pinch(page, 2.5, held);
+  await page.waitForTimeout(400);
+  const after = await spot(held);
+  const width = await widthOf(page, 1);
+  expect(Math.abs(after - before) * width).toBeLessThan(2);
+});
 
 /** The second tap of a double tap, held and dragged: Google's own
  *  one-finger zoom, down to zoom in. */

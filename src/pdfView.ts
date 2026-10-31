@@ -1061,9 +1061,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const was = zoom;
     const pane = scroller.getBoundingClientRect();
     const paneTop = pane.top;
-    const column = doc.getBoundingClientRect();
     const acrossAt = anchorX ?? pane.left + pane.width / 2;
-    const across = clamp((acrossAt - column.left) / Math.max(1, column.width), 0, 1);
     const held = scroller.scrollTop + (anchorY - paneTop) - columnTop;
     let edge = 0;
     let found = { page: 1, into: 0 };
@@ -1072,6 +1070,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       if (held < edge + height + GAP) { found = { page: slab.page, into: clamp((held - edge) / Math.max(1, height), 0, 1) }; break; }
       edge += height + GAP;
     }
+    // Across, the point is held on the *page* under the finger, not on the
+    // column around it. The column carries padding and the page sits
+    // centred in it, and neither of those grows with the zoom -- so a
+    // fraction of the column is a different place on the page at every
+    // size, and the page slid sideways under the fingers by about ten
+    // pixels a step (measured at a quarter across a 390px screen).
+    const anchored = slabs[found.page - 1] ?? slabs[0];
+    const sheetWas = anchored.box.getBoundingClientRect();
+    const across = clamp((acrossAt - sheetWas.left) / Math.max(1, sheetWas.width), 0, 1);
     zoom = limited;
     letGo();
     layout();
@@ -1079,7 +1086,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     scroller.scrollTop = Math.max(0, offsetOf(found) - (anchorY - paneTop));
     // the same slice of the page stays under the finger across as well as down
     const reach = scroller.scrollWidth - scroller.clientWidth;
-    if (reach > 0) scroller.scrollLeft = clamp(doc.offsetLeft + across * doc.offsetWidth - (acrossAt - pane.left), 0, reach);
+    if (reach > 0) {
+      // Where that same point on that same page has landed, read after the
+      // layout rather than worked out from it, and put back under the finger.
+      const sheetNow = anchored.box.getBoundingClientRect();
+      const point = scroller.scrollLeft + (sheetNow.left - pane.left) + across * sheetNow.width;
+      scroller.scrollLeft = clamp(point - (acrossAt - pane.left), 0, reach);
+    }
     // Scaled about the point the zoom was asked for, which is the point
     // the scroll above just pinned: the view the reader had, landing on
     // the view they asked for. Measured after the scrolling, so the two
