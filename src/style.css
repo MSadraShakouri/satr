@@ -1923,6 +1923,22 @@ body[data-mode="preview"] .workspace > .preview-pane {
   opacity: 0;
   pointer-events: none;
 }
+/* The keyboard is not a scroll, and the navbar does not travel for it.
+   Reported: "when opening the keyboard, the nav bar scrolls up and the
+   typing bar shows, it happens behind it and it goes under a second … it's
+   really fast and not too noticeable, but once you notice it's infuriating".
+   Two moves made that: the app shrinks the WebView for the keyboard, so the
+   wrapper (fixed to the bottom of a window that just got shorter) lifts the
+   navbar up in one jump, and the slide above then took a fifth of a second
+   to carry it back down — behind the typing bar, which is translucent. With
+   no transition there is nothing to see on the way in: the bar is simply
+   not there, from the first frame the keyboard is. It fades back in when
+   the keyboard goes, in place, without the slide. */
+.keyboard-open .mobile-navbar,
+.keyboard-up .mobile-navbar {
+  transform: none;
+  transition: none;
+}
 /* A warning you can scroll past is a warning you never read: while the pill has
    something to say it stays put, and slides away only once it has nothing. */
 .is-hidden-nav .mobile-navbar.has-math-warning {

@@ -363,3 +363,40 @@ test.describe('the hand behind the scroll', () => {
     await expectOneMovePerBeat(page);
   });
 });
+
+// The keyboard's half of the same subject. Reported: "when opening the
+// keyboard, the nav bar scrolls up and the typing bar shows, it happens
+// behind it and it goes under a second … once you notice it's infuriating".
+// The navbar is gone from the frame the keyboard arrives in, rather than
+// sliding out over one.
+test('the navbar does not travel when the keyboard comes up', async ({ page }) => {
+  // A keyboard, the way the app measures one (layoutToolbar, src/main.ts):
+  // the visible viewport stops being the whole window.
+  await page.addInitScript(() => {
+    let calls = 0;
+    Object.defineProperty(window.visualViewport!, 'height', {
+      get() { calls += 1; return calls <= 1 ? window.innerHeight : window.innerHeight - 300; },
+    });
+  });
+  await boot(page);
+  const seen = await page.evaluate(async () => {
+    const bar = document.querySelector<HTMLElement>('.mobile-navbar')!;
+    const frames: { opacity: string; transform: string }[] = [];
+    const watch = (): void => {
+      if (!document.body.classList.contains('keyboard-open')) return void requestAnimationFrame(watch);
+      const style = getComputedStyle(bar);
+      frames.push({ opacity: style.opacity, transform: style.transform });
+      if (frames.length < 6) requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+    document.querySelector<HTMLElement>('.cm-content')!.focus();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return frames;
+  });
+  // Every frame the keyboard is up: nothing drawn, nothing moving.
+  expect(seen.length).toBeGreaterThan(2);
+  for (const frame of seen) {
+    expect(frame.opacity, JSON.stringify(seen)).toBe('0');
+    expect(frame.transform, JSON.stringify(seen)).toBe('none');
+  }
+});
