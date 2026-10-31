@@ -631,6 +631,18 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
       if (number) next.setAttribute('start', String(number));
       next.append(...run);
       previous.after(next);
+      // A checklist and the bullets under it were one list in the writing,
+      // and nothing about them restarts: the only difference is whether a box
+      // is drawn. So the halves do not set each other apart — two lists'
+      // margins put 16px between them that source mode does not have, and
+      // where a blank line *was* typed, its one line of air is already drawn
+      // by gap-above on the item below. An ordered list cut where its
+      // alphabet or its punctuation changes keeps its gap: there the count
+      // starts again, and the gap is what says so.
+      if (bullets) {
+        previous.classList.add('cut-below');
+        next.classList.add('cut-above');
+      }
       previous = next;
     }
     for (const run of runs) tighten(run);

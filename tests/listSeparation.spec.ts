@@ -103,6 +103,55 @@ test('the two lists are drawn with a gap between them', async ({ page }) => {
   expect(gap.between).toBeGreaterThan(gap.inside + 4);
 });
 
+// Two lists, but not two lists set apart. Reported: "source and preview
+// checklist items aren't in the exact same vertical height" — the bullets
+// under a checklist sat 16px lower in the reading view than in source mode,
+// which is the margin the two halves claimed from each other once they were
+// cut. Nothing restarts between them, so nothing is owed.
+test('the halves of a bullet list keep the room they were written with', async ({ page }) => {
+  const room = await page.evaluate(async () => {
+    const { renderMarkdown } = await window.__satr.load('/src/markdown.ts');
+    const pane = document.createElement('div');
+    pane.className = 'preview-pane';
+    pane.style.cssText = 'position:fixed;inset:0;background:white;z-index:99;overflow:auto';
+    document.body.appendChild(pane);
+    await document.fonts.ready;
+    // Where the item's text lands, not where its box starts: the one line of
+    // air a typed blank line is worth is drawn as padding inside the item
+    // below it, which a box-to-box measurement cannot see and a reader can.
+    const textTop = (item: Element): number => {
+      const range = document.createRange();
+      range.selectNodeContents(item);
+      return range.getBoundingClientRect().top;
+    };
+    const step = (text: string): number[] => {
+      pane.innerHTML = renderMarkdown(text);
+      const items = [...pane.querySelectorAll('li')];
+      return items.slice(1).map((item, i) => Math.round(textTop(item) - textTop(items[i])));
+    };
+    const tight = step('- [ ] one\n- [x] two\n- three\n- four');
+    const spaced = step('- [ ] one\n- [x] two\n\n- three\n- four');
+    // what one typed blank line is worth, while that render is still up
+    const air = Math.round(parseFloat(getComputedStyle(pane.querySelector('li.gap-above')!).paddingBlockStart));
+    const plain = step('- one\n- two\n- three\n- four');
+    pane.remove();
+    return { tight, spaced, plain, air };
+  });
+  // Stepping across the cut costs what stepping inside either half costs:
+  // the halves add nothing between them. (Within a pixel — a row with a
+  // checkbox in it is a pixel taller than a row without one.)
+  expect(Math.abs(room.tight[1] - room.tight[0])).toBeLessThanOrEqual(1);
+  expect(Math.abs(room.tight[1] - room.tight[2])).toBeLessThanOrEqual(1);
+  expect(room.tight[2]).toBe(room.plain[2]);
+  // A blank line that was typed is worth one line of air, and only one: the
+  // halves do not add their margins on top of it.
+  expect(room.air).toBeGreaterThan(8);
+  expect(Math.abs(room.spaced[1] - (room.tight[1] + room.air))).toBeLessThanOrEqual(1);
+  // and it is worth that only where it was typed
+  expect(room.spaced[0]).toBe(room.tight[0]);
+  expect(room.spaced[2]).toBe(room.tight[2]);
+});
+
 // A bullet list and a checklist are two lists.
 //
 // Reported: "- and - [ ] lists merge if there's nothing between them (even
