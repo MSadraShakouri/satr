@@ -148,3 +148,29 @@ test('print: the phone’s font scale changes neither the pages nor the hand-off
     .replace(/ ?data-split-(?:to|from)="[^"]*"/g, '');
   expect(withoutRefs(scaled)).toBe(withoutRefs(plain));
 });
+
+// Paper has its own floor. A formula too wide to break is set smaller rather
+// than run off the page (src/mathLayout.ts) -- on screen as far as 85%, in
+// print only as far as 90%: "85 is good but I say we should only do this for
+// preview. In print I think we either shouldn't do it or have it at 90 or
+// something". A page is wider than a phone, so less is needed; and paper
+// cannot pan sideways, so what is left over is still set smaller than it was.
+//
+// Wikipedia's cross-product determinant, which wants about 990px in a column
+// of roughly 600.
+const WIDE_DETERMINANT = String.raw`$$
+\mathbf{a} \times \mathbf{b} = \det \begin{bmatrix}
+  \hat\mathbf{i} & \hat\mathbf{j} & \hat\mathbf{k} \\
+  a_1 & a_2 & a_3 \\
+  b_1 & b_2 & b_3 \\
+\end{bmatrix}
+$$`;
+
+test('a formula too wide for the page is set smaller, and no smaller than 90%', async ({ page }) => {
+  const options: PrintOptions = { columns: 1, direction: 'ltr', mathAlign: 'center' };
+  const html = await printWeb(page, WIDE_DETERMINANT, options);
+  const fitted = /class="[^"]*math-flow[^"]*is-fitted[^"]*"[^>]*style="[^"]*font-size:\s*([\d.]+)%/.exec(html)
+    ?? /style="[^"]*font-size:\s*([\d.]+)%[^"]*"[^>]*class="[^"]*is-fitted/.exec(html);
+  expect(fitted, `the print document should have set this formula smaller:\n${html.slice(0, 400)}`).toBeTruthy();
+  expect(parseFloat(fitted![1])).toBe(90);
+});

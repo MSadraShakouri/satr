@@ -10,8 +10,10 @@
 // Inline math: the paragraph decides where lines end; units simply wrap, and
 // any unit that lands at the start of a line switches to its continued form.
 //
-// A single unit wider than the whole line is allowed to break internally as a
-// last resort (KaTeX's own breaks), rather than overflowing the screen.
+// A single unit wider than the whole line is set smaller until it fits, as
+// far as a floor and no further; what is still too wide at the floor is
+// allowed to break internally as a last resort (KaTeX's own breaks), rather
+// than overflowing the screen.
 //
 // Height. KaTeX sizes a formula from font struts, then the screen preview
 // clips that box (overflow-y: hidden, so a wide formula can scroll sideways
@@ -31,6 +33,10 @@ function contentWidth(el: HTMLElement): number {
 }
 
 function reset(flow: HTMLElement, units: HTMLElement[]): void {
+  // Measure at the written size: a formula set smaller last time would
+  // otherwise be measured small and shrink again on every pass.
+  flow.style.fontSize = '';
+  flow.classList.remove('is-fitted');
   flow.querySelectorAll(':scope > br.math-br').forEach((br) => br.remove());
   flow.classList.remove('is-wrapped');
   for (const unit of units) unit.classList.remove('is-line-start', 'is-overwide');
@@ -108,12 +114,80 @@ function displayStarts(units: HTMLElement[], available: number, plain: number[],
   return starts;
 }
 
-function applyDisplay(flow: HTMLElement, units: HTMLElement[], available: number, plain: number[], cont: number[], starts: number[]): void {
+/** How small a display formula may be set before it is left to pan instead.
+ *  Asked for: "math sometimes doesn't fit in screen no matter what, maybe
+ *  make the font smaller in those specific cases? (Have a limit to how
+ *  smaller it gets)" — and then: 85 on screen, "in print ... have it at 90 or
+ *  something". The screen can pan sideways, so it may go further; paper
+ *  cannot pan at all, but a page is wider than a phone, so it needs less. */
+const FLOOR_SCREEN = 0.85;
+const FLOOR_PRINT = 0.9;
+
+/** A piece of a formula is as wide as it is written: there is no break point
+ *  inside a fraction or a root, and cutting one in half would change what it
+ *  says. What is left, once the breaking has done all it can, is one piece
+ *  wider than the column — measured over the whole corpus, five formulas in
+ *  5 296. Those are set smaller, by exactly as much as they are over and no
+ *  more, down to the floor. Nothing that fits is ever touched, so a page of
+ *  formulas keeps one size. */
+function fitToWidth(flow: HTMLElement, units: HTMLElement[], available: number, widths: number[], starts: number[], floor: number): number {
+  let worst = 0;
   const n = units.length;
+  for (const i of starts) {
+    const end = starts.find((s) => s > i) ?? n;
+    if (end - 1 === i) worst = Math.max(worst, widths[i]); // a piece alone on its line
+  }
+  if (worst <= available || !(available > 0)) return 1;
+  const scale = Math.max(floor, available / worst);
+  // A tenth of a percent is not a size, and setting one costs a reflow.
+  if (scale > 0.999) return 1;
+  flow.style.fontSize = `${(scale * 100).toFixed(1)}%`;
+  flow.classList.add('is-fitted');
+  return scale;
+}
+
+function applyDisplay(flow: HTMLElement, units: HTMLElement[], available: number, plain: number[], cont: number[], starts: number[], floor: number, fitted: Fitted[]): void {
+  const n = units.length;
+  const widths = units.map((_, i) => (i === 0 ? plain[0] : cont[i]));
+  const scale = fitToWidth(flow, units, available, widths, starts, floor);
+  if (scale < 1) fitted.push({ flow, available, scale, floor });
   for (const i of starts) {
     if (i > 0) breakBefore(flow, units[i]);
     const end = starts.find((s) => s > i) ?? n;
-    if (end - 1 === i && (i === 0 ? plain[0] : cont[i]) > available) units[i].classList.add('is-overwide');
+    // Still over at the floor: the last resort stands, now on a smaller box.
+    if (end - 1 === i && widths[i] * scale > available) units[i].classList.add('is-overwide');
+  }
+}
+
+interface Fitted { flow: HTMLElement; available: number; scale: number; floor: number }
+
+/** The second half of the fit, for the few formulas that were set smaller.
+ *  A formula's width is not quite linear in its size — KaTeX picks a bracket
+ *  or a root from a ladder of drawn sizes, and a smaller box can land on the
+ *  same rung — so the size worked out from the measurement can come up a
+ *  pixel or five short. Those pixels are taken off here, in one read and one
+ *  write for the whole page, and never below the floor. */
+function settleFitted(fitted: Fitted[]): void {
+  // Two rounds at most, each one read for the whole page and then one write.
+  // The first takes off what the measurement could not predict; the second is
+  // for the formula whose brackets changed rung on the way down. A pixel is
+  // left in hand so rounding cannot put it back over.
+  let live = fitted.filter((f) => f.scale > f.floor);
+  for (let round = 0; round < 2 && live.length; round += 1) {
+    const over = live.map(({ flow }) => {
+      const box = flow.parentElement;
+      return box ? box.scrollWidth - box.clientWidth : 0;
+    });
+    const again: Fitted[] = [];
+    live.forEach((f, i) => {
+      if (over[i] <= 1) return;
+      const next = Math.max(f.floor, f.scale * ((f.available - 1) / (f.available + over[i])));
+      if (next >= f.scale) return;
+      f.flow.style.fontSize = `${(next * 100).toFixed(1)}%`;
+      f.scale = next;
+      if (next > f.floor) again.push(f);
+    });
+    live = again;
   }
 }
 
@@ -334,6 +408,9 @@ export function layoutMath(root: HTMLElement): void {
   const view = scroller ? scroller.getBoundingClientRect() : null;
   const todo = sectionsOf(root).filter((section) => !settled.has(section) && worthLayingOut(section, view));
   if (!todo.length) return;
+  // The print iframe is laid out through here too (src/exportPdf.ts), and
+  // paper has its own floor.
+  const floor = root.ownerDocument === document ? FLOOR_SCREEN : FLOOR_PRINT;
 
   const flows: Flow[] = [];
   for (const section of todo) {
@@ -374,17 +451,19 @@ export function layoutMath(root: HTMLElement): void {
   // Write.
   for (const f of flows) if (f.display) f.flow.classList.remove('is-measuring');
   const inline: Flow[] = [];
+  const fitted: Fitted[] = [];
   for (const f of flows) {
     if (!(f.available > 0)) continue; // no width to lay out against: ask again later
     settled.add(f.flow);
     if (f.display) {
-      applyDisplay(f.flow, f.units, f.available, f.plain, f.cont, displayStarts(f.units, f.available, f.plain, f.cont));
+      applyDisplay(f.flow, f.units, f.available, f.plain, f.cont, displayStarts(f.units, f.available, f.plain, f.cont), floor, fitted);
     } else {
       f.units.forEach((unit, index) => { if (f.plain[index] > f.available) unit.classList.add('is-overwide'); });
       if (f.units.length > 1) inline.push(f);
     }
   }
   markLineStarts(inline);
+  settleFitted(fitted);
 
   // The print iframe is measured here too; leave it alone (the PDF is already
   // right, and its WebView does not clip the way the preview does).

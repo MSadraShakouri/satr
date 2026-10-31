@@ -346,3 +346,79 @@ test('an overwide group breaks at its own punctuation, never at an arbitrary ato
   expect(report.narrow.balanced).toBe(true);
   expect(report.narrow.lines.join(' ')).toContain('κ');
 });
+
+// A piece that cannot be broken is set smaller instead of running off the
+// screen. Asked for: "math sometimes doesn't fit in screen no matter what,
+// maybe make the font smaller in those specific cases? (Have a limit to how
+// smaller it gets)", then "85 is good but I say we should only do this for
+// preview. In print I think we either shouldn't do it or have it at 90".
+//
+// The formula is Wikipedia's Navier–Stokes one, which is 52px past a phone
+// column at its written size: a single \frac with no break point in it.
+const NAVIER = String.raw`\rho(x,y,z) = \frac{1}{r^2 + x^2 + y^2 + z^2} f\left(\frac{x^2 + y^2}{(r^2 + x^2 + y^2 + z^2)^2}\right).`;
+const SHORT = String.raw`a + b = c`;
+
+/** Render formulas in a column of `width` and report what each one did. */
+async function fitted(page: import('@playwright/test').Page, texs: string[], width: number) {
+  return page.evaluate(async ({ texs, width }) => {
+    const { renderMath } = await window.__satr.load('/src/math.ts');
+    const { layoutMath } = await window.__satr.load('/src/mathLayout.ts');
+    document.getElementById('fit-host')?.remove();
+    const host = document.createElement('article');
+    host.id = 'fit-host';
+    host.style.cssText = `width:${width}px;position:fixed;inset:0 auto auto 0;background:white;z-index:5;font-size:16px`;
+    host.innerHTML = texs.map((tex) => renderMath(tex, true)).join('');
+    document.body.appendChild(host);
+    await document.fonts.ready;
+    layoutMath(host);
+    return [...host.querySelectorAll<HTMLElement>('.math-display')].map((box) => {
+      const flow = box.querySelector<HTMLElement>('.math-flow')!;
+      return {
+        size: flow.style.fontSize || '100%',
+        fitted: flow.classList.contains('is-fitted'),
+        overflow: Math.round(box.scrollWidth - box.clientWidth),
+      };
+    });
+  }, { texs, width });
+}
+
+test('a formula too wide to break is set smaller, and one that fits is left alone', async ({ page }) => {
+  await page.goto('/');
+  const [wide, short] = await fitted(page, [NAVIER, SHORT], 337);
+  expect(wide.fitted).toBe(true);
+  expect(parseFloat(wide.size)).toBeGreaterThanOrEqual(85);
+  expect(parseFloat(wide.size)).toBeLessThan(100);
+  expect(wide.overflow).toBeLessThanOrEqual(1);
+  // and the formula beside it keeps the size it was written at
+  expect(short.fitted).toBe(false);
+  expect(short.size).toBe('100%');
+  // By as much as it is over and no more: the same formula in a column it
+  // nearly fits is barely touched, where a phone column takes it to the floor.
+  const [roomier] = await fitted(page, [NAVIER], 370);
+  expect(roomier.fitted).toBe(true);
+  expect(parseFloat(roomier.size)).toBeGreaterThan(parseFloat(wide.size));
+  expect(roomier.overflow).toBeLessThanOrEqual(1);
+});
+
+test('the shrinking stops at the floor, and what is still too wide pans', async ({ page }) => {
+  await page.goto('/');
+  // half the column: no size above the floor can save this one
+  const [tiny] = await fitted(page, [NAVIER], 170);
+  expect(parseFloat(tiny.size)).toBe(85);
+});
+
+test('a formula is measured at its written size, not at the size it was given', async ({ page }) => {
+  await page.goto('/');
+  const first = await fitted(page, [NAVIER], 337);
+  // the same formula laid out again must land on the same size, not shrink
+  // once per pass
+  const again = await page.evaluate(async () => {
+    const { layoutMath, clearMathLayout } = await window.__satr.load('/src/mathLayout.ts');
+    const host = document.getElementById('fit-host') as HTMLElement;
+    for (let i = 0; i < 3; i += 1) { clearMathLayout(); layoutMath(host); }
+    const flow = host.querySelector<HTMLElement>('.math-flow')!;
+    return { size: flow.style.fontSize, overflow: Math.round(host.querySelector<HTMLElement>('.math-display')!.scrollWidth - host.querySelector<HTMLElement>('.math-display')!.clientWidth) };
+  });
+  expect(again.size).toBe(first[0].size);
+  expect(again.overflow).toBeLessThanOrEqual(1);
+});
