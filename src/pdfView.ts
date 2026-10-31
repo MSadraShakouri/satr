@@ -317,8 +317,9 @@ const SETTLE_MS = 120;
  *  drawn for the size the pages are about to be rather than after they
  *  get there; what is animated is the view the reader already had,
  *  scaled and slid into the new one. A pinch needs none of this: it is
- *  already following a finger. */
-const GLIDE_MS = 200;
+ *  already following a finger. 200ms read as a flinch rather than a move;
+ *  300 is long enough to be followed by eye and still answers the tap. */
+const GLIDE_MS = 300;
 const GLIDE_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 interface Slab {
