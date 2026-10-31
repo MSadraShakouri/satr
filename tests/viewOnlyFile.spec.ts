@@ -87,5 +87,9 @@ test('a file tapped twice does not come back raw on the next open', async ({ pag
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
   await expect(page.locator('#preview-pane img')).toBeVisible();
   expect(await page.evaluate(() => document.body.dataset.mode)).toBe('preview');
-  expect(await page.evaluate(() => localStorage.getItem('satr:view:Notes/photo.png'))).not.toContain('"mode":"edit"');
+  // Whether anything was written at all is a race with the restore this
+  // test does not care about -- what it is here for is that the mode is
+  // never written as edit. Nothing written says that just as well.
+  const saved = await page.evaluate(() => localStorage.getItem('satr:view:Notes/photo.png'));
+  expect(saved ?? '').not.toContain('"mode":"edit"');
 });
