@@ -66,6 +66,9 @@ test('the panel searches the document, and a result turns to its page', async ({
   await box.fill('Page 4');
   await expect(page.locator('#right-panel .search-result-file-match')).toHaveCount(1, { timeout: 15000 });
   await expect(page.locator('#right-panel')).toContainText('1 result');
+  // A result reads as the text it was found in, with the word marked.
+  await expect(page.locator('#right-panel .search-result-file-matched-text')).toHaveText('Page 4');
+  await expect(page.locator('#right-panel .search-result-line-number').first()).toHaveText('4');
   await expect(page.locator('#right-panel [data-scope="note"]')).toHaveText('This document');
   await page.locator('#right-panel .search-result-file-match').first().click();
   await page.waitForTimeout(900);

@@ -60,7 +60,14 @@ export interface PdfOutlineItem {
   children: PdfOutlineItem[];
 }
 /** One match: the page it is on, and the boxes to draw over it. */
-export interface PdfHit { page: number; rects: PageRect[] }
+export interface PdfHit {
+  page: number;
+  rects: PageRect[];
+  /** The words either side of the match, as PDFium read them off the page,
+   *  so a result can be shown as the line it was found in rather than as a
+   *  page number on its own. */
+  context?: { before: string; match: string; after: string };
+}
 export interface PdfHandle {
   pages: number;
   place(): PdfPlace;
@@ -1190,7 +1197,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       if (!keyword.trim()) return [];
       try {
         const found = await engine.searchAllPages(document_, keyword).toPromise();
-        return found.results.map((result) => ({ page: result.pageIndex + 1, rects: result.rects }));
+        return found.results.map((result) => ({
+          page: result.pageIndex + 1,
+          rects: result.rects,
+          context: result.context
+            ? { before: result.context.before ?? '', match: result.context.match ?? keyword, after: result.context.after ?? '' }
+            : undefined,
+        }));
       } catch { return []; }
     },
     showHits: (hits: PdfHit[], current: number) => {

@@ -48,9 +48,9 @@ export interface SidebarDeps {
   /** How many pages the open tab holds, where it holds a document rather
    *  than a note; 0 for a note. */
   documentPages?(): number;
-  /** Every page of the open document a word is on, marked on the pages as
-   *  well. The page of each hit, in reading order. */
-  findInDocument?(query: string): Promise<number[]>;
+  /** Every hit for a word in the open document, in reading order, marked on
+   *  the pages as well: the page it is on and the words either side of it. */
+  findInDocument?(query: string): Promise<{ page: number; before: string; match: string; after: string }[]>;
   /** Show the hit a result row names. */
   onDocumentHit?(index: number): void;
   /** The name of a note another app handed over — its path is a token
@@ -276,14 +276,17 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
     const found = re && query && find ? await find(query) : [];
     if (mine !== documentRun) return;
     if (found.length) {
-      // One row per hit, named by its page; a page with several hits says so
-      // once, with how many.
-      const perPage = new Map<number, number[]>();
-      found.forEach((page, i) => perPage.set(page, [...(perPage.get(page) ?? []), i]));
-      const rows = [...perPage].map(([page, hits]) => `<div class="search-result-file-match" data-page="${page}" data-hit="${hits[0]}">`
-        + `<span class="search-result-text">Page ${page}</span>`
-        + (hits.length > 1 ? `<span class="tree-item-flair">${hits.length}</span>` : '')
-        + `</div>`).join('');
+      // A result reads as the line it was found in, the way a note's results
+      // do -- PDFium gives back the words either side of a match -- with the
+      // page in the column the line number stands in for a note.
+      const rows = found.slice(0, MAX_TOTAL).map((hit, i) => {
+        const dir = RTL_FIRST.test(`${hit.before}${hit.match}`) ? 'rtl' : 'ltr';
+        return `<div class="search-result-file-match" data-page="${hit.page}" data-hit="${i}" dir="${dir}">`
+          + `<span class="search-result-line-number">${hit.page}</span>`
+          + `<span class="search-result-text">${escapeHtml(hit.before)}`
+          + `<span class="search-result-file-matched-text">${escapeHtml(hit.match)}</span>`
+          + `${escapeHtml(hit.after)}</span></div>`;
+      }).join('');
       html = `<div class="search-result-file-matches">${rows}</div>${html}`;
     }
     if (!html) html = `<div class="pane-empty">${re ? 'No results' : 'No table of contents'}</div>`;

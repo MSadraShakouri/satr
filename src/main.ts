@@ -3156,7 +3156,12 @@ const sidebar = createRightSidebar(rightPanel, {
     documentHits = await handle.find(query);
     if (pdfView !== handle) return [];
     handle.showHits(documentHits, 0);
-    return documentHits.map((hit) => hit.page + 1);
+    return documentHits.map((hit) => ({
+      page: hit.page,
+      before: hit.context?.before ?? '',
+      match: hit.context?.match ?? query,
+      after: hit.context?.after ?? '',
+    }));
   },
   onDocumentHit: (index) => {
     toggleOutline(false);
