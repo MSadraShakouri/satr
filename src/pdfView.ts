@@ -20,7 +20,7 @@
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
 import type { Rect as PageRect } from '@embedpdf/models';
 import { pdfium } from './pdfiumEngine';
-import { asFileWroteIt, inReadingOrder } from './pdfText';
+import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
  *  offset, so the place survives a different zoom, a rotation, or a wider
@@ -129,6 +129,9 @@ const BODY_PER_PAGE = 3;
 const BODY_FLOOR = 6;
 /** A paragraph is not a heading, however large it is set. */
 const MAX_TITLE = 120;
+/** More characters than a page can hold: the engine clamps it to the page's
+ *  own count, which saves counting the glyphs first (measured: identical). */
+const ALL_OF_A_PAGE = 1_000_000;
 /** Only a line that filled its own measure can be the top half of a wrapped
  *  heading; a short line that happens to sit above another is two headings. */
 const WRAP_MIN = 45;
@@ -1403,7 +1406,19 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
             if (!slab?.proxy) continue;
             try {
               const read = await engine.getPageTextRuns(document_, slab.proxy).toPromise();
-              lines.push(...linesOfPage(read.runs ?? [], i + 1));
+              // The runs have the letters in reading order and not one
+              // joiner; the text layer has every joiner (src/pdfText.ts).
+              // A page is asked for all of it: the count is clamped to
+              // what the page holds, so there is nothing to measure first.
+              let joiners: Joiners | null = null;
+              try {
+                const [raw] = await engine.getTextSlices(document_,
+                  [{ pageIndex: i, charIndex: 0, charCount: ALL_OF_A_PAGE }]).toPromise();
+                joiners = joinersIn(raw ?? '');
+              } catch { /* a page that will not give up its text layer keeps the runs' spelling */ }
+              for (const line of linesOfPage(read.runs ?? [], i + 1)) {
+                lines.push(joiners ? { ...line, text: withJoiners(line.text, joiners) } : line);
+              }
             } catch { /* a page that will not give up its text is not the end of the scan */ }
             // The engine runs on this thread. Without a breath every few
             // pages a long document would hold on to the tap that opened

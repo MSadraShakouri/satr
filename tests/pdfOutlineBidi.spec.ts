@@ -13,6 +13,10 @@ const NOTE = [
   '## ضرایب چندجمله ای (افراز)', '', BODY, '', BODY, '',
   '### انحنا (Curvature)', '', BODY, '', BODY, '',
   '### بردار نرمال یکه ($\\vec{N}$)', '', BODY, '', BODY, '',
+  // A heading with the joiner Persian is written with: the geometry a
+  // contents list is read from has no zero-width non-joiner in it at all,
+  // so this used to come back "ریشههای انقلاب و دستهبندی آنها".
+  '## ریشه\u200cهای انقلاب و دسته\u200cبندی آن\u200cها', '', BODY, '', BODY, '',
 ].join('\n');
 
 test('the contents of an exported note keep their brackets and their formulas', async ({ page, browser }) => {
@@ -57,6 +61,8 @@ test('the contents of an exported note keep their brackets and their formulas', 
   // KaTeX's letters are in the file, so the N is read back.
   expect(titles).toContain('بردار نرمال یکه (N)');
   expect(titles.join(' ')).not.toContain(')افراز(');
+  // and the joiners are where the note put them
+  expect(titles).toContain('ریشه\u200cهای انقلاب و دسته\u200cبندی آن\u200cها');
 });
 
 test('a formula whose letters the file gives no reading for leaves a mark', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { asFileWroteIt, hasLamAlef, inReadingOrder, type GlyphBox } from '../src/pdfText';
+import { asFileWroteIt, hasLamAlef, inReadingOrder, joinersIn, withJoiners, type GlyphBox } from '../src/pdfText';
 
 // A Persian page laid out visually — Word, and most things that typeset
 // Arabic script — writes the lam-alef pair in the order the two letters are
@@ -65,4 +65,44 @@ test('every ligature in a line is put back, not just the first', () => {
   const file = `${ALEF}نق${ALEF}${LAM}ب ${ALEF}س${ALEF}${LAM}می`;
   const boxes = painted([300, 290, 280, 265, 270, 250, 240, 230, 220, 205, 210, 190, 180]);
   expect(inReadingOrder(file, boxes)).toBe('انقلاب اسلامی');
+});
+
+// ---- The joiners the geometry drops ----
+
+test('a line gets back the joiners the page text has for it', () => {
+  // the contents are read off the geometry, which has no ZWNJ at all
+  const page = 'جلسه اول\r\nانقالب اسالمی و ریشه\u200cهای آن\r\nواژه\u200cشناسی\r\n';
+  const joiners = joinersIn(page);
+  expect(joiners).not.toBeNull();
+  expect(withJoiners('انقلاب اسلامی و ریشههای آن', joiners)).toBe('انقلاب اسلامی و ریشه\u200cهای آن');
+  expect(withJoiners('واژهشناسی', joiners)).toBe('واژه\u200cشناسی');
+  // a line with nothing to put back comes through as it is
+  expect(withJoiners('جلسه اول', joiners)).toBe('جلسه اول');
+});
+
+test('a page without joiners costs nothing, and an unknown line is left alone', () => {
+  expect(joinersIn('نظریه اول: مکتب تضاد')).toBeNull();
+  expect(withJoiners('هرچه', null)).toBe('هرچه');
+  const joiners = joinersIn('یک\u200cدو سه');
+  expect(withJoiners('چهار پنج', joiners)).toBe('چهار پنج'); // not on this page
+});
+
+test('a file that spells its ligatures the right way round is matched too', () => {
+  // no reversal in this text layer: the line is found as it reads
+  const joiners = joinersIn('کلاس\u200cهای لازم\r\n');
+  expect(withJoiners('کلاسهای لازم', joiners)).toBe('کلاس\u200cهای لازم');
+});
+
+test('two joiners in one line both come back, in the right places', () => {
+  const joiners = joinersIn('می\u200cتوان گفت نمونه\u200cهای تاریخی\r\n');
+  expect(withJoiners('میتوان گفت نمونههای تاریخی', joiners)).toBe('می\u200cتوان گفت نمونه\u200cهای تاریخی');
+});
+
+test('a wrapped heading, which is on the page in pieces, still gets them', () => {
+  // the contents join a heading that was printed over two lines, and turn
+  // its brackets back the right way round -- so the line as a whole is on
+  // no page, and each word has to be found on its own
+  const joiners = joinersIn('نمونه\u200cهای تاریخی )انقلاب\u200cهای\r\nمارکسیستی(\r\n');
+  expect(withJoiners('نمونههای تاریخی (انقلابهای مارکسیستی)', joiners))
+    .toBe('نمونه\u200cهای تاریخی (انقلاب\u200cهای مارکسیستی)');
 });
