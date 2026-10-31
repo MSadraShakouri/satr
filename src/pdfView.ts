@@ -20,6 +20,7 @@
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
 import type { Rect as PageRect } from '@embedpdf/models';
 import { pdfium } from './pdfiumEngine';
+import { asFileWroteIt, inReadingOrder } from './pdfText';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
  *  offset, so the place survives a different zoom, a rotation, or a wider
@@ -63,9 +64,9 @@ export interface PdfOutlineItem {
 export interface PdfHit {
   page: number;
   rects: PageRect[];
-  /** The words either side of the match, as PDFium read them off the page,
-   *  so a result can be shown as the line it was found in rather than as a
-   *  page number on its own. */
+  /** The words either side of the match, read off the page in reading
+   *  order, so a result can be shown as the line it was found in rather
+   *  than as a page number on its own. */
   context?: { before: string; match: string; after: string };
 }
 export interface PdfHandle {
@@ -454,6 +455,14 @@ const SETTLE_MS = 120;
  *  scaled and slid into the new one. A pinch needs none of this: it is
  *  already following a finger. 200ms read as a flinch rather than a move;
  *  300 is long enough to be followed by eye and still answers the tap. */
+/** How many results get the line they were found in. Reading a page back
+ *  in reading order costs a read of its glyph boxes (13ms on this machine,
+ *  three or four times that on a phone); a reader reads the first handful
+ *  of results and taps one, so that is what is paid for. The rest are
+ *  still listed, by page. */
+const CONTEXT_ROWS = 60;
+/** How much of the line either side of the match. */
+const CONTEXT_CHARS = 40;
 /** How long the column keeps its compositing layer after the hand leaves. */
 const LAYER_COOL_MS = 2000;
 const GLIDE_MS = 300;
@@ -1279,6 +1288,25 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // between two identical transforms for a single frame.
   try { doc.animate([{ transform: 'scale(1)' }, { transform: 'scale(1)' }], { duration: 1 }); } catch { /* no WAAPI */ }
 
+  /** A page's text in reading order, kept once it has been read. The text
+   *  PDFium gives back follows the order the glyphs were *painted* in, which
+   *  on a Persian page written by Word puts every lam-alef back to front
+   *  («انقالب» for «انقلاب»); the glyph boxes say which pairs those are. */
+  const readBack = new Map<number, string>();
+  const readable = async (index: number): Promise<string | null> => {
+    const held = readBack.get(index);
+    if (held !== undefined) return held;
+    const proxy = slabs[index]?.proxy;
+    if (!proxy) return null;
+    try {
+      const glyphs = await engine.getPageGlyphs(document_, proxy).toPromise();
+      const [raw] = await engine.getTextSlices(document_, [{ pageIndex: index, charIndex: 0, charCount: glyphs.length }]).toPromise();
+      const text = inReadingOrder(raw ?? '', glyphs);
+      readBack.set(index, text);
+      return text;
+    } catch { return null; }
+  };
+
   const handle: PdfHandle = {
     pages: document_.pageCount,
     place: placeNow,
@@ -1362,14 +1390,51 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     find: async (keyword: string) => {
       if (!keyword.trim()) return [];
       try {
-        const found = await engine.searchAllPages(document_, keyword).toPromise();
-        return found.results.map((result) => ({
+        // A Persian page is searched twice: once for the word as it is
+        // written, once for the word as this kind of file writes it, with
+        // every lam-alef turned round (see pdfText.ts). His handout found
+        // nothing at all for «انقلاب» and 141 for the file's own spelling.
+        const asked = [keyword];
+        const alsoAs = asFileWroteIt(keyword);
+        if (alsoAs !== keyword) asked.push(alsoAs);
+        const runs = await Promise.all(asked.map((word) => engine.searchAllPages(document_, word).toPromise()));
+        const results = runs.flatMap((run) => run.results);
+        // Two spellings can land on the same words; and a reader reads a
+        // document in order, so the list is in the document's order.
+        const seen = new Set<string>();
+        const hits = results.filter((result) => {
+          const key = `${result.pageIndex}:${result.charIndex}:${result.charCount}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).sort((a, b) => a.pageIndex - b.pageIndex || a.charIndex - b.charIndex);
+        const out: PdfHit[] = hits.map((result) => ({
           page: result.pageIndex + 1,
           rects: result.rects,
           context: result.context
             ? { before: result.context.before ?? '', match: result.context.match ?? keyword, after: result.context.after ?? '' }
             : undefined,
         }));
+        // The words around a match come off the page in the order the page
+        // was *painted* in, which puts every lam-alef back to front. Putting
+        // them right needs the boxes the glyphs sit in, which is a read of
+        // the whole page (13ms here, so a second or two for a document-wide
+        // search on a phone) -- so it is done for the results a reader will
+        // actually read, and kept, rather than for all of them.
+        const pages = [...new Set(hits.slice(0, CONTEXT_ROWS).map((hit) => hit.pageIndex))];
+        await Promise.all(pages.map((index) => readable(index)));
+        hits.slice(0, CONTEXT_ROWS).forEach((hit, i) => {
+          const text = readBack.get(hit.pageIndex);
+          if (text === undefined) return;
+          const from = hit.charIndex;
+          const to = hit.charIndex + hit.charCount;
+          out[i].context = {
+            before: text.slice(Math.max(0, from - CONTEXT_CHARS), from).replace(/\s+/gu, ' '),
+            match: text.slice(from, to),
+            after: text.slice(to, to + CONTEXT_CHARS).replace(/\s+/gu, ' '),
+          };
+        });
+        return out;
       } catch { return []; }
     },
     showHits: (hits: PdfHit[], current: number) => {
