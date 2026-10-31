@@ -375,6 +375,20 @@ async function pinch(page: Page, factor: number, atX?: number): Promise<void> {
   }, [factor, atX] as [number, number | undefined]);
 }
 
+test('a thumb that lands a little to one side still zooms', async ({ page }) => {
+  // Reported: "single finger zoom, I think it didn't work once for me".
+  // Measured here, the second tap of the gesture had to land within 24px of
+  // the first -- a tap 20px away zoomed and one 30px away did nothing --
+  // which is less than a thumb moves between two taps. The platform's own
+  // double tap allows 100dp.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  await dragZoom(page, 120, 40); // down is in, and 40px to one side
+  await page.waitForTimeout(400);
+  expect(await widthOf(page, 1)).toBeGreaterThan(fit * 1.3);
+});
+
 test('the page stays under the fingers, across as well as down', async ({ page }) => {
   // Reported: zooming shifts the page sideways a little. It did. The point
   // to hold was taken as a fraction of the *column*, and the column is the
@@ -400,22 +414,23 @@ test('the page stays under the fingers, across as well as down', async ({ page }
 
 /** The second tap of a double tap, held and dragged: Google's own
  *  one-finger zoom, down to zoom in. */
-async function dragZoom(page: Page, by: number): Promise<void> {
+async function dragZoom(page: Page, by: number, apart = 0): Promise<void> {
   // Dispatched on the page itself, as a thumb lands on it: the tap handler
   // sits on the column and the zoom handlers on the pane above it.
-  await page.locator('.pdf-page[data-page="1"]').evaluate((sheet, dy: number) => {
+  // `apart` moves the second tap sideways, the way a thumb does.
+  await page.locator('.pdf-page[data-page="1"]').evaluate((sheet, [dy, dx]: [number, number]) => {
     const box = sheet.getBoundingClientRect();
     const x = box.left + box.width / 2;
     const y = Math.max(box.top + 40, Math.min(box.bottom - 40, box.top + box.height / 2));
-    const fire = (type: string, atY: number): void => {
-      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+    const fire = (type: string, atX: number, atY: number): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: atX, clientY: atY, bubbles: true, cancelable: true }));
     };
-    fire('pointerdown', y);
-    fire('pointerup', y);       // the first tap
-    fire('pointerdown', y);     // the second, held
-    for (let step = 1; step <= 6; step += 1) fire('pointermove', y + (dy * step) / 6);
-    fire('pointerup', y + dy);
-  }, by);
+    fire('pointerdown', x, y);
+    fire('pointerup', x, y);           // the first tap
+    fire('pointerdown', x + dx, y);    // the second, held, a thumb's width over
+    for (let step = 1; step <= 6; step += 1) fire('pointermove', x + dx, y + (dy * step) / 6);
+    fire('pointerup', x + dx, y + dy);
+  }, [by, apart] as [number, number]);
 }
 
 /** How many pixels the visible page is actually drawn with. */

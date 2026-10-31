@@ -426,7 +426,17 @@ const MAX_ZOOM = 8;
  *  than back out (Gander's rule: the geometric middle of the two). */
 const DOUBLE_TAP_ZOOM = 2.5;
 const DOUBLE_TAP_MS = 300;
-const DOUBLE_TAP_SLOP = 24;
+/** How far the second tap may land from the first. 24px was this app's own
+ *  guess and it was too strict to rely on: measured here, a second tap 20px
+ *  away still zoomed and one 30px away did nothing at all, which is well
+ *  inside how much a thumb moves between two taps -- "single finger zoom, I
+ *  think it didn't work once for me". Android's own double tap allows
+ *  100dp (ViewConfiguration.DOUBLE_TAP_SLOP), which every gesture on that
+ *  phone is measured against; 64 keeps a comfortable margin under it while
+ *  still telling two deliberate taps in different places apart. The time is
+ *  the platform's 300ms, and counted from the first tap's release rather
+ *  than its press, so a slow first tap does not eat the window. */
+const DOUBLE_TAP_SLOP = 64;
 /** A one-finger zoom: how far the finger drags to double the zoom, and how
  *  far it may wander before it is a drag rather than a tap. */
 const DRAG_DOUBLE_PX = 180;
