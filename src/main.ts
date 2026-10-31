@@ -35,6 +35,8 @@ import { installLiveBlocks, stripLiveBlocks } from './liveBlocks';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
+import { onThemeChange } from './theme';
+import type { PdfTheme } from './pdfChrome';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
 import { createFolderExport } from './folderExport';
@@ -202,24 +204,41 @@ const picture = { path: '', url: '' };
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
 let pdfView: PdfHandle | null = null;
 let pdfChrome: { destroy(): void } | null = null;
-/** Obsidian's "Adapt to theme" for a PDF: a flag it remembers across
- *  sessions (pdfjs-is-themed in its own storage). Obsidian starts it off
- *  and makes you find it; here it starts ON, because a white page opening
- *  in a dark app is the thing a reader notices and the setting is the
- *  thing they do not. Once it has been tapped the answer is theirs and is
- *  kept, either way. It only does anything while the theme is dark —
- *  adapting to a light theme means leaving the paper alone. */
+/** Whether a PDF's pages are turned over, in the same three states the
+ *  app's own theme has (src/theme.ts): Automatic follows the app, and the
+ *  other two are the reader overruling it. Obsidian ships one checkbox
+ *  ("Adapt to theme", pdfjs-is-themed in its own storage) which can only
+ *  say yes or no to following — there is no way to keep a document white
+ *  in a dark app, and no way to read a white one in the dark on a light
+ *  app. Automatic is the default, because a white page opening in a dark
+ *  app is the thing a reader notices and the setting is the thing they do
+ *  not. The older yes/no answer is read back as Automatic or Always
+ *  light, which is what those two meant. */
 const PDF_THEME_KEY = 'satr:pdf-theme';
-let pdfThemed = (localStorage.getItem(PDF_THEME_KEY) ?? '1') === '1';
-function applyPdfTheme(): void {
-  document.body.classList.toggle('is-pdf-themed', pdfThemed);
+function storedPdfTheme(): PdfTheme {
+  const saved = localStorage.getItem(PDF_THEME_KEY);
+  if (saved === 'auto' || saved === 'light' || saved === 'dark') return saved;
+  return saved === '0' ? 'light' : 'auto';
 }
-function togglePdfTheme(): void {
-  pdfThemed = !pdfThemed;
-  localStorage.setItem(PDF_THEME_KEY, pdfThemed ? '1' : '0');
+let pdfTheme: PdfTheme = storedPdfTheme();
+const pdfPagesDark = (): boolean => pdfTheme === 'dark'
+  || (pdfTheme === 'auto' && document.documentElement.classList.contains('theme-dark'));
+function applyPdfTheme(): void {
+  document.body.classList.toggle('is-pdf-themed', pdfPagesDark());
+}
+function setPdfTheme(next: PdfTheme): void {
+  pdfTheme = next;
+  localStorage.setItem(PDF_THEME_KEY, next);
   applyPdfTheme();
 }
 applyPdfTheme();
+/** Opens the Dark pages sheet — the same one the toolbar opens. Set while
+ *  a document is mounted, which is the only time the entry is offered. */
+let openPdfTheme: (() => void) | null = null;
+// Automatic means automatic: the app changing theme, or the system
+// changing it under Auto, turns the pages over with it.
+onThemeChange(applyPdfTheme);
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPdfTheme);
 /** A PDF is being read in the pane. It keeps its own place, by its own
  *  bytes, and has no lines for the note machinery to scroll to: everything
  *  that would move the reading view for a note leaves this one alone, or it
@@ -647,7 +666,10 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   // thumbnails and contents (src/pdfChrome.ts).
   const { mountPdfChrome } = await import('./pdfChrome');
   if (filePath !== path) { handle.destroy(); pdfView = null; return; }
-  pdfChrome = mountPdfChrome(handle, { on: () => pdfThemed, toggle: togglePdfTheme });
+  const { openDarkPages } = await import('./pdfChrome');
+  const themed = { mode: () => pdfTheme, set: setPdfTheme };
+  openPdfTheme = () => openDarkPages(themed);
+  pdfChrome = mountPdfChrome(handle, themed);
 }
 function setPreviewTitle(): void {
   const title = preview.querySelector<HTMLElement>('.inline-title');
@@ -2767,7 +2789,7 @@ function showFileMenu(): void {
   // does and the words he used looking for it; the moon is what a reader
   // is already looking for when they want this.
   if (documentOpen()) entries.push(
-    { title: 'Dark pages', icon: MENU_ICONS.dark, checked: pdfThemed, action: togglePdfTheme },
+    { title: 'Dark pages', icon: MENU_ICONS.dark, action: () => openPdfTheme?.() },
   );
   entries.push({ title: 'Settings', icon: MENU_ICONS.settings, action: showSettings });
   openMenu(entries, { title: fileBase || fileName(path) });

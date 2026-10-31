@@ -35,6 +35,12 @@ const option = async (page: Page, title: string): Promise<void> => {
   await page.locator('.menu-item', { hasText: title }).click();
   await page.waitForTimeout(300);
 };
+/** Dark pages, from the toolbar, set to one of its three. */
+const darkPages = async (page: Page, choice: string): Promise<void> => {
+  await option(page, 'Dark pages');
+  await page.locator('.menu-item', { hasText: choice }).click();
+  await page.waitForTimeout(300);
+};
 const pageBox = async (page: Page): Promise<{ width: number; height: number }> => {
   const box = await page.locator('.pdf-page[data-page="1"]').boundingBox();
   return { width: Math.round(box!.width), height: Math.round(box!.height) };
@@ -99,8 +105,8 @@ test('dark pages turns the paper over, and only in the dark', async ({ page }) =
   await boot(page, 'handout.pdf'); // light
   await openDocument(page);
   expect(await inked()).toBe('none');
-  await option(page, 'Dark pages');
-  expect(await inked()).toBe('none'); // adapting to a light theme leaves the paper alone
+  await darkPages(page, 'Automatic');
+  expect(await inked()).toBe('none'); // following a light theme leaves the paper alone
 
   // Dark, and nothing chosen yet: the paper is turned over without being
   // asked. Obsidian starts this off; a white page opening in a dark app is
@@ -111,7 +117,7 @@ test('dark pages turns the paper over, and only in the dark', async ({ page }) =
   await expect(page.locator('body')).toHaveClass(/is-pdf-themed/);
   expect(await inked()).toContain('invert');
   // and turning it off is remembered, the way Obsidian remembers its own
-  await option(page, 'Dark pages');
+  await darkPages(page, 'Always light');
   expect(await inked()).toBe('none');
   await boot(page, 'handout.pdf', 'dark');
   await openDocument(page);
@@ -127,17 +133,61 @@ test('the ⋮ carries dark pages as well, beside settings', async ({ page }) => 
   await page.locator('#file-actions').click();
   const items = await page.locator('[role="menuitem"]').allInnerTexts();
   expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Dark pages', 'Settings']);
-  // on by default in the dark, and the menu says so
-  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Dark pages');
 
-  // and it is the same switch, not a second one
+  // and it opens the same sheet the toolbar opens, on the same answer
+  await page.locator('.menu-item', { hasText: 'Dark pages' }).click();
+  await expect(page.locator('.menu')).toHaveCount(1); // the one it came from has gone
+  expect(await page.locator('[role="menuitem"]').allInnerTexts())
+    .toEqual(['Automatic', 'Always light', 'Always dark']);
+  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Automatic');
+
+  // it is one setting, not two: answered here, the toolbar's sheet agrees
   const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
   expect(await inked()).toContain('invert');
-  await page.locator('.menu-item', { hasText: 'Dark pages' }).click();
+  await page.locator('.menu-item', { hasText: 'Always light' }).click();
   await page.waitForTimeout(300);
   expect(await inked()).toBe('none');
+  await option(page, 'Dark pages');
+  await expect(page.locator('.menu')).toHaveCount(1);
+  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Always light');
+});
+
+test('the reader can overrule the app, in either direction', async ({ page }) => {
+  // What one checkbox could not say. A light app and a document that is
+  // hard on the eyes; a dark app and a document -- a scan, a slide deck,
+  // anything whose colour is the point -- that has to stay as it was
+  // printed.
+  const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
+  await boot(page, 'handout.pdf'); // a light app
+  await openDocument(page);
+  expect(await inked()).toBe('none');
+  await darkPages(page, 'Always dark');
+  expect(await inked()).toContain('invert'); // dark pages in a light app
+
+  await boot(page, 'handout.pdf', 'dark'); // a dark app
+  await openDocument(page);
+  expect(await inked()).toContain('invert'); // the answer above was kept
+  await darkPages(page, 'Always light');
+  expect(await inked()).toBe('none'); // white paper in a dark app
+
+  // and Automatic hands it back to the app
+  await darkPages(page, 'Automatic');
+  expect(await inked()).toContain('invert');
+});
+
+test('an answer given before the three states is still the reader\'s', async ({ page }) => {
+  // The setting used to be a checkbox kept as 1 or 0. Off meant "do not
+  // turn these pages over", which is Always light; on meant "do what the
+  // app does", which is Automatic.
+  const inked = () => page.evaluate(() => getComputedStyle(document.querySelector('.pdf-raster')!).filter);
+  await page.addInitScript(() => localStorage.setItem('satr:pdf-theme', '0'));
+  await boot(page, 'handout.pdf', 'dark');
+  await openDocument(page);
+  expect(await inked()).toBe('none');
   await page.locator('.pdf-toolbar-button[aria-label="Display options"]').click();
-  await expect(page.locator('.menu-item', { hasText: 'Dark pages' })).not.toHaveClass(/mod-selected/);
+  await page.locator('.menu-item', { hasText: 'Dark pages' }).click();
+  await expect(page.locator('.menu')).toHaveCount(1);
+  await expect(page.locator('.menu-item.mod-selected')).toHaveText('Always light');
 });
 
 test('the inversion is softened, so paper is not pitch and ink is not glare', async ({ page }) => {

@@ -54,7 +54,28 @@ export interface PdfChrome { destroy(): void }
  *  width without knowing what is inside. */
 type SidebarView = '1' | '2';
 
-export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggle(): void }): PdfChrome {
+/** Light, dark, or whichever the app is — the same three the app's own
+ *  theme has (src/theme.ts), said the same way. Obsidian ships one
+ *  checkbox here, which cannot say "this document is a scan of a black
+ *  page, leave it alone" or "keep these pages white while the app is
+ *  dark". */
+export type PdfTheme = 'auto' | 'light' | 'dark';
+export interface PdfThemeControl { mode(): PdfTheme; set(next: PdfTheme): void }
+
+/** The sheet behind Dark pages, opened from the toolbar's display options
+ *  and from the file's ⋮ alike: one list, one place the answer lives. */
+export function openDarkPages(themed: PdfThemeControl): void {
+  const now = themed.mode();
+  const choice = (title: string, value: PdfTheme): MenuEntry =>
+    ({ title, checked: now === value, action: () => themed.set(value) });
+  openMenu([
+    choice('Automatic', 'auto'),
+    choice('Always light', 'light'),
+    choice('Always dark', 'dark'),
+  ], { title: 'Dark pages' });
+}
+
+export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfChrome {
   const toolbar = document.createElement('div');
   toolbar.className = 'pdf-toolbar';
   const left = document.createElement('div');
@@ -129,7 +150,7 @@ export function mountPdfChrome(handle: PdfHandle, themed: { on(): boolean; toggl
     openMenu([
       stop('Fit width', 'width'), stop('Fit height', 'height'),
       'separator',
-      { title: 'Dark pages', checked: themed.on(), action: () => themed.toggle() },
+      { title: 'Dark pages', action: () => openDarkPages(themed) },
     ]);
   };
 
