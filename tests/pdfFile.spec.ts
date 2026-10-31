@@ -118,9 +118,9 @@ test.describe('on a phone-sized screen, where the wide band holds the whole docu
     await readThis(page, 'handout.pdf');
     await page.waitForTimeout(1200);
     const far = page.locator('.pdf-page[data-page="5"]');
-    await expect(far.locator('canvas.is-rough')).toHaveCount(1, { timeout: 15000 });
+    await expect(far.locator('canvas.pdf-rough')).toHaveCount(1, { timeout: 15000 });
     // It is a hundred pixels wide, not a page of them.
-    const width = await far.locator('canvas.is-rough').evaluate((el) => (el as HTMLCanvasElement).width);
+    const width = await far.locator('canvas.pdf-rough').evaluate((el) => (el as HTMLCanvasElement).width);
     expect(width).toBeLessThanOrEqual(110);
     // A fast flick to the end: the page it lands on is never an empty box.
     await page.locator('#preview-pane').evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -128,8 +128,35 @@ test.describe('on a phone-sized screen, where the wide band holds the whole docu
     // Coming back, the page left behind kept its rough picture rather than
     // becoming a blank box again.
     await page.waitForTimeout(600);
-    await expect(page.locator('.pdf-page[data-page="1"] canvas.is-rough')).toHaveCount(1);
+    await expect(page.locator('.pdf-page[data-page="1"] canvas.pdf-rough')).toHaveCount(1);
   });
+});
+
+test('one finger zooms: the second tap of a double tap, held and dragged', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  // Down to zoom in, the way Google's own apps answer this gesture.
+  await dragZoom(page, 180);
+  await page.waitForTimeout(500);
+  const bigger = await widthOf(page, 1);
+  expect(bigger).toBeGreaterThan(fit * 1.6);
+  expect(bigger).toBeLessThan(fit * 2.6);
+  // And up to take it back out again.
+  await dragZoom(page, -180);
+  await page.waitForTimeout(500);
+  const back = await widthOf(page, 1);
+  expect(back).toBeLessThan(bigger * 0.75);
+});
+
+test('a double tap that does not drag is still a double tap', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  await dragZoom(page, 2); // a thumb never lands perfectly still
+  await page.waitForTimeout(600);
+  const after = await widthOf(page, 1);
+  expect(after).toBeGreaterThan(fit * 1.6);
 });
 
 test('the last page is named as the last page', async ({ page }) => {
@@ -284,6 +311,26 @@ async function pinch(page: Page, factor: number): Promise<void> {
     fire('pointerup', 1, middleX, middleY - moved);
     fire('pointerup', 2, middleX, middleY + moved);
   }, factor);
+}
+
+/** The second tap of a double tap, held and dragged: Google's own
+ *  one-finger zoom, down to zoom in. */
+async function dragZoom(page: Page, by: number): Promise<void> {
+  // Dispatched on the page itself, as a thumb lands on it: the tap handler
+  // sits on the column and the zoom handlers on the pane above it.
+  await page.locator('.pdf-page[data-page="1"]').evaluate((sheet, dy: number) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = Math.max(box.top + 40, Math.min(box.bottom - 40, box.top + box.height / 2));
+    const fire = (type: string, atY: number): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown', y);
+    fire('pointerup', y);       // the first tap
+    fire('pointerdown', y);     // the second, held
+    for (let step = 1; step <= 6; step += 1) fire('pointermove', y + (dy * step) / 6);
+    fire('pointerup', y + dy);
+  }, by);
 }
 
 /** How many pixels the visible page is actually drawn with. */

@@ -4225,6 +4225,7 @@ body.is-pdf-themed .pdf-page {
   box-shadow: 0 1px 4px rgb(0 0 0 / 60%);
 }
 body.is-pdf-themed .pdf-raster,
+body.is-pdf-themed .pdf-rough,
 body.is-pdf-themed .pdf-detail,
 body.is-pdf-themed .thumbnailImage {
   /* 0.86, not 1: a full inversion makes paper pure black and ink pure
@@ -4237,6 +4238,7 @@ body.is-pdf-themed .thumbnailImage {
    hand back the white page the reader was getting away from. Measured off
    the drawn pixels in src/pdfView.ts. */
 body.is-pdf-themed .pdf-page.is-dark-page .pdf-raster,
+body.is-pdf-themed .pdf-page.is-dark-page .pdf-rough,
 body.is-pdf-themed .pdf-page.is-dark-page .pdf-detail {
   filter: none;
 }
@@ -4507,10 +4509,15 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
 /* The rough picture a page is shown as until its own is drawn: a hundred
    pixels of it stretched over the whole box. It sits under the sharp
    pictures, which are opaque, so it is seen only where there is nothing
-   better yet. */
-.pdf-raster.is-rough {
+   better yet. A class of its own, not the sharp one's: they are told
+   apart by what they are. */
+.pdf-rough {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   z-index: 0;
-  filter: blur(0.3px);
 }
 .pdf-raster {
   position: absolute;

@@ -419,6 +419,10 @@ const MAX_ZOOM = 8;
 const DOUBLE_TAP_ZOOM = 2.5;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_SLOP = 24;
+/** A one-finger zoom: how far the finger drags to double the zoom, and how
+ *  far it may wander before it is a drag rather than a tap. */
+const DRAG_DOUBLE_PX = 180;
+const DRAG_SLOP = 8;
 /** Between two pages, in CSS pixels at any zoom — a gap that grew with the
  *  zoom would push the pages apart as they were read. */
 const GAP = 8;
@@ -755,7 +759,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   };
   /** Put a rough picture up, underneath whatever sharp one there is. */
   const showRough = (slab: Slab, canvas: HTMLCanvasElement): void => {
-    canvas.className = 'pdf-raster is-rough';
+    canvas.className = 'pdf-rough';
     slab.rough?.remove();
     slab.box.prepend(canvas);
     slab.rough = canvas;
@@ -1103,6 +1107,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // be wrong anyway.
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { span: number; middle: number; across: number; zoom: number } | null = null;
+  /** A one-finger zoom in progress: where it started, and from what. */
+  let hold: { y: number; x: number; zoom: number; moved: boolean } | null = null;
+  let lastTap = { time: 0, x: 0, y: 0 };
   const spanOf = (): { span: number; middle: number; across: number } => {
     const [a, b] = [...touches.values()];
     return { span: Math.hypot(a.x - b.x, a.y - b.y), middle: (a.y + b.y) / 2, across: (a.x + b.x) / 2 };
@@ -1110,6 +1117,19 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType !== 'touch') return;
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    // One finger: the second tap of a double tap, held rather than lifted,
+    // zooms by dragging — down to zoom in, up to zoom out, which is the
+    // gesture Google's own apps answer to and the one a reader's thumb
+    // already knows. Armed here, on the way down, because by the time the
+    // finger lifts the gesture is over.
+    if (touches.size === 1 && Date.now() - lastTap.time < DOUBLE_TAP_MS
+      && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP) {
+      hold = { y: event.clientY, x: event.clientX, zoom, moved: false };
+      const column = doc.getBoundingClientRect();
+      doc.style.transformOrigin = `${event.clientX - column.left}px ${event.clientY - column.top}px`;
+      // The pane must not scroll under the finger that is zooming.
+      scroller.style.touchAction = 'none';
+    }
     if (touches.size === 2) {
       const { span, middle, across } = spanOf();
       pinch = { span, middle, across, zoom };
@@ -1124,6 +1144,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const onPointerMove = (event: PointerEvent): void => {
     if (!touches.has(event.pointerId)) return;
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (hold && touches.size === 1) {
+      event.preventDefault();
+      const dy = event.clientY - hold.y;
+      if (Math.abs(dy) > DRAG_SLOP) hold.moved = true;
+      const factor = clamp(hold.zoom * 2 ** (dy / DRAG_DOUBLE_PX), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
+      doc.style.transform = `scale(${factor})`;
+      return;
+    }
     if (!pinch || touches.size !== 2) return;
     event.preventDefault();
     const { span } = spanOf();
@@ -1132,6 +1160,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   };
   const endPinch = (event: PointerEvent): void => {
     touches.delete(event.pointerId);
+    if (hold) {
+      const held = hold;
+      hold = null;
+      scroller.style.touchAction = '';
+      const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
+      doc.style.transform = '';
+      doc.style.transformOrigin = '';
+      // A finger that only tapped is a double tap, and that is the tap
+      // handler's business; one that dragged has already said what zoom it
+      // wants, and must not be given the double tap's one on top of it.
+      if (held.moved) {
+        lastTap.time = 0;
+        zoomTo(held.zoom * factor, held.y, held.x);
+      }
+      return;
+    }
     if (!pinch || touches.size >= 2) return;
     const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
     doc.style.transform = '';
@@ -1148,7 +1192,6 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   // A double tap zooms in about the place tapped, and the next one takes it
   // back to the page's own width.
-  let lastTap = { time: 0, x: 0, y: 0 };
   const onTap = (event: PointerEvent): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const now = Date.now();
