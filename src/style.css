@@ -4485,9 +4485,13 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
 /* The one being looked at is the same highlight, deeper -- not the
    accent with a ring round it, which read as selected text rather than
    as a word found. */
+/* The one you are on is the same highlighter, pressed harder: a deeper
+   amber over the same yellow. It was painted in the accent with a ring
+   around it, which is how this app draws *selected* text -- so the match
+   you were walking to looked like something you had picked up and could
+   drag, when all it is is the next one along. */
 .pdf-find-hit.is-current {
-  background-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent);
+  background-color: color-mix(in srgb, var(--text-highlight-bg) 50%, #e2900a 50%);
 }
 
 /* The rough picture a page is shown as until its own is drawn: a hundred

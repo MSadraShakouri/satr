@@ -198,6 +198,30 @@ test('one find button, and it is the app\'s own', async ({ page }) => {
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible();
 });
 
+test('the current match is the same highlight, deeper', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  await page.locator('#nav-find').click();
+  await page.locator('.pdf-findbar input').fill('Page');
+  await expect(page.locator('.pdf-find-hit.is-current')).toHaveCount(1, { timeout: 15000 });
+  const paint = await page.evaluate(() => {
+    const read = (el: Element) => getComputedStyle(el);
+    const one = read(document.querySelector('.pdf-find-hit:not(.is-current)')!);
+    const now = read(document.querySelector('.pdf-find-hit.is-current')!);
+    const alpha = (c: string) => Number((/rgba?\([^)]*?([\d.]+)\)/.exec(c) ?? [, '1'])[1]);
+    return {
+      restAlpha: alpha(one.backgroundColor), nowAlpha: alpha(now.backgroundColor),
+      ring: now.boxShadow, rest: one.backgroundColor, now: now.backgroundColor,
+      accent: getComputedStyle(document.body).getPropertyValue('--accent').trim(),
+    };
+  });
+  // deeper than its neighbours...
+  expect(paint.nowAlpha).toBeGreaterThan(paint.restAlpha);
+  // ...and still the highlight, not the colour a selection is drawn in
+  expect(paint.now).not.toBe(paint.accent);
+  expect(paint.ring === 'none' || paint.ring === '').toBe(true);
+});
+
 test('find marks every match and walks them', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
