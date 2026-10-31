@@ -1652,6 +1652,16 @@ function recentNotes(): string[] {
   try { const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); return Array.isArray(list) ? list.filter((p) => typeof p === 'string' && !isExternalPath(p)) : []; } catch { return []; }
 }
 function setRecent(list: string[]): void { localStorage.setItem(RECENT_KEY, JSON.stringify(list.filter((p) => !isExternalPath(p)).slice(0, 12))); }
+/** A note joins the recent list when the reader asked for that note: from the
+ *  file tree, from search, from a link, from this list, or by making it. Not
+ *  when the tab machinery merely lands on it — closing a tab shows whatever
+ *  was beside it, switching tabs shows the next one, a folder opened as a
+ *  block shows its first note, and starting the app shows where you left
+ *  off. None of those is a note anyone chose, and they were burying the ones
+ *  that were. */
+function rememberRecent(path: string): void {
+  setRecent([path, ...recentNotes().filter((p) => p !== path)]);
+}
 async function leaveCurrent(): Promise<boolean> {
   closePopover();
   editor.closeFind();
@@ -1727,7 +1737,6 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   } else {
     diskBase = { path, text: fileText, mtime: 0 };
     localStorage.setItem(CURRENT_KEY, path);
-    setRecent([path, ...recentNotes().filter((p) => p !== path)]);
     void backend.stat(path).then((entry) => {
       if (filePath !== path || diskBase?.path !== path || diskBase.text !== fileText) return;
       if (entry) diskBase.mtime = entry.mtime;
@@ -1812,6 +1821,7 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   }
   if (!await leaveCurrent()) return;
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
+  rememberRecent(path);
   showFile(path, opened.text, after, { lossy: !opened.clean });
 }
 /** The bottom bar's arrows: the previous / next tab. */
@@ -2023,6 +2033,7 @@ async function newFile(dir = focusedNoteDir()): Promise<void> {
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
   localStorage.removeItem(viewKey(path));
   localStorage.removeItem(printOptionsKey(path));
+  rememberRecent(path);
   showFile(path, '');
   setMode('edit');
   toggleFiles(false);
