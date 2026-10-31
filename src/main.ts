@@ -37,7 +37,7 @@ import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_
 import { maskMathAndCode } from './mathScan';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
 import { onThemeChange } from './theme';
-import type { PdfTheme } from './pdfChrome';
+import type { PdfChrome, PdfTheme } from './pdfChrome';
 import { setHighlightAll } from './findBar';
 import { exportPdf } from './exportPdf';
 import { createFolderExport } from './folderExport';
@@ -204,7 +204,7 @@ const picture = { path: '', url: '' };
  *  place is remembered against them. */
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
 let pdfView: PdfHandle | null = null;
-let pdfChrome: { destroy(): void } | null = null;
+let pdfChrome: PdfChrome | null = null;
 /** The contents of the PDF in the tab, in the shape the outline panel reads
  *  notes in: a document has no lines, so what a row carries is the page it
  *  turns to. The viewer keeps its own contents button; this is the same list
@@ -574,6 +574,7 @@ function watchSections(): void {
 function closeDocument(): void {
   pdfChrome?.destroy();
   pdfChrome = null;
+  syncFindButton();
   pdfView?.destroy();
   pdfView = null;
   pdfHeadings = [];
@@ -684,6 +685,7 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   const themed = { mode: () => pdfTheme, set: setPdfTheme };
   openPdfTheme = () => openDarkPages(themed);
   pdfChrome = mountPdfChrome(handle, themed);
+  syncFindButton(); // the magnifier now means "find in this document"
   // The contents, into the outline panel. Whatever the document's own
   // bookmarks say wins; a document with none (everything a browser prints)
   // falls back to the contents read off the type, which costs a scan of
@@ -2911,7 +2913,11 @@ navMenu.addEventListener('click', () => {
 const findButton = document.querySelector<HTMLButtonElement>('#nav-find')!;
 const emptySearchField = (): HTMLInputElement | null => emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field');
 function syncFindButton(): void {
-  findButton.setAttribute('aria-label', document.body.classList.contains('is-empty-tab') ? 'Search notes' : 'Find in note');
+  // Three states now, not two: a document is found in too, and the label
+  // should say which of the three the press will do.
+  const where = document.body.classList.contains('is-empty-tab') ? 'Search notes'
+    : pdfChrome ? 'Find in document' : 'Find in note';
+  findButton.setAttribute('aria-label', where);
 }
 findButton.addEventListener('click', () => {
   if (document.body.classList.contains('is-empty-tab')) {
@@ -3032,6 +3038,10 @@ document.querySelector('#navbar')!.addEventListener('mousedown', (event) => even
 renderNavButtons();
 // Find: one bar for find and replace (its chevron drops the replace row).
 function find(replace = false): void {
+  // A document has no text to edit and no editor to find in: the same
+  // button opens the document's own find instead, so one magnifier means
+  // "find something in what is open" whatever the tab holds.
+  if (pdfChrome) { pdfChrome.setFinding(!pdfChrome.finding()); return; }
   if (mode !== 'edit') setMode('edit');
   editor.openFind(replace);
 }

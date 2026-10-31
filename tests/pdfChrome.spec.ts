@@ -41,7 +41,9 @@ test('a document gets the strip of controls, in Obsidian\'s own order', async ({
   // left group is the panel, right group is zoom and the page
   const order = await page.evaluate(() => [...document.querySelectorAll('.pdf-toolbar [aria-label], .pdf-toolbar input, .pdf-toolbar span')]
     .map((el) => el.getAttribute('aria-label') ?? el.className));
-  expect(order).toEqual(['Thumbnails', 'Table of contents', 'Find in document', 'Zoom out', 'Zoom in',
+  // No search icon up here: finding something in what is open is the job of
+  // the magnifier at the bottom of the screen, in every kind of tab.
+  expect(order).toEqual(['Thumbnails', 'Table of contents', 'Zoom out', 'Zoom in',
     'Display options', 'Page', 'pdf-page-numbers']);
 
   await boot(page, 'note.md');
@@ -177,15 +179,35 @@ test('a reader who does not want motion does not get it', async ({ page }) => {
   expect(await page.evaluate(() => (document.querySelector('.pdf-doc') as HTMLElement).getAnimations().length)).toBe(0);
 });
 
+test('one find button, and it is the app\'s own', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  // The strip gave its magnifier up, so there is exactly one way in.
+  await expect(page.locator('.pdf-toolbar [aria-label="Find in document"]')).toHaveCount(0);
+  const pill = page.locator('#nav-find');
+  await pill.click();
+  await expect(page.locator('.pdf-findbar')).toBeVisible();
+  // and what opens is the bar a note gets, not a second, lesser one
+  await expect(page.locator('.pdf-findbar.document-search-container')).toHaveCount(1);
+  await expect(page.locator('.pdf-findbar .search-input-container input')).toBeFocused();
+  // the same button closes it again
+  await pill.click();
+  await expect(page.locator('.pdf-findbar')).toBeHidden();
+  // and it never drops the reader into the editor on the way
+  await expect(page.locator('.cm-editor')).toBeHidden();
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible();
+});
+
 test('find marks every match and walks them', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
   await expect(page.locator('.pdf-findbar')).toBeHidden();
-  await control(page, 'Find in document').click();
+  // The app's own find button, the one a note uses, opens a document's find.
+  await page.locator('#nav-find').click();
   await expect(page.locator('.pdf-findbar')).toBeVisible();
   // every page of this document says "Page", so there is one hit per page
   await page.locator('.pdf-findbar input').fill('Page');
-  await expect(page.locator('.pdf-find-results-count')).toHaveText('1 of 8', { timeout: 15000 });
+  await expect(page.locator('.document-search-count')).toHaveText('1 of 8', { timeout: 15000 });
   await expect(page.locator('.pdf-find-hit')).toHaveCount(8);
   await expect(page.locator('.pdf-find-hit.is-current')).toHaveCount(1);
   // and a mark is actually painted: the colours here are Satr's own, and a
@@ -198,16 +220,16 @@ test('find marks every match and walks them', async ({ page }) => {
   expect(paint.fill).not.toBe('rgba(0, 0, 0, 0)');
   expect(paint.wide).toBeGreaterThan(4);
   // the arrows walk them, and the document follows
-  await control(page, 'Next match').click();
-  await expect(page.locator('.pdf-find-results-count')).toHaveText('2 of 8');
+  await page.locator('.pdf-findbar [aria-label="Next match"]').click();
+  await expect(page.locator('.document-search-count')).toHaveText('2 of 8');
   await page.waitForTimeout(500);
   await expect(page.locator('.pdf-counter')).toHaveText('2 / 8');
   // a word that is not there says so rather than going quiet
   await page.locator('.pdf-findbar input').fill('zzzzz');
-  await expect(page.locator('.pdf-find-results-count')).toHaveText('No matches', { timeout: 15000 });
+  await expect(page.locator('.document-search-count')).toHaveText('No matches', { timeout: 15000 });
   await expect(page.locator('.pdf-find-hit')).toHaveCount(0);
   // and closing it puts the page back the way it was
-  await control(page, 'Close find').click();
+  await page.locator('.pdf-findbar [aria-label="Close find"]').click();
   await expect(page.locator('.pdf-findbar')).toBeHidden();
   await expect(page.locator('.pdf-toolbar')).toBeVisible();
 });

@@ -47,7 +47,12 @@ const button = (name: string, label: string): HTMLButtonElement => {
   return el;
 };
 
-export interface PdfChrome { destroy(): void }
+export interface PdfChrome {
+  destroy(): void;
+  /** Open (or close) the find bar: the app's own find button drives this. */
+  setFinding(on: boolean): void;
+  finding(): boolean;
+}
 
 /** Which of the two panels is up. Obsidian keeps the same two and addresses
  *  them by number on the container, so the stylesheet can give each its own
@@ -171,36 +176,46 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfC
   box.onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); jump(); } };
   box.onblur = () => { box.value = String(shownPage); };
   box.onfocus = () => box.select();
-  const search = button('search', 'Find in document');
-  search.onclick = () => setFinding(true);
-  right.append(search, out, into, divider, display, box, count);
+  // No search icon in the strip: finding something in what is open is what
+  // the magnifier at the bottom of the screen does in every other kind of
+  // tab, and two ways in -- one of them a second, smaller icon up here --
+  // was one too many.
+  right.append(out, into, divider, display, box, count);
 
   // ---- the find bar ----------------------------------------------------
   // Obsidian's lies across the top of the pages, above everything, and on a
   // phone it sheds its divider, its settings button and its message line
   // and keeps the field, the count and the two arrows.
+  // The same bar the app finds things in a note with, down to its class
+  // names: a reader should not meet a second, lesser search field just
+  // because the tab holds a document. It has no replace row -- there is
+  // nothing to write back into a document -- so the chevron is left off.
   const findbar = document.createElement('div');
-  findbar.className = 'pdf-findbar mod-hidden';
-  const wrap = document.createElement('div');
-  wrap.className = 'pdf-search-wrapper';
-  const field = document.createElement('input');
-  field.className = 'pdf-toolbar-field';
-  field.setAttribute('type', 'text');
-  field.setAttribute('aria-label', 'Find');
-  field.setAttribute('placeholder', 'Find in document');
-  const tally = document.createElement('span');
-  tally.className = 'pdf-find-results-count';
-  const previous = button('up', 'Previous match');
-  const next = button('down', 'Next match');
-  const shut = button('close', 'Close find');
-  wrap.append(field, tally, previous, next, shut);
-  findbar.append(wrap);
+  findbar.className = 'pdf-findbar document-search-container mod-hidden';
+  findbar.dataset.ignoreSwipe = '';
+  findbar.innerHTML = `
+    <div class="document-search">
+      <div class="search-input-container document-search-input">
+        <input type="search" dir="auto" placeholder="Find in document" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Find in document">
+        <div class="document-search-count"></div>
+      </div>
+      <div class="document-search-buttons">
+        <button type="button" class="document-search-button clickable-icon" data-act="prev" aria-label="Previous match"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS.up}</svg></button>
+        <button type="button" class="document-search-button clickable-icon" data-act="next" aria-label="Next match"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS.down}</svg></button>
+      </div>
+      <button type="button" class="document-search-close-button clickable-icon" data-act="close" aria-label="Close find"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS.close}</svg></button>
+    </div>`;
+  const field = findbar.querySelector('input') as HTMLInputElement;
+  const tally = findbar.querySelector('.document-search-count') as HTMLElement;
+  const previous = findbar.querySelector('[data-act="prev"]') as HTMLButtonElement;
+  const next = findbar.querySelector('[data-act="next"]') as HTMLButtonElement;
+  const shut = findbar.querySelector('[data-act="close"]') as HTMLButtonElement;
 
   let hits: PdfHit[] = [];
   let at = -1;
   const show = (): void => {
     tally.textContent = hits.length ? `${at + 1} of ${hits.length}` : (field.value.trim() ? 'No matches' : '');
-    field.classList.toggle('mod-not-found', Boolean(field.value.trim()) && !hits.length);
+    findbar.classList.toggle('mod-no-match', Boolean(field.value.trim()) && !hits.length);
     handle.showHits(hits, at);
   };
   const step = (by: number): void => {
@@ -374,6 +389,8 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl): PdfC
   (document.querySelector<HTMLElement>('.workspace') ?? document.body).append(sidebar);
 
   return {
+    setFinding,
+    finding: () => !findbar.classList.contains('mod-hidden'),
     destroy: () => {
       unfollow();
       window.clearTimeout(asking);

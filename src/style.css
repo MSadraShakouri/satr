@@ -4452,41 +4452,22 @@ body.is-pdf-sidebar .pdf-sidebar-container {
    Its phone layout sheds the divider, the settings button and the message
    line and keeps the field, the count and the arrows, with the field given
    the room the rest leave; these are its own class names again. */
+/* The find bar is the app's own search bar, with the look it has in a
+   note (.document-search-container): this only puts it where the strip
+   of controls was. */
 .pdf-findbar {
   flex: 0 0 100%;
   box-sizing: border-box;
-  height: var(--pdf-toolbar-height);
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  padding: 0 var(--size-4-2, 8px);
-  font-size: 13px;
+  padding: 0 0 8px;
+  border-bottom: 0;
 }
 /* One line at a time: the find row takes the strip's place rather than
    covering it, so the header is the same height either way. */
 body.is-pdf-finding .pdf-toolbar { display: none; }
 .pdf-findbar.mod-hidden { display: none; }
-.pdf-findbar .pdf-search-wrapper {
-  display: flex;
-  align-items: center;
-  gap: var(--size-4-2, 8px);
-  width: 100%;
-}
-.pdf-findbar .pdf-toolbar-field {
-  flex-grow: 1;
-  min-width: 0;
-  height: 28px;
-  font-size: 13px;
-}
-.pdf-findbar .pdf-toolbar-field.mod-not-found {
+.pdf-findbar.mod-no-match .document-search-input input {
   border-color: var(--text-error);
 }
-.pdf-find-results-count {
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-style: italic;
-}
-.pdf-find-results-count:empty { display: none; }
 /* The find bar takes the strip's place while it is up, rather than
    stacking on top of it: one row of chrome under the file's name. */
 body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
@@ -4501,6 +4482,9 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
   mix-blend-mode: var(--highlight-mix-blend-mode, darken);
   pointer-events: none;
 }
+/* The one being looked at is the same highlight, deeper -- not the
+   accent with a ring round it, which read as selected text rather than
+   as a word found. */
 .pdf-find-hit.is-current {
   background-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
