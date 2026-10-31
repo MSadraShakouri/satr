@@ -2,7 +2,7 @@
  *  never need a file checked in beside them. Shared by the specs that open a
  *  document from the vault and the one that imports it from the device.
  */
-export function tinyPdf(pages: number, darkPages: number[] = [], outline: string[] = []): string {
+export function tinyPdf(pages: number, darkPages: number[] = [], outline: string[] = [], viaAction = false): string {
   const objects: string[] = [];
   const pageIds: number[] = [];
   for (let index = 0, id = 3; index < pages; index += 1, id += 2) pageIds.push(id);
@@ -32,8 +32,13 @@ export function tinyPdf(pages: number, darkPages: number[] = [], outline: string
     outline.forEach((title, index) => {
       const previous = index > 0 ? ` /Prev ${itemId(index - 1)} 0 R` : '';
       const next = index < outline.length - 1 ? ` /Next ${itemId(index + 1)} 0 R` : '';
-      objects[itemId(index)] = `<< /Title ${pdfString(title)} /Parent ${outlineId} 0 R${previous}${next}`
-        + ` /Dest [${pageIds[Math.min(index, pages - 1)]} 0 R /Fit] >>`;
+      // Two ways a bookmark names a page, both of them common: the /Dest
+      // every simple writer uses, and the GoTo action LaTeX's hyperref
+      // writes — which is what every paper off arXiv carries.
+      const target = viaAction
+        ? ` /A << /S /GoTo /D [${pageIds[Math.min(index, pages - 1)]} 0 R /XYZ 108 720 0] >>`
+        : ` /Dest [${pageIds[Math.min(index, pages - 1)]} 0 R /Fit]`;
+      objects[itemId(index)] = `<< /Title ${pdfString(title)} /Parent ${outlineId} 0 R${previous}${next}${target} >>`;
     });
   }
   return assemble(objects);

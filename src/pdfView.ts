@@ -1165,9 +1165,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       return deriving;
     },
     outline: async () => {
+      // A bookmark names its page in one of two ways, and both are ordinary:
+      // a destination of its own, or a GoTo action carrying one — which is
+      // what LaTeX's hyperref writes, so every paper off arXiv came back
+      // with a contents list that could be read and not followed.
+      const pageOf = (target: PdfBookmarkObject['target']): number | null => {
+        if (!target) return null;
+        if (target.type === 'destination') return target.destination.pageIndex + 1;
+        if (target.type === 'action') {
+          const action = target.action as { destination?: { pageIndex: number } } | undefined;
+          if (action?.destination) return action.destination.pageIndex + 1;
+        }
+        return null;
+      };
       const read = (items: PdfBookmarkObject[]): PdfOutlineItem[] => items.map((item) => ({
         title: item.title,
-        page: item.target?.type === 'destination' ? item.target.destination.pageIndex + 1 : null,
+        page: pageOf(item.target),
         children: read(item.children ?? []),
       }));
       try { return read((await engine.getBookmarks(document_).toPromise()).bookmarks ?? []); }

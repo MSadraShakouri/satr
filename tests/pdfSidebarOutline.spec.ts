@@ -72,3 +72,16 @@ test('the panel searches the document, and a result turns to its page', async ({
   const found = await page.locator('.pdf-page[data-page="4"]').boundingBox();
   expect(found!.y).toBeLessThan(400);
 });
+
+test('a paper written by LaTeX has contents that can be followed', async ({ page }) => {
+  // hyperref writes a GoTo action rather than a destination, so these rows
+  // named no page at all and went nowhere when tapped.
+  await bootPdf(page, tinyPdf(6, [], ['Introduction', 'Background', 'Results'], true));
+  await openOutline(page);
+  const rows = page.locator('#right-panel .tree-item-self');
+  await expect(rows).toHaveCount(3, { timeout: 15000 });
+  await rows.nth(2).click();
+  await page.waitForTimeout(900);
+  const third = await page.locator('.pdf-page[data-page="3"]').boundingBox();
+  expect(third!.y).toBeLessThan(300);
+});
