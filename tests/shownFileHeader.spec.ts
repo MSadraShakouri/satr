@@ -33,8 +33,8 @@ const hidden = (page: Page) => page.evaluate(() => document.body.classList.conta
  *  assignment outright. */
 async function scrollPane(page: Page, steps: number): Promise<void> {
   await page.mouse.move(195, 400);
-  for (let i = 0; i < steps; i += 1) {
-    await page.mouse.wheel(0, 500);
+  for (let i = 0; i < Math.abs(steps); i += 1) {
+    await page.mouse.wheel(0, Math.sign(steps) * 500);
     await page.waitForTimeout(400);
   }
 }
@@ -42,14 +42,24 @@ async function scrollPane(page: Page, steps: number): Promise<void> {
 test('a document keeps its header however far it is scrolled', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  const header = async (): Promise<number> =>
+    (await page.locator('.topbar').boundingBox())!.y;
+  const was = await header();
   expect(await hidden(page)).toBe(false);
   await scrollPane(page, 3);
   // the pane really moved — otherwise this proves nothing
   expect(await page.evaluate(() => document.querySelector('.preview-pane')?.scrollTop ?? 0)).toBeGreaterThan(600);
+  // the name of the document, and the toolbar under it, do not move
+  expect(await header()).toBe(was);
+  await expect(page.locator('#topbar-title')).toBeVisible();
+  await expect(page.locator('.pdf-toolbar')).toBeVisible();
+  // ...and the pill over the page does, the same as in a note
+  expect(await hidden(page)).toBe(true);
+  await scrollPane(page, -2);
   expect(await hidden(page)).toBe(false);
 });
 
-test('a note still hides the bars in reading view, not only in source', async ({ page }) => {
+test('a note still hides the pill in reading view, not only in source', async ({ page }) => {
   await boot(page, { 'note.md': LONG }, 'note.md');
   await page.locator('#preview-toggle').click();
   await expect(page.locator('.preview-pane article')).toBeVisible();

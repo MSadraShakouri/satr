@@ -1422,14 +1422,13 @@ let programmaticUntil = 0;
 function ownScroll(ms = 150): void { programmaticUntil = Math.max(programmaticUntil, performance.now() + ms); }
 function onNavScroll(el: HTMLElement): void {
   const top = el.scrollTop;
-  // A file that is shown rather than read keeps its chrome on screen. In
-  // Obsidian only the two markdown views ever report a scroll to the navbar,
-  // so a PDF, a picture or a page never hides the header no matter how far
-  // you scroll it — the header is their only label, and taking it away
-  // leaves a nameless document. The anchor still keeps up, so coming back to
-  // a note does not count the distance the document travelled as the
-  // reader's first gesture.
-  if (el === previewPane && namedFile) { scrollAnchors.set(el, top); return; }
+  // A document used to be left out of this entirely: in Obsidian only the
+  // two markdown views report a scroll to the navbar, and while the header
+  // slid away with the pill that was the right answer — the header is a
+  // document's only label, and a nameless PDF is worse than a covered line
+  // of it. Now that the header stays put, a document has the same problem a
+  // note has and gets the same answer: the pill is over the page, and
+  // scrolling the page puts it away.
   const anchor = scrollAnchors.get(el) ?? 0; // panes start at the top
   if (syncingScroll || restoringView || performance.now() < programmaticUntil
     || Date.now() - lastRender < 100 || el.getBoundingClientRect().height === 0

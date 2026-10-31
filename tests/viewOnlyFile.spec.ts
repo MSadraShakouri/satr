@@ -34,12 +34,17 @@ test('its menu offers what applies to a file and nothing a note would need', asy
   expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Settings']);
 });
 
-test('the header hides and returns with the rest of the chrome', async ({ page }) => {
+test('the header stays while the rest of the chrome goes', async ({ page }) => {
   await boot(page, { 'Notes/photo.png': PNG });
   await expect(page.locator('#topbar-title')).toBeVisible();
   expect(await page.locator('.topbar > #topbar-title').count(), 'the name travels with the bar').toBe(1);
+  const was = (await page.locator('.topbar').boundingBox())!;
   await page.evaluate(() => document.body.classList.add('is-hidden-nav'));
-  await expect(page.locator('.topbar')).toHaveCSS('opacity', '0');
+  await page.waitForTimeout(400);
+  // the pill is what goes; the name of the file stays where it was
+  await expect(page.locator('.topbar')).toHaveCSS('opacity', '1');
+  await expect(page.locator('#topbar-title')).toBeVisible();
+  expect((await page.locator('.topbar').boundingBox())!.y).toBe(was.y);
 });
 
 test('a note keeps the chrome it has always had', async ({ page }) => {

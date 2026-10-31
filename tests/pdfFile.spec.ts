@@ -346,11 +346,11 @@ test('the counter stays with the pane when a zoomed page is pushed sideways', as
   expect(Math.abs(await centred() - still)).toBeLessThan(2);
 });
 
-test('the counter rides with the floating buttons, which a document keeps', async ({ page }) => {
+test('the counter rides with the floating buttons, pill and all', async ({ page }) => {
   // It is chrome, not part of the page: it belongs in the same floating
-  // layer as the navbar pill and above it. The pill used to slide away
-  // under a scrolling document and the counter came down into the space;
-  // a shown file keeps its chrome now, so the pair simply stays put.
+  // layer as the navbar pill and above it. So when a scrolling document
+  // puts the pill away, the counter comes down into the space it left
+  // rather than hanging in the middle of the page on its own.
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
   expect(await page.locator('.navbar-wrap .pdf-counter').count()).toBe(1);
@@ -364,14 +364,23 @@ test('the counter rides with the floating buttons, which a document keeps', asyn
   });
   const above = await offTheEdge();
   expect(above).toBeGreaterThan(await bar()); // clear of the pill, above it
-  // a hand on the document moves the document and nothing else: the name
-  // in the header is a document's only label, and it does not come and go
+  const header = async (): Promise<number> => (await page.locator('.topbar').boundingBox())!.y;
+  const headerWas = await header();
   await page.mouse.move(195, 400);
   for (let i = 0; i < 3; i += 1) { await page.mouse.wheel(0, 500); await page.waitForTimeout(300); }
   const moved = await page.evaluate(() => (document.querySelector('#preview-pane') as HTMLElement).scrollTop);
   expect(moved).toBeGreaterThan(200); // the reader really did travel
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(true);
+  const dropped = await offTheEdge();
+  expect(dropped).toBeLessThan(above); // the counter followed the pill down
+  expect(dropped).toBeGreaterThan(0); // and is still on the screen, not off it
+  expect(await header()).toBe(headerWas); // while the document's only label stays
+
+  await page.mouse.wheel(0, -500);
+  await page.waitForTimeout(500);
   expect(await page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(false);
-  expect(await offTheEdge()).toBe(above); // and the counter stayed with the pill
+  expect(await offTheEdge()).toBe(above); // and back above the pill with it
 });
 });
 

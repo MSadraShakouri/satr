@@ -305,14 +305,10 @@ button:focus-visible {
 .topbar > * {
   pointer-events: auto;
 }
-.is-hidden-nav .topbar {
-  /* .is-hidden-nav .view-header: slide up by its own height and fade */
-  transform: translateY(calc(-44px - max(12px, var(--safe-top))));
-  opacity: 0;
-}
-.is-hidden-nav .topbar > * {
-  pointer-events: none;
-}
+/* The header does not move. It used to slide up with the pill, which took
+   the name of the file, the back arrow and -- on a document -- the whole
+   toolbar away with it, and put them behind a scroll upwards. Only the pill
+   covers anything a reader is trying to read, so only the pill goes. */
 .topbar-actions {
   display: flex;
   gap: 8px;
@@ -432,8 +428,7 @@ body.is-view-only .cm-file-title {
    steady state the drawer's settle animation ends on, src/drawers.ts). */
 .files-open .workspace,
 .files-open .topbar,
-.files-open .notice-container,
-.files-open.is-hidden-nav .topbar {
+.files-open .notice-container {
   transform: translate3d(var(--drawer-width), 0, 0);
 }
 /* The note is not tappable through the backdrop; keep the caret dead too. */
@@ -443,17 +438,8 @@ body.is-view-only .cm-file-title {
 }
 .outline-open .workspace,
 .outline-open .topbar,
-.outline-open .notice-container,
-.outline-open.is-hidden-nav .topbar {
+.outline-open .notice-container {
   transform: translate3d(calc(-1 * var(--drawer-width)), 0, 0);
-}
-.files-open.is-hidden-nav .topbar,
-.outline-open.is-hidden-nav .topbar {
-  opacity: 1;
-}
-.files-open.is-hidden-nav .topbar > *,
-.outline-open.is-hidden-nav .topbar > * {
-  pointer-events: auto;
 }
 body {
   overflow: hidden;
@@ -479,9 +465,6 @@ body {
   --view-top-spacing: calc(max(12px, var(--safe-top)) + 44px + 8px);
   /* Obsidian's PDF strip, which sits under the file's own header. */
   --pdf-toolbar-height: 40px;
-}
-.is-hidden-nav {
-  --view-top-fade-mask: linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, #000 var(--safe-top));
 }
 .editor-pane,
 .preview-pane {
@@ -4630,17 +4613,8 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
   pointer-events: none;
   transition: transform 0.3s ease-in-out;
 }
-/* Buttons gone: the rectangle's edges show, still not a pill. A drawer
-   open brings the buttons back. */
-.is-hidden-nav .notice-container {
-  right: 12px;
-  left: 12px;
-}
-.files-open.is-hidden-nav .notice-container,
-.outline-open.is-hidden-nav .notice-container {
-  right: var(--notice-side);
-  left: var(--notice-side);
-}
+/* The header's buttons are always there now, so a notice always keeps
+   clear of them -- it no longer widens into the space they used to leave. */
 .notice {
   width: 100%;
   height: 44px;
