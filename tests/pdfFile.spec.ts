@@ -94,7 +94,7 @@ test('the counter names the page being read, not the one just left', async ({ pa
   await scrollToPage(page, 3);
   await expect(page.locator('.pdf-counter')).toHaveText('3 / 6');
   // A third of a screen short of page three's top edge: page two owns the
-  // top strip, page three owns the rest.
+  // top strip, page three owns the middle and the rest.
   const pane0 = await page.locator('#preview-pane').boundingBox();
   await page.locator('#preview-pane').evaluate((el, up: number) => { el.scrollTop -= up; }, pane0!.height / 3);
   await page.waitForTimeout(500); // let it settle, so this reads the new answer
@@ -147,6 +147,49 @@ test('one finger zooms: the second tap of a double tap, held and dragged', async
   await page.waitForTimeout(500);
   const back = await widthOf(page, 1);
   expect(back).toBeLessThan(bigger * 0.75);
+});
+
+test('a double tap keeps the point it was aimed at', async ({ page }) => {
+  // The tap handler starts the zoom about the point tapped and the pointer
+  // handler above it used to wipe the column's origin a moment later, so
+  // every double tap flew out of the wrong corner.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const state = await page.locator('.pdf-page[data-page="1"]').evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + 120;
+    for (const type of ['pointerdown', 'pointerup', 'pointerdown', 'pointerup']) {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }
+    const column = sheet.parentElement as HTMLElement;
+    return { origin: column.style.transformOrigin, animations: column.getAnimations().length };
+  });
+  expect(state.origin).not.toBe('');
+  expect(state.animations).toBeGreaterThan(0);
+});
+
+test('a one-finger drag refuses the scroll it would otherwise be', async ({ page }) => {
+  // touch-action is read when a gesture begins, so asking for it on the
+  // second tap is too late: the pane scrolled away under the finger. The
+  // touch event itself has to be turned down as it happens.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const prevented = await page.locator('.pdf-page[data-page="1"]').evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + 120;
+    const point = (atY: number) => new PointerEvent('x', { clientX: x, clientY: atY });
+    for (const type of ['pointerdown', 'pointerup', 'pointerdown']) {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }
+    const touch = new Touch({ identifier: 1, target: sheet, clientX: x, clientY: y + 60 });
+    const move = new TouchEvent('touchmove', { touches: [touch], targetTouches: [touch], changedTouches: [touch], bubbles: true, cancelable: true });
+    sheet.dispatchEvent(move);
+    void point;
+    return move.defaultPrevented;
+  });
+  expect(prevented).toBe(true);
 });
 
 test('a double tap that does not drag is still a double tap', async ({ page }) => {

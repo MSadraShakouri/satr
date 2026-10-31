@@ -1144,9 +1144,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (touches.size === 1 && Date.now() - lastTap.time < DOUBLE_TAP_MS
       && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP) {
       hold = { y: event.clientY, x: event.clientX, zoom, moved: false };
-      const column = doc.getBoundingClientRect();
-      doc.style.transformOrigin = `${event.clientX - column.left}px ${event.clientY - column.top}px`;
-      // The pane must not scroll under the finger that is zooming.
+      // The origin is set when the drag starts, not here: a tap that turns
+      // out to be an ordinary double tap must find the column exactly as
+      // the tap handler left it.
       scroller.style.touchAction = 'none';
     }
     if (touches.size === 2) {
@@ -1166,7 +1166,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (hold && touches.size === 1) {
       event.preventDefault();
       const dy = event.clientY - hold.y;
-      if (Math.abs(dy) > DRAG_SLOP) hold.moved = true;
+      if (!hold.moved && Math.abs(dy) > DRAG_SLOP) {
+        hold.moved = true;
+        const column = doc.getBoundingClientRect();
+        doc.style.transformOrigin = `${hold.x - column.left}px ${hold.y - column.top}px`;
+      }
+      if (!hold.moved) return;
       const factor = clamp(hold.zoom * 2 ** (dy / DRAG_DOUBLE_PX), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
       doc.style.transform = `scale(${factor})`;
       return;
@@ -1184,16 +1189,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const held = hold;
       hold = null;
       scroller.style.touchAction = '';
+      // A finger that only tapped is a double tap, and that is the tap
+      // handler's business -- which has already run, on the way up through
+      // the pages, and has the column mid-animation about the point it was
+      // tapped at. Touching the column's transform here would scale that
+      // animation from somewhere else: leave it alone.
+      if (!held.moved) return;
       const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
       doc.style.transform = '';
       doc.style.transformOrigin = '';
-      // A finger that only tapped is a double tap, and that is the tap
-      // handler's business; one that dragged has already said what zoom it
-      // wants, and must not be given the double tap's one on top of it.
-      if (held.moved) {
-        lastTap.time = 0;
-        zoomTo(held.zoom * factor, held.y, held.x);
-      }
+      lastTap.time = 0;
+      zoomTo(held.zoom * factor, held.y, held.x);
       return;
     }
     if (!pinch || touches.size >= 2) return;
@@ -1205,6 +1211,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     pinch = null;
     zoomTo(from * factor, middle, across);
   };
+  // Pointer events cannot call off a scroll -- touch-action is read when
+  // the gesture begins, so setting it on the second tap is already too
+  // late, and the pane scrolled away under the finger instead of zooming.
+  // The touch event itself can, and this is the only thing it is for.
+  scroller.addEventListener('touchmove', (event: TouchEvent) => {
+    if (hold && event.touches.length === 1) event.preventDefault();
+  }, { passive: false });
   scroller.addEventListener('pointerdown', onPointerDown, { passive: true });
   scroller.addEventListener('pointermove', onPointerMove, { passive: false });
   scroller.addEventListener('pointerup', endPinch, { passive: true });
