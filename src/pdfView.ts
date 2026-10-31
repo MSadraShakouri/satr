@@ -967,11 +967,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     slab.detail.style.height = `${Math.round(slab.detailRect.height * scale)}px`;
   };
 
-  /** Which page the counter names: the page under the line two thirds down
-   *  the screen, the same place the outline reads a heading from (main.ts).
+  /** Which page the counter names: the page under the middle of the screen.
    *  The page at the very top is the one the reader has just left -- a page
    *  turned one pixel past its edge was being called the next one -- and the
-   *  page being read is the one in front of them. At the end of a document
+   *  page being read is the one in front of them. Two thirds down was tried
+   *  first, to match the line the outline reads a heading from, and it
+   *  changed the number too early: a page is one thing all the way down,
+   *  where a heading is the start of one. At the end of a document
    *  the scroll can go no further and the last page can never reach that
    *  line, so there the reader is plainly on it. (The place written down
    *  stays the exact top-of-screen one, so reopening lands on the same
@@ -981,7 +983,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const atEnd = scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 2;
     if (scrollable && atEnd) return slabs.length;
     const screen = Math.max(0, scroller.clientHeight - chromeTop());
-    const anchor = scroller.scrollTop + chromeTop() - columnTop + screen * (2 / 3);
+    const anchor = scroller.scrollTop + chromeTop() - columnTop + screen / 2;
     let edge = 0;
     for (const slab of slabs) {
       const height = heightOf(slab);
