@@ -159,6 +159,25 @@ test('a double tap that does not drag is still a double tap', async ({ page }) =
   expect(after).toBeGreaterThan(fit * 1.6);
 });
 
+test('the column is made ready to be scaled while the finger is still down', async ({ page }) => {
+  // The first zoom of a session had to rasterise the whole column into a
+  // layer before it could scale it, which is the stutter that only ever
+  // happens once. A finger on the pages is the warning.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const column = page.locator('.pdf-document, #preview-pane .pdf-page').first();
+  await page.locator('.pdf-page[data-page="1"]').evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    sheet.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: box.left + 20, clientY: box.top + 20, bubbles: true, cancelable: true }));
+  });
+  const warmed = await page.evaluate(() => {
+    const doc = document.querySelector('.pdf-page')!.parentElement as HTMLElement;
+    return doc.style.willChange;
+  });
+  expect(warmed).toBe('transform');
+  await expect(column).toBeVisible();
+});
+
 test('the last page is named as the last page', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');

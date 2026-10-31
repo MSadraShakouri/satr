@@ -454,6 +454,8 @@ const SETTLE_MS = 120;
  *  scaled and slid into the new one. A pinch needs none of this: it is
  *  already following a finger. 200ms read as a flinch rather than a move;
  *  300 is long enough to be followed by eye and still answers the tap. */
+/** How long the column keeps its compositing layer after the hand leaves. */
+const LAYER_COOL_MS = 2000;
 const GLIDE_MS = 300;
 const GLIDE_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
@@ -1114,8 +1116,25 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const [a, b] = [...touches.values()];
     return { span: Math.hypot(a.x - b.x, a.y - b.y), middle: (a.y + b.y) / 2, across: (a.x + b.x) / 2 };
   };
+  /** Tell the compositor a transform is coming while the finger is still
+   *  down. The first zoom of a session has to rasterise the whole column
+   *  into a layer of its own before it can be scaled, and that lands on the
+   *  first frame of the motion — the stutter that is only ever on the first
+   *  one, because the layer is warm from then on. A finger touching the
+   *  pages is all the warning needed, and it is given back shortly after
+   *  the hand leaves, since a layer that size is not free to keep. */
+  let coolDown = 0;
+  const warmLayer = (): void => {
+    window.clearTimeout(coolDown);
+    doc.style.willChange = 'transform';
+  };
+  const coolLayer = (): void => {
+    window.clearTimeout(coolDown);
+    coolDown = window.setTimeout(() => { doc.style.willChange = ''; }, LAYER_COOL_MS);
+  };
   const onPointerDown = (event: PointerEvent): void => {
     if (event.pointerType !== 'touch') return;
+    warmLayer();
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
     // One finger: the second tap of a double tap, held rather than lifted,
     // zooms by dragging — down to zoom in, up to zoom out, which is the
@@ -1160,6 +1179,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   };
   const endPinch = (event: PointerEvent): void => {
     touches.delete(event.pointerId);
+    if (!touches.size) coolLayer();
     if (hold) {
       const held = hold;
       hold = null;
@@ -1225,6 +1245,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   applyPending();
   showCounter();
   drawBand();
+  // The animation machinery itself, started once on nothing: the first
+  // doc.animate() of a page has a cost of its own, and paying it here
+  // rather than on the reader's first double tap is free -- this animates
+  // between two identical transforms for a single frame.
+  try { doc.animate([{ transform: 'scale(1)' }, { transform: 'scale(1)' }], { duration: 1 }); } catch { /* no WAAPI */ }
 
   const handle: PdfHandle = {
     pages: document_.pageCount,
