@@ -85,6 +85,28 @@ test('the counter says which page is being read, and only when there are several
   await expect(page.locator('.pdf-counter')).toHaveText('3 / 6');
 });
 
+test('the counter names the page being read, not the one just left', async ({ page }) => {
+  // A sliver of the page above is still at the top of the screen while the
+  // reader is plainly on the next one. The counter reads the page under the
+  // line two thirds down, which is where the outline reads a heading from.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await scrollToPage(page, 3);
+  await expect(page.locator('.pdf-counter')).toHaveText('3 / 6');
+  // A third of a screen short of page three's top edge: page two owns the
+  // top strip, page three owns the rest.
+  const pane0 = await page.locator('#preview-pane').boundingBox();
+  await page.locator('#preview-pane').evaluate((el, up: number) => { el.scrollTop -= up; }, pane0!.height / 3);
+  await page.waitForTimeout(500); // let it settle, so this reads the new answer
+  await expect(page.locator('.pdf-counter')).toHaveText('3 / 6');
+  // And a screen that is mostly page two says two.
+  const box = await pageBox(page, 3).boundingBox();
+  const pane = await page.locator('#preview-pane').boundingBox();
+  await page.locator('#preview-pane').evaluate((el, to: number) => { el.scrollTop += to; }, -(pane!.height * 0.75) + ((box?.y ?? 0) - (pane?.y ?? 0)));
+  await page.waitForTimeout(500);
+  await expect(page.locator('.pdf-counter')).toHaveText('2 / 6');
+});
+
 test('the last page is named as the last page', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');

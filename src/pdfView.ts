@@ -884,15 +884,28 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     slab.detail.style.height = `${Math.round(slab.detailRect.height * scale)}px`;
   };
 
-  /** Which page the counter names. The page at the top of the screen,
-   *  except at the very bottom of a document: there the scroll cannot go
-   *  any further, the last page can never reach the top, and the reader is
-   *  plainly on it. (The place written down stays the exact top-of-screen
-   *  one, so reopening lands on the same pixels.) */
+  /** Which page the counter names: the page under the line two thirds down
+   *  the screen, the same place the outline reads a heading from (main.ts).
+   *  The page at the very top is the one the reader has just left -- a page
+   *  turned one pixel past its edge was being called the next one -- and the
+   *  page being read is the one in front of them. At the end of a document
+   *  the scroll can go no further and the last page can never reach that
+   *  line, so there the reader is plainly on it. (The place written down
+   *  stays the exact top-of-screen one, so reopening lands on the same
+   *  pixels.) */
   const pageShown = (): number => {
     const scrollable = scroller.scrollHeight > scroller.clientHeight + 4;
     const atEnd = scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 2;
-    return scrollable && atEnd ? slabs.length : placeNow().page;
+    if (scrollable && atEnd) return slabs.length;
+    const screen = Math.max(0, scroller.clientHeight - chromeTop());
+    const anchor = scroller.scrollTop + chromeTop() - columnTop + screen * (2 / 3);
+    let edge = 0;
+    for (const slab of slabs) {
+      const height = heightOf(slab);
+      if (anchor < edge + height + GAP - 1 || slab.page === slabs.length) return slab.page;
+      edge += height + GAP;
+    }
+    return placeNow().page;
   };
   /** Everything that follows the reader down the document: the counter in
    *  the floating layer, and the toolbar's number and the sidebar's
