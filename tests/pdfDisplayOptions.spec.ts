@@ -421,3 +421,101 @@ test('under fit width a page is drawn at the size it is shown, not at fit', asyn
   expect(small.picture).toBeGreaterThanOrEqual(small.page); // and still sharp
   expect(small.kept).toBe(atFit.picture);
 });
+
+test.describe('a page the engine cannot draw inside a frame', () => {
+  // Three times the pixels: an A4 page at this screen is 1122 x 1587, which
+  // is over the budget a single go at the engine is allowed, so it is drawn
+  // in slices. On his book one whole sheet was measured at 116ms -- seven
+  // frames in which nothing else could happen, and the stutter he felt on a
+  // slow scroll. These say the pieces still make one page.
+  test.use({ deviceScaleFactor: 3 });
+
+  test('is drawn in slices that tile exactly, with no row left out', async ({ page }) => {
+    const { colourPdf } = await import('./support/tinyPdf');
+    // Red across the top third, green across the middle, blue across the
+    // foot. A slice drawn at the wrong offset, or a row lost where two of
+    // them meet, moves a boundary or leaves a gap -- and both are read off
+    // the finished canvas here, a column of it at a time.
+    await boot(page, 'handout.pdf', undefined, colourPdf());
+    await openDocument(page);
+    await page.waitForTimeout(1200);
+    const sheet = await page.evaluate(() => {
+      const canvas = document.querySelector('.pdf-page[data-page="1"] .pdf-raster') as HTMLCanvasElement;
+      const context = canvas.getContext('2d', { willReadFrequently: true })!;
+      const column = context.getImageData(Math.round(canvas.width / 2), 0, 1, canvas.height).data;
+      const colourAt = (row: number): string => {
+        const at = row * 4;
+        if (column[at + 3] < 255) return 'nothing';
+        if (column[at] > 200 && column[at + 1] < 80) return 'red';
+        if (column[at + 1] > 200 && column[at] < 80) return 'green';
+        if (column[at + 2] > 200 && column[at] < 80) return 'blue';
+        return 'other';
+      };
+      const runs: { colour: string; from: number; to: number }[] = [];
+      for (let row = 0; row < canvas.height; row += 1) {
+        const colour = colourAt(row);
+        const last = runs[runs.length - 1];
+        if (last && last.colour === colour) last.to = row;
+        else runs.push({ colour, from: row, to: row });
+      }
+      return { width: canvas.width, height: canvas.height, runs: runs.filter((run) => run.to - run.from > 2) };
+    });
+    // the premise: a picture this big is one the reader cuts up
+    expect(sheet.width * sheet.height).toBeGreaterThan(1_200_000);
+    // three bands, in order, each a third of the page, and nothing else:
+    // no unpainted row anywhere down the sheet
+    expect(sheet.runs.map((run) => run.colour)).toEqual(['red', 'green', 'blue']);
+    for (const [index, run] of sheet.runs.entries()) {
+      expect(Math.abs(run.from - (index * sheet.height) / 3)).toBeLessThan(6);
+    }
+  });
+
+  test('is asked for in pieces, each one inside the budget', async ({ page }) => {
+    const { colourPdf } = await import('./support/tinyPdf');
+    await boot(page, 'handout.pdf', undefined, colourPdf());
+    await openDocument(page);
+    await page.waitForTimeout(800);
+    // The engine the app is drawing with, not a copy of it: the module hands
+    // out the one instance. Every rectangle asked of it from here on is
+    // written down.
+    await page.evaluate(async () => {
+      const hook = (window as unknown as { __satr: { load: (path: string) => Promise<Record<string, unknown>> } }).__satr;
+      const module_ = await hook.load('/src/pdfiumEngine.ts');
+      const engine = await (module_.pdfium as () => Promise<Record<string, unknown>>)();
+      const asks: { y: number; height: number }[] = [];
+      (window as unknown as { __asks: typeof asks }).__asks = asks;
+      const was = (engine.renderPageRectRaw as (...args: unknown[]) => unknown).bind(engine);
+      engine.renderPageRectRaw = (document_: unknown, sheet: unknown, rect: { origin: { y: number }; size: { height: number } }, options: unknown) => {
+        asks.push({ y: rect.origin.y, height: rect.size.height });
+        return was(document_, sheet, rect, options);
+      };
+    });
+    // A wider pane: the page is laid out again, and its picture drawn again
+    // at the size it is now shown at.
+    await page.setViewportSize({ width: 430, height: 700 });
+    await page.waitForTimeout(1500);
+    const asks = await page.evaluate(() => (window as unknown as { __asks: { y: number; height: number }[] }).__asks);
+    const tall = await page.evaluate(() => (document.querySelector('.pdf-page[data-page="1"]') as HTMLElement).clientHeight);
+    expect(asks.length).toBeGreaterThan(1); // in pieces, not in one go
+    // down the page in order, from the top edge to the bottom one, with no
+    // band of it missed out
+    expect(asks[0].y).toBeLessThan(1);
+    let reach = 0;
+    for (const ask of asks) {
+      expect(ask.y).toBeLessThanOrEqual(reach + 1);
+      reach = Math.max(reach, ask.y + ask.height);
+    }
+    expect(reach).toBeGreaterThan(tall - 2);
+  });
+
+  test('is still judged dark or light as a whole page', async ({ page }) => {
+    // The probe that keeps a dark slide from being inverted into a white one
+    // reads the edge of the picture. Sliced, there is no one picture to read:
+    // it is the edge of every slice, voted on at the end.
+    await boot(page, 'handout.pdf', 'dark', tinyPdf(3, [2]));
+    await openDocument(page);
+    await page.waitForTimeout(1200);
+    await expect(page.locator('.pdf-page[data-page="1"]')).not.toHaveClass(/is-dark-page/);
+    await expect(page.locator('.pdf-page[data-page="2"]')).toHaveClass(/is-dark-page/);
+  });
+});

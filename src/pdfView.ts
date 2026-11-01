@@ -485,6 +485,29 @@ const ROUGH_PX = 100;
  * reading outwards and the far end of it is let go of first.
  */
 const SKETCH_BYTES = 24 * 1024 * 1024;
+/**
+ * How long one go at the engine may hold the thread for.
+ *
+ * The engine draws on this thread and cannot be interrupted, so whatever
+ * it is in the middle of when a finger lands is a frame the reader does
+ * not get. A page of his book at the screen's own pixels was measured at
+ * 116ms -- seven frames, and the stutter he reported on a slow scroll,
+ * which was there long before any of the background drawing was. The
+ * same page in three pieces is three blocks of forty.
+ *
+ * It is a budget and not a size because the two documents in front of me
+ * differ by a factor of eight: his scanned book costs 65ms a million
+ * pixels, his typeset handout 8ms for the same pixels, and a phone is
+ * slower than both. So the reader times what it draws and cuts the next
+ * page into however many pieces that rate says it needs -- nothing on a
+ * page that is already inside the budget.
+ */
+const SLICE_MS = 40;
+/** A picture this big is worth cutting whatever it costs: the copy out of
+ *  the engine and into a canvas is a frame's work on its own. */
+const SLICE_PIXELS = 1_200_000;
+/** Past this the fixed cost of asking again is most of what is left. */
+const MOST_SLICES = 6;
 /** How far out pages that have already been drawn are put back up. The
  *  engine is not asked for anything out here -- this is the sketch book
  *  going back into its boxes, which costs a line of code and no drawing,
@@ -610,7 +633,7 @@ const stop = (task: PdfTask<Pixels> | null): void => {
  *  whole page into a thumbnail and read that back off the canvas, which
  *  is a draw and a readback per page for the same answer. */
 const PROBE = 24;
-const alreadyDark = (picture: Pixels): boolean => {
+const darkRing = (picture: Pixels): number[] => {
   const ring: number[] = [];
   for (let y = 0; y < PROBE; y += 1) {
     for (let x = 0; x < PROBE; x += 1) {
@@ -621,8 +644,15 @@ const alreadyDark = (picture: Pixels): boolean => {
       ring.push(0.299 * picture.data[at] + 0.587 * picture.data[at + 1] + 0.114 * picture.data[at + 2]);
     }
   }
-  ring.sort((a, b) => a - b);
-  return ring[ring.length >> 1] < 110;
+  return ring;
+};
+/** Half the edge of the page is darker than mid grey. Taken from the ring
+ *  of samples above -- of the whole picture when it was drawn in one go,
+ *  and of every slice of it when it was not, which is the same edge plus
+ *  the lines the slices were cut along. */
+const ringIsDark = (ring: number[]): boolean => {
+  const sorted = [...ring].sort((a, b) => a - b);
+  return sorted.length > 0 && sorted[sorted.length >> 1] < 110;
 };
 
 /** Each document opened in this session gets its own name, so two tabs on
@@ -1450,6 +1480,27 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     void pump();
   };
 
+  /**
+   * What the engine has been costing, per million pixels, on this
+   * document and this machine. Learned from the pages it has already
+   * drawn -- and only from the big ones, because a picture a hundred
+   * pixels across is nearly all fixed cost and would price a sheet at
+   * twenty times what it comes to.
+   */
+  let perMillion = 0;
+  const costs = (pixels: number, ms: number): void => {
+    if (pixels < 250_000) return;
+    const rate = ms / (pixels / 1e6);
+    // the last few pages, weighted towards the last: the reader is looking
+    // for the order of magnitude, and a page with a photograph on it
+    // should not make the next twenty pages of plain text timid
+    perMillion = perMillion ? perMillion * 0.6 + rate * 0.4 : rate;
+  };
+  const slicesFor = (pixels: number): number => clamp(Math.max(
+    Math.ceil(pixels / SLICE_PIXELS),
+    perMillion ? Math.ceil((perMillion * (pixels / 1e6)) / SLICE_MS) : 1,
+  ), 1, MOST_SLICES);
+
   /** The screen's own pixels, unless the picture asked for would cost more
    *  than the budget, and then as many as fit. */
   const rasterFor = (width: number, height: number): number => {
@@ -1487,28 +1538,54 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const raster = rasterFor(width, height);
     const made = sheet(width, height, raster);
     if (!made) return;
-    const task = engine.renderPageRaw(document_, slab.proxy, { scaleFactor: drawnFor, dpr: raster, withAnnotations: true });
-    slab.baseTask = task;
-    let picture: Pixels;
-    try {
-      picture = await task.toPromise();
-    } catch {
-      if (slab.baseScale === drawnFor) slab.baseScale = 0;
-      return; // called off, or the document went away
+    const tall = made.canvas.height;
+    const slices = slicesFor(made.canvas.width * tall);
+    const ring: number[] = [];
+    // Down the page a slice at a time, with the thread given back between
+    // them. The rows are worked out in the picture's own pixels and turned
+    // back into the page's units, so the pieces tile exactly however the
+    // division falls; each one after the first starts a row early, because
+    // a row lost to rounding would be a hairline of the rough picture
+    // showing through the sharp one.
+    for (let slice = 0; slice < slices; slice += 1) {
+      const from = Math.round((slice * tall) / slices);
+      const to = Math.round(((slice + 1) * tall) / slices);
+      const top = slice ? from - 1 : 0;
+      // Timed from before the ask, not after it: the engine draws on this
+      // thread, inside the call, and has already finished by the time the
+      // promise is waited on. Timing the wait measured nothing at all.
+      const began = performance.now();
+      const task = engine.renderPageRectRaw(document_, slab.proxy,
+        { origin: { x: 0, y: top / (drawnFor * raster) }, size: { width: slab.width, height: (to - top) / (drawnFor * raster) } },
+        { scaleFactor: drawnFor, dpr: raster, withAnnotations: true });
+      slab.baseTask = task;
+      let picture: Pixels;
+      try {
+        picture = await task.toPromise();
+      } catch {
+        if (slab.baseScale === drawnFor) slab.baseScale = 0;
+        return; // called off, or the document went away
+      }
+      costs(picture.width * picture.height, performance.now() - began);
+      // The reader has moved while this was drawing and the page is gone
+      // from the screen: it is not put up, and not kept. Between slices is
+      // the whole point of the slicing -- a page being left behind stops
+      // costing anything within one slice rather than at the end of a
+      // whole sheet.
+      if (slab.baseTask !== task || !standing(slab).near) {
+        if (slab.baseTask === task) { slab.baseTask = null; slab.baseScale = 0; }
+        return;
+      }
+      // The engine's rounding, not ours, decides how wide the picture is.
+      if (slice === 0 && picture.width !== made.canvas.width) made.canvas.width = picture.width;
+      made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, top);
+      ring.push(...darkRing(picture));
+      if (slice + 1 < slices) await breathe();
     }
-    // The reader has moved while this was drawing and the page is gone
-    // from the screen: it is not put up, and not kept.
-    if (slab.baseTask !== task || !standing(slab).near) {
-      if (slab.baseTask === task) { slab.baseTask = null; slab.baseScale = 0; }
-      return;
-    }
-    made.canvas.width = picture.width;
-    made.canvas.height = picture.height;
-    made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
     drawPhotos(slab, made.canvas, { x: 0, y: 0, width: slab.width, height: slab.height });
     made.canvas.className = 'pdf-raster';
     // A page that was authored dark must not be inverted into a white one.
-    slab.box.classList.toggle('is-dark-page', alreadyDark(picture));
+    slab.box.classList.toggle('is-dark-page', ringIsDark(ring));
     // the picture it replaces stays up until this one is ready, so a resize
     // is never a column of empty boxes
     slab.base?.remove();
