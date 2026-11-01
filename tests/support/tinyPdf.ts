@@ -133,25 +133,45 @@ export function tinyPdfBytes(pages: number): Buffer {
 }
 
 /**
- * A page with a picture printed on it, covering `share` of the page's area.
+ * A page with pictures printed on it, covering `share` of the page's area
+ * between them.
  *
- * The picture is eight by eight pixels of near-white, written as hex rather
- * than as bytes so the file stays text the way every other fixture here
- * does. Near-white is the point of it: inverted it goes black, so a test
- * can tell by its colour alone whether the dark theme left it alone.
+ * The pictures are eight by eight pixels of near-white, written as hex
+ * rather than as bytes so the file stays text the way every other fixture
+ * here does. Near-white is the point of them: inverted they go black, so a
+ * test can tell by colour alone whether the dark theme left them alone.
  *
- * `share` is what the whole thing is for: a picture on a page is a
- * photograph and is left in its own colours, while a picture that is
- * nearly the whole page is a scan of a page and is darkened with it.
+ * `how` is what the rest of it is for. A page is judged by what is written
+ * on it: with words on it its pictures are photographs printed in a
+ * document, however much of it they cover; with nothing written on it and
+ * covered in pictures, it is a scan of a page and is darkened whole. `text`
+ * is which of the three a page carries -- words set to be read, words set
+ * to be drawn as nothing (an OCR layer over a scan), or none at all -- and
+ * `count` is how many pictures they are spread over, laid out in a grid.
+ * Pick a share that fits the count, or the squares overlap.
  */
-export function picturePdf(share: number): string {
+export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' | 'none'; count?: number } = {}): string {
   const objects: string[] = [];
   const page = { width: 595, height: 842 };
-  const side = Math.round(Math.sqrt(share * page.width * page.height));
-  const x = Math.round((page.width - side) / 2);
-  const y = Math.round((page.height - side) / 2);
+  const count = Math.max(1, how.count ?? 1);
+  // The page's own shape, shrunk to the share asked for, so a picture
+  // always fits inside the sheet however big a share it is given.
+  const of = Math.sqrt(share / count);
+  const size = { width: Math.round(page.width * of), height: Math.round(page.height * of) };
+  const columns = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / columns);
+  const places: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const cell = { x: (index % columns) * (page.width / columns), y: Math.floor(index / columns) * (page.height / rows) };
+    const x = Math.round(cell.x + (page.width / columns - size.width) / 2);
+    const y = Math.round(cell.y + (page.height / rows - size.height) / 2);
+    places.push(`q ${size.width} 0 0 ${size.height} ${x} ${y} cm /Im1 Do Q`);
+  }
   const pixels = new Array(8 * 8 * 3).fill('f2').join('');
-  const content = `BT /F1 18 Tf 60 780 Td (A page with a picture on it) Tj ET\nq ${side} 0 0 ${side} ${x} ${y} cm /Im1 Do Q`;
+  const said = how.text ?? 'visible';
+  const words = said === 'none' ? ''
+    : `BT ${said === 'invisible' ? '3 Tr ' : ''}/F1 18 Tf 60 780 Td (A page with a picture on it) Tj ET\n`;
+  const content = words + places.join('\n');
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
   objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]`

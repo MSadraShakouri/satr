@@ -45,8 +45,13 @@ export function pdfium(): Promise<PdfEngine<Blob>> {
 /** A rectangle of a page, in the page's own units, measured from its top. */
 export interface PageRect { x: number; y: number; width: number; height: number }
 
-/** PDFium's number for a page object that is an image. */
+/** PDFium's numbers for the two kinds of page object this reads. */
+const OBJECT_TEXT = 1;
 const OBJECT_IMAGE = 3;
+/** And for text that is drawn as nothing at all: an OCR layer, the words a
+ *  machine read off a scan, kept behind the picture so the page can be
+ *  searched. Written text is never set this way. */
+const TEXT_INVISIBLE = 3;
 /** Four floats, for the bounds of one object. */
 const FLOAT = 4;
 
@@ -62,6 +67,7 @@ interface Innards {
     FPDFPage_CountObjects(page: number): number;
     FPDFPage_GetObject(page: number, index: number): number;
     FPDFPageObj_GetType(object: number): number;
+    FPDFTextObj_GetTextRenderMode(object: number): number;
     FPDFPageObj_GetBounds(object: number, left: number, bottom: number, right: number, top: number): boolean;
     pdfium: { getValue(pointer: number, type: string): number };
   };
@@ -70,27 +76,34 @@ interface Innards {
 }
 
 /**
- * Where the pictures on a page are, in the page's own units.
+ * Where the photographs on a page are, in the page's own units.
  *
  * The dark theme is a filter over the whole drawn page, and a photograph
  * is part of a drawn page: a whiteboard came out black with white chalk on
  * it. These rectangles are what the viewer leaves alone.
  *
- * A page that is mostly picture is not a page with pictures on it -- it is
- * a scanned page -- and a scan is left to the filter, or a dark theme would
- * do nothing at all for a scanned book.
+ * A scanned page is the hard case, because a scan is a picture too -- of a
+ * page -- and leaving it alone means a dark theme does nothing at all for
+ * a scanned book. What tells the two apart is the writing: a page that was
+ * typeset carries its words as text, so the pictures on it are pictures
+ * printed in a document; a page with no words on it at all that is covered
+ * in pictures is not a page with pictures on it, it is a photograph of a
+ * page. Nothing has to be counted or guessed at.
  *
- * That is judged on the page and not on any one picture, because a scanner
- * does not hand over one image a page. A 528-page book of his comes in
- * strips: eleven to thirty-three JPEGs a page, 8x436, 1144x24, 64x8, which
- * together are the whole sheet. Measured against each picture on its own
- * every strip looked like a photograph, so every strip was laid back over
- * the page un-inverted, and a dark page came out as a patchwork of white
- * bands -- or, where the strips happened to tile the sheet, as a white page
- * in a dark theme. Two things say scan: how much of the page is covered,
- * all pictures counted, and how many there are. A slide with photographs on
- * it has one or two, or three; nothing meant to be read as a picture comes
- * in eleven pieces.
+ * Measured on his 528-page scan, on a 52-page handout and on an OCR'd
+ * sheet: the book has no text object anywhere, five to forty-nine image
+ * strips a page, 82% to 139% of the sheet covered; the handout has one to
+ * two thousand text objects a page and no images; an OCR'd scan has its
+ * words, but set to be drawn as nothing, which is how it is known from a
+ * page someone wrote. The rule this replaced went by a count and a share
+ * -- more than eight pictures, or six tenths of the page -- and both of
+ * them break on a real document: nine photographs on one slide came out
+ * inverted, and a full-bleed photograph behind a heading did too.
+ *
+ * The one count left is for a sheet handed over in pieces. A page in more
+ * than two dozen fragments that cover it is a scan whatever is written on
+ * it -- a stamp, a page number, a line of OCR left visible -- because
+ * nothing meant to be looked at comes in two dozen pieces.
  *
  * Only unrotated pages are answered for. The bounds come back in PDF user
  * space, which a rotated page does not share with what is drawn, and a
@@ -104,11 +117,22 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageR
   const held = context.acquirePage(page.index);
   const bounds = inner.memoryManager.malloc(FLOAT * 4);
   const found: PageRect[] = [];
+  let written = false;
   try {
     const count = inner.pdfiumModule.FPDFPage_CountObjects(held.pagePtr);
     for (let index = 0; index < count; index += 1) {
       const object = inner.pdfiumModule.FPDFPage_GetObject(held.pagePtr, index);
-      if (!object || inner.pdfiumModule.FPDFPageObj_GetType(object) !== OBJECT_IMAGE) continue;
+      if (!object) continue;
+      const kind = inner.pdfiumModule.FPDFPageObj_GetType(object);
+      // The question is whether anything is written here, so the asking
+      // stops at the first word that shows. On a page of the handout that
+      // is one call where reading the whole text layer would be two
+      // thousand, and five milliseconds.
+      if (kind === OBJECT_TEXT) {
+        if (!written && inner.pdfiumModule.FPDFTextObj_GetTextRenderMode(object) !== TEXT_INVISIBLE) written = true;
+        continue;
+      }
+      if (kind !== OBJECT_IMAGE) continue;
       if (!inner.pdfiumModule.FPDFPageObj_GetBounds(object, bounds, bounds + FLOAT, bounds + FLOAT * 2, bounds + FLOAT * 3)) continue;
       const at = (slot: number): number => inner.pdfiumModule.pdfium.getValue(bounds + FLOAT * slot, 'float');
       const [left, bottom, right, top] = [at(0), at(1), at(2), at(3)];
@@ -123,13 +147,18 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageR
     inner.memoryManager.free(bounds);
     held.release();
   }
-  if (found.length > MOST_PICTURES) return [];
+  // A document with no pictures on this page -- most pages of most
+  // documents -- is out before anything is weighed.
+  if (!found.length) return found;
   const sheet = Math.max(1, page.size.width * page.size.height);
   const covered = found.reduce((sum, rect) => sum + rect.width * rect.height, 0) / sheet;
-  return covered >= SCANNED ? [] : found;
+  const scan = covered >= COVERED && (!written || found.length > PIECES);
+  return scan ? [] : found;
 }
 
-/** This much of the page in pictures, and the page is one. */
-const SCANNED = 0.6;
-/** And this many pictures is a sheet in pieces, whatever they cover. */
-const MOST_PICTURES = 8;
+/** A page with nothing written on it, with this much of it in pictures:
+ *  the page is a picture. */
+const COVERED = 0.5;
+/** And a sheet in this many fragments is a sheet in pieces, whatever is
+ *  written on it. */
+const PIECES = 24;

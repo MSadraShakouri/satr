@@ -258,12 +258,54 @@ test('a picture on a page keeps its own colours in the dark theme', async ({ pag
 
 test('a scanned page is darkened, picture and all', async ({ page }) => {
   const { picturePdf } = await import('./support/tinyPdf');
-  // nearly the whole page: this picture is the page, and a dark theme that
-  // left it alone would do nothing at all for a scanned book
-  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95));
+  // Nearly the whole page, and not a word written on it: this picture is
+  // the page, and a dark theme that left it alone would do nothing at all
+  // for a scanned book.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95, { text: 'none' }));
   await openDocument(page);
   await page.waitForTimeout(1200);
   await expect(page.locator('.pdf-photo')).toHaveCount(0);
+});
+
+test('a picture behind a heading is a picture, however much of the page it covers', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // The slide with a photograph across the whole of it and a line of type
+  // over the top. By share of the page it is indistinguishable from a
+  // scan; by what is written on it, it is nothing like one.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95, { text: 'visible' }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(1);
+  const shade = await page.locator('.pdf-photo').evaluate((photo) => {
+    const canvas = photo as HTMLCanvasElement;
+    const data = canvas.getContext('2d')!.getImageData(Math.round(canvas.width / 2), Math.round(canvas.height / 2), 1, 1).data;
+    return Math.min(data[0], data[1], data[2]);
+  });
+  expect(shade).toBeGreaterThan(200); // still the near-white it was printed as
+});
+
+test('a scan with the words a machine read off it is still a scan', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // An OCR'd scan carries text, but text set to be drawn as nothing: the
+  // page is a picture and the words are behind it, so a reader can search
+  // them. Counting text objects alone would call this a typeset page and
+  // hand back a white sheet in a dark theme.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95, { text: 'invisible' }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+  expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
+});
+
+test('a page of photographs keeps all of them, however many there are', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // Twelve pictures and a line of type: a page of plates, a contact sheet,
+  // a slide of screenshots. The rule this replaced threw away every
+  // picture on a page that had more than eight of them.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.3, { count: 12 }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(12);
 });
 
 test('a scan that came in strips is a scan, not a page of photographs', async ({ page }) => {
