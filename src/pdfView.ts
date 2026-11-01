@@ -482,6 +482,11 @@ const DRAG_GRIP_PX = 8;
  *  pane, and is all the way there by the time the page is this fraction of
  *  its fitted width. Continuous, so nothing steps as it crosses. */
 const CENTRE_BY = 0.7;
+/** A gesture that has paused for this long, with the finger still down, is
+ *  drawn at the size the finger is holding rather than waiting for it to
+ *  lift. Long enough that a sweep does not draw thirty times on its way
+ *  past, short enough to land while the reader is still looking. */
+const LIVE_DRAW_MS = 140;
 /** Between two pages, in CSS pixels at any zoom — a gap that grew with the
  *  zoom would push the pages apart as they were read. */
 const GAP = 8;
@@ -773,6 +778,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     fit = room > 0 ? room / widest : 1;
   };
   const scaleNow = (): number => fit * zoom;
+  /**
+   * What a finger is doing to the column this instant, as a multiple of
+   * the zoom the layout is laid out at: 1 whenever nothing is being held.
+   *
+   * A pinch or a one-finger zoom scales the whole column with a CSS
+   * transform and only commits to a zoom when the finger lifts, which is
+   * what keeps the gesture on the compositor. Nothing used to be drawn
+   * until then — no scroll event fires during a gesture, so nothing ever
+   * made a plan — and a reader who held a page at three times its size
+   * was looking at a stretched picture until they let go. Drive draws
+   * under the finger. This is the number that lets us: the pictures are
+   * asked for at the size the gesture is holding, and land in a box that
+   * is already being shown at that size.
+   */
+  let living = 1;
+  const liveScale = (): number => scaleNow() * living;
   const heightOf = (slab: Slab): number => slab.laid;
   /** Where the first page's top edge sits in the scroller — the column's own
    *  padding, and anything the pane puts above it. Measured rather than
@@ -1273,7 +1294,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * to draw a worse one is not an economy -- so this only ever makes new
    * work cheaper.
    */
-  const baseWanted = (): number => fit * Math.min(1, zoom);
+  const baseWanted = (): number => fit * Math.min(1, zoom * living);
 
   /** Is this page still waiting for this, now? Asked again at the moment
    *  the work would start, because by then the reader has usually moved.
@@ -1495,7 +1516,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // it waits until the scrolling stops rather than being drawn for a
       // place the reader is already leaving.
       if (moving) continue;
-      if (slab.detailZoom === zoom && slab.detailRect && covers(slab.detailRect, want)) continue;
+      if (slab.detailZoom === zoom * living && slab.detailRect && covers(slab.detailRect, want)) continue;
       jobs.push({ slab, work: 'detail', rank: rank('detail', steps, moving) });
     }
     for (const page of recalled.sort((first, second) => first.steps - second.steps)) {
@@ -1624,8 +1645,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  so a small scroll does not need a new one. Null when the page is not
    *  zoomed past its own width, where the base is already sharp. */
   const detailWanted = (slab: Slab): Rect | null => {
-    if (zoom <= 1.01) return null;
-    const scale = scaleNow();
+    if (zoom * living <= 1.01) return null;
+    // The live scale, both because that is the sharpness wanted and
+    // because the box this measures against is itself being scaled by
+    // the gesture: the two cancel, and the rect comes out in the page's
+    // own units either way.
+    const scale = liveScale();
     const box = slab.box.getBoundingClientRect();
     const pane = scroller.getBoundingClientRect();
     const margin = { x: pane.width / 4, y: pane.height / 4 };
@@ -1643,8 +1668,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     && have.y + have.height >= want.y + want.height - 0.5;
 
   async function paintDetail(slab: Slab, rect: Rect): Promise<void> {
-    const scale = scaleNow();
-    const drawnAt = zoom;
+    // Drawn at the size the reader is looking at, placed at the size the
+    // page is laid out at: under a gesture those differ by exactly the
+    // transform the column is wearing, so the tile lands with one device
+    // pixel per screen pixel now and is still the right tile when the
+    // finger lifts and the layout catches up.
+    const scale = liveScale();
+    const drawnAt = zoom * living;
     if (!slab.proxy) return;
     const width = Math.round(rect.width * scale);
     const height = Math.round(rect.height * scale);
@@ -1909,6 +1939,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  pages is all the warning needed, and it is given back shortly after
    *  the hand leaves, since a layer that size is not free to keep. */
   let coolDown = 0;
+  /** The pause after a gesture's last move that draws it (LIVE_DRAW_MS). */
+  let liveTimer = 0;
   /** How far a one-finger drag has zoomed, as a multiple of the zoom it
    *  started from: Android's quick-scale curve, square root of the
    *  distance (see DRAG_GRIP_PX). Down zooms in, up zooms out, and the
@@ -1962,6 +1994,27 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       ? `translate(${shiftX.toFixed(2)}px, ${shiftY.toFixed(2)}px) scale(${factor})`
       : `scale(${factor})`;
   };
+  /**
+   * Draw at the size the fingers are holding, without waiting for them to
+   * lift (Drive does, and he asked for it).
+   *
+   * Only once the gesture pauses. A page of his book is twenty-six
+   * milliseconds of this thread at its cheapest and the gesture runs on
+   * it too, so drawing every frame of a sweep would buy sharpness with
+   * the smoothness of the thing the sharpness is for. A finger that has
+   * stopped for a seventh of a second has arrived somewhere, and that is
+   * the picture worth having.
+   */
+  const liveDraw = (factor: number): void => {
+    living = factor;
+    window.clearTimeout(liveTimer);
+    liveTimer = window.setTimeout(() => { if (!shut && living !== 1) drawBand(); }, LIVE_DRAW_MS);
+  };
+  /** Back to the laid-out size, with nothing owed. */
+  const stopLiving = (): void => {
+    window.clearTimeout(liveTimer);
+    living = 1;
+  };
   const warmLayer = (): void => {
     window.clearTimeout(coolDown);
     doc.style.willChange = 'transform';
@@ -2013,6 +2066,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const factor = clamp(hold.zoom * dragFactor(dy), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
       holdColumn(factor, hold, anchorFor(hold.zoom * factor, hold.y, hold.x).pull);
       spaceOut(factor, hold.about);
+      liveDraw(factor);
       return;
     }
     if (!pinch || touches.size !== 2) return;
@@ -2021,6 +2075,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const factor = clamp((span / pinch.span) * pinch.zoom, MIN_ZOOM, MAX_ZOOM) / pinch.zoom;
     doc.style.transform = `scale(${factor})`;
     spaceOut(factor, pinch.about);
+    liveDraw(factor);
   };
   const endPinch = (event: PointerEvent): void => {
     touches.delete(event.pointerId);
@@ -2042,6 +2097,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       doc.style.transform = '';
       doc.style.transformOrigin = '';
       unspace();
+      stopLiving();
       lastTap.time = 0;
       zoomTo(held.zoom * factor, about.y, about.x);
       return;
@@ -2054,6 +2110,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const { middle, across } = pinch;
     const from = pinch.zoom;
     pinch = null;
+    stopLiving();
     zoomTo(from * factor, middle, across);
   };
   // Pointer events cannot call off a scroll -- touch-action is read when
@@ -2327,6 +2384,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       window.clearTimeout(settleTimer);
       window.clearTimeout(idleTimer);
       window.clearTimeout(placeTimer);
+      stopLiving();
       shut = true;
       stopGlide();
       watcher.disconnect();

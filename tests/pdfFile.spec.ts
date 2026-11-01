@@ -732,6 +732,50 @@ test('the page stays under the fingers, across as well as down', async ({ page }
   expect(Math.abs(after - before) * width).toBeLessThan(2);
 });
 
+test('a page is drawn at the size the finger is holding, before it lifts', async ({ page }) => {
+  // Reported: "Google Drive loads pages without waiting for the finger to
+  // lift". Nothing was drawn during a gesture at all -- the column is
+  // scaled with a transform and no scroll event fires, so nothing ever
+  // made a plan -- and a reader holding a page at three times its size
+  // was looking at a stretched picture until they let go.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const hold = async (step: 'start' | 'end'): Promise<void> => {
+    await page.locator('.pdf-page[data-page="1"]').evaluate((sheet, which: string) => {
+      const box = sheet.getBoundingClientRect();
+      const x = box.left + box.width / 2;
+      const y = (window as unknown as { heldAt?: number }).heldAt ?? box.top + 120;
+      (window as unknown as { heldAt?: number }).heldAt = y;
+      const fire = (type: string, atY: number): void => {
+        sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+      };
+      if (which === 'start') {
+        fire('pointerdown', y); fire('pointerup', y);
+        fire('pointerdown', y);
+        for (let step = 1; step <= 6; step += 1) fire('pointermove', y + (90 * step) / 6);
+        return; // and the finger stays where it is
+      }
+      fire('pointerup', y + 90);
+    }, step);
+  };
+  await hold('start');
+  await page.waitForTimeout(900);
+  const held = await page.evaluate(() => {
+    const column = document.querySelector('.pdf-doc') as HTMLElement;
+    const tile = document.querySelector('canvas.pdf-detail') as HTMLCanvasElement | null;
+    const box = tile?.getBoundingClientRect();
+    return {
+      transform: column.style.transform,
+      tiles: document.querySelectorAll('canvas.pdf-detail').length,
+      sharpness: tile && box ? tile.width / Math.max(1, box.width) / (window.devicePixelRatio || 1) : 0,
+    };
+  });
+  expect(held.transform).toContain('scale('); // the finger really is still down
+  expect(held.tiles).toBeGreaterThan(0);
+  expect(held.sharpness).toBeGreaterThan(0.9); // and drawn for the size it is being shown at
+  await hold('end');
+});
+
 /** The second tap of a double tap, held and dragged: Google's own
  *  one-finger zoom, down to zoom in. */
 async function dragZoom(page: Page, by: number, apart = 0): Promise<void> {
