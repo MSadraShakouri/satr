@@ -162,3 +162,29 @@ export function picturePdf(share: number): string {
     + ` /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${pixels.length + 1} >>\nstream\n${pixels}>\nendstream`;
   return assemble(objects);
 }
+
+/**
+ * A page the way a scanner hands one over: not one picture of the sheet
+ * but a stack of strips that together are the sheet. His 528-page book is
+ * built this way -- eleven to thirty-three JPEGs a page -- and no single
+ * one of them looks like a scan.
+ */
+export function scanPdf(strips: number): string {
+  const objects: string[] = [];
+  const page = { width: 595, height: 842 };
+  const band = page.height / strips;
+  const pixels = new Array(8 * 8 * 3).fill('f2').join('');
+  const places: string[] = [];
+  for (let index = 0; index < strips; index += 1) {
+    places.push(`q ${page.width} 0 0 ${band.toFixed(2)} 0 ${(index * band).toFixed(2)} cm /Im1 Do Q`);
+  }
+  const content = places.join('\n');
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+  objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]`
+    + ' /Resources << /XObject << /Im1 5 0 R >> >> /Contents 4 0 R >>';
+  objects[4] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+  objects[5] = '<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceRGB'
+    + ` /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${pixels.length + 1} >>\nstream\n${pixels}>\nendstream`;
+  return assemble(objects);
+}

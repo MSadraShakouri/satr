@@ -76,9 +76,21 @@ interface Innards {
  * is part of a drawn page: a whiteboard came out black with white chalk on
  * it. These rectangles are what the viewer leaves alone.
  *
- * A picture that covers nearly the whole page is not a picture on a page --
- * it is the page, scanned -- and a scan is left to the filter, or a dark
- * theme would do nothing at all for a scanned book.
+ * A page that is mostly picture is not a page with pictures on it -- it is
+ * a scanned page -- and a scan is left to the filter, or a dark theme would
+ * do nothing at all for a scanned book.
+ *
+ * That is judged on the page and not on any one picture, because a scanner
+ * does not hand over one image a page. A 528-page book of his comes in
+ * strips: eleven to thirty-three JPEGs a page, 8x436, 1144x24, 64x8, which
+ * together are the whole sheet. Measured against each picture on its own
+ * every strip looked like a photograph, so every strip was laid back over
+ * the page un-inverted, and a dark page came out as a patchwork of white
+ * bands -- or, where the strips happened to tile the sheet, as a white page
+ * in a dark theme. Two things say scan: how much of the page is covered,
+ * all pictures counted, and how many there are. A slide with photographs on
+ * it has one or two, or three; nothing meant to be read as a picture comes
+ * in eleven pieces.
  *
  * Only unrotated pages are answered for. The bounds come back in PDF user
  * space, which a rotated page does not share with what is drawn, and a
@@ -103,7 +115,6 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageR
       const width = right - left;
       const height = top - bottom;
       if (width <= 0 || height <= 0) continue;
-      if (width * height > page.size.width * page.size.height * PAGE_SIZED) continue;
       // PDF space counts up from the foot of the page; a drawn page counts
       // down from its head.
       found.push({ x: left, y: page.size.height - top, width, height });
@@ -112,8 +123,13 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageR
     inner.memoryManager.free(bounds);
     held.release();
   }
-  return found;
+  if (found.length > MOST_PICTURES) return [];
+  const sheet = Math.max(1, page.size.width * page.size.height);
+  const covered = found.reduce((sum, rect) => sum + rect.width * rect.height, 0) / sheet;
+  return covered >= SCANNED ? [] : found;
 }
 
-/** A picture this much of the page is the page itself: a scan. */
-const PAGE_SIZED = 0.8;
+/** This much of the page in pictures, and the page is one. */
+const SCANNED = 0.6;
+/** And this many pictures is a sheet in pieces, whatever they cover. */
+const MOST_PICTURES = 8;

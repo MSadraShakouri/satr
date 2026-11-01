@@ -265,3 +265,17 @@ test('a scanned page is darkened, picture and all', async ({ page }) => {
   await page.waitForTimeout(1200);
   await expect(page.locator('.pdf-photo')).toHaveCount(0);
 });
+
+test('a scan that came in strips is a scan, not a page of photographs', async ({ page }) => {
+  const { scanPdf } = await import('./support/tinyPdf');
+  // The shape his book is in: no picture of the sheet, six strips that are
+  // the sheet between them. Judged one at a time every strip passed for a
+  // photograph and was laid back over the page un-inverted, and a dark
+  // page came out striped white.
+  await boot(page, 'handout.pdf', 'dark', scanPdf(6));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+  // and the page itself is still darkened, which is the point of the theme
+  expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
+});
