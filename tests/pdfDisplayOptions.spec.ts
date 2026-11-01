@@ -491,9 +491,11 @@ test.describe('a page the engine cannot draw inside a frame', () => {
       };
     });
     // A wider pane: the page is laid out again, and its picture drawn again
-    // at the size it is now shown at.
-    await page.setViewportSize({ width: 430, height: 700 });
-    await page.waitForTimeout(1500);
+    // at the size it is now shown at. A third wider rather than a tenth,
+    // to clear BASE_GATE: a page drawn for 390 and shown at 430 is inside
+    // the band where the picture it already has is good enough to keep.
+    await page.setViewportSize({ width: 520, height: 700 });
+    await page.waitForTimeout(2500);
     const asks = await page.evaluate(() => (window as unknown as { __asks: { y: number; height: number }[] }).__asks);
     const tall = await page.evaluate(() => (document.querySelector('.pdf-page[data-page="1"]') as HTMLElement).clientHeight);
     expect(asks.length).toBeGreaterThan(1); // in pieces, not in one go

@@ -526,6 +526,58 @@ const RECALL_WAIT_MS = 160;
  *  lift. Long enough that a sweep does not draw thirty times on its way
  *  past, short enough to land while the reader is still looking. */
 const LIVE_DRAW_MS = 140;
+/**
+ * How far a picture's resolution may sit from the one the reader is
+ * looking at before it is worth the engine drawing it again.
+ *
+ * A quarter short is about where a shortfall starts to read as blur, and
+ * a redraw is not free: it is a page of PDFium on the thread the scroll
+ * runs on, ahead of the pages the reader is moving towards. Acting on any
+ * shortfall at all — which is what `* 0.99` here used to mean — spends a
+ * whole page to recover five per cent, every time a pinch settles a
+ * fraction away from where it settled last. Gander's number, and their
+ * reasoning, in pdf.mjs: TILE_GATE = 1.25.
+ *
+ * Short only, deliberately. Gander redraws a page a quarter *over* as
+ * well, to hand back the memory while the reader is zoomed out, and this
+ * file does not: a page already drawn is drawn, and throwing a good
+ * picture away to draw a worse one is not an economy. (The test "under
+ * fit width a page is drawn at the size it is shown" holds that line,
+ * and a page far enough out of the band is released whole by bank().)
+ */
+const BASE_GATE = 1.25;
+/**
+ * How far the live zoom may drift from the zoom a tile was drawn at
+ * before the tile stops standing for it.
+ *
+ * It was exact equality, which since a gesture draws while the finger is
+ * still down (LIVE_DRAW_MS) means a tile painted at a pause is thrown
+ * away by the next two pixels of drag and drawn again at a scale half a
+ * per cent different. placeDetail already stretches a tile into whatever
+ * the zoom has become, so a sixth either way is a picture the reader
+ * cannot tell from a fresh one, and it is the difference between a
+ * gesture that draws once and one that draws at every pause.
+ */
+const DETAIL_DRIFT = 0.15;
+/**
+ * How far past what is on the screen a tile reaches, as a share of what
+ * is on the screen.
+ *
+ * Entirely about how often a pan costs a redraw. A fifth either way
+ * absorbs the small correction that follows a pinch without the tile
+ * costing half as much again, and a pan that outruns it is a deliberate
+ * move to somewhere else on the page, which wants its own tile whatever
+ * this number says. A fifth either way is 1.4 squared, about twice the
+ * screen; Gander's note beside the same number points out that Okular,
+ * the one viewer that keeps both a viewport rectangle and a tile grid and
+ * chooses at runtime, turns its grid on at four times the screen -- so at
+ * twice, one rectangle is still the right answer here.
+ *
+ * It was a quarter of the whole pane, measured against the pane rather
+ * than against the part of the page actually showing, which is how a page
+ * barely on screen could ask for a tile larger than the budget.
+ */
+const DETAIL_MARGIN = 0.2;
 /** Between two pages, in CSS pixels at any zoom — a gap that grew with the
  *  zoom would push the pages apart as they were read. */
 const GAP = 8;
@@ -1355,7 +1407,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!job.slab.proxy) return false;
     if (job.work === 'rough') return where.rough && !job.slab.rough && !job.slab.roughTask;
     const close = Date.now() - movedAt < SETTLE_MS ? where.seen : where.near;
-    if (job.work === 'base') return close && job.slab.baseScale < baseWanted() * 0.99;
+    if (job.work === 'base') return close && !sharpEnough(job.slab.baseScale, baseWanted());
     return close;
   };
 
@@ -1455,7 +1507,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         else {
           const want = detailWanted(job.slab);
           if (!want) continue;
-          if (job.slab.detailZoom === zoom && job.slab.detailRect && covers(job.slab.detailRect, want)) continue;
+          if (nearEnough(job.slab.detailZoom, zoom, 1 + DETAIL_DRIFT) && job.slab.detailRect && covers(job.slab.detailRect, want)) continue;
           await paintDetail(job.slab, want);
         }
         await breathe();
@@ -1555,7 +1607,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         else if (where.rough && !slab.roughTask) jobs.push({ slab, work: 'rough', rank: rank('rough', steps, moving) });
       }
       if (!where.near) continue;
-      if (slab.baseScale < baseWanted() * 0.99 && (!moving || where.seen)) {
+      if (!sharpEnough(slab.baseScale, baseWanted()) && (!moving || where.seen)) {
         jobs.push({ slab, work: 'base', rank: rank('base', steps, moving) });
       }
       const want = detailWanted(slab);
@@ -1567,7 +1619,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // it waits until the scrolling stops rather than being drawn for a
       // place the reader is already leaving.
       if (moving) continue;
-      if (slab.detailZoom === zoom * living && slab.detailRect && covers(slab.detailRect, want)) continue;
+      if (nearEnough(slab.detailZoom, zoom * living, 1 + DETAIL_DRIFT) && slab.detailRect && covers(slab.detailRect, want)) continue;
       jobs.push({ slab, work: 'detail', rank: rank('detail', steps, moving) });
     }
     for (const page of recalled.sort((first, second) => first.steps - second.steps)) {
@@ -1704,14 +1756,52 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const scale = liveScale();
     const box = slab.box.getBoundingClientRect();
     const pane = scroller.getBoundingClientRect();
-    const margin = { x: pane.width / 4, y: pane.height / 4 };
+    // As much margin as the budget will carry, and no more. What is
+    // actually on the screen is the tile's whole purpose, so when the two
+    // together will not fit in one canvas it is the margin that gives way
+    // -- the alternative, which this file did until now, was to keep the
+    // margin and drop the resolution through rasterFor, which spends the
+    // gesture's dearest render on a picture that is soft on purpose. On a
+    // 390 by 700 pane at three device pixels to the CSS pixel a quarter
+    // either way comes to 5.5 million against a 5.2 million cap, so this
+    // was biting, quietly, on the phone it was written for.
+    const seen = {
+      width: Math.min(pane.right, box.right) - Math.max(pane.left, box.left),
+      height: Math.min(pane.bottom, box.bottom) - Math.max(pane.top, box.top),
+    };
+    if (!(seen.width > 0) || !(seen.height > 0)) return null;
+    const raster = Math.max(1, window.devicePixelRatio || 1);
+    const room = Math.sqrt(maxCanvasPixels() / Math.max(1, seen.width * seen.height * raster * raster));
+    const share = Math.max(0, Math.min(DETAIL_MARGIN, (room - 1) / 2));
+    const margin = { x: seen.width * share, y: seen.height * share };
     const left = clamp((pane.left - margin.x - box.left) / scale, 0, slab.width);
     const right = clamp((pane.right + margin.x - box.left) / scale, 0, slab.width);
     const top = clamp((pane.top - margin.y - box.top) / scale, 0, slab.height);
     const bottom = clamp((pane.bottom + margin.y - box.top) / scale, 0, slab.height);
     if (right - left < 1 || bottom - top < 1) return null;
-    return { x: left, y: top, width: right - left, height: bottom - top };
+    // Snapped so the rectangle begins and ends on whole device pixels of
+    // the picture about to be drawn, with the placement derived back from
+    // the snapped figures rather than the other way about. Unsnapped, the
+    // tile sits a fraction of a device pixel off the base underneath it
+    // and is resampled on the way to the screen -- which is exactly the
+    // detail it was drawn to recover.
+    const step = Math.max(scale * raster, 0.0001);
+    const snap = (at: number, how: 'floor' | 'ceil'): number => Math[how](at * step) / step;
+    const x = Math.max(0, snap(left, 'floor'));
+    const y = Math.max(0, snap(top, 'floor'));
+    return {
+      x,
+      y,
+      width: Math.min(slab.width, snap(right, 'ceil')) - x,
+      height: Math.min(slab.height, snap(bottom, 'ceil')) - y,
+    };
   };
+  /** Whether a picture drawn at one resolution still stands for another:
+   *  near enough either way for a tile (DETAIL_DRIFT), and merely not too
+   *  short for a page's own picture (BASE_GATE). */
+  const nearEnough = (have: number, want: number, by: number): boolean =>
+    have >= want / by && have <= want * by;
+  const sharpEnough = (have: number, want: number): boolean => have >= want / BASE_GATE;
   /** Whether a tile already drawn still covers what is wanted. */
   const covers = (have: Rect, want: Rect): boolean =>
     have.x <= want.x + 0.5 && have.y <= want.y + 0.5

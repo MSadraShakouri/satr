@@ -1562,3 +1562,51 @@ test("a double tap's zoom travels by ratio, not by scale", async ({ page }) => {
   expect(apart).toBeGreaterThan(0.03);
 });
 
+test('a pinch that drifts a little keeps the tile it already has', async ({ page }) => {
+  // It was exact equality on the zoom, and since a gesture now draws
+  // while the finger is still down, a tile painted at a pause was thrown
+  // away by the next two pixels of drag (DETAIL_DRIFT).
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await pinch(page, 3);
+  await expect.poll(async () => page.locator('.pdf-detail').count(), { timeout: 15000 }).toBeGreaterThan(0);
+  // The element itself is the marker: a redraw appends a new canvas and
+  // removes the old one, so identity says whether the engine was asked.
+  const stash = async (): Promise<void> => {
+    await page.evaluate(() => { (window as Window & { kept?: Element | null }).kept = document.querySelector('.pdf-detail'); });
+  };
+  const same = async (): Promise<boolean> => page.evaluate(() =>
+    (window as Window & { kept?: Element | null }).kept === document.querySelector('.pdf-detail'));
+  await stash();
+  await pinch(page, 1.1); // a tenth, inside the band
+  await page.waitForTimeout(900);
+  expect(await same()).toBe(true);
+  await pinch(page, 1.6); // and well outside it
+  await expect.poll(same, { timeout: 15000 }).toBe(false);
+});
+
+test('a tile reaches a fifth past what is on the screen, no further', async ({ page }) => {
+  // The margin was a quarter of the whole pane, measured against the pane
+  // rather than against the part of the page actually showing, which is
+  // how a page barely on screen could ask for a canvas over the cap --
+  // and the cap was then met by dropping the tile's resolution, which is
+  // the one thing it is drawn for (DETAIL_MARGIN).
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await pinch(page, 3);
+  await expect.poll(async () => page.locator('.pdf-detail').count(), { timeout: 15000 }).toBeGreaterThan(0);
+  const { tile, seen } = await page.evaluate(() => {
+    const canvas = document.querySelector('.pdf-detail') as HTMLElement;
+    const sheet = canvas.closest('.pdf-page') as HTMLElement;
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const page_ = sheet.getBoundingClientRect();
+    const view = pane.getBoundingClientRect();
+    return {
+      tile: parseFloat(canvas.style.width),
+      seen: Math.min(page_.right, view.right) - Math.max(page_.left, view.left),
+    };
+  });
+  expect(tile).toBeGreaterThan(seen * 1.3);
+  expect(tile).toBeLessThan(seen * 1.45); // a quarter of the pane either side would be 1.5
+});
+
