@@ -1135,6 +1135,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     drawing = true;
     try {
       while (queue.length) {
+        // The move first, then the work: while a zoom is gliding, the
+        // pages travel on the pictures they already have. Drawing one
+        // during the motion is the stutter this animation was built to
+        // get away from.
+        if (gliding?.playState === 'running') { await breathe(); continue; }
         const job = queue.shift();
         if (!job || !stillWanted(job)) continue;
         if (job.work === 'rough') await paintRough(job.slab);
