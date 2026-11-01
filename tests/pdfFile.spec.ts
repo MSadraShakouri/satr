@@ -1141,12 +1141,19 @@ test('the page in front of the reader is drawn before the pages behind them', as
   // they had already gone past. The engine takes about a fortieth of a
   // second per page of his book before it draws anything, so that wait is
   // real: a second of it, measured on a flick of his 528-page book.
+  // A hand on the glass throughout, like its sibling below: the engine
+  // answers from another thread now, so the background sketching walk
+  // gets much further in the same wait, and a page it was in the middle
+  // of lands after the jump and is counted as the first arrival. The
+  // walk does not run at all while the reader is still moving.
+  await keepMoving(page);
   await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
   await readThis(page, 'long.pdf');
   // Before the background has begun sketching the rest of the document:
   // this is about the order pages are asked of the engine in, and a page
   // already in the sketch book is not asked for at all.
   await page.waitForTimeout(300);
+  await letGo(page);
   // Everything drawn so far goes: this is about what comes next, and in
   // what order it arrives -- not what sits earliest in the document. A
   // whole band of pages can come back out of the sketch book on one
@@ -1850,5 +1857,65 @@ test.describe('pages printed on more than one size of paper', () => {
     await expect.poll(async () => widthOf(page, 1)).toBeGreaterThan(before[0] * 1.5);
     const after = await widths(page);
     for (const width of after) expect(width).toBe(after[0]);
+  });
+});
+
+test.describe('the engine on a thread of its own', () => {
+  // A phone, because the point of this is what the hand feels.
+  test.use({ viewport: { width: 390, height: 760 }, deviceScaleFactor: 3 });
+  // Long enough that searching it is real work: 120 pages, each with a
+  // word on it that the search will find.
+  const LONG = tinyPdf(400);
+
+  /** The longest gap between two animation frames, from now until it is
+   *  read. A thread that is busy draws no frames, so this is the stall the
+   *  hand would feel, measured the way the stutter round measured it. */
+  const watchFrames = (page: Page): Promise<void> => page.evaluate(() => {
+    const seen = { worst: 0, frames: 0 };
+    (window as unknown as { frames_: typeof seen }).frames_ = seen;
+    let last = performance.now();
+    const tick = (): void => {
+      const now = performance.now();
+      if (seen.frames > 0) seen.worst = Math.max(seen.worst, now - last);
+      seen.frames += 1;
+      last = now;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const framesSince = (page: Page): Promise<{ worst: number; frames: number }> => page.evaluate(() => {
+    const seen = (window as unknown as { frames_: { worst: number; frames: number } }).frames_;
+    const was = { ...seen };
+    seen.worst = 0;
+    seen.frames = 0;
+    return was;
+  });
+
+  test('the page keeps answering while the whole document is searched', async ({ page }) => {
+    test.setTimeout(120_000);
+    await boot(page, { 'long.pdf': LONG }, 'long.pdf');
+    await readThis(page, 'long.pdf');
+    await watchFrames(page);
+    await page.waitForTimeout(500);
+    const idle = await framesSince(page); // what a quiet second looks like here
+    expect(idle.frames).toBeGreaterThan(5);
+
+    await page.locator('#nav-find').click();
+    const field = page.locator('.pdf-findbar input');
+    await expect(field).toBeVisible();
+    await framesSince(page);
+    // Every page of the document carries this word, so the engine reads
+    // and searches all 120 of them and then reads 60 of them back for the
+    // words either side of each hit.
+    await field.fill('Page');
+    await expect(page.locator('.document-search-count')).toContainText('/', { timeout: 60000 });
+    const busy = await framesSince(page);
+    // Measured both ways on this machine, searching these 400 pages:
+    // with the engine on the page's own thread, 16 frames drawn and a
+    // worst stall of 108 ms; with it on a thread of its own, 52 frames
+    // and 35 ms. The gate sits between the two, so moving the engine
+    // back would fail this twice over.
+    expect(busy.frames).toBeGreaterThan(30);
+    expect(busy.worst).toBeLessThan(70);
   });
 });

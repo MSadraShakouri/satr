@@ -1211,7 +1211,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    */
   const drawPhotos = (slab: Slab, drawn: HTMLCanvasElement, area: Rect): void => {
     if (!slab.proxy) return;
-    slab.pictures ??= imagesOnPage(document_, slab.proxy);
+    // The engine is on its own thread, so this answer is not here the
+    // first time a page is drawn. It is asked for once and the page is
+    // drawn again from whatever picture it is holding when it lands --
+    // which is a line of work, against never blocking the finger.
+    if (slab.pictures === null) { void askPictures(slab); return; }
     if (!slab.pictures.length) return;
     const unit = slab.width / Math.max(1, slab.proxy.size.width); // page units to ours
     const per = drawn.width / Math.max(1, area.width); // and ours to this canvas's pixels
@@ -1258,6 +1262,23 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       slab.photos.push({ canvas: made.canvas, index, part, whole });
       slab.box.append(made.canvas);
     });
+  };
+  /** Which pages have a question outstanding, so a page being drawn
+   *  three times over does not ask three times. */
+  const asking = new Set<number>();
+  const askPictures = async (slab: Slab): Promise<void> => {
+    if (!slab.proxy || asking.has(slab.page)) return;
+    asking.add(slab.page);
+    const found = await imagesOnPage(document_, slab.proxy).catch(() => [] as PictureRect[]);
+    asking.delete(slab.page);
+    if (shut || slab.pictures !== null) return;
+    slab.pictures = found;
+    if (!found.length) return;
+    // Over the best picture of the page there is: the sharp one if it has
+    // landed, the rough one otherwise, and the sharp one will put these
+    // back itself when it arrives.
+    const whole = slab.base ?? slab.rough;
+    if (whole) drawPhotos(slab, whole, { x: 0, y: 0, width: slab.width, height: slab.height });
   };
   /** Take down the pieces of one picture that the test picks out. */
   const dropPhotos = (slab: Slab, index: number, pick: (photo: Photo) => boolean): void => {
@@ -1852,9 +1873,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const from = Math.round((slice * tall) / slices);
       const to = Math.round(((slice + 1) * tall) / slices);
       const top = slice ? from - 1 : 0;
-      // Timed from before the ask, not after it: the engine draws on this
-      // thread, inside the call, and has already finished by the time the
-      // promise is waited on. Timing the wait measured nothing at all.
+      // What this slice cost the reader, end to end: the ask, the engine's
+      // own work on the other thread, and the pixels coming back. It is
+      // not the engine's time alone -- a slice queued behind another
+      // page's is counted waiting -- and that is the right number to size
+      // the next page's slices by, because it is the one the reader waits.
       const began = performance.now();
       const task = engine.renderPageRectRaw(document_, slab.proxy,
         { origin: { x: 0, y: top / (drawnFor * raster) }, size: { width: slab.width, height: (to - top) / (drawnFor * raster) } },
