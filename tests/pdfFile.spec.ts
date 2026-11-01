@@ -170,21 +170,25 @@ test('one finger zooms: the second tap of a double tap, held and dragged', async
   expect(back).toBeLessThan(bigger * 0.75);
 });
 
-test('a short drag covers as much zoom as Drive gives it', async ({ page }) => {
-  // Reported: "single finger zooming, the sensitivity of Drive is higher,
-  // you can move more with it". It was. Android measures this gesture from
-  // the anchor rather than from the last frame -- ScaleGestureDetector in
-  // quick-scale mode, which telescopes to the square root of how far the
-  // finger has gone -- so thirty-two pixels doubles the zoom there and
-  // moved it by a seventh here (see DRAG_GRIP_PX).
+test('a drag answers at the same rate wherever it is in the stroke', async ({ page }) => {
+  // The curve is Chromium's: a constant share of the zoom per pixel of
+  // travel, `1.005 ** dy`, which is what Gander's one-finger zoom is --
+  // it hands the gesture to the WebView and never touches it. The law
+  // this replaced, Android's quick-scale square root, is more sensitive
+  // over the first inch and then falls away as one over the distance
+  // already gone: it did twice the page in 32 pixels and then needed
+  // another 380 to reach four times. Here every 147 pixels doubles the
+  // page, the second 147 as much as the first, which is the whole of why
+  // the gesture still answers at the end of a long sweep.
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
-  const fit = await widthOf(page, 1);
-  await dragZoom(page, 32); // a thumb's first centimetre
-  await page.waitForTimeout(500);
-  const bigger = await widthOf(page, 1);
-  expect(bigger).toBeGreaterThan(fit * 1.8);
-  expect(bigger).toBeLessThan(fit * 2.3);
+  const seen = await dragAndWatch(page, [-147, -294]);
+  expect(seen[0]).toBeGreaterThan(1.9);
+  expect(seen[0]).toBeLessThan(2.1);
+  // the same distance again doubles it again -- a square root would have
+  // reached 4.3 by here and be crawling, at 1.4 times for the second half
+  expect(seen[1] / seen[0]).toBeGreaterThan(1.9);
+  expect(seen[1] / seen[0]).toBeLessThan(2.1);
 });
 
 test('a drag that comes back where it started leaves the zoom where it started', async ({ page }) => {
@@ -244,7 +248,7 @@ test('a drag out keeps answering the finger the whole way down the range', async
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
   const fit = await widthOf(page, 1);
-  const seen = await dragAndWatch(page, [130, 260, 400]);
+  const seen = await dragAndWatch(page, [70, 150, 270]);
   // each further centimetre of thumb is answered with more zoom out
   expect(seen[0]).toBeLessThan(0.75);
   expect(seen[1]).toBeLessThan(seen[0] - 0.03);
@@ -264,7 +268,7 @@ test('the end of the range gives, and comes back to it', async ({ page }) => {
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
   const fit = await widthOf(page, 1);
-  const seen = await dragAndWatch(page, [700, 1400]);
+  const seen = await dragAndWatch(page, [320, 420]);
   // past the stop, and still moving
   expect(seen[0]).toBeLessThan(0.25);
   expect(seen[1]).toBeLessThan(seen[0]);
@@ -313,8 +317,8 @@ test('below its own width, a one-finger zoom out goes to the middle of the scree
     };
     fire('pointerdown', y); fire('pointerup', y);
     fire('pointerdown', y);
-    for (let step = 1; step <= 6; step += 1) fire('pointermove', y - (70 * step) / 6);
-    fire('pointerup', y - 70);
+    for (let step = 1; step <= 6; step += 1) fire('pointermove', y - (160 * step) / 6);
+    fire('pointerup', y - 160);
   });
   await page.waitForTimeout(700);
   const zoomedOut = await page.evaluate(() => {

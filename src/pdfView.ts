@@ -459,48 +459,40 @@ const ZOOM_EPSILON = 0.005;
 const DOUBLE_TAP_SLOP = 64;
 /**
  * A one-finger zoom: how far the finger may wander before it is a drag
- * rather than a tap, and the distance the zoom is measured against.
+ * rather than a tap, and how much of the zoom one pixel of drag is worth.
  *
- * Android measures this gesture from the anchor, not from the last frame.
- * ScaleGestureDetector in quick-scale mode (the double-tap-and-drag every
- * Google app answers to) freezes the focus at the tapped point, calls the
- * span twice the distance from it, and multiplies the zoom by
- * `1 ± |1 - span/lastSpan| * 0.5` each event — which telescopes, over a
- * drag, to the square root of how far the finger has travelled against
- * how far it had travelled when the gesture began. That start is the
- * touch slop, eight density pixels, the same eight this file already
- * waits for.
+ * `zoom * (1 + DRAG_SPEED) ** travelled`, which doubles the page every
+ * 139 pixels and halves it every 139 the other way, for as long as the
+ * finger keeps going. This is Chromium's number, not a tuned one:
+ * `kDoubleTapDragZoomSpeed = 0.005f` in
+ * ui/events/gesture_detection/gesture_provider.cc, which is the curve
+ * every document opened in a WebView on this phone already answers to —
+ * including Gander's PDF viewer, which hands the gesture straight to the
+ * browser and never touches it.
  *
- * So the zoom is `sqrt(|dy| / DRAG_GRIP_PX)`: a doubling in 32 pixels,
- * four times in 128, six in 288. What was here before was `2 ** (dy/180)`
- * — 1.14 times in 32 pixels and 3 in 288 — which is why a thumb's whole
- * sweep moved so little of the zoom next to Drive's. The curve is also
- * the right shape rather than only the right size: fast where the finger
- * is close to where it started and the reader is reaching for a size,
- * slow further out where they are settling on one.
+ * It replaces Android's own quick-scale law, `sqrt(|dy| / 8dp)`, which is
+ * what a native view such as Drive gets from ScaleGestureDetector and
+ * what this file shipped last round. The square root is more sensitive
+ * over the first inch — twice the page in 32 pixels, where this needs
+ * 147 — and that was the complaint it was written for. But its rate
+ * falls as one over the distance already travelled: three hundred pixels
+ * into a stroke, another hundred buys 15%, and the gesture stops
+ * answering the thumb while the thumb is still moving. Chromium's rate is
+ * the same ×1.65 per hundred pixels wherever you are in the stroke, which
+ * is the whole of why theirs keeps feeling alive to the end of a sweep
+ * and why Chrome adopted it: the comment beside that constant says the
+ * scale delta is to stay constant while the touch velocity is constant.
+ *
+ * Out is the reciprocal rather than Chromium's `0.995 ** dy`. The two
+ * differ by a part in forty thousand per pixel, and the reciprocal has
+ * the property worth keeping: a drag that comes back to where it began
+ * leaves the zoom exactly where it began.
+ *
+ * Against this file's range: fit to 8× is 425 pixels, fit to the 0.25
+ * floor is 286, and both ends still give and ease back (GIVE_POWER).
  */
 const DRAG_SLOP = 8;
-const DRAG_GRIP_PX = 8;
-/**
- * Going out is not the same distance as going in, and was the same curve.
- *
- * The square root above is the right law, but the range it works over is
- * lopsided: eight times the page's width above fit, a quarter of it
- * below. `sqrt` reaches the top in `DRAG_GRIP_PX * MAX_ZOOM ** 2` — 512
- * pixels, two thirds of a phone's screen, a long deliberate stroke —
- * while the same curve reaches the bottom in 128, which is one flick of a
- * thumb. So the zoom hit its stop almost at once and every pixel after it
- * was a dead gesture: the column held still under a moving finger and the
- * lift had nothing to land. (Reported: "the zoom gets stuck when it's at
- * width, usually".)
- *
- * Both ends are the same stroke away now. The power going out is whatever
- * takes the zoom to MIN_ZOOM over that same 512 pixels, which for this
- * range is a cube root — gentler than the way in, because there is less
- * room that way and the same thumb has to cover it.
- */
-const DRAG_REACH_PX = DRAG_GRIP_PX * MAX_ZOOM ** 2;
-const DRAG_OUT_POWER = Math.log(1 / MIN_ZOOM) / Math.log(DRAG_REACH_PX / DRAG_GRIP_PX);
+const DRAG_SPEED = 0.005;
 /**
  * The end of the range has to feel like an end, not like a fault.
  *
@@ -1994,13 +1986,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   /** The pause after a gesture's last move that draws it (LIVE_DRAW_MS). */
   let liveTimer = 0;
   /** How far a one-finger drag has zoomed, as a multiple of the zoom it
-   *  started from: Android's quick-scale curve, square root of the
-   *  distance (see DRAG_GRIP_PX). Down zooms in, up zooms out, and the
-   *  two are reciprocals, so a drag that comes back where it started
-   *  leaves the zoom where it started. */
+   *  started from: Chromium's curve, a constant share of the zoom per
+   *  pixel travelled (see DRAG_SPEED). The slop the gesture waited out
+   *  before it counted as a drag is not charged for. Down zooms in, up
+   *  zooms out, and the two are reciprocals, so a drag that comes back
+   *  where it started leaves the zoom where it started. */
   const dragFactor = (dy: number): number => {
-    const far = Math.max(Math.abs(dy), DRAG_GRIP_PX) / DRAG_GRIP_PX;
-    return dy < 0 ? 1 / far ** DRAG_OUT_POWER : Math.sqrt(far);
+    const far = Math.max(0, Math.abs(dy) - DRAG_SLOP);
+    const factor = (1 + DRAG_SPEED) ** far;
+    return dy < 0 ? 1 / factor : factor;
   };
   /** The zoom a gesture is asking for, with the ends of the range given a
    *  little to pull against rather than a wall (see GIVE_POWER). */
