@@ -11,11 +11,19 @@
  *
  * One engine for the app, made the first time a document is opened and kept
  * afterwards: the wasm is 4.5 MB and compiling it twice would be felt.
+ *
+ * It is built here from its three pieces rather than by the package's own
+ * one-liner, because the dark theme needs something the wrapper does not
+ * offer: where the pictures on a page are. Same wasm, same document, one
+ * extra question asked of it (`imagesOnPage`).
  */
-import { createPdfiumEngine } from '@embedpdf/engines/pdfium-direct-engine';
+import { init } from '@embedpdf/pdfium';
+import { PdfEngine as PdfiumEngine, PdfiumNative, browserImageDataToBlobConverter } from '@embedpdf/engines';
 import type { PdfEngine } from '@embedpdf/engines';
+import type { PdfDocumentObject, PdfPageObject } from '@embedpdf/models';
 
 let engine: Promise<PdfEngine<Blob>> | null = null;
+let native: PdfiumNative | null = null;
 
 /**
  * The wasm, from this app's own origin. Resolved against the document's base
@@ -26,6 +34,86 @@ let engine: Promise<PdfEngine<Blob>> | null = null;
 const wasmUrl = (): string => new URL('pdfium/pdfium.wasm', document.baseURI).href;
 
 export function pdfium(): Promise<PdfEngine<Blob>> {
-  engine ??= createPdfiumEngine(wasmUrl());
+  engine ??= (async () => {
+    const wasmBinary = await (await fetch(wasmUrl())).arrayBuffer();
+    native = new PdfiumNative(await init({ wasmBinary }));
+    return new PdfiumEngine(native, { imageConverter: browserImageDataToBlobConverter }) as PdfEngine<Blob>;
+  })();
   return engine;
 }
+
+/** A rectangle of a page, in the page's own units, measured from its top. */
+export interface PageRect { x: number; y: number; width: number; height: number }
+
+/** PDFium's number for a page object that is an image. */
+const OBJECT_IMAGE = 3;
+/** Four floats, for the bounds of one object. */
+const FLOAT = 4;
+
+/**
+ * What the wrapper keeps to itself. These are the fields PdfiumNative is
+ * built with -- the wasm module, its allocator, and the map of open
+ * documents -- reached here by name because the class declares them
+ * private. Pinned to the version in package.json; the test that reads an
+ * image off a page fails loudly if a later one renames them.
+ */
+interface Innards {
+  pdfiumModule: {
+    FPDFPage_CountObjects(page: number): number;
+    FPDFPage_GetObject(page: number, index: number): number;
+    FPDFPageObj_GetType(object: number): number;
+    FPDFPageObj_GetBounds(object: number, left: number, bottom: number, right: number, top: number): boolean;
+    pdfium: { getValue(pointer: number, type: string): number };
+  };
+  memoryManager: { malloc(bytes: number): number; free(pointer: number): void };
+  cache: { getContext(id: string): { acquirePage(index: number): { pagePtr: number; release(): void } } | undefined };
+}
+
+/**
+ * Where the pictures on a page are, in the page's own units.
+ *
+ * The dark theme is a filter over the whole drawn page, and a photograph
+ * is part of a drawn page: a whiteboard came out black with white chalk on
+ * it. These rectangles are what the viewer leaves alone.
+ *
+ * A picture that covers nearly the whole page is not a picture on a page --
+ * it is the page, scanned -- and a scan is left to the filter, or a dark
+ * theme would do nothing at all for a scanned book.
+ *
+ * Only unrotated pages are answered for. The bounds come back in PDF user
+ * space, which a rotated page does not share with what is drawn, and a
+ * rectangle in the wrong place would be worse than none.
+ */
+export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageRect[] {
+  if (!native || page.rotation) return [];
+  const inner = native as unknown as Innards;
+  const context = inner.cache.getContext(doc.id);
+  if (!context) return [];
+  const held = context.acquirePage(page.index);
+  const bounds = inner.memoryManager.malloc(FLOAT * 4);
+  const found: PageRect[] = [];
+  try {
+    const count = inner.pdfiumModule.FPDFPage_CountObjects(held.pagePtr);
+    for (let index = 0; index < count; index += 1) {
+      const object = inner.pdfiumModule.FPDFPage_GetObject(held.pagePtr, index);
+      if (!object || inner.pdfiumModule.FPDFPageObj_GetType(object) !== OBJECT_IMAGE) continue;
+      if (!inner.pdfiumModule.FPDFPageObj_GetBounds(object, bounds, bounds + FLOAT, bounds + FLOAT * 2, bounds + FLOAT * 3)) continue;
+      const at = (slot: number): number => inner.pdfiumModule.pdfium.getValue(bounds + FLOAT * slot, 'float');
+      const [left, bottom, right, top] = [at(0), at(1), at(2), at(3)];
+      const width = right - left;
+      const height = top - bottom;
+      if (width <= 0 || height <= 0) continue;
+      if (width * height > page.size.width * page.size.height * PAGE_SIZED) continue;
+      // PDF space counts up from the foot of the page; a drawn page counts
+      // down from its head.
+      found.push({ x: left, y: page.size.height - top, width, height });
+    }
+  } catch { return []; } finally {
+    inner.memoryManager.free(bounds);
+    held.release();
+  }
+  return found;
+}
+
+/** A picture this much of the page is the page itself: a scan. */
+const PAGE_SIZED = 0.8;

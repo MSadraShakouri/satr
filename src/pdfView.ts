@@ -19,7 +19,7 @@
 // meanwhile, so there is never a blank page.
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
 import type { Rect as PageRect } from '@embedpdf/models';
-import { pdfium } from './pdfiumEngine';
+import { imagesOnPage, pdfium, type PageRect as PictureRect } from './pdfiumEngine';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
@@ -527,6 +527,12 @@ interface Slab {
    * the page, and the sharp one lands on top of it when it arrives.
    */
   rough: HTMLCanvasElement | null;
+  /** The pictures drawn on this page, in the page's own units, asked of
+   *  the engine once. Empty for a page with none. */
+  pictures: PictureRect[] | null;
+  /** The photographs put back over the page, un-inverted, one for each
+   *  picture on it (or none yet, where nothing has drawn it). */
+  photos: (HTMLCanvasElement | null)[];
   roughTask: PdfTask<Blob> | null;
   /**
    * The part of the page actually on screen, drawn at the screen's own
@@ -671,6 +677,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     doc.append(box);
     slabs.push({ page: index + 1, box, proxy: page, base: null, baseFit: 0, baseTask: null,
       rough: null, roughTask: null,
+      pictures: null, photos: [],
       detail: null, detailRect: null, detailZoom: 0, detailTask: null, width, height, laid: height });
   });
 
@@ -859,7 +866,63 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     forget(slab);
     stop(slab.roughTask); slab.roughTask = null;
     slab.rough?.remove(); slab.rough = null;
+    for (const photo of slab.photos) photo?.remove();
+    slab.photos = [];
   };
+  /**
+   * The photographs on a page, put back over the drawn page as they are.
+   *
+   * The dark theme is one filter over the whole page, and a photograph is
+   * part of a page: a whiteboard came out black with white chalk on it,
+   * and a page of slides came out with its pictures in negative. The page
+   * keeps the filter -- that is what makes a document readable in the dark
+   * -- and every picture on it is drawn again on top, unfiltered, out of
+   * the same bitmap the page was drawn from. Nothing is inverted twice and
+   * nothing is drawn twice by the engine.
+   *
+   * The boxes are placed in the page's own terms (a share of its width and
+   * height), so a zoom moves them with the page and none of this runs
+   * again. They are drawn in both themes and shown in the dark one, so
+   * turning the theme over stays what it has always been: a class on the
+   * body, nothing redrawn.
+   *
+   * `area` is the part of the page this bitmap holds, in page units: the
+   * whole page for the base and rough pictures, a rectangle of it for a
+   * sharp tile.
+   */
+  const drawPhotos = (slab: Slab, picture: ImageBitmap, area: Rect): void => {
+    if (!slab.proxy) return;
+    slab.pictures ??= imagesOnPage(document_, slab.proxy);
+    if (!slab.pictures.length) return;
+    const unit = slab.width / Math.max(1, slab.proxy.size.width); // page units to ours
+    const per = picture.width / Math.max(1, area.width); // and ours to this bitmap's pixels
+    slab.pictures.forEach((picture_, index) => {
+      const left = picture_.x * unit;
+      const top = picture_.y * unit;
+      const right = left + picture_.width * unit;
+      const bottom = top + picture_.height * unit;
+      // Only out of a bitmap that holds the whole of it. A sharp tile of a
+      // zoomed page often holds a corner of a photograph and no more, and
+      // half a photograph drawn over half an inverted one would be worse
+      // than what is already up there.
+      if (left < area.x - 0.5 || top < area.y - 0.5
+        || right > area.x + area.width + 0.5 || bottom > area.y + area.height + 0.5) return;
+      const made = sheet(Math.max(1, Math.round((right - left) * per)), Math.max(1, Math.round((bottom - top) * per)), 1);
+      if (!made) return;
+      made.context.drawImage(picture,
+        (left - area.x) * per, (top - area.y) * per, (right - left) * per, (bottom - top) * per,
+        0, 0, made.canvas.width, made.canvas.height);
+      made.canvas.className = 'pdf-photo';
+      made.canvas.style.left = `${(left / slab.width) * 100}%`;
+      made.canvas.style.top = `${(top / slab.height) * 100}%`;
+      made.canvas.style.width = `${((right - left) / slab.width) * 100}%`;
+      made.canvas.style.height = `${((bottom - top) / slab.height) * 100}%`;
+      slab.photos[index]?.remove();
+      slab.photos[index] = made.canvas;
+      slab.box.append(made.canvas);
+    });
+  };
+
   /** Shrink a picture already drawn into the rough one. */
   const keepRough = (slab: Slab, from: HTMLCanvasElement): void => {
     const width = ROUGH_PX;
@@ -892,6 +955,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     made.canvas.width = picture.width;
     made.canvas.height = picture.height;
     made.context.drawImage(picture, 0, 0);
+    drawPhotos(slab, picture, { x: 0, y: 0, width: slab.width, height: slab.height });
     picture.close();
     showRough(slab, made.canvas);
   }
@@ -993,6 +1057,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     made.canvas.width = picture.width;
     made.canvas.height = picture.height;
     made.context.drawImage(picture, 0, 0);
+    drawPhotos(slab, picture, { x: 0, y: 0, width: slab.width, height: slab.height });
     picture.close();
     made.canvas.className = 'pdf-raster';
     // A page that was authored dark must not be inverted into a white one.
@@ -1054,6 +1119,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     made.canvas.width = picture.width;
     made.canvas.height = picture.height;
     made.context.drawImage(picture, 0, 0);
+    drawPhotos(slab, picture, rect);
     picture.close();
     made.canvas.className = 'pdf-raster pdf-detail';
     slab.detail?.remove();

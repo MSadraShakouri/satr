@@ -131,3 +131,34 @@ export function typesetPdf(pages: Array<{
 export function tinyPdfBytes(pages: number): Buffer {
   return Buffer.from(tinyPdf(pages).slice('data:application/pdf;base64,'.length), 'base64');
 }
+
+/**
+ * A page with a picture printed on it, covering `share` of the page's area.
+ *
+ * The picture is eight by eight pixels of near-white, written as hex rather
+ * than as bytes so the file stays text the way every other fixture here
+ * does. Near-white is the point of it: inverted it goes black, so a test
+ * can tell by its colour alone whether the dark theme left it alone.
+ *
+ * `share` is what the whole thing is for: a picture on a page is a
+ * photograph and is left in its own colours, while a picture that is
+ * nearly the whole page is a scan of a page and is darkened with it.
+ */
+export function picturePdf(share: number): string {
+  const objects: string[] = [];
+  const page = { width: 595, height: 842 };
+  const side = Math.round(Math.sqrt(share * page.width * page.height));
+  const x = Math.round((page.width - side) / 2);
+  const y = Math.round((page.height - side) / 2);
+  const pixels = new Array(8 * 8 * 3).fill('f2').join('');
+  const content = `BT /F1 18 Tf 60 780 Td (A page with a picture on it) Tj ET\nq ${side} 0 0 ${side} ${x} ${y} cm /Im1 Do Q`;
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+  objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]`
+    + ' /Resources << /Font << /F1 5 0 R >> /XObject << /Im1 6 0 R >> >> /Contents 4 0 R >>';
+  objects[4] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+  objects[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+  objects[6] = '<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceRGB'
+    + ` /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${pixels.length + 1} >>\nstream\n${pixels}>\nendstream`;
+  return assemble(objects);
+}

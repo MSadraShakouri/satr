@@ -4626,6 +4626,19 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
   z-index: 2;
   inset: auto;
 }
+/* A photograph, over the page it is printed on. The page is inverted for
+   the dark theme and a photograph must not be -- a whiteboard came out
+   black with white chalk on it. It is drawn in both themes and shown in
+   the one that needs it, so turning the theme over is still nothing but a
+   class on the body. */
+.pdf-photo {
+  display: none;
+  position: absolute;
+  z-index: 3;
+}
+body.is-pdf-themed .pdf-page:not(.is-dark-page) .pdf-photo {
+  display: block;
+}
 /* A file that says .pdf and is not one, or one the engine will not read. */
 .pdf-unreadable {
   width: fit-content;

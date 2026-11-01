@@ -223,3 +223,45 @@ test('a page that was authored dark is left alone', async ({ page }) => {
   expect(marked[1].dark).toBe(true);
   expect(marked[1].filter).toBe('none');
 });
+
+test('a picture on a page keeps its own colours in the dark theme', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // a quarter of the page: a photograph printed on a page, not a scan of one
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.25));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  const seen = await page.evaluate(() => {
+    const read = (canvas: HTMLCanvasElement, atX: number, atY: number): number[] => {
+      const context = canvas.getContext('2d')!;
+      const data = context.getImageData(Math.round(canvas.width * atX), Math.round(canvas.height * atY), 1, 1).data;
+      return [data[0], data[1], data[2]];
+    };
+    const photo = document.querySelector('.pdf-photo') as HTMLCanvasElement | null;
+    const sheet = document.querySelector('.pdf-raster') as HTMLCanvasElement;
+    return {
+      photos: document.querySelectorAll('.pdf-photo').length,
+      shown: photo ? getComputedStyle(photo).display : 'gone',
+      inThePhoto: photo ? read(photo, 0.5, 0.5) : [0, 0, 0],
+      // the page's own picture, at the middle, under the photograph
+      inThePage: read(sheet, 0.5, 0.5),
+      filtered: getComputedStyle(sheet).filter,
+    };
+  });
+  // The page is still inverted for the dark theme...
+  expect(seen.filtered).toContain('invert');
+  // ...and the picture is still the near-white it was printed as, drawn
+  // over the top rather than turned black with the paper around it.
+  expect(seen.photos).toBe(1);
+  expect(seen.shown).toBe('block');
+  expect(Math.min(...seen.inThePhoto)).toBeGreaterThan(200);
+});
+
+test('a scanned page is darkened, picture and all', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // nearly the whole page: this picture is the page, and a dark theme that
+  // left it alone would do nothing at all for a scanned book
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+});
