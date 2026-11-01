@@ -107,6 +107,11 @@
   --background-modifier-hover: rgba(var(--mono-rgb-100), 0.067);
   --background-modifier-cover: rgba(0, 0, 0, 0.15);
   --mobile-sidebar-background: var(--background-primary);
+  /* A bar of chrome floating over what is being read. The page colour in
+     the light theme, where the page is white and a grey band would be a
+     stripe across it; a grey in the dark one, where the page colour is
+     pure black and a band of it reads as a hole. */
+  --bar-background: var(--background-primary);
   --interactive-normal: var(--background-secondary); /* .is-mobile */
   --segment-thumb: var(--background-primary);
   --interactive-hover: var(--background-modifier-border);
@@ -148,6 +153,7 @@
   --background-modifier-hover: rgba(var(--mono-rgb-100), 0.15);
   --background-modifier-cover: rgba(0, 0, 0, 0.35);
   --mobile-sidebar-background: var(--background-secondary);
+  --bar-background: var(--background-secondary);
   --interactive-normal: var(--background-modifier-border);
   --segment-thumb: #555; /* base-40 */
   --interactive-hover: var(--background-modifier-border-hover);
@@ -2730,7 +2736,7 @@ input.mod-no-match {
   gap: 8px;
   padding: var(--view-top-spacing-markdown) 12px 10px;
   border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
+  background: var(--bar-background);
   font-family: Vazirmatn, "Segoe UI", system-ui, sans-serif;
 }
 .cm-editor:has(.document-search-container) .cm-content {
