@@ -761,6 +761,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   };
 
   const layout = (): void => {
+    unspace();
     const scale = scaleNow();
     let edge = 0;
     for (const slab of slabs) {
@@ -996,6 +997,62 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * was tried before this and abandoned, because with pdf.js a slice cost a
    * page: the engine can draw a rectangle on its own now.
    */
+
+  /**
+   * The space between pages is the same at every zoom.
+   *
+   * A pinch does not lay the column out again -- it scales the whole
+   * column, which is one transform the compositor can do on its own while
+   * the fingers move. But the eight pixels between two pages are inside
+   * that column, so they were scaled too: pinching to two and a half
+   * opened the pages twenty pixels apart, and lifting the fingers snapped
+   * them back to eight.
+   *
+   * So while a gesture is scaling the column, every page near the screen
+   * is moved back by the slack the scaled gaps add up to -- eight pixels
+   * of it per page between that page and the one the fingers are on, which
+   * is the page that must not move. The sums are per page and the writes
+   * are transforms, so none of this lays anything out; it is the same
+   * frame the pinch was already costing.
+   */
+  let spaced: Slab[] = [];
+  const unspace = (): void => {
+    for (const slab of spaced) slab.box.style.transform = '';
+    spaced = [];
+  };
+  const spaceOut = (factor: number, about: number): void => {
+    const slack = GAP * (1 / Math.max(0.01, factor) - 1);
+    const was = spaced;
+    spaced = [];
+    for (const slab of slabs) {
+      if (!standing(slab).rough) continue;
+      slab.box.style.transform = `translateY(${((slab.page - 1 - about) * slack).toFixed(2)}px)`;
+      spaced.push(slab);
+    }
+    for (const slab of was) if (!spaced.includes(slab)) slab.box.style.transform = '';
+  };
+  /** The page under a point on the screen, as an index from zero. */
+  const pageUnder = (clientY: number): number => {
+    const held = scroller.scrollTop + (clientY - scroller.getBoundingClientRect().top) - columnTop;
+    for (const slab of slabs) if (held < slab.top + heightOf(slab) + GAP) return slab.page - 1;
+    return slabs.length - 1;
+  };
+  /** How far along its own curve the glide is at a fraction of its time,
+   *  so the gaps can be laid out along the same curve the scale takes. */
+  const glideAt = (part: number): number => {
+    const [x1, x2] = [0.22, 0.36];
+    let low = 0;
+    let high = 1;
+    let time = part;
+    for (let step = 0; step < 24; step += 1) {
+      time = (low + high) / 2;
+      const rest = 1 - time;
+      const at = 3 * rest * rest * time * x1 + 3 * rest * time * time * x2 + time * time * time;
+      if (at < part) low = time; else high = time;
+    }
+    const rest = 1 - time;
+    return 3 * rest * rest * time + 3 * rest * time * time + time * time * time;
+  };
 
   /** Where a page stands in relation to the screen. The three bands are
    *  what gets drawn, what is kept when it goes by, and what is worth a
@@ -1427,6 +1484,29 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         { transform: `translate(${acrossAt - nowX}px, ${anchorY - nowY}px) scale(${was / zoom})` },
         { transform: 'none' },
       ], { duration: GLIDE_MS, easing: GLIDE_EASE });
+      // The gaps travel too. The column is scaled over the motion, so the
+      // space between two pages would be scaled with it and arrive at
+      // eight pixels from somewhere else; each page is walked back along
+      // the same curve instead, sampled, so the gap is eight pixels the
+      // whole way across. Cleared when the motion ends, like the scale.
+      const steps = 10;
+      const slack = (part: number): number => {
+        const factor = (was / zoom) + (1 - was / zoom) * glideAt(part);
+        return GAP * (1 / Math.max(0.01, factor) - 1);
+      };
+      for (const slab of slabs) {
+        if (!standing(slab).rough) continue;
+        const paces = slab.page - 1 - (found.page - 1);
+        if (!paces) continue;
+        slab.box.animate(
+          Array.from({ length: steps + 1 }, (ignored, step) => ({
+            offset: step / steps,
+            easing: 'linear',
+            transform: `translateY(${(slack(step / steps) * paces).toFixed(2)}px)`,
+          })),
+          { duration: GLIDE_MS },
+        );
+      }
       // The move first, then the work. Drawing a band of pages at a new
       // size is the most expensive thing this view does -- it is PDFium,
       // on this thread -- and starting it on the same frame as the motion
@@ -1447,9 +1527,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // gesture would be a page of work per frame for a picture that is about to
   // be wrong anyway.
   const touches = new Map<number, { x: number; y: number }>();
-  let pinch: { span: number; middle: number; across: number; zoom: number } | null = null;
+  let pinch: { span: number; middle: number; across: number; zoom: number; about: number } | null = null;
   /** A one-finger zoom in progress: where it started, and from what. */
-  let hold: { y: number; x: number; zoom: number; moved: boolean } | null = null;
+  let hold: { y: number; x: number; zoom: number; moved: boolean; about: number } | null = null;
   let lastTap = { time: 0, x: 0, y: 0 };
   const spanOf = (): { span: number; middle: number; across: number } => {
     const [a, b] = [...touches.values()];
@@ -1482,7 +1562,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // finger lifts the gesture is over.
     if (touches.size === 1 && Date.now() - lastTap.time < DOUBLE_TAP_MS
       && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP) {
-      hold = { y: event.clientY, x: event.clientX, zoom, moved: false };
+      hold = { y: event.clientY, x: event.clientX, zoom, moved: false, about: pageUnder(event.clientY) };
       // The origin is set when the drag starts, not here: a tap that turns
       // out to be an ordinary double tap must find the column exactly as
       // the tap handler left it.
@@ -1490,7 +1570,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     }
     if (touches.size === 2) {
       const { span, middle, across } = spanOf();
-      pinch = { span, middle, across, zoom };
+      pinch = { span, middle, across, zoom, about: pageUnder(middle) };
       // The origin is the point between the fingers in the column's own
       // coordinates, both ways. Measured off the column's live box, so it
       // carries the scroll and the padding above the first page with it —
@@ -1513,6 +1593,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       if (!hold.moved) return;
       const factor = clamp(hold.zoom * 2 ** (dy / DRAG_DOUBLE_PX), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
       doc.style.transform = `scale(${factor})`;
+      spaceOut(factor, hold.about);
       return;
     }
     if (!pinch || touches.size !== 2) return;
@@ -1520,6 +1601,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const { span } = spanOf();
     const factor = clamp((span / pinch.span) * pinch.zoom, MIN_ZOOM, MAX_ZOOM) / pinch.zoom;
     doc.style.transform = `scale(${factor})`;
+    spaceOut(factor, pinch.about);
   };
   const endPinch = (event: PointerEvent): void => {
     touches.delete(event.pointerId);
@@ -1537,6 +1619,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
       doc.style.transform = '';
       doc.style.transformOrigin = '';
+      unspace();
       lastTap.time = 0;
       zoomTo(held.zoom * factor, held.y, held.x);
       return;
@@ -1545,6 +1628,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
     doc.style.transform = '';
     doc.style.transformOrigin = '';
+    unspace();
     const { middle, across } = pinch;
     const from = pinch.zoom;
     pinch = null;

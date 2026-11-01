@@ -872,3 +872,41 @@ test('a document kept as bytes in the store opens', async ({ page }) => {
   await readThis(page, 'stored.pdf');
   await expect(page.locator('.pdf-page')).toHaveCount(6);
 });
+
+test('the space between pages is the same at every zoom, pinch and all', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await page.waitForTimeout(600);
+  /** The space between page one and page two, as the eye sees it. */
+  const gap = (): Promise<number> => page.evaluate(() => {
+    const one = document.querySelector('.pdf-page[data-page="1"]')!.getBoundingClientRect();
+    const two = document.querySelector('.pdf-page[data-page="2"]')!.getBoundingClientRect();
+    return Math.round((two.top - one.bottom) * 10) / 10;
+  });
+  const fingers = (apart: number, up = false): Promise<void> => page.locator('#preview-pane').evaluate((pane, [span, lift]: [number, boolean]) => {
+    const box = pane.getBoundingClientRect();
+    const midX = box.left + box.width / 2;
+    const midY = box.top + box.height / 2;
+    const fire = (type: string, id: number, y: number): void => {
+      pane.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: midX, clientY: y, bubbles: true, cancelable: true }));
+    };
+    const kind = lift ? 'pointerup' : (span === 100 ? 'pointerdown' : 'pointermove');
+    fire(kind, 1, midY - span / 2);
+    fire(kind, 2, midY + span / 2);
+  }, [apart, up] as [number, boolean]);
+
+  const atRest = await gap();
+  expect(atRest).toBeCloseTo(8, 0);
+  await fingers(100);
+  for (const span of [250, 400]) {
+    await fingers(span);
+    await page.waitForTimeout(120);
+    // the pages are two and a half, then four times the size; the space
+    // between them is the space it was
+    expect(await gap()).toBeCloseTo(atRest, 0);
+  }
+  await fingers(400, true);
+  await page.waitForTimeout(2500);
+  expect(await gap()).toBeCloseTo(atRest, 0);
+  expect(await widthOf(page, 1)).toBeGreaterThan(900); // it really did zoom
+});
