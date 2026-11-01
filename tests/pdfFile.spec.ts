@@ -210,6 +210,72 @@ test('a drag that comes back where it started leaves the zoom where it started',
   expect(await widthOf(page, 1)).toBeCloseTo(fit, -1);
 });
 
+/** One held drag, reading the column's own transform at each step along
+ *  the way: what the finger is being answered with, before any lift. */
+async function dragAndWatch(page: Page, steps: number[]): Promise<number[]> {
+  return page.locator('#preview-pane').evaluate((pane, byEach) => {
+    const box = pane.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const sheet = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    const column = document.querySelector('.pdf-doc') as HTMLElement;
+    const fire = (type: string, atY: number): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+    };
+    const seen: number[] = [];
+    fire('pointerdown', y); fire('pointerup', y);
+    fire('pointerdown', y);
+    for (const by of byEach) {
+      fire('pointermove', y - by);
+      seen.push(parseFloat(/scale\(([\d.]+)\)/.exec(column.style.transform)?.[1] ?? '1'));
+    }
+    fire('pointerup', y - byEach[byEach.length - 1]);
+    return seen;
+  }, steps);
+}
+
+test('a drag out keeps answering the finger the whole way down the range', async ({ page }) => {
+  // Reported: "the zoom gets stuck when it's at width, usually". It was.
+  // The range is lopsided -- eight times the page's width above fit, a
+  // quarter of it below -- so the square root that takes 512 pixels to
+  // reach the top reached the bottom in 128, and every pixel of the drag
+  // after that was a dead gesture: the column still, the lift landing
+  // nothing. Both ends are the same stroke away now (DRAG_OUT_POWER).
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  const seen = await dragAndWatch(page, [130, 260, 400]);
+  // each further centimetre of thumb is answered with more zoom out
+  expect(seen[0]).toBeLessThan(0.75);
+  expect(seen[1]).toBeLessThan(seen[0] - 0.03);
+  expect(seen[2]).toBeLessThan(seen[1] - 0.02);
+  // and a quarter of the page's width is still further down the stroke
+  expect(seen[2]).toBeGreaterThan(0.25);
+  await page.waitForTimeout(600);
+  // what the finger was holding is what lands
+  expect(await widthOf(page, 1)).toBeCloseTo(fit * seen[2], -1);
+});
+
+test('the end of the range gives, and comes back to it', async ({ page }) => {
+  // A gesture that asks for more than there is keeps moving the page a
+  // little rather than freezing under the finger, and the column eases
+  // back to the stop when the hand leaves -- the phone's own answer at
+  // the edge of anything pannable (GIVE_POWER, GIVE_MOST).
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  const seen = await dragAndWatch(page, [700, 1400]);
+  // past the stop, and still moving
+  expect(seen[0]).toBeLessThan(0.25);
+  expect(seen[1]).toBeLessThan(seen[0]);
+  // but never far past it
+  expect(seen[1]).toBeGreaterThan(0.25 * 0.85);
+  await page.waitForTimeout(900);
+  // and it settles exactly on the stop, with nothing left on the column
+  expect(await widthOf(page, 1)).toBeCloseTo(fit * 0.25, 0);
+  expect(await page.locator('.pdf-doc').evaluate((column) => (column as HTMLElement).style.transform)).toBe('');
+});
+
 test('below its own width, a one-finger zoom out goes to the middle of the screen', async ({ page }) => {
   // Reported: "single finger when going out below default zoom, I want it
   // centered rather than based on finger position". Under the page's own
@@ -352,9 +418,13 @@ test('pinching zooms the pages, and stops at a quarter of the width', async ({ p
   const half = await widthOf(page, 1);
   expect(half).toBeLessThan(fit * 0.6);
   expect(half).toBeGreaterThan(fit * 0.4);
-  // and no further than his floor, however hard it is pinched
+  // and no further than his floor, however hard it is pinched -- with a
+  // moment for the column to come back off the stop, since a pinch that
+  // asks for more than there is now gives a little and eases back to it
+  // rather than freezing under the fingers (GIVE_BACK_MS)
   await pinch(page, 0.1);
   await pinch(page, 0.1);
+  await page.waitForTimeout(400);
   expect(await widthOf(page, 1)).toBeGreaterThan(fit * 0.24);
   expect(await widthOf(page, 1)).toBeLessThan(fit * 0.27);
   // zoomed out, the pages are a single column still: one page per row

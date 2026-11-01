@@ -481,6 +481,38 @@ const DOUBLE_TAP_SLOP = 64;
  */
 const DRAG_SLOP = 8;
 const DRAG_GRIP_PX = 8;
+/**
+ * Going out is not the same distance as going in, and was the same curve.
+ *
+ * The square root above is the right law, but the range it works over is
+ * lopsided: eight times the page's width above fit, a quarter of it
+ * below. `sqrt` reaches the top in `DRAG_GRIP_PX * MAX_ZOOM ** 2` — 512
+ * pixels, two thirds of a phone's screen, a long deliberate stroke —
+ * while the same curve reaches the bottom in 128, which is one flick of a
+ * thumb. So the zoom hit its stop almost at once and every pixel after it
+ * was a dead gesture: the column held still under a moving finger and the
+ * lift had nothing to land. (Reported: "the zoom gets stuck when it's at
+ * width, usually".)
+ *
+ * Both ends are the same stroke away now. The power going out is whatever
+ * takes the zoom to MIN_ZOOM over that same 512 pixels, which for this
+ * range is a cube root — gentler than the way in, because there is less
+ * room that way and the same thumb has to cover it.
+ */
+const DRAG_REACH_PX = DRAG_GRIP_PX * MAX_ZOOM ** 2;
+const DRAG_OUT_POWER = Math.log(1 / MIN_ZOOM) / Math.log(DRAG_REACH_PX / DRAG_GRIP_PX);
+/**
+ * The end of the range has to feel like an end, not like a fault.
+ *
+ * A gesture that asks for more than the range holds keeps moving the page
+ * a little — GIVE_POWER of the drag past the stop, never more than
+ * GIVE_MOST past it — and the column eases back to the stop when the hand
+ * leaves. It is what every pannable surface on the phone does at its
+ * edges, and it is the difference between "it stops here" and "it broke".
+ */
+const GIVE_POWER = 0.3;
+const GIVE_MOST = 0.12;
+const GIVE_BACK_MS = 180;
 /** Below the page's own width a zoom out stops being about any point on
  *  the page and starts being about getting back to the whole of it: the
  *  point held still slides out from under the finger to the middle of the
@@ -1967,9 +1999,34 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  two are reciprocals, so a drag that comes back where it started
    *  leaves the zoom where it started. */
   const dragFactor = (dy: number): number => {
-    const far = Math.max(Math.abs(dy), DRAG_GRIP_PX);
-    const grown = Math.sqrt(far / DRAG_GRIP_PX);
-    return dy < 0 ? 1 / grown : grown;
+    const far = Math.max(Math.abs(dy), DRAG_GRIP_PX) / DRAG_GRIP_PX;
+    return dy < 0 ? 1 / far ** DRAG_OUT_POWER : Math.sqrt(far);
+  };
+  /** The zoom a gesture is asking for, with the ends of the range given a
+   *  little to pull against rather than a wall (see GIVE_POWER). */
+  const giveAt = (wanted: number): number => {
+    if (wanted < MIN_ZOOM) return MIN_ZOOM * Math.max(1 - GIVE_MOST, (wanted / MIN_ZOOM) ** GIVE_POWER);
+    if (wanted > MAX_ZOOM) return MAX_ZOOM * Math.min(1 + GIVE_MOST, (wanted / MAX_ZOOM) ** GIVE_POWER);
+    return wanted;
+  };
+  /**
+   * The stretch past the end of the range, handed back.
+   *
+   * Measured against the layout that has just landed rather than the one
+   * the gesture started from, so it reads the same whether the lift
+   * changed the zoom or found it already at the stop — in both cases the
+   * column is exactly `stretch` away from where it belongs, about the
+   * point the gesture was anchored to.
+   */
+  const giveBack = (stretch: number, at: { x: number; y: number }): void => {
+    stopGlide();
+    const box = doc.getBoundingClientRect();
+    doc.style.transformOrigin = `${at.x - box.left}px ${at.y - box.top}px`;
+    gliding = doc.animate(
+      [{ transform: `scale(${stretch})` }, { transform: 'none' }],
+      { duration: GIVE_BACK_MS, easing: GLIDE_EASE },
+    );
+    gliding.addEventListener('finish', endGlide);
   };
   /**
    * The point a one-finger zoom holds still.
@@ -2083,7 +2140,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         doc.style.transformOrigin = `${hold.x - column.left}px ${hold.y - column.top}px`;
       }
       if (!hold.moved) return;
-      const factor = clamp(hold.zoom * dragFactor(dy), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
+      const factor = giveAt(hold.zoom * dragFactor(dy)) / hold.zoom;
       holdColumn(factor, hold, anchorFor(hold.zoom * factor, hold.y, hold.x).pull);
       spaceOut(factor, hold.about);
       liveDraw(factor);
@@ -2092,7 +2149,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!pinch || touches.size !== 2) return;
     event.preventDefault();
     const { span } = spanOf();
-    const factor = clamp((span / pinch.span) * pinch.zoom, MIN_ZOOM, MAX_ZOOM) / pinch.zoom;
+    const factor = giveAt((span / pinch.span) * pinch.zoom) / pinch.zoom;
     doc.style.transform = `scale(${factor})`;
     spaceOut(factor, pinch.about);
     liveDraw(factor);
@@ -2119,7 +2176,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       unspace();
       stopLiving();
       lastTap.time = 0;
-      zoomTo(held.zoom * factor, about.y, about.x);
+      const shown = held.zoom * factor;
+      zoomTo(shown, about.y, about.x);
+      if (Math.abs(shown / zoom - 1) > ZOOM_EPSILON) giveBack(shown / zoom, about);
       return;
     }
     if (!pinch || touches.size >= 2) return;
@@ -2131,7 +2190,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const from = pinch.zoom;
     pinch = null;
     stopLiving();
-    zoomTo(from * factor, middle, across);
+    const shown = from * factor;
+    zoomTo(shown, middle, across);
+    if (Math.abs(shown / zoom - 1) > ZOOM_EPSILON) giveBack(shown / zoom, { x: across, y: middle });
   };
   // Pointer events cannot call off a scroll -- touch-action is read when
   // the gesture begins, so setting it on the second tap is already too
