@@ -333,6 +333,48 @@ test('a page of photographs keeps all of them, however many there are', async ({
   await expect(page.locator('.pdf-photo')).toHaveCount(12);
 });
 
+test('a figure exported as a picture goes dark with the page it is on', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // A chart out of a note, printed into a PDF. It is a picture on a page
+  // of type, so the page's own rule exempts it -- and it came out a white
+  // rectangle glaring off a dark page. A picture made on a computer has a
+  // flat field of paper white behind it that no photograph has, and that
+  // is what is read here.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.25, { ink: 'paper' }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+  expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
+});
+
+test('a photograph is still a photograph beside a figure, on the same page', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // The same page, and a photograph on it rather than a chart: the
+  // decision is made picture by picture, not page by page.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.25, { ink: 'photo' }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(1);
+});
+
+test('a picture on a sideways page is found, and found in the right place', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // A page with a /Rotate on it -- a sideways table, a sheet fed into a
+  // scanner the wrong way round. The boxes come out of the engine in the
+  // page's own space, which a turned page does not share with what is
+  // drawn, and the viewer used to give up and return none at all: every
+  // picture on a sideways page was inverted with the paper.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.25, { rotate: 90 }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(1);
+  const shape = await page.locator('.pdf-photo').boundingBox();
+  // The picture is 298 by 421 on the sheet, so it lies down when the sheet
+  // does: wider than it is tall. Placed without the turn it would stand up
+  // at 0.71, in the wrong corner.
+  expect(shape!.width / shape!.height).toBeCloseTo(842 / 595, 1);
+});
+
 test('a scan that came in strips is a scan, not a page of photographs', async ({ page }) => {
   const { scanPdf } = await import('./support/tinyPdf');
   // The shape his book is in: no picture of the sheet, six strips that are

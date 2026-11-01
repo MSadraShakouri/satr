@@ -718,9 +718,10 @@ interface Slab {
   /** The pictures drawn on this page, in the page's own units, asked of
    *  the engine once. Empty for a page with none. */
   pictures: PictureRect[] | null;
-  /** The photographs put back over the page, un-inverted, one for each
-   *  picture on it (or none yet, where nothing has drawn it). */
-  photos: (HTMLCanvasElement | null)[];
+  /** The photographs put back over the page, un-inverted. One piece per
+   *  picture per bitmap it has been found in: a sharp tile usually holds
+   *  part of a picture and no more, and that part is worth putting back. */
+  photos: Photo[];
   roughTask: PdfTask<Pixels> | null;
   /**
    * The part of the page actually on screen, drawn at the screen's own
@@ -799,6 +800,62 @@ const darkRing = (picture: Pixels): number[] => {
 const ringIsDark = (ring: number[]): boolean => {
   const sorted = [...ring].sort((a, b) => a - b);
   return sorted.length > 0 && sorted[sorted.length >> 1] < 110;
+};
+
+/** One picture, or the part of one, drawn again over the page without the
+ *  dark theme's filter on it. */
+interface Photo {
+  canvas: HTMLCanvasElement;
+  /** Which of the page's pictures this is a piece of. */
+  index: number;
+  /** The piece of that picture this canvas holds, in the page's own units. */
+  part: Rect;
+  /** Whether it is the whole of the picture: a whole one replaces the lot. */
+  whole: boolean;
+}
+
+/**
+ * Is this picture a piece of the paper, or a thing printed on it?
+ *
+ * The dark theme inverts the page and every picture on it is then put back
+ * as it was -- which is right for a photograph, and quite wrong for a
+ * figure. A chart or a diagram exported out of a note is a picture of a
+ * white sheet with a few lines on it, and leaving it alone leaves a white
+ * rectangle glaring out of a dark page. The page's own rule cannot tell
+ * them apart, because both are pictures on a page full of type.
+ *
+ * Their pixels can. A figure made on a computer has a background that is
+ * *flat* paper white -- the same 255 across most of it -- and a photograph
+ * of anything at all, a whiteboard included, has not: its white is 230 to
+ * 250 and it moves from pixel to pixel. So a picture that is two fifths
+ * paper white is treated as part of the sheet and inverted with it; every
+ * other picture is put back as it was printed.
+ *
+ * Measured on a 24 by 24 reduction rather than the picture, which costs
+ * one drawImage and one read whatever the picture's size, and which helps:
+ * shrinking blends a photograph's white specks away and leaves a figure's
+ * flat field exactly where it was.
+ */
+const PAPER_PROBE = 24;
+/** A pixel this bright in all three channels is paper rather than ink. */
+const PAPER_WHITE = 250;
+/** And this much of a picture being paper makes the picture one. */
+const PAPER_SHARE = 0.4;
+const looksLikePaper = (drawn: HTMLCanvasElement, from: Rect): boolean => {
+  const probe = window.document.createElement('canvas');
+  probe.width = PAPER_PROBE;
+  probe.height = PAPER_PROBE;
+  const context = probe.getContext('2d', { willReadFrequently: true });
+  if (!context) return false;
+  try {
+    context.drawImage(drawn, from.x, from.y, from.width, from.height, 0, 0, PAPER_PROBE, PAPER_PROBE);
+    const pixels = context.getImageData(0, 0, PAPER_PROBE, PAPER_PROBE).data;
+    let paper = 0;
+    for (let at = 0; at < pixels.length; at += 4) {
+      if (Math.min(pixels[at], pixels[at + 1], pixels[at + 2]) >= PAPER_WHITE) paper += 1;
+    }
+    return paper / (PAPER_PROBE * PAPER_PROBE) >= PAPER_SHARE;
+  } catch { return false; }
 };
 
 /** Each document opened in this session gets its own name, so two tabs on
@@ -1128,7 +1185,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     forget(slab);
     stop(slab.roughTask); slab.roughTask = null;
     slab.rough?.remove(); slab.rough = null;
-    for (const photo of slab.photos) photo?.remove();
+    for (const photo of slab.photos) photo.canvas.remove();
     slab.photos = [];
   };
   /**
@@ -1163,27 +1220,58 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const top = picture_.y * unit;
       const right = left + picture_.width * unit;
       const bottom = top + picture_.height * unit;
-      // Only out of a bitmap that holds the whole of it. A sharp tile of a
-      // zoomed page often holds a corner of a photograph and no more, and
-      // half a photograph drawn over half an inverted one would be worse
-      // than what is already up there.
-      if (left < area.x - 0.5 || top < area.y - 0.5
-        || right > area.x + area.width + 0.5 || bottom > area.y + area.height + 0.5) return;
-      const made = sheet(Math.max(1, Math.round((right - left) * per)), Math.max(1, Math.round((bottom - top) * per)), 1);
+      // As much of it as this bitmap holds. A sharp tile of a zoomed page
+      // usually holds a corner of a picture and no more; that corner used
+      // to be dropped, so a zoomed photograph kept the soft copy taken off
+      // the base. The piece is cut to the bitmap instead, and put back
+      // over its own part of the page.
+      const part = {
+        x: Math.max(left, area.x),
+        y: Math.max(top, area.y),
+        width: Math.min(right, area.x + area.width) - Math.max(left, area.x),
+        height: Math.min(bottom, area.y + area.height) - Math.max(top, area.y),
+      };
+      if (!(part.width > 0.5) || !(part.height > 0.5)) return;
+      const whole = part.width >= (right - left) - 1 && part.height >= (bottom - top) - 1;
+      const from = {
+        x: (part.x - area.x) * per, y: (part.y - area.y) * per,
+        width: part.width * per, height: part.height * per,
+      };
+      // A figure is part of the sheet and goes dark with it; a photograph
+      // is a thing on the sheet and is put back as it was printed.
+      if (looksLikePaper(drawn, from)) {
+        if (whole) dropPhotos(slab, index, () => true);
+        return;
+      }
+      const made = sheet(Math.max(1, Math.round(from.width)), Math.max(1, Math.round(from.height)), 1);
       if (!made) return;
-      made.context.drawImage(drawn,
-        (left - area.x) * per, (top - area.y) * per, (right - left) * per, (bottom - top) * per,
-        0, 0, made.canvas.width, made.canvas.height);
+      made.context.drawImage(drawn, from.x, from.y, from.width, from.height, 0, 0, made.canvas.width, made.canvas.height);
       made.canvas.className = 'pdf-photo';
-      made.canvas.style.left = `${(left / slab.width) * 100}%`;
-      made.canvas.style.top = `${(top / slab.height) * 100}%`;
-      made.canvas.style.width = `${((right - left) / slab.width) * 100}%`;
-      made.canvas.style.height = `${((bottom - top) / slab.height) * 100}%`;
-      slab.photos[index]?.remove();
-      slab.photos[index] = made.canvas;
+      made.canvas.style.left = `${(part.x / slab.width) * 100}%`;
+      made.canvas.style.top = `${(part.y / slab.height) * 100}%`;
+      made.canvas.style.width = `${(part.width / slab.width) * 100}%`;
+      made.canvas.style.height = `${(part.height / slab.height) * 100}%`;
+      // The whole of a picture is the whole truth about it and replaces
+      // every piece; a piece replaces the pieces it covers, and lies over
+      // whatever is left because it is the sharper of the two.
+      dropPhotos(slab, index, (photo) => whole || inside(photo.part, part));
+      slab.photos.push({ canvas: made.canvas, index, part, whole });
       slab.box.append(made.canvas);
     });
   };
+  /** Take down the pieces of one picture that the test picks out. */
+  const dropPhotos = (slab: Slab, index: number, pick: (photo: Photo) => boolean): void => {
+    slab.photos = slab.photos.filter((photo) => {
+      if (photo.index !== index || !pick(photo)) return true;
+      photo.canvas.remove();
+      return false;
+    });
+  };
+  /** Is the first rectangle wholly within the second? */
+  const inside = (box: Rect, other: Rect): boolean =>
+    box.x >= other.x - 0.5 && box.y >= other.y - 0.5
+    && box.x + box.width <= other.x + other.width + 0.5
+    && box.y + box.height <= other.y + other.height + 0.5;
 
   /**
    * The sketch book: a hundred-pixel picture of every page that has been

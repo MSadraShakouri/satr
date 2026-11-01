@@ -116,16 +116,28 @@ interface Innards {
  * thousand text objects a page and no images at all, and never reaches the
  * question. Nothing is counted: not the pictures, not the words.
  *
- * Only unrotated pages are answered for. The bounds come back in PDF user
- * space, which a rotated page does not share with what is drawn, and a
- * rectangle in the wrong place would be worse than none.
+ * A rotated page is answered too. The bounds come back in PDF user space,
+ * which a page with a /Rotate on it does not share with what is drawn --
+ * that was the reason this used to give up and return nothing, leaving
+ * every picture on a sideways page to be inverted with the paper. The
+ * quarter turn is a quarter turn: the rectangle is carried through it
+ * here (see `asShown`) instead of the page being abandoned.
  */
 export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageRect[] {
-  if (!native || page.rotation) return [];
+  if (!native) return [];
   const inner = native as unknown as Innards;
   const context = inner.cache.getContext(doc.id);
   if (!context) return [];
   const module = inner.pdfiumModule;
+  // A page's own sheet, before the viewer turns it. `page.size` is the size
+  // the page is *shown* at, so on a quarter turn it is the sheet the other
+  // way round.
+  const turn = (page.rotation ?? 0) & 3;
+  const sideways = turn === 1 || turn === 3;
+  const sheet = {
+    width: sideways ? page.size.height : page.size.width,
+    height: sideways ? page.size.width : page.size.height,
+  };
   const held = context.acquirePage(page.index);
   const bounds = inner.memoryManager.malloc(FLOAT * 4);
   const found: PageRect[] = [];
@@ -134,16 +146,32 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageR
   const over: number[] = [];
   let scan = false;
   try {
-    /** A page object's box, in the page's own units, counting down from
-     *  the head of the page the way a drawn page does. */
-    const boxOf = (object: number): PageRect | null => {
-      if (!module.FPDFPageObj_GetBounds(object, bounds, bounds + FLOAT, bounds + FLOAT * 2, bounds + FLOAT * 3)) return null;
-      const at = (slot: number): number => module.pdfium.getValue(bounds + FLOAT * slot, 'float');
-      const [left, bottom, right, top] = [at(0), at(1), at(2), at(3)];
+    /**
+     * A box in PDF user space, as it is drawn: measured from the top left
+     * of the page the reader sees, after the page's own quarter turns.
+     *
+     * User space counts up from the foot of the unturned sheet, so even an
+     * unturned page needs its y flipped. A turn is then one of four, and a
+     * right angle takes a rectangle to a rectangle -- which is why this is
+     * four lines of arithmetic and not a matrix. Checked by its corners:
+     * the head of the sheet goes to the right-hand edge on a quarter turn
+     * clockwise, to the foot on a half one, to the left-hand edge on three
+     * quarters.
+     */
+    const asShown = (left: number, bottom: number, right: number, top: number): PageRect | null => {
       const width = right - left;
       const height = top - bottom;
       if (width <= 0 || height <= 0) return null;
-      return { x: left, y: page.size.height - top, width, height };
+      if (turn === 1) return { x: bottom, y: left, width: height, height: width };
+      if (turn === 2) return { x: sheet.width - right, y: bottom, width, height };
+      if (turn === 3) return { x: sheet.height - top, y: sheet.width - right, width: height, height: width };
+      return { x: left, y: sheet.height - top, width, height };
+    };
+    /** A page object's box, where it is drawn on the page as shown. */
+    const boxOf = (object: number): PageRect | null => {
+      if (!module.FPDFPageObj_GetBounds(object, bounds, bounds + FLOAT, bounds + FLOAT * 2, bounds + FLOAT * 3)) return null;
+      const at = (slot: number): number => module.pdfium.getValue(bounds + FLOAT * slot, 'float');
+      return asShown(at(0), at(1), at(2), at(3));
     };
     const count = module.FPDFPage_CountObjects(held.pagePtr);
     // The first walk asks only for the pictures. Most pages of most
@@ -158,15 +186,15 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): PageR
       over.push(index);
     }
     if (!found.length) return found;
-    const sheet = Math.max(1, page.size.width * page.size.height);
-    const covered = found.reduce((sum, rect) => sum + rect.width * rect.height, 0) / sheet;
+    const paper = Math.max(1, sheet.width * sheet.height);
+    const covered = found.reduce((sum, rect) => sum + rect.width * rect.height, 0) / paper;
     // Half a page of pictures or less leaves room for a page: it is a
     // document with photographs in it, and the words need not be read.
     if (covered < COVERED) return found;
     // And now, on the few pages that are covered in pictures, what shows
     // through them. The adding stops the moment there is a line's worth:
     // on a page of plain prose that is the second or third word.
-    const enough = sheet * WRITING;
+    const enough = paper * WRITING;
     let showing = 0;
     for (let index = 0; index < count && showing < enough; index += 1) {
       const object = module.FPDFPage_GetObject(held.pagePtr, index);

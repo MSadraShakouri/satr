@@ -159,7 +159,17 @@ export function tinyPdfBytes(pages: number): Buffer {
  * -- and `count` is how many pictures they are spread over, laid out in a
  * grid. Pick a share that fits the count, or the squares overlap.
  */
-export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' | 'under' | 'stamp' | 'none'; count?: number } = {}): string {
+export function picturePdf(share: number, how: {
+  text?: 'visible' | 'invisible' | 'under' | 'stamp' | 'none';
+  count?: number;
+  /** What the picture is a picture of. A photograph has no flat field of
+   *  paper white anywhere in it; a figure drawn on a computer is mostly
+   *  one, which is how the viewer tells a chart from a photograph. */
+  ink?: 'photo' | 'paper';
+  /** A /Rotate on the page, the way a sideways table or a sheet fed into
+   *  a scanner the wrong way round carries one. */
+  rotate?: 0 | 90 | 180 | 270;
+} = {}): string {
   const objects: string[] = [];
   const page = { width: 595, height: 842 };
   const count = Math.max(1, how.count ?? 1);
@@ -176,7 +186,23 @@ export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' 
     const y = Math.round(cell.y + (page.height / rows - size.height) / 2);
     places.push(`q ${size.width} 0 0 ${size.height} ${x} ${y} cm /Im1 Do Q`);
   }
-  const pixels = new Array(8 * 8 * 3).fill('f2').join('');
+  // 8 by 8, three bytes a pixel, written as hex. A photograph is near
+  // white but never flat -- every pixel a little different, as a camera's
+  // or a scanner's are -- and a figure is a sheet of paper white with its
+  // ink in the middle of it.
+  const swatch: string[] = [];
+  for (let y = 0; y < 8; y += 1) {
+    for (let x = 0; x < 8; x += 1) {
+      const middle = x >= 2 && x <= 4 && y >= 2 && y <= 4;
+      if (how.ink === 'paper') swatch.push(middle ? '1a1a1a' : 'ffffff');
+      else {
+        const wobble = ((x * 7 + y * 13) % 11) - 5; // 237 to 247, never 250
+        const shade = (242 + wobble).toString(16).padStart(2, '0');
+        swatch.push(shade + shade + shade);
+      }
+    }
+  }
+  const pixels = swatch.join('');
   const said = how.text ?? 'visible';
   const lines: Record<string, string> = {
     visible: 'BT /F1 18 Tf 60 780 Td (A page with a picture on it) Tj ET',
@@ -196,7 +222,8 @@ export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' 
     : `${places.join('\n')}\n${words}`;
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
-  objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]`
+  const turned = how.rotate ? ` /Rotate ${how.rotate}` : '';
+  objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]${turned}`
     + ' /Resources << /Font << /F1 5 0 R >> /XObject << /Im1 6 0 R >> >> /Contents 4 0 R >>';
   objects[4] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
   objects[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
