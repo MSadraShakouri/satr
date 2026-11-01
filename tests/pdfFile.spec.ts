@@ -924,6 +924,42 @@ test('zoomed in, the page being read is sharpened before the pages around it', a
   if (sharp.includes(19) && sharp.includes(21)) expect(sharp.indexOf(21)).toBeLessThan(sharp.indexOf(19));
 });
 
+test('the pages left behind hand back what they were holding', async ({ page }) => {
+  // The sweep looks at the band and at whatever was in the band last
+  // time, and at nothing else: his book is 528 pages and walking all of
+  // them on every frame of a scroll cost 1.4ms a frame. What must not
+  // change is that a page left behind still gives its pictures back, and
+  // that the page the reader lands on is drawn.
+  await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  await page.waitForTimeout(800);
+  const held = await page.evaluate(async () => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
+    // away down the document, a couple of screens at a time, the way a
+    // reader gets there
+    for (let step = 0; step < 12; step += 1) {
+      pane.scrollTop += pane.clientHeight * 2;
+      pane.dispatchEvent(new Event('scroll'));
+      await new Promise((done) => setTimeout(done, 120));
+    }
+    await new Promise((done) => setTimeout(done, 2500));
+    const middle = document.elementsFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+      .find((el) => el.classList.contains('pdf-page')) as HTMLElement | undefined;
+    return {
+      first: sheets[0].querySelectorAll('canvas').length,
+      second: sheets[1].querySelectorAll('canvas').length,
+      here: middle?.querySelectorAll('canvas').length ?? 0,
+      all: document.querySelectorAll('.pdf-page canvas').length,
+      pages: [...document.querySelectorAll('.pdf-page')].filter((sheet) => sheet.querySelector('canvas')).length,
+    };
+  });
+  expect(held.first).toBe(0); // long behind: nothing kept
+  expect(held.second).toBe(0);
+  expect(held.here).toBeGreaterThan(0); // and the page landed on is drawn
+  expect(held.pages).toBeLessThan(24); // the band, not the document
+});
+
 test('a document kept as bytes in the store opens', async ({ page }) => {
   // Anything over a few megabytes lives in IndexedDB as the bytes it is;
   // only the index stays in localStorage. A 31 MB book turned into a data:

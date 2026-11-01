@@ -1024,7 +1024,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const slack = GAP * (1 / Math.max(0.01, factor) - 1);
     const was = spaced;
     spaced = [];
-    for (const slab of slabs) {
+    const band = bandNow();
+    for (let index = band.first; index <= band.last; index += 1) {
+      const slab = slabs[index];
       if (!standing(slab).rough) continue;
       slab.box.style.transform = `translateY(${((slab.page - 1 - about) * slack).toFixed(2)}px)`;
       spaced.push(slab);
@@ -1063,6 +1065,31 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     }
     const rest = 1 - time;
     return 3 * rest * rest * time + 3 * rest * time * time + time * time * time;
+  };
+
+  /**
+   * The stretch of the column worth looking at at all: the wide band and
+   * no further, as a first and last page.
+   *
+   * The sweep used to walk every page of the document on every frame of a
+   * scroll, asking each one where it stood and handing back whatever the
+   * ones out of sight were holding. On his 528-page book that was 1.4ms a
+   * frame while scrolling, and 100ms on the frame after a jump, when a
+   * hundred pages at once were given back things they had already given
+   * back. The pages are laid out in order, so the band is a range, and
+   * the only pages outside it that can be holding anything are the ones
+   * that were inside it last time.
+   */
+  let bandFrom = 0;
+  let bandTo = -1;
+  const bandNow = (): { first: number; last: number } => {
+    if (!slabs.length) return { first: 0, last: -1 }; // nothing laid out yet
+    const screen = scroller.clientHeight;
+    const top = scroller.scrollTop - columnTop;
+    return {
+      first: pageAt(top - ROUGH_SCREENS * screen),
+      last: pageAt(top + (1 + ROUGH_SCREENS) * screen),
+    };
   };
 
   /** Where a page stands in relation to the screen: the three bands are
@@ -1193,7 +1220,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // The page in the middle of the screen is the one being read, and
     // everything is ranked by how far from it it is.
     const here = pageAt(scroller.scrollTop - columnTop + scroller.clientHeight / 2);
-    for (const slab of slabs) {
+    const band = bandNow();
+    // what has gone out of the band since the last pass, and nothing else:
+    // every other page gave back what it was holding long ago
+    for (let index = bandFrom; index <= bandTo; index += 1) {
+      if (index < band.first || index > band.last) forgetWhole(slabs[index]);
+    }
+    bandFrom = band.first;
+    bandTo = band.last;
+    for (let index = band.first; index <= band.last; index += 1) {
+      const slab = slabs[index];
       const where = standing(slab);
       if (!where.rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
       if (!where.keep) forget(slab); // out of the sharp band: the rough picture stays
