@@ -141,16 +141,25 @@ export function tinyPdfBytes(pages: number): Buffer {
  * here does. Near-white is the point of them: inverted they go black, so a
  * test can tell by colour alone whether the dark theme left them alone.
  *
- * `how` is what the rest of it is for. A page is judged by what is written
- * on it: with words on it its pictures are photographs printed in a
- * document, however much of it they cover; with nothing written on it and
- * covered in pictures, it is a scan of a page and is darkened whole. `text`
- * is which of the three a page carries -- words set to be read, words set
- * to be drawn as nothing (an OCR layer over a scan), or none at all -- and
- * `count` is how many pictures they are spread over, laid out in a grid.
- * Pick a share that fits the count, or the squares overlap.
+ * `how` is what the rest of it is for. A page is judged by the writing on
+ * it that a reader could actually see: words over the pictures make it a
+ * page with photographs printed on it, however much of it they cover;
+ * words a picture is painted over are OCR, and leave it a scan. `text` is
+ * which kind this page carries --
+ *
+ *   visible   a line of type over the pictures, the way a slide carries a
+ *             heading over a photograph
+ *   invisible an OCR layer set to be drawn as nothing, under them
+ *   under     an OCR layer in plain black, under them: the words are
+ *             there, in ordinary ink, and no reader will ever see them
+ *   stamp     a page number in the corner, over them -- writing, but not
+ *             a line's worth of it
+ *   none      nothing written at all
+ *
+ * -- and `count` is how many pictures they are spread over, laid out in a
+ * grid. Pick a share that fits the count, or the squares overlap.
  */
-export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' | 'none'; count?: number } = {}): string {
+export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' | 'under' | 'stamp' | 'none'; count?: number } = {}): string {
   const objects: string[] = [];
   const page = { width: 595, height: 842 };
   const count = Math.max(1, how.count ?? 1);
@@ -169,9 +178,22 @@ export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' 
   }
   const pixels = new Array(8 * 8 * 3).fill('f2').join('');
   const said = how.text ?? 'visible';
-  const words = said === 'none' ? ''
-    : `BT ${said === 'invisible' ? '3 Tr ' : ''}/F1 18 Tf 60 780 Td (A page with a picture on it) Tj ET\n`;
-  const content = words + places.join('\n');
+  const lines: Record<string, string> = {
+    visible: 'BT /F1 18 Tf 60 780 Td (A page with a picture on it) Tj ET',
+    invisible: 'BT 3 Tr /F1 12 Tf 70 500 Td (the words a machine read off this sheet) Tj ET',
+    // Four lines of ordinary black type across the middle of the sheet,
+    // painted before the pictures and buried by them: a scan run through
+    // an OCR tool that did not bother to set the render mode.
+    under: [0, 1, 2, 3].map((line) => `BT /F1 14 Tf 70 ${520 - line * 20} Td (the words a machine read off this sheet, in plain black ink) Tj ET`).join('\n'),
+    stamp: 'BT /F1 7 Tf 30 22 Td (12) Tj ET',
+    none: '',
+  };
+  const words = lines[said] ?? '';
+  // Where the words go in the painting order is the whole question: over
+  // the pictures they are a caption, under them they are hidden.
+  const content = said === 'invisible' || said === 'under'
+    ? `${words}\n${places.join('\n')}`
+    : `${places.join('\n')}\n${words}`;
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
   objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]`
@@ -189,21 +211,27 @@ export function picturePdf(share: number, how: { text?: 'visible' | 'invisible' 
  * built this way -- eleven to thirty-three JPEGs a page -- and no single
  * one of them looks like a scan.
  */
-export function scanPdf(strips: number): string {
+export function scanPdf(strips: number, how: { ocr?: boolean } = {}): string {
   const objects: string[] = [];
   const page = { width: 595, height: 842 };
   const band = page.height / strips;
   const pixels = new Array(8 * 8 * 3).fill('f2').join('');
   const places: string[] = [];
+  const words: string[] = [];
   for (let index = 0; index < strips; index += 1) {
     places.push(`q ${page.width} 0 0 ${band.toFixed(2)} 0 ${(index * band).toFixed(2)} cm /Im1 Do Q`);
+    // A line of plain black OCR sitting across the join between this
+    // strip and the next, so that no single strip covers it and only the
+    // two of them together do.
+    if (how.ocr && index) words.push(`BT /F1 14 Tf 40 ${(index * band - 5).toFixed(2)} Td (a line of words lying across the join between two strips) Tj ET`);
   }
-  const content = places.join('\n');
+  const content = [...words, ...places].join('\n');
   objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
   objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}]`
-    + ' /Resources << /XObject << /Im1 5 0 R >> >> /Contents 4 0 R >>';
+    + ' /Resources << /Font << /F1 6 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 4 0 R >>';
   objects[4] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+  objects[6] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
   objects[5] = '<< /Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceRGB'
     + ` /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${pixels.length + 1} >>\nstream\n${pixels}>\nendstream`;
   return assemble(objects);

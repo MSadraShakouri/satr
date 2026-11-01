@@ -347,6 +347,44 @@ test('a scan that came in strips is a scan, not a page of photographs', async ({
   expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
 });
 
+test('a scan whose machine-read words were left in plain ink is still a scan', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // The commonest OCR'd sheet there is: the words are laid on the page in
+  // ordinary black type and the picture of the sheet is painted over the
+  // top of them, so nobody ever sees them. Asking only whether the page
+  // carries a word set to be read calls this a typeset page -- and hands
+  // back a bright white sheet in a dark theme, which is the one thing
+  // this rule exists to prevent.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95, { text: 'under' }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+  expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
+});
+
+test('a line of machine-read words across the join between two strips is still behind the scan', async ({ page }) => {
+  const { scanPdf } = await import('./support/tinyPdf');
+  // His book's shape with an OCR layer on it: no one strip covers a line
+  // of those words, and the two it lies across do. Coverage has to be
+  // added up over every picture painted after the words or a sheet in
+  // pieces comes out white.
+  await boot(page, 'handout.pdf', 'dark', scanPdf(6, { ocr: true }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+  expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
+});
+
+test('a page number stamped on a scan does not make it a page someone wrote', async ({ page }) => {
+  const { picturePdf } = await import('./support/tinyPdf');
+  // Writing over the picture, and a reader can see it -- but two digits
+  // in a corner are not what the rule is asking about. A line of text is.
+  await boot(page, 'handout.pdf', 'dark', picturePdf(0.95, { text: 'stamp' }));
+  await openDocument(page);
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.pdf-photo')).toHaveCount(0);
+});
+
 test('under fit width a page is drawn at the size it is shown, not at fit', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await openDocument(page);
