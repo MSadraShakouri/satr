@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { tinyPdf } from './support/tinyPdf';
+import { mixedPdf, tinyPdf } from './support/tinyPdf';
 
 // A PDF is read here: its pages, a zoom, and the place it was left at. It is
 // never text — the editor has nothing to show for it and never writes it
@@ -1792,5 +1792,63 @@ test.describe('what is drawn under a hand that is still on the glass', () => {
     // fifth of margin: the one drawn at rest is several times the picture.
     expect(full).toBeGreaterThan(quick * 1.5);
     expect(same).toBe(false); // and it is a different canvas, not the same one stretched
+  });
+});
+
+test.describe('pages printed on more than one size of paper', () => {
+  // A4 upright, a narrower sheet, a landscape one, A4 again. The column used
+  // to fit the *widest* page to the pane and lay the rest out at that one
+  // scale, so the narrow page was shown narrow and its type came out smaller
+  // than the page before it. Every page is laid out at the pane's width now.
+  const SHEETS = [
+    { width: 595, height: 842 },
+    { width: 420, height: 842 },
+    { width: 842, height: 595 },
+    { width: 595, height: 842 },
+  ];
+  const MIXED = mixedPdf(SHEETS);
+
+  /** Every box measured in one go. Asking for them one at a time lets the
+   *  zoom's own animation move the column between two of the questions,
+   *  which would read as a difference that is not there. */
+  const widths = (page: Page): Promise<number[]> => page.evaluate(() =>
+    [...document.querySelectorAll('.pdf-page')].map((box) => box.getBoundingClientRect().width));
+
+  test('every page is the same width, whatever its own sheet measures', async ({ page }) => {
+    await boot(page, { 'mixed.pdf': MIXED }, 'mixed.pdf');
+    await readThis(page, 'mixed.pdf');
+    const seen = await widths(page);
+    expect(seen).toHaveLength(SHEETS.length);
+    expect(seen[0]).toBeGreaterThan(0);
+    // Not "about the same": the width is rounded once and shared, so the
+    // boxes are identical to the pixel.
+    for (const width of seen) expect(width).toBe(seen[0]);
+  });
+
+  test('a page of another shape keeps its shape, it is only its width that is shared', async ({ page }) => {
+    await boot(page, { 'mixed.pdf': MIXED }, 'mixed.pdf');
+    await readThis(page, 'mixed.pdf');
+    const shapeOf = async (number: number): Promise<number> => {
+      const box = await pageBox(page, number).boundingBox();
+      return box ? box.height / box.width : 0;
+    };
+    // The upright pages stand at A4's ratio, the narrow one at its own
+    // (taller, because it is the same height on a narrower sheet), and the
+    // landscape one lies down. Squashing them all to one shape would be the
+    // other way of making the widths match, and is not what this does.
+    expect(await shapeOf(1)).toBeCloseTo(842 / 595, 1);
+    expect(await shapeOf(2)).toBeCloseTo(842 / 420, 1);
+    expect(await shapeOf(3)).toBeCloseTo(595 / 842, 1);
+  });
+
+  test('they are still the same width after a zoom', async ({ page }) => {
+    await boot(page, { 'mixed.pdf': MIXED }, 'mixed.pdf');
+    await readThis(page, 'mixed.pdf');
+    const before = await widths(page);
+    const middle = await page.locator('#preview-pane').boundingBox();
+    await page.mouse.dblclick(middle!.x + middle!.width / 2, middle!.y + 120);
+    await expect.poll(async () => widthOf(page, 1)).toBeGreaterThan(before[0] * 1.5);
+    const after = await widths(page);
+    for (const width of after) expect(width).toBe(after[0]);
   });
 });

@@ -690,6 +690,9 @@ interface Slab {
   page: number;
   box: HTMLElement;
   proxy: PdfPageObject | null;
+  /** The scale at which *this* page fills the pane's width. One number per
+   *  page rather than one for the document: see measureFit. */
+  fit: number;
   /**
    * The whole page, drawn once at the width the pane gives it — not at the
    * zoom. The browser stretches it for free, so a zoom shows something
@@ -864,7 +867,6 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const endGlide = (): void => { if (stopGlide()) drawBand(); };
   let derived: PdfOutlineItem[] | null = null;
   let deriving: Promise<PdfOutlineItem[]> | null = null;
-  let fit = 1; // the scale at which a page fills the pane's width
   const slabs: Slab[] = [];
 
   // Every page's natural size, which is what the column is laid out from.
@@ -877,19 +879,45 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     box.className = 'pdf-page';
     box.dataset.page = String(index + 1);
     doc.append(box);
-    slabs.push({ page: index + 1, box, proxy: page, base: null, baseScale: 0, baseTask: null,
+    slabs.push({ page: index + 1, box, proxy: page, fit: 1, base: null, baseScale: 0, baseTask: null,
       rough: null, roughTask: null,
       pictures: null, photos: [],
       detail: null, detailRect: null, detailZoom: 0, detailQuick: false, detailTask: null, width, height, laid: height, top: 0 });
   });
 
-  const widest = sizes.reduce((most, size) => Math.max(most, size.width), 1);
-  const tallest = sizes.reduce((most, size) => Math.max(most, size.height), 1);
+  /**
+   * Every page is laid out at the same width -- the pane's -- whatever its
+   * own sheet measures.
+   *
+   * A document is not always printed on one size of paper: a scan dropped
+   * into a thesis, a cover a few points narrower than the body, a table
+   * turned sideways. This column used to fit the *widest* page to the pane
+   * and then lay every other page out at that one scale, so a page a
+   * centimetre narrower than its neighbours was shown a centimetre
+   * narrower, and reading down the document the type changed size from one
+   * page to the next. Nothing in the file asked for that: it was the single
+   * document-wide number.
+   *
+   * So the scale is the page's own, `room / this page's width`, and zoom 1
+   * is fit width for every page rather than for the widest one. A page of
+   * another shape keeps its aspect ratio and is therefore taller or shorter
+   * than its neighbours, which is the honest answer -- what it must not be
+   * is narrower. The width itself is rounded once, in layout, and handed to
+   * every page: computing it per page would let floating point put one box
+   * on 389px and the next on 390px, which is the thing being fixed.
+   */
+  let room = 1; // the pane's width, less the gap on either side
+  /** The steepest page in the document: the one that stands tallest once
+   *  every page has been made the same width. It decides the fit-the-whole-
+   *  page stop, where the tallest page used to. */
+  const steepest = sizes.reduce((most, size) => Math.max(most, size.height / Math.max(1, size.width)), 0.1);
   const measureFit = (): void => {
-    const room = scroller.clientWidth - 2 * GAP;
-    fit = room > 0 ? room / widest : 1;
+    room = Math.max(1, scroller.clientWidth - 2 * GAP);
+    for (const slab of slabs) slab.fit = room / Math.max(1, slab.width);
   };
-  const scaleNow = (): number => fit * zoom;
+  /** The scale a page is drawn and laid out at: its own fit width, times
+   *  the one zoom the whole column shares. */
+  const scaleOf = (slab: Slab): number => slab.fit * zoom;
   /**
    * What a finger is doing to the column this instant, as a multiple of
    * the zoom the layout is laid out at: 1 whenever nothing is being held.
@@ -905,7 +933,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * is already being shown at that size.
    */
   let living = 1;
-  const liveScale = (): number => scaleNow() * living;
+  const liveScaleOf = (slab: Slab): number => scaleOf(slab) * living;
   const heightOf = (slab: Slab): number => slab.laid;
   /** Where the first page's top edge sits in the scroller — the column's own
    *  padding, and anything the pane puts above it. Measured rather than
@@ -954,11 +982,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     });
   };
   const drawMarks = (): void => {
-    const scale = scaleNow();
     for (const slab of slabs) for (const old of slab.box.querySelectorAll('.pdf-find-hit')) old.remove();
     marks.forEach((hit, index) => {
       const slab = slabs[hit.page - 1];
       if (!slab) return;
+      const scale = scaleOf(slab);
       for (const stroke of strokes(hit)) {
         const el = document.createElement('div');
         el.className = index === marked ? 'pdf-find-hit is-current' : 'pdf-find-hit';
@@ -973,13 +1001,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   const layout = (): void => {
     unspace();
-    const scale = scaleNow();
+    // Rounded once and shared, so no two pages can land a pixel apart.
+    const wide = Math.max(1, Math.round(room * zoom));
     let edge = 0;
     for (const slab of slabs) {
-      slab.laid = Math.round(slab.height * scale);
+      slab.laid = Math.max(1, Math.round(wide * (slab.height / Math.max(1, slab.width))));
       slab.top = edge;
       edge += slab.laid + GAP;
-      slab.box.style.width = `${Math.round(slab.width * scale)}px`;
+      slab.box.style.width = `${wide}px`;
       slab.box.style.height = `${slab.laid}px`;
       // the sharp picture goes where the zoom put it, stretched for now and
       // redrawn when the reader stops moving
@@ -1412,7 +1441,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * to draw a worse one is not an economy -- so this only ever makes new
    * work cheaper.
    */
-  const baseWanted = (): number => fit * Math.min(1, zoom * living);
+  const baseWanted = (slab: Slab): number => slab.fit * Math.min(1, zoom * living);
 
   /** Is this page still waiting for this, now? Asked again at the moment
    *  the work would start, because by then the reader has usually moved.
@@ -1428,7 +1457,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!job.slab.proxy) return false;
     if (job.work === 'rough') return where.rough && !job.slab.rough && !job.slab.roughTask;
     const close = Date.now() - movedAt < SETTLE_MS ? where.seen : where.near;
-    if (job.work === 'base') return close && !sharpEnough(job.slab.baseScale, baseWanted());
+    if (job.work === 'base') return close && !sharpEnough(job.slab.baseScale, baseWanted(job.slab));
     return close;
   };
 
@@ -1633,7 +1662,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         else if (where.rough && !slab.roughTask) jobs.push({ slab, work: 'rough', rank: rank('rough', steps, moving) });
       }
       if (!where.near) continue;
-      if (!sharpEnough(slab.baseScale, baseWanted()) && (!moving || where.seen)) {
+      if (!sharpEnough(slab.baseScale, baseWanted(slab)) && (!moving || where.seen)) {
         jobs.push({ slab, work: 'base', rank: rank('base', steps, moving) });
       }
       const want = detailWanted(slab);
@@ -1713,7 +1742,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   /** The whole page at the width it is shown at, stretched thereafter. */
   async function paintBase(slab: Slab): Promise<void> {
-    const drawnFor = baseWanted();
+    const drawnFor = baseWanted(slab);
     const width = Math.round(slab.width * drawnFor);
     const height = Math.round(slab.height * drawnFor);
     if (!slab.proxy || width <= 0 || height <= 0) return;
@@ -1787,7 +1816,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // because the box this measures against is itself being scaled by
     // the gesture: the two cancel, and the rect comes out in the page's
     // own units either way.
-    const scale = liveScale();
+    const scale = liveScaleOf(slab);
     const box = slab.box.getBoundingClientRect();
     const pane = scroller.getBoundingClientRect();
     // As much margin as the budget will carry, and no more. What is
@@ -1852,7 +1881,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // transform the column is wearing, so the tile lands with one device
     // pixel per screen pixel now and is still the right tile when the
     // finger lifts and the layout catches up.
-    const scale = liveScale();
+    const scale = liveScaleOf(slab);
     const drawnAt = zoom * living;
     if (!slab.proxy) return;
     const width = Math.round(rect.width * scale);
@@ -1916,7 +1945,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  stretched into its new place and stays until a fresh one lands. */
   const placeDetail = (slab: Slab): void => {
     if (!slab.detail || !slab.detailRect) return;
-    const scale = scaleNow();
+    const scale = scaleOf(slab);
     slab.detail.style.left = `${Math.round(slab.detailRect.x * scale)}px`;
     slab.detail.style.top = `${Math.round(slab.detailRect.y * scale)}px`;
     slab.detail.style.width = `${Math.round(slab.detailRect.width * scale)}px`;
@@ -2014,13 +2043,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * throw a zoomed-in page sideways: the column grew and the sideways
    * scroll stayed where it was.
    */
-  /** Fit width is zoom 1 by construction, because fit is measured from the
-   *  pane's width. Fit height is therefore the ratio between the two fits:
-   *  the whole of the tallest page on the screen at once, which is how a
-   *  handout gets read a page at a time without a spread mode. */
+  /** Fit width is zoom 1 by construction, because every page is laid out at
+   *  the pane's width. Fit height is the zoom at which the page that stands
+   *  tallest at that width is on the screen whole, which is how a handout
+   *  gets read a page at a time without a spread mode. */
   const heightStop = (): number => {
-    const room = scroller.clientHeight - chromeTop() - 2 * GAP;
-    return room > 0 && fit > 0 ? (room / tallest) / fit : 1;
+    const tall = scroller.clientHeight - chromeTop() - 2 * GAP;
+    return tall > 0 ? tall / (room * steepest) : 1;
   };
 
   const zoomTo = (next: number, anchorY: number, anchorX?: number, smooth = false): void => {
@@ -2731,7 +2760,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // A couple of lines of context above the match, but never so far up
       // that its own page is no longer the page at the top of the screen —
       // otherwise the counter and the page box would name the page before.
-      const scale = scaleNow();
+      const scale = scaleOf(slab);
       const edge = offsetOf({ page: hit.page, into: 0 });
       letGo();
       options.ownScroll?.();

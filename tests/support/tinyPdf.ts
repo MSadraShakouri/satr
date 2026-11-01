@@ -261,3 +261,25 @@ export function colourPdf(): string {
   objects[4] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
   return assemble(objects);
 }
+
+/** A document printed on more than one size of paper: a scan dropped into a
+ *  thesis, a cover a few points narrower than the body, a table turned
+ *  sideways. Every page carries its own MediaBox and nothing else differs,
+ *  so what a spec measures off it is the layout's own doing. */
+export function mixedPdf(sheets: Array<{ width: number; height: number }>): string {
+  const objects: string[] = [];
+  const pageIds: number[] = [];
+  for (let index = 0, id = 3; index < sheets.length; index += 1, id += 2) pageIds.push(id);
+  const fontId = 3 + sheets.length * 2;
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${sheets.length} >>`;
+  pageIds.forEach((id, index) => {
+    const sheet = sheets[index];
+    objects[id] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${sheet.width} ${sheet.height}]`
+      + ` /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${id + 1} 0 R >>`;
+    const stream = `BT /F1 36 Tf 40 ${Math.round(sheet.height - 80)} Td (Page ${index + 1}) Tj ET`;
+    objects[id + 1] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  });
+  objects[fontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+  return assemble(objects);
+}
