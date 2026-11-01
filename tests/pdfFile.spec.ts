@@ -842,6 +842,88 @@ test('the page in front of the reader is drawn before the pages behind them', as
   expect(first).toBeGreaterThan(28);
 });
 
+test('the pages after the one being read are drawn before the pages before it', async ({ page }) => {
+  // His order, in his words: the page you are on first, then up and down
+  // from it. Up and down are not equal -- a document is read downwards --
+  // so at the same distance the page after wins. What this replaced
+  // ranked every page on the screen ahead of every page off it and then
+  // went by pixels, which put the page above the reader ahead of the one
+  // they were about to turn to.
+  await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  await page.waitForTimeout(800);
+  const order = await page.evaluate(async () => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
+    for (const canvas of document.querySelectorAll('.pdf-page canvas')) canvas.remove();
+    const drawn: number[] = [];
+    const watch = new MutationObserver((changes) => {
+      for (const change of changes) {
+        for (const node of change.addedNodes) {
+          if (!(node instanceof HTMLCanvasElement)) continue;
+          const sheet = node.closest('.pdf-page') as HTMLElement | null;
+          const number = Number(sheet?.dataset.page);
+          if (number && !drawn.includes(number)) drawn.push(number);
+        }
+      }
+    });
+    watch.observe(document.querySelector('.pdf-doc')!, { childList: true, subtree: true });
+    pane.scrollTop = sheets[29].offsetTop;
+    pane.dispatchEvent(new Event('scroll'));
+    await new Promise((done) => setTimeout(done, 2500));
+    watch.disconnect();
+    return drawn;
+  });
+  // the page being read, first
+  expect(order[0]).toBe(30);
+  // and the page after it before the page before it
+  expect(order.indexOf(31)).toBeGreaterThan(-1);
+  expect(order.indexOf(31)).toBeLessThan(order.indexOf(29) === -1 ? order.length : order.indexOf(29));
+});
+
+test('zoomed in, the page being read is sharpened before the pages around it', async ({ page }) => {
+  // The other half of his order: a sharp tile is the dearest thing the
+  // viewer draws, and the reader gets theirs first. Three pages are on
+  // the screen here and all three want one; the queue hands them out
+  // from the middle of the screen outwards, leaning downwards.
+  await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  await page.waitForTimeout(600);
+  for (let step = 0; step < 3; step += 1) {
+    await page.locator('.pdf-toolbar-button[aria-label="Zoom in"]').click();
+    await page.waitForTimeout(400);
+  }
+  // page 20 across the middle of the screen, 19 above it and 21 below
+  await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const sheet = document.querySelector('.pdf-page[data-page="20"]') as HTMLElement;
+    pane.scrollTop = sheet.offsetTop - pane.clientHeight * 0.35;
+    pane.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForTimeout(2500);
+  const sharp = await page.evaluate(async () => {
+    const order: number[] = [];
+    const watch = new MutationObserver((changes) => {
+      for (const change of changes) {
+        for (const node of change.addedNodes) {
+          if (!(node instanceof HTMLCanvasElement) || !node.classList.contains('pdf-detail')) continue;
+          const sheet = node.closest('.pdf-page') as HTMLElement | null;
+          const number = Number(sheet?.dataset.page);
+          if (number && !order.includes(number)) order.push(number);
+        }
+      }
+    });
+    watch.observe(document.querySelector('.pdf-doc')!, { childList: true, subtree: true });
+    // one more step of zoom: every tile on the screen is stale at once
+    (document.querySelector('.pdf-toolbar-button[aria-label="Zoom in"]') as HTMLElement).click();
+    await new Promise((done) => setTimeout(done, 3500));
+    watch.disconnect();
+    return order;
+  });
+  expect(sharp[0]).toBe(20); // the page being read
+  if (sharp.includes(19) && sharp.includes(21)) expect(sharp.indexOf(21)).toBeLessThan(sharp.indexOf(19));
+});
+
 test('a document kept as bytes in the store opens', async ({ page }) => {
   // Anything over a few megabytes lives in IndexedDB as the bytes it is;
   // only the index stays in localStorage. A 31 MB book turned into a data:

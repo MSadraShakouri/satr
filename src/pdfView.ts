@@ -1031,12 +1031,23 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     }
     for (const slab of was) if (!spaced.includes(slab)) slab.box.style.transform = '';
   };
-  /** The page under a point on the screen, as an index from zero. */
-  const pageUnder = (clientY: number): number => {
-    const held = scroller.scrollTop + (clientY - scroller.getBoundingClientRect().top) - columnTop;
-    for (const slab of slabs) if (held < slab.top + heightOf(slab) + GAP) return slab.page - 1;
-    return slabs.length - 1;
+  /** The page at an offset down the column, as an index from zero. The
+   *  pages are laid out in order, so this is a search and not a walk: ten
+   *  comparisons on his 528-page book where walking it was five hundred,
+   *  and this is asked on every frame of a scroll. */
+  const pageAt = (offset: number): number => {
+    let low = 0;
+    let high = slabs.length - 1;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const slab = slabs[middle];
+      if (offset < slab.top + heightOf(slab) + GAP) high = middle; else low = middle + 1;
+    }
+    return Math.max(0, low);
   };
+  /** The page under a point on the screen, as an index from zero. */
+  const pageUnder = (clientY: number): number =>
+    pageAt(scroller.scrollTop + (clientY - scroller.getBoundingClientRect().top) - columnTop);
   /** How far along its own curve the glide is at a fraction of its time,
    *  so the gaps can be laid out along the same curve the scale takes. */
   const glideAt = (part: number): number => {
@@ -1054,11 +1065,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     return 3 * rest * rest * time + 3 * rest * time * time + time * time * time;
   };
 
-  /** Where a page stands in relation to the screen. The three bands are
+  /** Where a page stands in relation to the screen: the three bands are
    *  what gets drawn, what is kept when it goes by, and what is worth a
-   *  hundred pixels of itself; `away` is how far off the screen it is,
-   *  which is the order a reader wants their pages in. */
-  const standing = (slab: Slab): { seen: boolean; near: boolean; keep: boolean; rough: boolean; away: number } => {
+   *  hundred pixels of itself. What order they are drawn in is a separate
+   *  question, and the reader's own (stepsFrom). */
+  const standing = (slab: Slab): { seen: boolean; near: boolean; keep: boolean; rough: boolean } => {
     const screen = scroller.clientHeight;
     const top = scroller.scrollTop - columnTop;
     const from = slab.top;
@@ -1068,7 +1079,6 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       near: to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen,
       keep: to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen,
       rough: to > top - ROUGH_SCREENS * screen && from < top + (1 + ROUGH_SCREENS) * screen,
-      away: Math.max(0, from - (top + screen), top - to),
     };
   };
 
@@ -1119,8 +1129,30 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   interface Job { slab: Slab; work: Work; rank: number }
   let queue: Job[] = [];
   let drawing = false;
-  /** Far enough apart that a page's own distance never outranks its turn. */
-  const PHASE = 1e7;
+  /**
+   * The order the reader asked for: the page they are on, then outwards a
+   * page at a time, and the page after the one they are on before the one
+   * before it -- a document is read downwards.
+   *
+   * Distance is counted in pages and not in pixels, because that is how a
+   * reader counts it: the next page is the next page whether it is a
+   * screen away or a thumb's width.
+   */
+  const stepsFrom = (slab: Slab, here: number): number => {
+    const steps = slab.page - 1 - here;
+    return steps >= 0 ? steps * 2 : -steps * 2 + 1;
+  };
+  /**
+   * And within one page: something rather than nothing, then sharp where
+   * the reader is looking, then the whole page behind it.
+   *
+   * Sharpening the page under the reader outranks everything on every
+   * other page, which is the other half of what he asked for -- a zoom is
+   * the reader saying "this, closer", and preparing the page after it can
+   * wait the fifth of a second that takes.
+   */
+  const KINDS = 3;
+  const KIND: Record<Work, number> = { rough: 0, detail: 1, base: 2 };
 
   /** A frame to itself between one page and the next, so what was just
    *  drawn is painted and a scroll meanwhile is heard. A pane nobody is
@@ -1158,6 +1190,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const drawBand = (): void => {
     const jobs: Job[] = [];
     const moving = Date.now() - movedAt < SETTLE_MS;
+    // The page in the middle of the screen is the one being read, and
+    // everything is ranked by how far from it it is.
+    const here = pageAt(scroller.scrollTop - columnTop + scroller.clientHeight / 2);
     for (const slab of slabs) {
       const where = standing(slab);
       if (!where.rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
@@ -1166,12 +1201,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // A page anywhere in the wide band gets its rough picture, so a fast
       // scroll runs into soft pages rather than empty ones -- but a page
       // on the screen with nothing on it at all comes first.
+      const steps = stepsFrom(slab, here);
       if (!slab.rough && !slab.base && !slab.roughTask) {
-        jobs.push({ slab, work: 'rough', rank: (where.seen ? 0 : 4) * PHASE + where.away });
+        jobs.push({ slab, work: 'rough', rank: steps * KINDS + KIND.rough });
       }
       if (!where.near) continue;
       if (slab.baseScale < baseWanted() * 0.99) {
-        jobs.push({ slab, work: 'base', rank: (where.seen ? 1 : 3) * PHASE + where.away });
+        jobs.push({ slab, work: 'base', rank: steps * KINDS + KIND.base });
       }
       const want = detailWanted(slab);
       if (!want) {
@@ -1183,7 +1219,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // place the reader is already leaving.
       if (moving) continue;
       if (slab.detailZoom === zoom && slab.detailRect && covers(slab.detailRect, want)) continue;
-      jobs.push({ slab, work: 'detail', rank: 2 * PHASE + where.away });
+      jobs.push({ slab, work: 'detail', rank: steps * KINDS + KIND.detail });
     }
     queue = jobs.sort((first, second) => first.rank - second.rank);
     void pump();
