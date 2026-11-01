@@ -48,6 +48,10 @@ export interface SidebarDeps {
   /** How many pages the open tab holds, where it holds a document rather
    *  than a note; 0 for a note. */
   documentPages?(): number;
+  /** Where the reader is in a document, on the same scale as a heading's
+   *  `from` (the page and how far down it). Null for a note, which says
+   *  where it is by line instead. */
+  currentPlace?(): number | null;
   /** Every hit for a word in the open document, in reading order, marked on
    *  the pages as well: the page it is on and the words either side of it. */
   findInDocument?(query: string): Promise<{ page: number; at: number; before: string; match: string; after: string }[]>;
@@ -516,10 +520,32 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   // The heading you're reading, highlighted (in the open note's tree).
   function markCurrent(): void {
     const own = deps.headings();
+    const path = deps.currentPath();
+    // A document is read by the page, and a page can carry three headings:
+    // marking every row whose page is the one on the screen lit three rows
+    // at once and read as though the contents were grouped by page. A
+    // document's rows are marked by place instead -- the page and how far
+    // down it -- so the row marked is the heading being read and no other.
+    const place = deps.currentPlace?.() ?? null;
+    if (place !== null) {
+      let current = -Infinity;
+      for (const h of own) { if (h.from <= place) current = h.from; else break; }
+      // Above the first heading of all -- the cover, a title page -- the
+      // heading of the page being looked at is still where you are, rather
+      // than nowhere.
+      if (current === -Infinity) {
+        const here = Math.floor(place / 10000);
+        const first = own.find((h) => Math.floor(h.from / 10000) === here);
+        if (first) current = first.from;
+      }
+      for (const el of list.querySelectorAll<HTMLElement>('.tree-item-self[data-from]')) {
+        el.classList.toggle('is-active', el.dataset.path === path && Number(el.dataset.from) === current);
+      }
+      return;
+    }
     const line = deps.currentLine();
     let current = -1;
     for (const h of own) { if (h.line <= line + 0.5) current = h.line; else break; }
-    const path = deps.currentPath();
     for (const el of list.querySelectorAll<HTMLElement>('.tree-item-self[data-line]')) {
       el.classList.toggle('is-active', el.dataset.path === path && Number(el.dataset.line) === current);
     }

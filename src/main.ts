@@ -3164,6 +3164,11 @@ const sidebar = createRightSidebar(rightPanel, {
   currentPath: () => filePath,
   currentText: () => editor.getValue(),
   documentPages: () => pdfView?.pages ?? 0,
+  currentPlace: () => {
+    if (!pdfView) return null;
+    const here = pdfView.reading();
+    return placeOnPage(here.page, here.top);
+  },
   findInDocument: async (query) => {
     const handle = pdfView;
     if (!handle) return [];

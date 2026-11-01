@@ -86,6 +86,9 @@ export interface PdfHit {
 export interface PdfHandle {
   pages: number;
   place(): PdfPlace;
+  /** Where the reader is on the page's own scale: the page, and how far
+   *  down it in the units an outline row's `top` is given in. */
+  reading(): { page: number; top: number };
   goTo(page: number): void;
   fitTo(mode: PdfFit): void;
   /** Which stop the page is sitting at, if either — for the checkmark. */
@@ -1396,6 +1399,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const handle: PdfHandle = {
     pages: document_.pageCount,
     place: placeNow,
+    /** Where the reader is, finely: the page, and how far down it in the
+     *  page's own units -- the same units an outline row's `top` is in, so
+     *  the two can be compared. The page alone is too coarse to say which
+     *  heading is being read when a page carries three of them. */
+    reading: () => {
+      const here = placeNow();
+      const sheet = sizes[here.page - 1];
+      return { page: here.page, top: here.into * (sheet ? sheet.height : 0) };
+    },
     fitTo: (mode: PdfFit) => {
       const pane = scroller.getBoundingClientRect();
       // anchored at the top of the readable area, not the middle: a fit is

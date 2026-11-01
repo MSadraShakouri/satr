@@ -163,3 +163,29 @@ test('a paper written by LaTeX has contents that can be followed', async ({ page
   const third = await page.locator('.pdf-page[data-page="3"]').boundingBox();
   expect(third!.y).toBeLessThan(300);
 });
+
+test('one row of the contents is marked, where a page carries three headings', async ({ page }) => {
+  const { typesetPdf } = await import('./support/tinyPdf');
+  // Three headings on one page, which is an ordinary page of a handout.
+  await bootPdf(page, typesetPdf([
+    { chapter: 'First chapter', section: 'A section', minor: 'A smaller heading' },
+    { chapter: 'Second chapter' },
+  ]));
+  await openOutline(page);
+  const rows = page.locator('#right-panel .tree-item-self');
+  await expect(rows).toHaveCount(4, { timeout: 20000 });
+  const marked = page.locator('#right-panel .tree-item-self.is-active');
+  // Where you are is one heading, never the page's worth of them: marking
+  // by page lit all three of these at once and read as a group, not a place.
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toContainText('First chapter');
+  // Down the page, past all three, without leaving it.
+  await page.locator('#preview-pane').evaluate((pane: HTMLElement) => {
+    const sheet = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    pane.scrollTop += sheet.getBoundingClientRect().height * 0.5;
+    pane.dispatchEvent(new Event('scroll'));
+  });
+  await page.waitForTimeout(700);
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toContainText('A smaller heading');
+});
