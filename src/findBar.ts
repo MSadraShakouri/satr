@@ -25,6 +25,7 @@ import { expandReplacement, searchRegExp } from './searchRegex';
 import { EditorSelection, StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, type Panel, showPanel, type ViewUpdate } from '@codemirror/view';
 import { typingTop } from './scrollSync';
+import { countLabel, markQuery } from './searchQuery';
 
 interface Match { from: number; to: number }
 interface FindState {
@@ -207,8 +208,7 @@ function replaceEvery(view: EditorView, replacement: string): void {
   view.dispatch({ effects: setFind.of({ current: null }) });
 }
 
-// First strong character is Hebrew/Arabic-script (Persian).
-const RTL_QUERY = /^[^A-Za-z\u00C0-\u024F\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]*[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
 
 function createPanel(view: EditorView): Panel {
   const dom = document.createElement('div');
@@ -248,11 +248,8 @@ function createPanel(view: EditorView): Panel {
     const invalid = Boolean(s.query) && !searchRegExp(s.query);
     // A right-to-left query (Persian) puts the count on the left, where the
     // text ends, in Persian digits.
-    const rtl = RTL_QUERY.test(s.query);
-    const digits = (n: number): string => (rtl ? String(n).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]) : String(n));
-    dom.classList.toggle('mod-rtl-query', rtl);
-    count.dir = rtl ? 'rtl' : 'ltr';
-    count.textContent = invalid ? 'Invalid' : s.query ? `${digits(matches.length ? index + 1 : 0)} / ${digits(matches.length)}` : '';
+    markQuery(dom, count, s.query);
+    count.textContent = invalid ? 'Invalid' : countLabel(s.query, index, matches.length);
     count.style.display = s.query ? '' : 'none';
     dom.classList.toggle('mod-no-match', Boolean(s.query) && !matches.length);
     dom.querySelector('[data-act="toggle-replace"]')!.setAttribute('aria-expanded', String(s.replaceMode));
@@ -271,9 +268,7 @@ function createPanel(view: EditorView): Panel {
     // The count's side follows the typed text at once, not after the search:
     // otherwise Persian text sat short of the right edge (where the count
     // had been) for a moment before jumping over.
-    const rtl = RTL_QUERY.test(find.value);
-    dom.classList.toggle('mod-rtl-query', rtl);
-    count.dir = rtl ? 'rtl' : 'ltr';
+    markQuery(dom, count, find.value);
     window.clearTimeout(timer);
     timer = window.setTimeout(search, 150);
   });

@@ -231,7 +231,7 @@ test('find marks every match and walks them', async ({ page }) => {
   await expect(page.locator('.pdf-findbar')).toBeVisible();
   // every page of this document says "Page", so there is one hit per page
   await page.locator('.pdf-findbar input').fill('Page');
-  await expect(page.locator('.document-search-count')).toHaveText('1 of 8', { timeout: 15000 });
+  await expect(page.locator('.document-search-count')).toHaveText('1 / 8', { timeout: 15000 });
   await expect(page.locator('.pdf-find-hit')).toHaveCount(8);
   await expect(page.locator('.pdf-find-hit.is-current')).toHaveCount(1);
   // and a mark is actually painted: the colours here are Satr's own, and a
@@ -245,12 +245,14 @@ test('find marks every match and walks them', async ({ page }) => {
   expect(paint.wide).toBeGreaterThan(4);
   // the arrows walk them, and the document follows
   await page.locator('.pdf-findbar [aria-label="Next match"]').click();
-  await expect(page.locator('.document-search-count')).toHaveText('2 of 8');
+  await expect(page.locator('.document-search-count')).toHaveText('2 / 8');
   await page.waitForTimeout(500);
   await expect(page.locator('.pdf-counter')).toHaveText('2 / 8');
   // a word that is not there says so rather than going quiet
   await page.locator('.pdf-findbar input').fill('zzzzz');
-  await expect(page.locator('.document-search-count')).toHaveText('No matches', { timeout: 15000 });
+  // the count a note's bar shows for a word that is not there, and the
+  // field goes red behind it
+  await expect(page.locator('.document-search-count')).toHaveText('0 / 0', { timeout: 15000 });
   await expect(page.locator('.pdf-find-hit')).toHaveCount(0);
   // and closing it puts the page back the way it was
   await page.locator('.pdf-findbar [aria-label="Close find"]').click();
@@ -505,7 +507,7 @@ test('a match is one band a line, at the height of the line', async ({ page }) =
   // glyphs, so a phrase comes back in pieces. Drawn as they come, they are a
   // ragged skyline of blocks at several heights.
   await page.locator('.pdf-findbar input').fill('Page 1');
-  await expect(page.locator('.document-search-count')).toHaveText('1 of 1', { timeout: 15000 });
+  await expect(page.locator('.document-search-count')).toHaveText('1 / 1', { timeout: 15000 });
   await expect(page.locator('.pdf-find-hit')).toHaveCount(1);
   const band = await page.locator('.pdf-find-hit').first().evaluate((el: HTMLElement) => {
     const box = el.getBoundingClientRect();
@@ -537,4 +539,33 @@ test('the field you type into can be told from the bar it sits on', async ({ pag
     // of nearly black in the dark one. A field is filled, as the panel's is.
     expect(paint.field, mode).not.toBe(paint.bar);
   }
+});
+
+test('a Persian query lays the bar out the way a note\'s does', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  await page.locator('#nav-find').click();
+  await page.locator('.pdf-findbar input').fill('صفحه');
+  await page.waitForTimeout(600);
+  const bar = await page.evaluate(() => {
+    const count = document.querySelector('.document-search-count') as HTMLElement;
+    const field = document.querySelector('.pdf-findbar input') as HTMLInputElement;
+    const box = field.getBoundingClientRect();
+    const seen = count.getBoundingClientRect();
+    return {
+      rtlClass: document.querySelector('.pdf-findbar')!.classList.contains('mod-rtl-query'),
+      countDir: count.dir, text: count.textContent,
+      // the room the field keeps for the count, on the side the count is on
+      padStart: getComputedStyle(field).paddingInlineStart,
+      countLeftOfMiddle: seen.left + seen.width / 2 < box.left + box.width / 2,
+    };
+  });
+  // The document's bar was the odd one out: the count stayed on the right
+  // in English digits while the text it counts ran the other way, and the
+  // field kept its 72px of room on the wrong edge.
+  expect(bar.rtlClass).toBe(true);
+  expect(bar.countDir).toBe('rtl');
+  expect(bar.countLeftOfMiddle).toBe(true);
+  expect(bar.padStart).toBe('16px');
+  expect(bar.text).toMatch(/[۰-۹]/);
 });

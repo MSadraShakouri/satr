@@ -19,6 +19,7 @@
 import { openMenu, type MenuEntry } from './menu';
 import { majorityDirection } from './direction';
 import type { PdfFit, PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
+import { countLabel, markQuery } from './searchQuery';
 
 const ICONS: Record<string, string> = {
   // Obsidian's own pair: lucide-layout-list for the toggle, a plain chevron
@@ -198,7 +199,7 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
   findbar.innerHTML = `
     <div class="document-search">
       <div class="search-input-container document-search-input">
-        <input type="search" dir="auto" placeholder="Find in document" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Find in document">
+        <input type="search" dir="auto" placeholder="Find" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Find in document">
         <div class="document-search-count"></div>
       </div>
       <div class="document-search-buttons">
@@ -216,7 +217,11 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
   let hits: PdfHit[] = [];
   let at = -1;
   const show = (): void => {
-    tally.textContent = hits.length ? `${at + 1} of ${hits.length}` : (field.value.trim() ? 'No matches' : '');
+    // The same count the note's bar shows, from the same place: "۳ / ۱۴۱"
+    // for a Persian query, with the bar laid out for it.
+    markQuery(findbar, tally, field.value);
+    tally.textContent = countLabel(field.value, at, hits.length);
+    tally.style.display = field.value.trim() ? '' : 'none';
     findbar.classList.toggle('mod-no-match', Boolean(field.value.trim()) && !hits.length);
     handle.showHits(hits, at);
   };
@@ -239,7 +244,11 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
       told?.(asked); // the panel lists what the bar is looking for
     }, 200);
   };
-  field.oninput = look;
+  field.oninput = () => {
+    // the side the count sits on follows the typing, not the search
+    markQuery(findbar, tally, field.value);
+    look();
+  };
   field.onkeydown = (event) => {
     if (event.key === 'Enter') { event.preventDefault(); step(event.shiftKey ? -1 : 1); }
     if (event.key === 'Escape') setFinding(false);
@@ -252,6 +261,7 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
     at = -1;
     field.value = '';
     tally.textContent = '';
+    markQuery(findbar, tally, '');
     findbar.classList.remove('mod-no-match');
     handle.showHits([], -1);
     told?.('');

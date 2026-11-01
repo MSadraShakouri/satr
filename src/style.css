@@ -2783,10 +2783,10 @@ input.mod-no-match {
 .document-search-container input {
   display: block;
   width: 100%;
-  /* 36px, not 40: with `height: auto` a 40px field is a tall bar for one
-     line of text on a phone. A minimum still, so a larger system font scale
-     grows it with the text. */
-  min-height: 36px;
+  /* The panel's field's height, so the two searches are the same object
+     seen in two places. A minimum, so a larger system font scale grows it
+     with the text. */
+  min-height: 40px;
   height: auto;
   padding: 8px 16px;
   /* Filled, like the panel's search field, rather than outlined: an
