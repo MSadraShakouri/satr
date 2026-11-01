@@ -2959,7 +2959,8 @@ input.mod-no-match {
   flex: 1;
   min-width: 0;
 }
-.drawer-recursive-toggle {
+.drawer-recursive-toggle,
+.drawer-documents-toggle {
   display: grid;
   place-items: center;
   width: 32px;
@@ -2969,11 +2970,13 @@ input.mod-no-match {
   border-radius: 8px;
   color: var(--text-muted);
 }
-.drawer-recursive-toggle.is-active {
+.drawer-recursive-toggle.is-active,
+.drawer-documents-toggle.is-active {
   color: var(--interactive-accent);
   background: var(--background-modifier-hover);
 }
-.drawer-recursive-toggle:disabled {
+.drawer-recursive-toggle:disabled,
+.drawer-documents-toggle:disabled {
   opacity: 0.35;
   pointer-events: none;
 }

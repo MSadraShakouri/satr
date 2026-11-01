@@ -76,6 +76,10 @@ const ICONS = {
   folder: icon('<path d="M3.5 7.5a2 2 0 0 1 2-2h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
   expandAll: icon('<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>'),
   recursive: icon('<path d="M10.7 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v4.1"/><path d="m21 21-1.9-1.9"/><circle cx="17" cy="17" r="3"/>'),
+  // A sheet with its corner turned, under the same magnifier the
+  // subfolders button wears: the pair reads as two things the search can
+  // be told to take in.
+  documents: icon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h5.1"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M20 8v3.1"/><path d="m21 21-1.9-1.9"/><circle cx="17" cy="17" r="3"/>'),
 };
 const SCOPE_KEY = 'satr:search-scope';
 const MAX_PER_NOTE = 100;
@@ -110,6 +114,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
           <div class="workspace-drawer-header-info drawer-note-name" dir="auto"></div>
           <div class="workspace-drawer-header-info drawer-note-count" dir="auto"></div>
         </div>
+        <button type="button" class="clickable-icon drawer-documents-toggle" data-documents-toggle aria-label="Search documents too" title="Search documents too">${ICONS.documents}</button>
         <button type="button" class="clickable-icon drawer-recursive-toggle" data-recursive-toggle aria-label="Include subfolders" title="Include subfolders">${ICONS.recursive}</button>
       </div>
       <div class="search-input-container">${ICONS.search}<input type="search" class="vault-search" dir="auto" placeholder="Search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button type="button" class="search-input-clear-button" aria-label="Clear search" hidden></button></div>
@@ -133,6 +138,7 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   const segmented = root.querySelector<HTMLElement>('.search-scope')!;
   const collapseButton = root.querySelector<HTMLButtonElement>('[data-act="collapse"]')!;
   const recursiveButton = root.querySelector<HTMLButtonElement>('[data-recursive-toggle]')!;
+  const documentsButton = root.querySelector<HTMLButtonElement>('[data-documents-toggle]')!;
   let scope: SearchScope = localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'note';
   const collapsed = new Set<string>(); // closed branches: "h:<line>" or "n:<path>"
   // Notes the reader opened or closed by hand in the all-notes list; the
@@ -186,6 +192,13 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       recursiveButton.classList.toggle('is-active', recursive);
       recursiveButton.setAttribute('aria-pressed', String(recursive));
       recursiveButton.disabled = scope === 'note';
+    }
+    if (documentsButton) {
+      const documents = loadSettings().searchDocuments ?? true;
+      documentsButton.classList.toggle('is-active', documents);
+      documentsButton.setAttribute('aria-pressed', String(documents));
+      // Nothing to take in while the search is this note's own text.
+      documentsButton.disabled = scope === 'note';
     }
   }
 
@@ -625,6 +638,14 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
       el.classList.toggle('is-collapsed', !any);
     }
     renderChrome();
+  });
+  documentsButton?.addEventListener('click', () => {
+    if (documentsButton.disabled) return;
+    const settings = loadSettings();
+    settings.searchDocuments = !(settings.searchDocuments ?? true);
+    saveSettings(settings);
+    render();
+    window.dispatchEvent(new CustomEvent('satr:settings-changed'));
   });
   recursiveButton?.addEventListener('click', () => {
     if (recursiveButton.disabled) return;

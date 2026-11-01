@@ -418,6 +418,13 @@ export function migrateOldNotes(): string | null {
 
 /** Every note (md/txt) under `dir`, depth-first, at most `limit`. */
 export async function walkNotes(dir: string, limit = 2000, recursive = true): Promise<string[]> {
+  return walkFiles(dir, isNote, limit, recursive);
+}
+
+/** The same walk, over whatever kind of file the caller is after: the
+ *  search panel wants documents as well as notes, and a second copy of
+ *  this walk would be a second place to forget `Android` in. */
+export async function walkFiles(dir: string, keep: (name: string) => boolean, limit = 2000, recursive = true): Promise<string[]> {
   if (!recursive) {
     let entries: Entry[];
     try { entries = await backend.list(dir); } catch { return []; }
@@ -425,7 +432,7 @@ export async function walkNotes(dir: string, limit = 2000, recursive = true): Pr
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue;
       if (entry.path === 'Android') continue;
-      if (entry.kind === 'file' && isNote(entry.name)) {
+      if (entry.kind === 'file' && keep(entry.name)) {
         out.push(entry.path);
         if (out.length >= limit) break;
       }
@@ -441,7 +448,7 @@ export async function walkNotes(dir: string, limit = 2000, recursive = true): Pr
       if (entry.name.startsWith('.')) continue;
       if (entry.path === 'Android') continue; // the phone's app data, never notes
       if (entry.kind === 'folder') queue.push(entry.path);
-      else if (isNote(entry.name)) out.push(entry.path);
+      else if (keep(entry.name)) out.push(entry.path);
     }
   }
   return out.slice(0, limit);

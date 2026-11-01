@@ -50,7 +50,8 @@ import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupS
 import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
-import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
+import { pageAt as documentPageAt } from './documentText';
+import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkFiles, walkNotes, within, type TextOpen } from './vault';
 import { fileKind, isEditableFile } from './fileKinds';
 
 type Mode = 'edit' | 'preview';
@@ -654,6 +655,9 @@ function renderPreview(): void {
     .then(() => { if (path === filePath) layoutMath(preview); });
 }
 /** Draw a PDF into the reading view, where it was left. */
+/** The page a document is to be opened at, set by a search result on its
+ *  way in and spent by the viewer as it mounts. */
+let openAtPage = 0;
 async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   const { showPdf, pdfKey } = await import('./pdfView');
   if (filePath !== path) return;
@@ -668,7 +672,14 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   const handle = await showPdf(preview, bytes.slice().buffer, {
     scroller: previewPane,
     key,
-    place: readPlace(key),
+    // A search result names a page, and that beats where the document
+    // was left: it is given as the place it opens at rather than scrolled
+    // to afterwards, because the remembered place is restored over
+    // several frames while the column settles and would win a race
+    // against anything done after the mount.
+    place: openAtPage
+      ? { page: openAtPage, into: 0, zoom: readPlace(key)?.zoom ?? 1 }
+      : readPlace(key),
     onPlace: (place) => writePlace(key, place),
     // Putting a document back where it was is not the reader scrolling: the
     // bars stay as they are.
@@ -679,6 +690,7 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   });
   if (filePath !== path) { handle.destroy(); return; }
   pdfView = handle;
+  if (openAtPage) { ownScroll(400); openAtPage = 0; }
   // Obsidian's chrome around it: the strip of controls and the panel of
   // thumbnails and contents (src/pdfChrome.ts).
   const { mountPdfChrome } = await import('./pdfChrome');
@@ -3110,7 +3122,39 @@ async function allNotes(): Promise<{ path: string; text: string }[]> {
     const text = await backend.read(path);
     if (text !== null) notes.push({ path, text });
   }
+  if (loadSettings().searchDocuments ?? true) notes.push(...await documentsIn(root, recursive));
   return notes;
+}
+
+/**
+ * The documents under the same root, with whatever text has already been
+ * read out of them (src/documentText.ts).
+ *
+ * A document that has not been read yet joins with none -- which is
+ * enough for its *name* to match, the way a note's does -- and the panel
+ * is asked to search again when its text lands. Nothing waits: a folder
+ * with his 528-page book in it shows every note's result at once and the
+ * book's a moment later, instead of showing nothing until the book has
+ * been read.
+ */
+let refreshing = 0;
+async function documentsIn(root: string, recursive: boolean): Promise<{ path: string; text: string }[]> {
+  const { isDocument, textHeld, textOf } = await import('./documentText');
+  const paths = await walkFiles(root, isDocument, 500, recursive).catch(() => []);
+  const out: { path: string; text: string }[] = [];
+  for (const path of paths) {
+    const text = textHeld(path);
+    out.push({ path, text: text ?? '' });
+    if (text !== null) continue;
+    void textOf(path).then(() => {
+      // One refresh for a batch of them, on the next quiet moment: ten
+      // documents landing within a second of each other is one search of
+      // the folder, not ten.
+      window.clearTimeout(refreshing);
+      refreshing = window.setTimeout(() => sidebar.refresh(), 150);
+    });
+  }
+  return out;
 }
 
 /** What each note's folder is called in a list: the path shortened the way
@@ -3257,6 +3301,18 @@ const sidebar = createRightSidebar(rightPanel, {
   },
   onResult: (path, from, to) => {
     toggleOutline(false);
+    // A document's text is kept a page to a line, so the newlines before
+    // the hit count the pages above it: a result in a PDF opens the
+    // document at the page the words are on, which is the document's
+    // answer to a note's caret landing on the line.
+    if (isDocument(path)) {
+      // Written down rather than done in the callback: the viewer is
+      // mounted after the file is opened, and the handle to tell does not
+      // exist yet when that callback runs.
+      openAtPage = documentPageAt(path, from);
+      void openFile(path);
+      return;
+    }
     void openFile(path, () => {
       if (mode !== 'edit') setMode('edit');
       ownScroll(400);

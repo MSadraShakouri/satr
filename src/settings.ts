@@ -42,6 +42,8 @@ export interface Settings {
   newTabAfterMinutes: number;
   /** Whether the All-notes and new-tab searches walk subfolders; false = only direct children of the space root / walked folder. */
   recursiveSearch: boolean;
+  /** Take documents in as well as notes when searching a whole space. */
+  searchDocuments: boolean;
   /** Settings format; 3 = roomier default line spacing. */
   version?: number;
 }
@@ -60,7 +62,7 @@ const SETTINGS_VERSION = 5;
  *  Only the DEFAULT moves: a reader whose settings were already saved keeps
  *  whatever they have, so nobody's note grows a gutter or loses one behind
  *  their back on update. */
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
 /** The seven first days, in the order a week can start. Labels come from the
  *  Dates language, never the device's. */
 export const WEEK_START_CHOICES = [6, 0, 1, 2, 3, 4, 5];
@@ -90,6 +92,7 @@ export function loadSettings(): Settings {
     s.newTabAfterMinutes = NEW_TAB_AFTER_CHOICES.some(([m]) => m === Number(s.newTabAfterMinutes)) ? Number(s.newTabAfterMinutes) : 30;
     s.hiddenTools = Array.isArray(s.hiddenTools) ? s.hiddenTools.filter((t) => typeof t === 'string') : [];
     if (typeof s.recursiveSearch !== 'boolean') s.recursiveSearch = true;
+    if (typeof s.searchDocuments !== 'boolean') s.searchDocuments = true;
     return s;
   } catch { return { ...DEFAULTS }; }
 }
@@ -287,6 +290,10 @@ export function openSettings(deps: SettingsDeps): void {
           <div class="setting-item-info"><div class="setting-item-name">Include subfolders</div><div class="setting-item-description">Search notes in subfolders. When off, only notes in the current folder are searched.</div></div>
           ${toggle('recursiveSearch', settings.recursiveSearch)}
         </div>
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Search documents</div><div class="setting-item-description">Look inside PDFs as well as notes. A document is read once and kept for the rest of the session; a scan has no text in it to find.</div></div>
+          ${toggle('searchDocuments', settings.searchDocuments)}
+        </div>
       </div>
       <div class="setting-group-title">Keyboard toolbar</div>
       <div class="setting-group">
@@ -390,6 +397,7 @@ export function openSettings(deps: SettingsDeps): void {
     else if (name === 'highlightAll') settings.highlightAll = on;
     else if (name === 'spaceAfterPunctuation') settings.spaceAfterPunctuation = on;
     else if (name === 'recursiveSearch') settings.recursiveSearch = on;
+    else if (name === 'searchDocuments') settings.searchDocuments = on;
     else if (name.startsWith('tool:')) {
       const command = name.slice(5);
       settings.hiddenTools = on ? settings.hiddenTools.filter((c) => c !== command) : [...settings.hiddenTools, command];
