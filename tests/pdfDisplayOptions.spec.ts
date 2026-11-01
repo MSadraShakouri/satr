@@ -279,3 +279,40 @@ test('a scan that came in strips is a scan, not a page of photographs', async ({
   // and the page itself is still darkened, which is the point of the theme
   expect(await page.locator('.pdf-raster').first().evaluate((sheet) => getComputedStyle(sheet).filter)).toContain('invert');
 });
+
+test('under fit width a page is drawn at the size it is shown, not at fit', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await openDocument(page);
+  await page.waitForTimeout(800);
+  const atFit = await page.evaluate(() => {
+    const sheet = document.querySelector('.pdf-page[data-page="1"] .pdf-raster') as HTMLCanvasElement;
+    const box = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    return { picture: sheet.width, page: Math.round(box.getBoundingClientRect().width) };
+  });
+  expect(atFit.picture).toBeGreaterThan(atFit.page); // the screen's own pixels
+  // well under fit width, where a page on screen is a third of the pane
+  for (let step = 0; step < 5; step += 1) {
+    await page.locator('.pdf-toolbar-button[aria-label="Zoom out"]').click();
+    await page.waitForTimeout(350);
+  }
+  await page.waitForTimeout(3000);
+  const small = await page.evaluate(() => {
+    const last = document.querySelector('.pdf-page[data-page="6"]') as HTMLElement;
+    const sheet = last.querySelector('.pdf-raster') as HTMLCanvasElement | null;
+    const first = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    return {
+      picture: sheet ? sheet.width : 0,
+      page: Math.round(last.getBoundingClientRect().width),
+      kept: (first.querySelector('.pdf-raster') as HTMLCanvasElement).width,
+    };
+  });
+  expect(small.page).toBeLessThan(atFit.page * 0.75); // it really did zoom out
+  // A page drawn while the reader is zoomed out is drawn for the size it
+  // is shown at: a sheet two inches across is not asked for at the pane's
+  // full width. Page one keeps the bigger picture it already has -- it is
+  // drawn, and throwing it away to draw a worse one is not an economy.
+  expect(small.picture).toBeGreaterThan(0);
+  expect(small.picture).toBeLessThan(atFit.picture * 0.75);
+  expect(small.picture).toBeGreaterThanOrEqual(small.page); // and still sharp
+  expect(small.kept).toBe(atFit.picture);
+});

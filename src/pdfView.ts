@@ -1015,10 +1015,20 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     };
   };
 
-  /** The scale a whole-page picture is worth drawing at: the pane's width.
-   *  Zoomed in it stays there -- the sharp tile is what carries a zoom --
-   *  so zooming asks for nothing again. */
-  const baseWanted = (): number => fit;
+  /**
+   * The scale a whole-page picture is worth drawing at.
+   *
+   * Zoomed in that is the pane's width and no more -- the sharp tile is
+   * what carries a zoom, so zooming in asks nothing of the engine for the
+   * page underneath it. Zoomed out it is the width the page is actually
+   * shown at: a sheet a third of the pane wide was being drawn at the
+   * full width of the pane and shrunk into a third of it, which on a page
+   * of his book is 167ms of the thread for pixels nobody can see. Pages
+   * already drawn keep the bigger picture they have -- throwing it away
+   * to draw a worse one is not an economy -- so this only ever makes new
+   * work cheaper.
+   */
+  const baseWanted = (): number => fit * Math.min(1, zoom);
 
   /** Is this page still waiting for this, now? Asked again at the moment
    *  the work would start, because by then the reader has usually moved. */
