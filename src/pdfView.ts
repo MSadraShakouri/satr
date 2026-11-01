@@ -1794,10 +1794,21 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         if (slab.detail) { stop(slab.detailTask); slab.detailTask = null; slab.detail.remove(); slab.detail = null; slab.detailRect = null; }
         continue;
       }
-      // A screenful at the screen's own pixels is the dearest thing here;
-      // it waits until the scrolling stops rather than being drawn for a
-      // place the reader is already leaving.
-      if (moving) continue;
+      // A screenful at the screen's own pixels is the dearest thing here,
+      // and it used to wait for the scrolling to stop altogether. That
+      // rule was written when the engine drew on this thread, where a
+      // tile was a sixth of a second of the frames the scroll was made
+      // of; it is on a thread of its own now, and the cost of drawing
+      // one during a slow read-scroll is a canvas swap.
+      //
+      // So the question is no longer "is the reader moving" but "will
+      // this tile still be over the screen when it lands". The margin is
+      // how much room there is to be wrong by, and the pace times the
+      // tile's own cost is how far the reader will have gone: a hand
+      // easing down the page gets a tile, a flick does not -- at six
+      // thousand pixels a second the reader is a screen away before the
+      // engine has finished, and the rough pictures are what carry that.
+      if (moving && !willLand(slab, want)) continue;
       // Under a hand there is a floor on what a tile is worth. At a tenth
       // over its own width the page's own picture, stretched, is within a
       // tenth of right, and the tile costs a slice of the gesture's own
@@ -2139,6 +2150,50 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     settleTimer = window.setTimeout(drawBand, SETTLE_MS);
   };
 
+  /** How fast the view is travelling, in CSS pixels a millisecond, kept
+   *  smooth so one stuttering frame does not call off the sharpening. */
+  let pace = 0;
+  let paceAt = 0;
+  let paceTop = 0;
+  /** Which way, because a tile only has to outlast the reader in the
+   *  direction they are actually going. */
+  let down = true;
+  const keepPace = (): void => {
+    const now = Date.now();
+    if (scroller.scrollTop !== paceTop) down = scroller.scrollTop > paceTop;
+    const gone = Math.abs(scroller.scrollTop - paceTop);
+    const over = now - paceAt;
+    if (over > 0 && over < 400) pace = pace * 0.6 + (gone / over) * 0.4;
+    else if (over >= 400) pace = gone / Math.max(1, over);
+    paceAt = now;
+    paceTop = scroller.scrollTop;
+  };
+  /**
+   * Whether a tile asked for now would still be over the screen when it
+   * arrives. The engine's own measured rate (perMillion) says how long it
+   * will take; the pace says how far the reader will have gone by then;
+   * the margin outside the screen is how far they may go before the tile
+   * stops covering what they are looking at.
+   *
+   * Before the engine has been timed at all, nothing is drawn under a
+   * moving view -- the first page of a document is not the place to find
+   * out what a tile costs.
+   */
+  const willLand = (slab: Slab, want: Rect): boolean => {
+    if (!perMillion) return false;
+    const raster = Math.max(1, window.devicePixelRatio || 1);
+    const scale = liveScaleOf(slab);
+    const pixels = want.width * want.height * scale * scale * raster * raster;
+    const takes = perMillion * (pixels / 1e6);
+    // How far past the screen this tile reaches, the way the reader is
+    // going: that is the room there is to be wrong by.
+    const box = slab.box.getBoundingClientRect();
+    const pan = scroller.getBoundingClientRect();
+    const top = box.top + want.y * scale;
+    const spare = down ? (top + want.height * scale) - pan.bottom : pan.top - top;
+    return pace * takes < Math.max(0, spare);
+  };
+
   const onScroll = (): void => {
     // A scroll nobody asked for, while the document is still being put back
     // where it was: put it back again.
@@ -2148,6 +2203,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       return;
     }
     movedAt = Date.now();
+    keepPace();
     showCounter();
     // The band is re-planned while the hand is still moving, not only when
     // it stops: that is what calls off the pages being left behind, and

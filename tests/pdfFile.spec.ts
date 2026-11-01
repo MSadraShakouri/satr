@@ -1970,4 +1970,98 @@ test.describe('the sharp layer, while the reader is still moving', () => {
     // is the line, which the old fifth-of-a-screen fails.
     expect(beyond).toBeGreaterThan(0.33);
   });
+
+  test('the sharp layer keeps up with a reader easing down the page', async ({ page }) => {
+    // The tile used to wait for the scrolling to stop altogether, which
+    // was right when the engine drew on this thread and is not now. A
+    // slow read-scroll gets its tiles as it goes.
+    await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+    await readThis(page, 'handout.pdf');
+    await dragZoom(page, 147);
+    await page.waitForTimeout(1500);
+    const watched = await page.evaluate(async () => {
+      const pane = document.querySelector('#preview-pane') as HTMLElement;
+      const doc = document.querySelector('.pdf-doc') as HTMLElement;
+      let tiles = 0;
+      const watch = new MutationObserver((changes) => {
+        for (const change of changes) {
+          for (const node of change.addedNodes) {
+            if (node instanceof HTMLCanvasElement && node.className.includes('detail')) tiles += 1;
+          }
+        }
+      });
+      watch.observe(doc, { childList: true, subtree: true });
+      const began = performance.now();
+      const shares: number[] = [];
+      await new Promise<void>((done) => {
+        const step = (): void => {
+          pane.scrollTop += 3; // about 180 px a second: a reader reading
+          const pan = pane.getBoundingClientRect();
+          let covered = 0;
+          for (const tile of document.querySelectorAll('canvas.pdf-detail')) {
+            const box = tile.getBoundingClientRect();
+            const wide = Math.min(pan.right, box.right) - Math.max(pan.left, box.left);
+            const tall = Math.min(pan.bottom, box.bottom) - Math.max(pan.top, box.top);
+            if (wide > 0 && tall > 0) covered += wide * tall;
+          }
+          shares.push(Math.min(1, covered / Math.max(1, pan.width * pan.height)));
+          if (performance.now() - began < 2000) requestAnimationFrame(step); else done();
+        };
+        requestAnimationFrame(step);
+      });
+      watch.disconnect();
+      return { worst: Math.min(...shares), tiles };
+    });
+    // On his book, measured: half the screen was soft at the worst
+    // moment of a slow scroll before this, and none of it after.
+    expect(watched.worst).toBeGreaterThan(0.85);
+    expect(watched.tiles).toBeGreaterThan(0);
+  });
+
+  test('a flick is no dearer than it was', async ({ page }) => {
+    // The other half of the rule. Whether a tile is drawn at speed is
+    // not a flag but a sum: it is drawn only if it will still be over
+    // the screen when it lands, so on a document whose pages are dear --
+    // his book, measured -- a flick draws none at all, while on a cheap
+    // one it may draw a couple and lose nothing by it. What must hold
+    // either way is the thing he says already works: a flick runs over
+    // pictures, never over empty boxes, and costs the frames what it
+    // always did.
+    await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+    await readThis(page, 'handout.pdf');
+    await dragZoom(page, 147);
+    await page.waitForTimeout(1500);
+    const flick = await page.evaluate(async () => {
+      const pane = document.querySelector('#preview-pane') as HTMLElement;
+      const gaps: number[] = [];
+      let empty = 0;
+      let samples = 0;
+      let last = performance.now();
+      const began = last;
+      await new Promise<void>((done) => {
+        const step = (): void => {
+          const now = performance.now();
+          gaps.push(now - last);
+          last = now;
+          pane.scrollTop += 110; // about 6600 px a second: a thumb flick
+          const pan = pane.getBoundingClientRect();
+          for (const box of document.querySelectorAll('.pdf-page')) {
+            const at = box.getBoundingClientRect();
+            if (at.bottom <= pan.top || at.top >= pan.bottom) continue;
+            samples += 1;
+            if (!box.querySelector('canvas')) empty += 1;
+          }
+          if (now - began < 1200) requestAnimationFrame(step); else done();
+        };
+        requestAnimationFrame(step);
+      });
+      const after = gaps.slice(1);
+      return {
+        emptyShare: empty / Math.max(1, samples),
+        meanFrameMs: after.reduce((sum, one) => sum + one, 0) / Math.max(1, after.length),
+      };
+    });
+    expect(flick.emptyShare).toBe(0);
+    expect(flick.meanFrameMs).toBeLessThan(25);
+  });
 });
