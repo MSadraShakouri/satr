@@ -30,6 +30,27 @@ async function boot(page: Page, files: Record<string, string>, open: string): Pr
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
 }
 
+/**
+ * A finger kept on the glass, from before the document opens.
+ *
+ * Nothing is sketched in the background while the reader is moving, so a
+ * test about what the engine is asked for can lay out its own scene --
+ * otherwise the background has quietly drawn half the document first, and
+ * what the test watches is the sketch book being put back rather than the
+ * band deciding anything. Let go of it to give the background its turn.
+ */
+async function keepMoving(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const tick = setInterval(() => {
+      const pane = document.querySelector('#preview-pane') as HTMLElement | null;
+      if (pane) pane.scrollTop = pane.scrollTop ? 0 : 1;
+    }, 80);
+    (window as unknown as { letGo: () => void }).letGo = () => { clearInterval(tick); };
+  });
+}
+const letGo = (page: Page): Promise<void> =>
+  page.evaluate(() => { (window as unknown as { letGo: () => void }).letGo(); });
+
 const pageBox = (page: Page, number: number) => page.locator(`.pdf-page[data-page="${number}"]`);
 const widthOf = async (page: Page, number: number): Promise<number> =>
   (await pageBox(page, number).boundingBox())?.width ?? 0;
@@ -864,9 +885,14 @@ test('the pages after the one being read are drawn before the pages before it', 
   // ranked every page on the screen ahead of every page off it and then
   // went by pixels, which put the page above the reader ahead of the one
   // they were about to turn to.
+  await keepMoving(page);
   await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
   await readThis(page, 'long.pdf');
-  await page.waitForTimeout(300); // before the background sketches them
+  // The background must not have sketched these pages already: a page it
+  // has been round is never asked of the engine again, and this is about
+  // the order they are asked for in.
+  await page.waitForTimeout(400);
+  await letGo(page);
   const order = await page.evaluate(async () => {
     const pane = document.querySelector('#preview-pane') as HTMLElement;
     const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
@@ -1015,10 +1041,14 @@ test('while the reader is still moving, the soft pictures come before the sharp 
   // while the view is moving every page's soft picture outranks any
   // page's sharp one, and the reader's own order -- this page, then
   // outwards -- comes back the moment they stop.
+  await keepMoving(page);
   await boot(page, { 'long.pdf': tinyPdf(60) }, 'long.pdf');
   await readThis(page, 'long.pdf');
-  // straight off, before the background has had time to sketch the
-  // document: every page the flick crosses has to be asked of the engine
+  // Before the background has sketched any of it: every page this flick
+  // crosses has to be asked of the engine, which is the case the order is
+  // there for.
+  await page.waitForTimeout(400);
+  await letGo(page);
   const seen = await page.evaluate(async () => {
     const pane = document.querySelector('#preview-pane') as HTMLElement;
     const soft = new Set<number>();
@@ -1129,4 +1159,48 @@ test('the space between pages is the same at every zoom, pinch and all', async (
   await page.waitForTimeout(2500);
   expect(await gap()).toBeCloseTo(atRest, 0);
   expect(await widthOf(page, 1)).toBeGreaterThan(900); // it really did zoom
+});
+
+test.describe('a document far longer than the band that draws it', () => {
+  test.use({ viewport: { width: 390, height: 700 } });
+  const LONG = tinyPdf(30); // about twenty-five screens of pages
+
+  /** Which pages have a picture in them, and how far down the document each
+   *  page sits, counted in screens from where the reader is. */
+  async function pictures(page: Page): Promise<{ screens: number; drawn: boolean }[]> {
+    return page.evaluate(() => {
+      const pane = document.querySelector('#preview-pane') as HTMLElement;
+      return [...document.querySelectorAll('.pdf-page')].map((box) => ({
+        screens: ((box as HTMLElement).offsetTop - pane.scrollTop) / pane.clientHeight,
+        drawn: box.querySelector('canvas') !== null,
+      }));
+    });
+  }
+  const at = (rows: { screens: number; drawn: boolean }[], screens: number) =>
+    rows.reduce((best, row) => (Math.abs(row.screens - screens) < Math.abs(best.screens - screens) ? row : best));
+
+  test('is not drawn out of sight, but is put back from much further away', async ({ page }) => {
+    // A finger on the glass for the whole of the first half of this test,
+    // so what is drawn is the band and only the band.
+    await keepMoving(page);
+    await boot(page, { 'handout.pdf': LONG }, 'handout.pdf');
+    await readThis(page, 'handout.pdf');
+    // Long enough that the engine has plainly had the time and has not
+    // taken it: ten screens down is out of the band's reach, and empty.
+    await page.waitForTimeout(1500);
+    const early = await pictures(page);
+    expect(at(early, 0).drawn).toBe(true);
+    expect(at(early, 10).drawn).toBe(false);
+    // The hand comes off, the background goes round the document, and those
+    // pages are in place without the reader having been near them.
+    await letGo(page);
+    await expect.poll(async () => Number((await page.locator('.pdf-doc').getAttribute('data-sketched')) ?? 0),
+      { timeout: 15000 }).toBeGreaterThan(20);
+    await page.waitForTimeout(300);
+    const later = await pictures(page);
+    expect(at(later, 10).drawn).toBe(true);
+    // It has an edge of its own, though: the far end of a long document is
+    // not held in the page boxes.
+    expect(at(later, 22).drawn).toBe(false);
+  });
 });

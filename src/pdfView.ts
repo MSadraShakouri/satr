@@ -485,6 +485,13 @@ const ROUGH_PX = 100;
  * reading outwards and the far end of it is let go of first.
  */
 const SKETCH_BYTES = 24 * 1024 * 1024;
+/** How far out pages that have already been drawn are put back up. The
+ *  engine is not asked for anything out here -- this is the sketch book
+ *  going back into its boxes, which costs a line of code and no drawing,
+ *  so it reaches twice as far as the band that can ask for a picture. A
+ *  flick that outruns the planning, or a thread held up by something
+ *  else, then lands on pages that are already in place. */
+const BANK_SCREENS = 16;
 /** How long nothing at all has to happen before the rest of the document
  *  is sketched in the background, and how long a touch stops it for. */
 const IDLE_MS = 500;
@@ -1056,8 +1063,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const made = sheet(picture.width, picture.height, 1);
     if (!made) return;
     made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
-    // On the screen it goes up; off it, it goes straight into the book.
-    if (!slab.rough && standing(slab).rough) showSketch(slab, made.canvas);
+    // Anywhere near the reader it goes up now -- as far out as the sketch
+    // book reaches, which is twice as far as the engine is ever asked to
+    // draw. Putting a picture that exists into a box that is empty costs
+    // a line; leaving it in the book means the reader finds the box empty
+    // until something else makes a plan.
+    if (!slab.rough && standing(slab).bank) showSketch(slab, made.canvas);
     else bank(slab.page - 1, made.canvas);
   }
 
@@ -1105,7 +1116,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const slack = GAP * (1 / Math.max(0.01, factor) - 1);
     const was = spaced;
     spaced = [];
-    const band = bandNow();
+    // the narrow band here, not the sketch book's: this writes a transform
+    // on every page it covers, on every frame of a pinch
+    const band = bandNow(ROUGH_SCREENS);
     for (let index = band.first; index <= band.last; index += 1) {
       const slab = slabs[index];
       if (!standing(slab).rough) continue;
@@ -1163,13 +1176,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    */
   let bandFrom = 0;
   let bandTo = -1;
-  const bandNow = (): { first: number; last: number } => {
+  const bandNow = (screens = BANK_SCREENS): { first: number; last: number } => {
     if (!slabs.length) return { first: 0, last: -1 }; // nothing laid out yet
     const screen = scroller.clientHeight;
     const top = scroller.scrollTop - columnTop;
     return {
-      first: pageAt(top - ROUGH_SCREENS * screen),
-      last: pageAt(top + (1 + ROUGH_SCREENS) * screen),
+      first: pageAt(top - screens * screen),
+      last: pageAt(top + (1 + screens) * screen),
     };
   };
 
@@ -1177,7 +1190,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  what gets drawn, what is kept when it goes by, and what is worth a
    *  hundred pixels of itself. What order they are drawn in is a separate
    *  question, and the reader's own (stepsFrom). */
-  const standing = (slab: Slab): { seen: boolean; near: boolean; keep: boolean; rough: boolean } => {
+  const standing = (slab: Slab): { seen: boolean; near: boolean; keep: boolean; rough: boolean; bank: boolean } => {
     const screen = scroller.clientHeight;
     const top = scroller.scrollTop - columnTop;
     const from = slab.top;
@@ -1187,6 +1200,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       near: to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen,
       keep: to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen,
       rough: to > top - ROUGH_SCREENS * screen && from < top + (1 + ROUGH_SCREENS) * screen,
+      bank: to > top - BANK_SCREENS * screen && from < top + (1 + BANK_SCREENS) * screen,
     };
   };
 
@@ -1397,7 +1411,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       if (slab.rough && !slab.rough.isConnected) slab.rough = null;
       if (slab.base && !slab.base.isConnected) { slab.base = null; slab.baseScale = 0; }
       const where = standing(slab);
-      if (!where.rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
+      if (!where.bank) { forgetWhole(slab); continue; } // right out of sight: all of it back
       if (!where.keep) forget(slab); // out of the sharp band: the rough picture stays
       if (!slab.proxy) continue;
       // A page anywhere in the wide band gets its rough picture, so a fast
@@ -1410,7 +1424,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         // asked and without waiting in a queue behind anything.
         const kept = sketches.get(index);
         if (kept) recalled.push({ slab, steps, kept });
-        else if (!slab.roughTask) jobs.push({ slab, work: 'rough', rank: rank('rough', steps, moving) });
+        else if (where.rough && !slab.roughTask) jobs.push({ slab, work: 'rough', rank: rank('rough', steps, moving) });
       }
       if (!where.near) continue;
       if (slab.baseScale < baseWanted() * 0.99 && (!moving || where.seen)) {
