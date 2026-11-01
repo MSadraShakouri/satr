@@ -18,7 +18,7 @@
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
-import type { Rect as PageRect } from '@embedpdf/models';
+import type { ImageDataLike, Rect as PageRect } from '@embedpdf/models';
 import { imagesOnPage, pdfium, type PageRect as PictureRect } from './pdfiumEngine';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
 
@@ -519,7 +519,7 @@ interface Slab {
    *  is less than fit: a page shown at a third of its width is drawn at a
    *  third of its width. */
   baseScale: number;
-  baseTask: PdfTask<Blob> | null;
+  baseTask: PdfTask<Pixels> | null;
   /**
    * A rough picture of the whole page, a hundred pixels wide, drawn for a
    * band far wider than the sharp one and kept when the sharp one is given
@@ -536,7 +536,7 @@ interface Slab {
   /** The photographs put back over the page, un-inverted, one for each
    *  picture on it (or none yet, where nothing has drawn it). */
   photos: (HTMLCanvasElement | null)[];
-  roughTask: PdfTask<Blob> | null;
+  roughTask: PdfTask<Pixels> | null;
   /**
    * The part of the page actually on screen, drawn at the screen's own
    * pixels and laid over the stretched base. Zoomed in, this is the only
@@ -545,7 +545,7 @@ interface Slab {
   detail: HTMLCanvasElement | null;
   detailRect: Rect | null;
   detailZoom: number;
-  detailTask: PdfTask<Blob> | null;
+  detailTask: PdfTask<Pixels> | null;
   width: number; // natural, at scale 1
   height: number;
   laid: number;
@@ -558,45 +558,48 @@ interface Slab {
 /** A rectangle of a page, in the page's own units (scale 1). */
 interface Rect { x: number; y: number; width: number; height: number }
 
+/**
+ * A drawn page as the engine hands it over: the pixels themselves.
+ *
+ * It can hand over a PNG instead, and did. That is an encode on the way
+ * out and a decode on the way back in -- both of them on this thread, for
+ * a picture that is going straight onto a canvas and is thrown away after
+ * -- and on a page of his book the two of them together were 40% of what
+ * drawing the page cost: 164ms to 101ms.
+ */
+type Pixels = ImageDataLike;
+
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
 /** Tells a draw already in flight that nobody wants its picture — a zoom
  *  that lands mid-render, or a page scrolled far enough away to be given
  *  back. Without this the engine would finish every page ever asked for. */
-const stop = (task: PdfTask<Blob> | null): void => {
+const stop = (task: PdfTask<Pixels> | null): void => {
   task?.abort({ code: PdfErrorCode.Cancelled, message: 'superseded' });
 };
 
 /** Is this page dark already? Adapting a PDF to a dark theme inverts the
  *  paper and the ink, which is wrong for a page that was authored dark —
  *  a slide deck, a dark-background poster — because inverting it hands
- *  back the white page the reader was trying to get away from. The page
- *  is squeezed into a 24x24 thumbnail and the ring of cells around its
- *  edge is read, where the background lives and the content usually does
- *  not, and their brightness is weighted the way an eye weighs it
- *  (BT.601: green 58.7%, red 29.9%, blue 11.4%). The median of the ring
- *  resists one dark photo bleeding off one side. 576 pixels, once per
- *  drawn page. */
+ *  back the white page the reader was trying to get away from. A 24x24
+ *  grid is laid over the page and the ring of cells around its edge is
+ *  read, where the background lives and the content usually does not, and
+ *  their brightness is weighted the way an eye weighs it (BT.601: green
+ *  58.7%, red 29.9%, blue 11.4%). The median of the ring resists one dark
+ *  photo bleeding off one side. Ninety-two pixels of the picture the
+ *  engine just handed over, read where they lie: this used to squeeze the
+ *  whole page into a thumbnail and read that back off the canvas, which
+ *  is a draw and a readback per page for the same answer. */
 const PROBE = 24;
-const alreadyDark = (canvas: HTMLCanvasElement): boolean => {
-  const small = document.createElement('canvas');
-  small.width = PROBE;
-  small.height = PROBE;
-  const context = small.getContext('2d', { willReadFrequently: true });
-  if (!context) return false;
-  context.drawImage(canvas, 0, 0, PROBE, PROBE);
-  let pixels: Uint8ClampedArray;
-  try {
-    pixels = context.getImageData(0, 0, PROBE, PROBE).data;
-  } catch {
-    return false;
-  }
+const alreadyDark = (picture: Pixels): boolean => {
   const ring: number[] = [];
   for (let y = 0; y < PROBE; y += 1) {
     for (let x = 0; x < PROBE; x += 1) {
       if (x !== 0 && y !== 0 && x !== PROBE - 1 && y !== PROBE - 1) continue;
-      const at = (y * PROBE + x) * 4;
-      ring.push(0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2]);
+      const column = Math.min(picture.width - 1, Math.floor(((x + 0.5) / PROBE) * picture.width));
+      const row = Math.min(picture.height - 1, Math.floor(((y + 0.5) / PROBE) * picture.height));
+      const at = (row * picture.width + column) * 4;
+      ring.push(0.299 * picture.data[at] + 0.587 * picture.data[at + 1] + 0.114 * picture.data[at + 2]);
     }
   }
   ring.sort((a, b) => a - b);
@@ -910,12 +913,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * whole page for the base and rough pictures, a rectangle of it for a
    * sharp tile.
    */
-  const drawPhotos = (slab: Slab, picture: ImageBitmap, area: Rect): void => {
+  const drawPhotos = (slab: Slab, drawn: HTMLCanvasElement, area: Rect): void => {
     if (!slab.proxy) return;
     slab.pictures ??= imagesOnPage(document_, slab.proxy);
     if (!slab.pictures.length) return;
     const unit = slab.width / Math.max(1, slab.proxy.size.width); // page units to ours
-    const per = picture.width / Math.max(1, area.width); // and ours to this bitmap's pixels
+    const per = drawn.width / Math.max(1, area.width); // and ours to this canvas's pixels
     slab.pictures.forEach((picture_, index) => {
       const left = picture_.x * unit;
       const top = picture_.y * unit;
@@ -929,7 +932,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         || right > area.x + area.width + 0.5 || bottom > area.y + area.height + 0.5) return;
       const made = sheet(Math.max(1, Math.round((right - left) * per)), Math.max(1, Math.round((bottom - top) * per)), 1);
       if (!made) return;
-      made.context.drawImage(picture,
+      made.context.drawImage(drawn,
         (left - area.x) * per, (top - area.y) * per, (right - left) * per, (bottom - top) * per,
         0, 0, made.canvas.width, made.canvas.height);
       made.canvas.className = 'pdf-photo';
@@ -963,20 +966,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   async function paintRough(slab: Slab): Promise<void> {
     if (!slab.proxy || slab.rough || slab.roughTask) return;
     const scale = ROUGH_PX / Math.max(1, slab.width);
-    const task = engine.renderPage(document_, slab.proxy, { scaleFactor: scale, dpr: 1, withAnnotations: false });
+    const task = engine.renderPageRaw(document_, slab.proxy, { scaleFactor: scale, dpr: 1, withAnnotations: false });
     slab.roughTask = task;
-    let picture: ImageBitmap;
-    try { picture = await createImageBitmap(await task.toPromise()); }
+    let picture: Pixels;
+    try { picture = await task.toPromise(); }
     catch { if (slab.roughTask === task) slab.roughTask = null; return; }
-    if (slab.roughTask !== task || !standing(slab).rough) { picture.close(); slab.roughTask = null; return; }
+    if (slab.roughTask !== task || !standing(slab).rough) { slab.roughTask = null; return; }
     slab.roughTask = null;
     const made = sheet(picture.width, picture.height, 1);
-    if (!made) { picture.close(); return; }
-    made.canvas.width = picture.width;
-    made.canvas.height = picture.height;
-    made.context.drawImage(picture, 0, 0);
-    drawPhotos(slab, picture, { x: 0, y: 0, width: slab.width, height: slab.height });
-    picture.close();
+    if (!made) return;
+    made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
+    drawPhotos(slab, made.canvas, { x: 0, y: 0, width: slab.width, height: slab.height });
     showRough(slab, made.canvas);
   }
 
@@ -1226,11 +1226,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const raster = rasterFor(width, height);
     const made = sheet(width, height, raster);
     if (!made) return;
-    const task = engine.renderPage(document_, slab.proxy, { scaleFactor: drawnFor, dpr: raster, withAnnotations: true });
+    const task = engine.renderPageRaw(document_, slab.proxy, { scaleFactor: drawnFor, dpr: raster, withAnnotations: true });
     slab.baseTask = task;
-    let picture: ImageBitmap;
+    let picture: Pixels;
     try {
-      picture = await createImageBitmap(await task.toPromise());
+      picture = await task.toPromise();
     } catch {
       if (slab.baseScale === drawnFor) slab.baseScale = 0;
       return; // called off, or the document went away
@@ -1238,18 +1238,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // The reader has moved while this was drawing and the page is gone
     // from the screen: it is not put up, and not kept.
     if (slab.baseTask !== task || !standing(slab).near) {
-      picture.close();
       if (slab.baseTask === task) { slab.baseTask = null; slab.baseScale = 0; }
       return;
     }
     made.canvas.width = picture.width;
     made.canvas.height = picture.height;
-    made.context.drawImage(picture, 0, 0);
-    drawPhotos(slab, picture, { x: 0, y: 0, width: slab.width, height: slab.height });
-    picture.close();
+    made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
+    drawPhotos(slab, made.canvas, { x: 0, y: 0, width: slab.width, height: slab.height });
     made.canvas.className = 'pdf-raster';
     // A page that was authored dark must not be inverted into a white one.
-    slab.box.classList.toggle('is-dark-page', alreadyDark(made.canvas));
+    slab.box.classList.toggle('is-dark-page', alreadyDark(picture));
     // the picture it replaces stays up until this one is ready, so a resize
     // is never a column of empty boxes
     slab.base?.remove();
@@ -1292,23 +1290,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const raster = rasterFor(width, height);
     const made = sheet(width, height, raster);
     if (!made) return;
-    const task = engine.renderPageRect(document_, slab.proxy,
+    const task = engine.renderPageRectRaw(document_, slab.proxy,
       { origin: { x: rect.x, y: rect.y }, size: { width: rect.width, height: rect.height } },
       { scaleFactor: scale, dpr: raster, withAnnotations: true });
     slab.detailTask = task;
-    let picture: ImageBitmap;
+    let picture: Pixels;
     try {
-      picture = await createImageBitmap(await task.toPromise());
+      picture = await task.toPromise();
     } catch {
       if (slab.detailZoom === drawnAt) slab.detailZoom = 0;
       return;
     }
-    if (slab.detailTask !== task) { picture.close(); return; }
+    if (slab.detailTask !== task) return;
     made.canvas.width = picture.width;
     made.canvas.height = picture.height;
-    made.context.drawImage(picture, 0, 0);
-    drawPhotos(slab, picture, rect);
-    picture.close();
+    made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
+    drawPhotos(slab, made.canvas, rect);
     made.canvas.className = 'pdf-raster pdf-detail';
     slab.detail?.remove();
     slab.box.append(made.canvas);
@@ -1752,15 +1749,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     thumbnail: async (page: number, width: number) => {
       const slab = slabs[page - 1];
       if (!slab?.proxy) return null;
-      const made = engine.renderThumbnail(document_, slab.proxy,
+      const made = engine.renderPageRaw(document_, slab.proxy,
         { scaleFactor: width / Math.max(1, slab.width), dpr: 1, withAnnotations: true });
       try {
-        const picture = await createImageBitmap(await made.toPromise());
+        const picture = await made.toPromise();
         const canvas = document.createElement('canvas');
         canvas.width = picture.width;
         canvas.height = picture.height;
-        canvas.getContext('2d')?.drawImage(picture, 0, 0);
-        picture.close();
+        canvas.getContext('2d')?.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
         return canvas.toDataURL('image/png');
       } catch { return null; }
     },

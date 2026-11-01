@@ -208,3 +208,28 @@ export function scanPdf(strips: number): string {
     + ` /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${pixels.length + 1} >>\nstream\n${pixels}>\nendstream`;
   return assemble(objects);
 }
+
+/**
+ * A page in three bands of flat colour: red at the top, green across the
+ * middle, blue at the foot.
+ *
+ * The engine hands a drawn page over as raw pixels and they go straight
+ * onto a canvas, which is four bytes a pixel in an order nothing checks.
+ * A page of grey text on white paper looks right whichever way round the
+ * three channels are; this one does not.
+ */
+export function colourPdf(): string {
+  const objects: string[] = [];
+  const page = { width: 595, height: 842 };
+  const band = page.height / 3;
+  const content = [
+    `0 0 1 rg 0 0 ${page.width} ${band.toFixed(2)} re f`,
+    `0 1 0 rg 0 ${band.toFixed(2)} ${page.width} ${band.toFixed(2)} re f`,
+    `1 0 0 rg 0 ${(band * 2).toFixed(2)} ${page.width} ${band.toFixed(2)} re f`,
+  ].join('\n');
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+  objects[3] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}] /Resources << >> /Contents 4 0 R >>`;
+  objects[4] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+  return assemble(objects);
+}

@@ -224,6 +224,31 @@ test('a page that was authored dark is left alone', async ({ page }) => {
   expect(marked[1].filter).toBe('none');
 });
 
+test('a page is drawn in the colours it was written with', async ({ page }) => {
+  const { colourPdf } = await import('./support/tinyPdf');
+  // Red at the top, green across the middle, blue at the foot. The engine
+  // hands a page over as raw pixels, four bytes each, and a canvas reads
+  // them in one order only: this says they are the right way round.
+  await boot(page, 'handout.pdf', undefined, colourPdf());
+  await openDocument(page);
+  await page.waitForTimeout(900);
+  const bands = await page.evaluate(() => {
+    const canvas = document.querySelector('.pdf-page[data-page="1"] .pdf-raster') as HTMLCanvasElement;
+    const context = canvas.getContext('2d')!;
+    const read = (down: number): number[] => {
+      const data = context.getImageData(Math.round(canvas.width / 2), Math.round(canvas.height * down), 1, 1).data;
+      return [data[0], data[1], data[2]];
+    };
+    return { top: read(0.15), middle: read(0.5), foot: read(0.85) };
+  });
+  expect(bands.top[0]).toBeGreaterThan(200); // red
+  expect(Math.max(bands.top[1], bands.top[2])).toBeLessThan(80);
+  expect(bands.middle[1]).toBeGreaterThan(200); // green
+  expect(Math.max(bands.middle[0], bands.middle[2])).toBeLessThan(80);
+  expect(bands.foot[2]).toBeGreaterThan(200); // blue
+  expect(Math.max(bands.foot[0], bands.foot[1])).toBeLessThan(80);
+});
+
 test('a picture on a page keeps its own colours in the dark theme', async ({ page }) => {
   const { picturePdf } = await import('./support/tinyPdf');
   // a quarter of the page: a photograph printed on a page, not a scan of one
