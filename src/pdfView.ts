@@ -452,10 +452,36 @@ const ZOOM_EPSILON = 0.005;
  *  the platform's 300ms, and counted from the first tap's release rather
  *  than its press, so a slow first tap does not eat the window. */
 const DOUBLE_TAP_SLOP = 64;
-/** A one-finger zoom: how far the finger drags to double the zoom, and how
- *  far it may wander before it is a drag rather than a tap. */
-const DRAG_DOUBLE_PX = 180;
+/**
+ * A one-finger zoom: how far the finger may wander before it is a drag
+ * rather than a tap, and the distance the zoom is measured against.
+ *
+ * Android measures this gesture from the anchor, not from the last frame.
+ * ScaleGestureDetector in quick-scale mode (the double-tap-and-drag every
+ * Google app answers to) freezes the focus at the tapped point, calls the
+ * span twice the distance from it, and multiplies the zoom by
+ * `1 ± |1 - span/lastSpan| * 0.5` each event — which telescopes, over a
+ * drag, to the square root of how far the finger has travelled against
+ * how far it had travelled when the gesture began. That start is the
+ * touch slop, eight density pixels, the same eight this file already
+ * waits for.
+ *
+ * So the zoom is `sqrt(|dy| / DRAG_GRIP_PX)`: a doubling in 32 pixels,
+ * four times in 128, six in 288. What was here before was `2 ** (dy/180)`
+ * — 1.14 times in 32 pixels and 3 in 288 — which is why a thumb's whole
+ * sweep moved so little of the zoom next to Drive's. The curve is also
+ * the right shape rather than only the right size: fast where the finger
+ * is close to where it started and the reader is reaching for a size,
+ * slow further out where they are settling on one.
+ */
 const DRAG_SLOP = 8;
+const DRAG_GRIP_PX = 8;
+/** Below the page's own width a zoom out stops being about any point on
+ *  the page and starts being about getting back to the whole of it: the
+ *  point held still slides out from under the finger to the middle of the
+ *  pane, and is all the way there by the time the page is this fraction of
+ *  its fitted width. Continuous, so nothing steps as it crosses. */
+const CENTRE_BY = 0.7;
 /** Between two pages, in CSS pixels at any zoom — a gap that grew with the
  *  zoom would push the pages apart as they were read. */
 const GAP = 8;
@@ -1883,6 +1909,59 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  pages is all the warning needed, and it is given back shortly after
    *  the hand leaves, since a layer that size is not free to keep. */
   let coolDown = 0;
+  /** How far a one-finger drag has zoomed, as a multiple of the zoom it
+   *  started from: Android's quick-scale curve, square root of the
+   *  distance (see DRAG_GRIP_PX). Down zooms in, up zooms out, and the
+   *  two are reciprocals, so a drag that comes back where it started
+   *  leaves the zoom where it started. */
+  const dragFactor = (dy: number): number => {
+    const far = Math.max(Math.abs(dy), DRAG_GRIP_PX);
+    const grown = Math.sqrt(far / DRAG_GRIP_PX);
+    return dy < 0 ? 1 / grown : grown;
+  };
+  /**
+   * The point a one-finger zoom holds still.
+   *
+   * The finger, while the page is at its own width or bigger: the reader
+   * is reaching for something on the page and it should stay under their
+   * thumb. Below that there is nothing to hold — the column is narrower
+   * than the pane, the page is centred in it whatever the scroll says,
+   * and a zoom out anchored to a thumb at the edge of the screen walks
+   * the page into the opposite corner on the way to the middle. So the
+   * anchor slides from the finger to the middle of the pane as the zoom
+   * falls from fitted to CENTRE_BY, and is the middle from there down.
+   *
+   * It is a fraction and not a switch on purpose: the same blend drives
+   * the live transform and the zoom that lands when the finger lifts, so
+   * the two agree to the pixel and nothing jumps at the lift.
+   */
+  const anchorFor = (next: number, y: number, x: number): { y: number; x: number; pull: number } => {
+    const pane = scroller.getBoundingClientRect();
+    const pull = clamp((1 - next) / (1 - CENTRE_BY), 0, 1);
+    return {
+      y: y + (pane.top + pane.height / 2 - y) * pull,
+      x: x + (pane.left + pane.width / 2 - x) * pull,
+      pull,
+    };
+  };
+  /**
+   * Hold the column at `factor` of its laid-out size about a point that
+   * is `pull` of the way from the finger to the middle of the pane.
+   *
+   * With the origin already at the finger, a scale alone holds the
+   * finger. Translating by `(1 - factor)` of the way to any other point
+   * holds that point instead — the fixed point of `origin + T + f(p -
+   * origin)` — so one multiplication slides the anchor anywhere along
+   * that line without touching the origin the gesture set up.
+   */
+  const holdColumn = (factor: number, from: { x: number; y: number }, pull: number): void => {
+    const pane = scroller.getBoundingClientRect();
+    const shiftX = pull * (pane.left + pane.width / 2 - from.x) * (1 - factor);
+    const shiftY = pull * (pane.top + pane.height / 2 - from.y) * (1 - factor);
+    doc.style.transform = pull > 0
+      ? `translate(${shiftX.toFixed(2)}px, ${shiftY.toFixed(2)}px) scale(${factor})`
+      : `scale(${factor})`;
+  };
   const warmLayer = (): void => {
     window.clearTimeout(coolDown);
     doc.style.willChange = 'transform';
@@ -1931,8 +2010,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         doc.style.transformOrigin = `${hold.x - column.left}px ${hold.y - column.top}px`;
       }
       if (!hold.moved) return;
-      const factor = clamp(hold.zoom * 2 ** (dy / DRAG_DOUBLE_PX), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
-      doc.style.transform = `scale(${factor})`;
+      const factor = clamp(hold.zoom * dragFactor(dy), MIN_ZOOM, MAX_ZOOM) / hold.zoom;
+      holdColumn(factor, hold, anchorFor(hold.zoom * factor, hold.y, hold.x).pull);
       spaceOut(factor, hold.about);
       return;
     }
@@ -1957,11 +2036,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // animation from somewhere else: leave it alone.
       if (!held.moved) return;
       const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
+      // Read before the transform goes: anchorFor measures the pane, and
+      // the pane is not moved by any of this.
+      const about = anchorFor(held.zoom * factor, held.y, held.x);
       doc.style.transform = '';
       doc.style.transformOrigin = '';
       unspace();
       lastTap.time = 0;
-      zoomTo(held.zoom * factor, held.y, held.x);
+      zoomTo(held.zoom * factor, about.y, about.x);
       return;
     }
     if (!pinch || touches.size >= 2) return;

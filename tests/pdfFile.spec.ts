@@ -162,12 +162,105 @@ test('one finger zooms: the second tap of a double tap, held and dragged', async
   await page.waitForTimeout(500);
   const bigger = await widthOf(page, 1);
   expect(bigger).toBeGreaterThan(fit * 1.6);
-  expect(bigger).toBeLessThan(fit * 2.6);
+  expect(bigger).toBeLessThan(fit * 6);
   // And up to take it back out again.
   await dragZoom(page, -180);
   await page.waitForTimeout(500);
   const back = await widthOf(page, 1);
   expect(back).toBeLessThan(bigger * 0.75);
+});
+
+test('a short drag covers as much zoom as Drive gives it', async ({ page }) => {
+  // Reported: "single finger zooming, the sensitivity of Drive is higher,
+  // you can move more with it". It was. Android measures this gesture from
+  // the anchor rather than from the last frame -- ScaleGestureDetector in
+  // quick-scale mode, which telescopes to the square root of how far the
+  // finger has gone -- so thirty-two pixels doubles the zoom there and
+  // moved it by a seventh here (see DRAG_GRIP_PX).
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  await dragZoom(page, 32); // a thumb's first centimetre
+  await page.waitForTimeout(500);
+  const bigger = await widthOf(page, 1);
+  expect(bigger).toBeGreaterThan(fit * 1.8);
+  expect(bigger).toBeLessThan(fit * 2.3);
+});
+
+test('a drag that comes back where it started leaves the zoom where it started', async ({ page }) => {
+  // The curve is a square root in and the reciprocal of one out, so the
+  // gesture is reversible: a thumb that overshoots and comes back does not
+  // have to let go and start again.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const fit = await widthOf(page, 1);
+  await page.locator('.pdf-page[data-page="1"]').evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const fire = (type: string, atY: number): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown', y); fire('pointerup', y);
+    fire('pointerdown', y);
+    for (const step of [20, 60, 120, 180, 120, 40, 0]) fire('pointermove', y + step);
+    fire('pointerup', y);
+  });
+  await page.waitForTimeout(500);
+  expect(await widthOf(page, 1)).toBeCloseTo(fit, -1);
+});
+
+test('below its own width, a one-finger zoom out goes to the middle of the screen', async ({ page }) => {
+  // Reported: "single finger when going out below default zoom, I want it
+  // centered rather than based on finger position". Under the page's own
+  // width there is nothing to hold a corner for -- the column is narrower
+  // than the pane and the page is centred in it whatever the scroll says
+  // -- so a zoom out anchored to a thumb near the top of the glass walked
+  // the whole document up to meet it.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  // Away from both ends, so the scroll this asks for can actually be had.
+  await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
+  });
+  await page.waitForTimeout(600);
+  /** How far down the whole document the middle of the screen is. A zoom
+   *  about the middle of the screen does not change it; a zoom about a
+   *  thumb anywhere else does. */
+  const middleOfScreen = async (): Promise<number> => page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const column = document.querySelector('.pdf-doc') as HTMLElement;
+    const box = column.getBoundingClientRect();
+    const paneBox = pane.getBoundingClientRect();
+    return (paneBox.top + paneBox.height / 2 - box.top) / box.height;
+  });
+  const before = await middleOfScreen();
+  // A thumb a long way above the middle, dragged up: out to about a third.
+  await page.locator('#preview-pane').evaluate((pane) => {
+    const box = pane.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + 80;
+    const sheet = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    const fire = (type: string, atY: number): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown', y); fire('pointerup', y);
+    fire('pointerdown', y);
+    for (let step = 1; step <= 6; step += 1) fire('pointermove', y - (70 * step) / 6);
+    fire('pointerup', y - 70);
+  });
+  await page.waitForTimeout(700);
+  const zoomedOut = await page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const sheet = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    return sheet.getBoundingClientRect().width / pane.clientWidth;
+  });
+  expect(zoomedOut).toBeLessThan(0.6); // well below the page's own width
+  const after = await middleOfScreen();
+  // Within a fifth of a page of where it was, against the page and a half
+  // the finger-anchored zoom moved it.
+  expect(Math.abs(after - before)).toBeLessThan(0.0055);
 });
 
 test('a double tap keeps the point it was aimed at', async ({ page }) => {
