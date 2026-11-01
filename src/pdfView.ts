@@ -498,6 +498,10 @@ const CONTEXT_CHARS = 40;
 /** How long the column keeps its compositing layer after the hand leaves. */
 const LAYER_COOL_MS = 2000;
 const GLIDE_MS = 300;
+/** How far past the letters a highlight is drawn, as a fraction of the
+ *  line's own height, top and bottom. Enough that a match is a band rather
+ *  than a hug, little enough that two lines of a paragraph keep a gap. */
+const MARK_GROWTH = 0.22;
 const GLIDE_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 interface Slab {
@@ -691,19 +695,52 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    *  anything the renderer knows about, so a zoom just re-lays them. */
   let marks: PdfHit[] = [];
   let marked = -1;
+  /** The boxes the engine gives for one match are per glyph run: five
+   *  slivers a pixel or two wide for a single word, each only as tall as
+   *  the letters inside it. Drawn as they come, a highlight is a ragged
+   *  skyline of blocks at four different heights. They are merged into one
+   *  box a line -- the word's whole run -- and the box is grown a little
+   *  past the letters, so a match reads as one stroke of a highlighter at
+   *  a steady height, the way the panel's own highlights do. The growth is
+   *  a fraction of the line, so lines keep the space between them. */
+  const strokes = (hit: PdfHit): { x: number; y: number; w: number; h: number }[] => {
+    const boxes = hit.rects.map((rect) => ({
+      left: rect.origin.x, top: rect.origin.y,
+      right: rect.origin.x + rect.size.width, bottom: rect.origin.y + rect.size.height,
+    })).sort((a, b) => a.top - b.top || a.left - b.left);
+    const lines: typeof boxes = [];
+    for (const box of boxes) {
+      const line = lines[lines.length - 1];
+      // the same line when they overlap down the page by more than half of
+      // the shorter of the two -- a descender or a tall letter is still
+      // that line, a line below is not
+      const shorter = line ? Math.min(line.bottom - line.top, box.bottom - box.top) : 0;
+      const over = line ? Math.min(line.bottom, box.bottom) - Math.max(line.top, box.top) : -1;
+      if (line && over > shorter * 0.5) {
+        line.left = Math.min(line.left, box.left);
+        line.right = Math.max(line.right, box.right);
+        line.top = Math.min(line.top, box.top);
+        line.bottom = Math.max(line.bottom, box.bottom);
+      } else lines.push({ ...box });
+    }
+    return lines.map((line) => {
+      const grown = (line.bottom - line.top) * MARK_GROWTH;
+      return { x: line.left, y: line.top - grown, w: line.right - line.left, h: (line.bottom - line.top) + grown * 2 };
+    });
+  };
   const drawMarks = (): void => {
     const scale = scaleNow();
     for (const slab of slabs) for (const old of slab.box.querySelectorAll('.pdf-find-hit')) old.remove();
     marks.forEach((hit, index) => {
       const slab = slabs[hit.page - 1];
       if (!slab) return;
-      for (const rect of hit.rects) {
+      for (const stroke of strokes(hit)) {
         const el = document.createElement('div');
         el.className = index === marked ? 'pdf-find-hit is-current' : 'pdf-find-hit';
-        el.style.left = `${rect.origin.x * scale}px`;
-        el.style.top = `${rect.origin.y * scale}px`;
-        el.style.width = `${rect.size.width * scale}px`;
-        el.style.height = `${rect.size.height * scale}px`;
+        el.style.left = `${stroke.x * scale}px`;
+        el.style.top = `${stroke.y * scale}px`;
+        el.style.width = `${stroke.w * scale}px`;
+        el.style.height = `${stroke.h * scale}px`;
         slab.box.append(el);
       }
     });

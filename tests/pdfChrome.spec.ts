@@ -496,3 +496,26 @@ test('the header and the strip are one pane of glass', async ({ page }) => {
   expect(look.barBlur).not.toBe('none');
   expect(look.height).toBe(104); // 12 + 44 + 8 + 40, the strip included
 });
+
+test('a match is one band a line, at the height of the line', async ({ page }) => {
+  await boot(page, 'handout.pdf');
+  await ready(page);
+  await page.locator('#nav-find').click();
+  // A phrase, not a word: the engine hands a match back as a box per run of
+  // glyphs, so a phrase comes back in pieces. Drawn as they come, they are a
+  // ragged skyline of blocks at several heights.
+  await page.locator('.pdf-findbar input').fill('Page 1');
+  await expect(page.locator('.document-search-count')).toHaveText('1 of 1', { timeout: 15000 });
+  await expect(page.locator('.pdf-find-hit')).toHaveCount(1);
+  const band = await page.locator('.pdf-find-hit').first().evaluate((el: HTMLElement) => {
+    const box = el.getBoundingClientRect();
+    const sheet = (document.querySelector('.pdf-page[data-page="1"]') as HTMLElement).getBoundingClientRect();
+    // the text is set in 36pt on an 842pt page, and the box the engine
+    // gives for it is the font's own, 0.040 of the page tall
+    return { high: box.height / sheet.height };
+  });
+  // grown past the letters, so it reads as a stroke rather than a hug...
+  expect(band.high).toBeGreaterThan(0.048);
+  // ...and not so far that two lines of a paragraph would touch
+  expect(band.high).toBeLessThan(0.07);
+});
