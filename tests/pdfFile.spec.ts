@@ -1577,6 +1577,10 @@ test('a pinch that drifts a little keeps the tile it already has', async ({ page
   };
   const same = async (): Promise<boolean> => page.evaluate(() =>
     (window as Window & { kept?: Element | null }).kept === document.querySelector('.pdf-detail'));
+  // The first tile to appear is the cheap one drawn under the hand, which
+  // owes a full-resolution replacement as soon as the hand is off. This
+  // test is about the one that lands at rest, so wait for the handover.
+  await page.waitForTimeout(1200);
   await stash();
   await pinch(page, 1.1); // a tenth, inside the band
   await page.waitForTimeout(900);
@@ -1595,6 +1599,10 @@ test('a tile reaches a fifth past what is on the screen, no further', async ({ p
   await readThis(page, 'handout.pdf');
   await pinch(page, 3);
   await expect.poll(async () => page.locator('.pdf-detail').count(), { timeout: 15000 }).toBeGreaterThan(0);
+  // The first tile to appear is the cheap one drawn under the hand, which
+  // owes a full-resolution replacement as soon as the hand is off. This
+  // test is about the one that lands at rest, so wait for the handover.
+  await page.waitForTimeout(1200);
   const { tile, seen } = await page.evaluate(() => {
     const canvas = document.querySelector('.pdf-detail') as HTMLElement;
     const sheet = canvas.closest('.pdf-page') as HTMLElement;
@@ -1666,3 +1674,75 @@ test('a sharp tile is asked for in pieces, so no one of them holds the gesture',
 });
 });
 
+test.describe('what is drawn under a hand that is still on the glass', () => {
+  test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 3 });
+  const PAGES = tinyPdf(6);
+
+  /** A thumb that lands, drags a step a frame, and stays down. The lift is
+   *  a separate call, so a test can look at the screen mid-gesture — which
+   *  dragZoom, which lifts at the end, cannot show. */
+  async function pressZoom(page: Page, by: number, steps: number): Promise<void> {
+    await page.locator('.pdf-page[data-page="1"]').evaluate(async (sheet, [dy, count]: [number, number]) => {
+      const box = sheet.getBoundingClientRect();
+      const x = box.left + box.width / 2;
+      const y = Math.max(box.top + 40, Math.min(box.bottom - 40, box.top + box.height / 2));
+      const fire = (type: string, atY: number): void => {
+        sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+      };
+      (window as unknown as { lift: () => void }).lift = (): void => fire('pointerup', y + dy);
+      fire('pointerdown', y);
+      fire('pointerup', y);
+      await new Promise((go) => setTimeout(go, 40));
+      fire('pointerdown', y);
+      // A frame between the steps, as a hand gives: dispatched back to back
+      // they are one frame's worth of gesture and nothing can be drawn
+      // during them.
+      const frame = (): Promise<void> => new Promise((go) => { requestAnimationFrame(() => go()); });
+      for (let step = 1; step <= count; step += 1) {
+        fire('pointermove', y + (dy * step) / count);
+        await frame();
+      }
+    }, [by, steps] as [number, number]);
+  }
+  const liftFinger = (page: Page): Promise<void> =>
+    page.evaluate(() => { (window as unknown as { lift: () => void }).lift(); });
+  const tilePixels = (page: Page): Promise<number> => page.evaluate(() => {
+    const tile = document.querySelector('.pdf-page[data-page="1"] .pdf-detail') as HTMLCanvasElement | null;
+    return tile ? tile.width * tile.height : 0;
+  });
+
+  test('a sharp picture is drawn while the finger is still moving, not only when it stops', async ({ page }) => {
+    await boot(page, { 'book.pdf': PAGES }, 'book.pdf');
+    await page.locator('.pdf-page canvas').first().waitFor();
+    await page.waitForTimeout(600);
+    await pressZoom(page, 200, 30); // down is in, well past the page's own width
+    // Read with the finger still down and its last move one frame ago —
+    // less than the settle, so nothing on the screen here was drawn
+    // because the gesture stopped. It was drawn because it slowed, or
+    // because it had carried the zoom a gate's worth since the last one.
+    const mid = await page.locator('.pdf-page[data-page="1"] .pdf-detail').count();
+    await liftFinger(page);
+    expect(mid).toBe(1);
+  });
+
+  test('what is drawn under a moving hand is the cheap one, and the full one lands when the hand goes', async ({ page }) => {
+    await boot(page, { 'book.pdf': PAGES }, 'book.pdf');
+    await page.locator('.pdf-page canvas').first().waitFor();
+    await page.waitForTimeout(600);
+    await pressZoom(page, 200, 30);
+    const quick = await tilePixels(page);
+    await page.evaluate(() => {
+      (window as unknown as { kept: Element | null }).kept = document.querySelector('.pdf-page[data-page="1"] .pdf-detail');
+    });
+    await liftFinger(page);
+    await page.waitForTimeout(1400);
+    const full = await tilePixels(page);
+    const same = await page.evaluate(() =>
+      (window as unknown as { kept: Element | null }).kept === document.querySelector('.pdf-page[data-page="1"] .pdf-detail'));
+    expect(quick).toBeGreaterThan(0); // something sharp was there during the gesture
+    // A quarter of the budget and no margin against the whole budget and a
+    // fifth of margin: the one drawn at rest is several times the picture.
+    expect(full).toBeGreaterThan(quick * 1.5);
+    expect(same).toBe(false); // and it is a different canvas, not the same one stretched
+  });
+});

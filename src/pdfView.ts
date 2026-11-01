@@ -527,6 +527,24 @@ const RECALL_WAIT_MS = 160;
  *  past, short enough to land while the reader is still looking. */
 const LIVE_DRAW_MS = 140;
 /**
+ * How much of itself the zoom may still be changing by, per frame, for a
+ * picture asked for now to still be the right picture when it lands. A
+ * hundredth is two pixels of thumb a frame: a hand that is arriving
+ * rather than travelling. Waiting instead for the rate to reach nothing
+ * is waiting for something a hand on glass does not do.
+ */
+const DRAG_CREEP = 0.01;
+/** A frame, for reading a rate per millisecond as a rate per frame. */
+const FRAME_MS = 16.7;
+/**
+ * What a tile drawn under a moving finger may cost, as a share of what one
+ * drawn at rest may. A quarter of the budget is about two thirds of the
+ * screen's own pixels on his phone -- softer than the sharp tile, still a
+ * third sharper than the whole-page picture stretched underneath it, and
+ * about a quarter of the time. The full one follows on the lift.
+ */
+const QUICK_SHARE = 4;
+/**
  * How far a picture's resolution may sit from the one the reader is
  * looking at before it is worth the engine drawing it again.
  *
@@ -709,6 +727,9 @@ interface Slab {
   detail: HTMLCanvasElement | null;
   detailRect: Rect | null;
   detailZoom: number;
+  /** Whether that tile is the cheap one drawn under a moving finger, and
+   *  so owes a full-resolution replacement the moment the hand is off. */
+  detailQuick: boolean;
   detailTask: PdfTask<Pixels> | null;
   width: number; // natural, at scale 1
   height: number;
@@ -859,7 +880,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     slabs.push({ page: index + 1, box, proxy: page, base: null, baseScale: 0, baseTask: null,
       rough: null, roughTask: null,
       pictures: null, photos: [],
-      detail: null, detailRect: null, detailZoom: 0, detailTask: null, width, height, laid: height, top: 0 });
+      detail: null, detailRect: null, detailZoom: 0, detailQuick: false, detailTask: null, width, height, laid: height, top: 0 });
   });
 
   const widest = sizes.reduce((most, size) => Math.max(most, size.width), 1);
@@ -1068,7 +1089,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // immediately.
     if (slab.base?.isConnected && !slab.rough) keepRough(slab, slab.base);
     slab.base?.remove(); slab.base = null; slab.baseScale = 0;
-    slab.detail?.remove(); slab.detail = null; slab.detailRect = null; slab.detailZoom = 0;
+    slab.detail?.remove(); slab.detail = null; slab.detailRect = null; slab.detailZoom = 0; slab.detailQuick = false;
   };
   /** Forget a page: everything it is holding goes back, and the page box
    *  is empty again. Its hundred-pixel picture is not thrown away with
@@ -1507,7 +1528,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         else {
           const want = detailWanted(job.slab);
           if (!want) continue;
-          if (nearEnough(job.slab.detailZoom, zoom, 1 + DETAIL_DRIFT) && job.slab.detailRect && covers(job.slab.detailRect, want)) continue;
+          // Against the live zoom, which is what the tile was drawn for
+          // and what it is being looked at through: measured against the
+          // laid-out zoom instead, every tile after the first in a
+          // gesture looked near enough and the sweep went unrefreshed.
+          if (nearEnough(job.slab.detailZoom, zoom * living, 1 + DETAIL_DRIFT) && job.slab.detailRect && covers(job.slab.detailRect, want)
+            && (sweeping() || !job.slab.detailQuick)) continue;
           await paintDetail(job.slab, want);
         }
         await breathe();
@@ -1619,7 +1645,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // it waits until the scrolling stops rather than being drawn for a
       // place the reader is already leaving.
       if (moving) continue;
-      if (nearEnough(slab.detailZoom, zoom * living, 1 + DETAIL_DRIFT) && slab.detailRect && covers(slab.detailRect, want)) continue;
+      // Under a hand there is a floor on what a tile is worth. At a tenth
+      // over its own width the page's own picture, stretched, is within a
+      // tenth of right, and the tile costs a slice of the gesture's own
+      // frames to be no better. At rest the ordinary threshold stands.
+      if (sweeping() && zoom * living < 1 + DETAIL_DRIFT) continue;
+      // Near enough, covering enough, and not the cheap one left over
+      // from a gesture that is now over.
+      if (nearEnough(slab.detailZoom, zoom * living, 1 + DETAIL_DRIFT) && slab.detailRect && covers(slab.detailRect, want)
+        && (sweeping() || !slab.detailQuick)) continue;
       jobs.push({ slab, work: 'detail', rank: rank('detail', steps, moving) });
     }
     for (const page of recalled.sort((first, second) => first.steps - second.steps)) {
@@ -1653,8 +1687,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   /** The screen's own pixels, unless the picture asked for would cost more
    *  than the budget, and then as many as fit. */
-  const rasterFor = (width: number, height: number): number => {
-    const fitted = Math.sqrt(maxCanvasPixels() / Math.max(1, width * height));
+  const rasterFor = (width: number, height: number, share = 1): number => {
+    const fitted = Math.sqrt(maxCanvasPixels() / share / Math.max(1, width * height));
     return Math.max(1, Math.min(window.devicePixelRatio || 1, fitted));
   };
 
@@ -1772,7 +1806,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!(seen.width > 0) || !(seen.height > 0)) return null;
     const raster = Math.max(1, window.devicePixelRatio || 1);
     const room = Math.sqrt(maxCanvasPixels() / Math.max(1, seen.width * seen.height * raster * raster));
-    const share = Math.max(0, Math.min(DETAIL_MARGIN, (room - 1) / 2));
+    // None at all while a finger is down. The margin buys a tile that
+    // survives the small scroll afterwards, and nobody scrolls in the
+    // middle of a zoom: under a hand it is pixels bought for a time
+    // nobody is in, paid for out of the gesture's own frames.
+    const share = sweeping() ? 0 : Math.max(0, Math.min(DETAIL_MARGIN, (room - 1) / 2));
     const margin = { x: seen.width * share, y: seen.height * share };
     const left = clamp((pane.left - margin.x - box.left) / scale, 0, slab.width);
     const right = clamp((pane.right + margin.x - box.left) / scale, 0, slab.width);
@@ -1822,7 +1860,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (width <= 0 || height <= 0) return;
     slab.detailZoom = drawnAt;
     stop(slab.detailTask);
-    const raster = rasterFor(width, height);
+    const quick = sweeping();
+    const raster = rasterFor(width, height, quick ? QUICK_SHARE : 1);
     const made = sheet(width, height, raster);
     if (!made) return;
     const tall = made.canvas.height;
@@ -1867,6 +1906,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     slab.detail = made.canvas;
     slab.detailRect = rect;
     slab.detailZoom = drawnAt;
+    slab.detailQuick = quick;
     slab.detailTask = null;
     placeDetail(slab);
   }
@@ -2124,6 +2164,21 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   let coolDown = 0;
   /** The pause after a gesture's last move that draws it (LIVE_DRAW_MS). */
   let liveTimer = 0;
+  /** Whether a hand is on the glass and still working, either gesture.
+   *  What is drawn for a hand that is still moving is worth less than
+   *  what is drawn for one that has arrived -- it is about to be wrong
+   *  again -- so it is drawn cheaper. A hand that has gone, and a hand
+   *  that has come to rest without lifting, both get the full picture:
+   *  the reader is looking at what they stopped on. */
+  const sweeping = (): boolean => (hold !== null || pinch !== null)
+    && performance.now() - liveMoved < LIVE_DRAW_MS;
+  /** When the last live draw was started and the factor it drew for; and
+   *  when the last move of the gesture came in, which is both how the
+   *  rate is read and how a hand that has stopped is told from one that
+   *  is still working. */
+  let liveAt = 0;
+  let liveFor = 1;
+  let liveMoved = 0;
   /** How far a one-finger drag has zoomed, as a multiple of the zoom it
    *  started from: Chromium's curve, a constant share of the zoom per
    *  pixel travelled (see DRAG_SPEED). The slop the gesture waited out
@@ -2216,14 +2271,42 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * the picture worth having.
    */
   const liveDraw = (factor: number): void => {
+    const now = performance.now();
+    const since = Math.max(1, now - liveMoved);
+    const was = living;
+    liveMoved = now;
     living = factor;
+    // The hand has stopped. Whatever is on the screen is where the reader
+    // has arrived, and it is worth the whole picture: full resolution and
+    // the margin back, through the ordinary path.
     window.clearTimeout(liveTimer);
     liveTimer = window.setTimeout(() => { if (!shut && living !== 1) drawBand(); }, LIVE_DRAW_MS);
+    // And while it has not. Two things are worth drawing for mid-gesture,
+    // and neither of them is a hand that has stopped dead:
+    //
+    //  - it has slowed to a creep, which is a reader arriving rather than
+    //    travelling, and the picture asked for now will still be the one
+    //    wanted when it lands;
+    //  - it has carried the zoom a whole tile-gate away from what the
+    //    last live draw was for, which on a long sweep is every third of
+    //    a second or so: without this a deliberate two-second zoom shows
+    //    nothing but a stretched picture until it ends.
+    //
+    // Either way no oftener than the settle, and what gets drawn under a
+    // hand is the cheap tile -- a quarter of the pixels, in slices.
+    if (now - liveAt < LIVE_DRAW_MS) return;
+    const rate = Math.abs(Math.log(factor / was)) * (FRAME_MS / since);
+    if (rate > DRAG_CREEP && nearEnough(liveFor, factor, 1 + DETAIL_DRIFT)) return;
+    liveAt = now;
+    liveFor = factor;
+    drawBand();
   };
   /** Back to the laid-out size, with nothing owed. */
   const stopLiving = (): void => {
     window.clearTimeout(liveTimer);
     living = 1;
+    liveAt = 0;
+    liveFor = 1;
   };
   const warmLayer = (): void => {
     window.clearTimeout(coolDown);
