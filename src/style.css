@@ -4408,7 +4408,6 @@ body.is-pdf-chrome .preview-pane article.is-document {
   border-inline-end: 1px solid var(--background-modifier-border);
   transition: inset-inline-start 275ms var(--anim-motion-swing, ease);
 }
-.pdf-sidebar-container[data-view="2"] { --sidebar-width: 275px; }
 body.is-pdf-sidebar .pdf-sidebar-container {
   inset-inline-start: 0;
   visibility: visible;
@@ -4417,8 +4416,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   position: relative;
   flex-grow: 1;
 }
-.pdf-thumbnail-view,
-.pdf-outline-view {
+.pdf-thumbnail-view {
   position: absolute;
   inset: 0;
   /* Down only. (overflow-x: clip would be the exact word for it, but paired
@@ -4429,8 +4427,7 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   user-select: none;
   -webkit-user-select: none;
 }
-.pdf-thumbnail-view.hidden,
-.pdf-outline-view.hidden { display: none; }
+.pdf-thumbnail-view.hidden { display: none; }
 .pdf-thumbnail-view {
   display: flex;
   flex-wrap: wrap;
@@ -4479,37 +4476,6 @@ body.is-pdf-sidebar .pdf-sidebar-container {
   border: 1px solid transparent;
   box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
 }
-.pdf-outline-view { padding: var(--size-4-2, 8px); }
-.pdf-outline-view .tree-item-self {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--size-4-2, 8px);
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-normal);
-}
-/* The nesting is the sidebar outline's, one step narrower: this panel is
-   275px wide where that drawer is most of the screen. */
-.pdf-outline-view .tree-item-children {
-  margin-inline-start: 8px;
-  padding-inline-start: 4px;
-}
-.pdf-outline-view .tree-item-self.mod-active {
-  color: var(--text-accent);
-  background-color: var(--background-modifier-hover);
-  font-weight: 600;
-}
-.pdf-outline-view .tree-item-flair {
-  white-space: nowrap;
-  color: var(--text-muted);
-}
-.pdf-outline-empty {
-  padding: var(--size-4-2, 8px);
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
 /* Obsidian's find bar lies across the top of the pages, over everything.
    Its phone layout sheds the divider, the settings button and the message
    line and keeps the field, the count and the arrows, with the field given

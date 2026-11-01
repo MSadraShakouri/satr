@@ -5,10 +5,15 @@
 // side. Its own stylesheet names every part of it, so the structure here is
 // the structure there, class for class: a .pdf-toolbar holding
 // .pdf-toolbar-left and .pdf-toolbar-right, and a .pdf-sidebar-container
-// holding a .pdf-thumbnail-view and a .pdf-outline-view, one shown at a
-// time, the panel addressed by data-view — 1 for thumbnails at 140px, 2 for
-// the table of contents at 275px, exactly the two widths its phone layout
-// uses.
+// holding a .pdf-thumbnail-view, 140px wide, exactly the width its phone
+// layout uses.
+//
+// Obsidian's panel has a second view, the table of contents. Ours does not:
+// the app already has a panel that answers "where am I" for a note, and a
+// document's contents go in the same one (src/rightSidebar.ts). The button
+// is still here, in Obsidian's own place on the strip, and opens that
+// drawer -- one outline, one place, one set of habits -- rather than a
+// second tree of its own that happened to look the same.
 //
 // What its phone layout changes, and so does ours: the panel lies over the
 // pages instead of pushing them aside, and the resizer between them is gone.
@@ -17,8 +22,7 @@
 // panel's view picker, then zoom out, zoom in, the display options, and the
 // page box with the count beside it.
 import { openMenu, type MenuEntry } from './menu';
-import { majorityDirection } from './direction';
-import type { PdfFit, PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
+import type { PdfFit, PdfHandle, PdfHit } from './pdfView';
 import { countLabel, markQuery } from './searchQuery';
 
 const ICONS: Record<string, string> = {
@@ -57,11 +61,6 @@ export interface PdfChrome {
   finding(): boolean;
 }
 
-/** Which of the two panels is up. Obsidian keeps the same two and addresses
- *  them by number on the container, so the stylesheet can give each its own
- *  width without knowing what is inside. */
-type SidebarView = '1' | '2';
-
 /** Light, dark, or whichever the app is — the same three the app's own
  *  theme has (src/theme.ts), said the same way. Obsidian ships one
  *  checkbox here, which cannot say "this document is a scan of a black
@@ -83,7 +82,15 @@ export function openDarkPages(themed: PdfThemeControl): void {
   ], { title: 'Dark pages' });
 }
 
-export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?: (query: string) => void): PdfChrome {
+export interface PdfChromeDeps {
+  /** What the bar is looking for, so the panel can list the same hits. */
+  told?(query: string): void;
+  /** Open the app's outline panel: where a document's contents live. */
+  contents?(): void;
+}
+
+export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, deps: PdfChromeDeps = {}): PdfChrome {
+  const { told, contents } = deps;
   const toolbar = document.createElement('div');
   toolbar.className = 'pdf-toolbar';
   const left = document.createElement('div');
@@ -97,11 +104,9 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
   sidebar.dataset.view = '1';
   const thumbs = document.createElement('div');
   thumbs.className = 'pdf-thumbnail-view';
-  const outline = document.createElement('div');
-  outline.className = 'pdf-outline-view hidden';
   const content = document.createElement('div');
   content.className = 'pdf-sidebar-content';
-  content.append(thumbs, outline);
+  content.append(thumbs);
   sidebar.append(content);
 
   // ---- the panel -----------------------------------------------------
@@ -109,37 +114,22 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
   const setOpen = (next: boolean): void => {
     open = next;
     document.body.classList.toggle('is-pdf-sidebar', open);
-    if (open) { void fillThumbs(); void fillOutline(); }
-    markButtons();
-  };
-  const setView = (view: SidebarView): void => {
-    sidebar.dataset.view = view;
-    thumbs.classList.toggle('hidden', view !== '1');
-    outline.classList.toggle('hidden', view !== '2');
-    if (!open) setOpen(true);
+    if (open) void fillThumbs();
     markButtons();
   };
 
-  // Two buttons, not a button and a menu behind it. Obsidian ships a
-  // toggle plus a chevron that opens a switcher, which is a tap and a
-  // read to do what the panel has only two of: each view gets its own
-  // button, each button says whether its view is the one on screen, and
-  // tapping the view that is already up shuts the panel.
-  const showing = (view: SidebarView): boolean => open && sidebar.dataset.view === view;
-  const pick = (view: SidebarView): void => {
-    if (showing(view)) { setOpen(false); return; }
-    setView(view);
-    if (view === '2') revealOutline(shownPage); // the contents open at where you are
-  };
+  // Two buttons, in Obsidian's own order and its own place: the panel of
+  // thumbnails, which is this view's own, and the contents, which are the
+  // app's. Tapping the thumbnails while they are up shuts them; the
+  // contents open the drawer and the drawer closes the way every drawer
+  // in the app does.
   const toThumbs = button('grid', 'Thumbnails');
-  toThumbs.onclick = () => pick('1');
+  toThumbs.onclick = () => setOpen(!open);
   const toOutline = button('list', 'Table of contents');
-  toOutline.onclick = () => pick('2');
+  toOutline.onclick = () => { setOpen(false); contents?.(); };
   const markButtons = (): void => {
-    toThumbs.classList.toggle('is-active', showing('1'));
-    toThumbs.setAttribute('aria-pressed', String(showing('1')));
-    toOutline.classList.toggle('is-active', showing('2'));
-    toOutline.setAttribute('aria-pressed', String(showing('2')));
+    toThumbs.classList.toggle('is-active', open);
+    toThumbs.setAttribute('aria-pressed', String(open));
   };
   left.append(toThumbs, toOutline);
 
@@ -322,89 +312,6 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, told?
       link.dataset.loaded = '';
     }
   }
-
-  // ---- the table of contents ------------------------------------------
-  let drewOutline = false;
-  const rows: { page: number; el: HTMLElement }[] = [];
-  async function fillOutline(): Promise<void> {
-    if (drewOutline) return;
-    drewOutline = true;
-    // What the document says about itself wins. Only when it says nothing
-    // is one read off the type — every PDF printed by a browser, which is
-    // every PDF this app and Markor export, carries no bookmarks at all.
-    let items = await handle.outline();
-    if (!items.length) {
-      const scanning = document.createElement('div');
-      scanning.className = 'pdf-outline-empty';
-      scanning.textContent = 'Reading the document…';
-      outline.append(scanning);
-      items = await handle.derivedOutline();
-      scanning.remove();
-    }
-    if (!items.length) {
-      const empty = document.createElement('div');
-      empty.className = 'pdf-outline-empty';
-      empty.textContent = 'No table of contents';
-      outline.append(empty);
-      return;
-    }
-    // The same tree the right sidebar's outline is, down to its markup:
-    // a row of its own per heading, the title in .tree-item-inner, the
-    // number beside it as flair, and the headings under it in a nested
-    // .tree-item-children, which is where the indent and its guide line
-    // come from. The panel takes the document's own direction the way
-    // that outline takes the note's (rightSidebar.ts: list.dir =
-    // majorityDirection), so a Persian document indents from the right;
-    // each row is dir=auto on top of that, so one English heading among
-    // them still reads the way it was written.
-    const titles: string[] = [];
-    const collect = (list: PdfOutlineItem[]): void => {
-      for (const item of list) { titles.push(item.title); collect(item.children); }
-    };
-    collect(items);
-    outline.dir = majorityDirection(titles.join('\n'));
-    const draw = (list: PdfOutlineItem[], into: HTMLElement): void => {
-      for (const item of list) {
-        const branch = document.createElement('div');
-        branch.className = 'tree-item';
-        const row = document.createElement('div');
-        row.className = 'tree-item-self';
-        row.dir = 'auto';
-        const inner = document.createElement('span');
-        inner.className = 'tree-item-inner';
-        inner.textContent = item.title;
-        row.append(inner);
-        if (item.page !== null) {
-          const flair = document.createElement('span');
-          flair.className = 'tree-item-flair';
-          flair.textContent = String(item.page);
-          row.append(flair);
-          row.onclick = () => { handle.goTo(item.page!); setOpen(false); };
-          rows.push({ page: item.page, el: row });
-        }
-        branch.append(row);
-        if (item.children.length) {
-          const under = document.createElement('div');
-          under.className = 'tree-item-children';
-          draw(item.children, under);
-          branch.append(under);
-        }
-        into.append(branch);
-      }
-    };
-    draw(items, outline);
-    // The scan outlives the tap that opened the panel, so the row for the
-    // page being read is found once there are rows to find it among.
-    if (sidebar.dataset.view === '2') revealOutline(shownPage);
-  }
-  /** Obsidian's "Reveal page in table of contents": the last heading at or
-   *  before the page being read is the one you are inside. */
-  const revealOutline = (page: number): void => {
-    let found: HTMLElement | null = null;
-    for (const row of rows) if (row.page <= page) found = row.el;
-    for (const row of rows) row.el.classList.toggle('mod-active', row.el === found);
-    found?.scrollIntoView({ block: 'center' });
-  };
 
   box.value = String(shownPage);
   // The strip and the findbar go INSIDE the header, as a second line of it.

@@ -27,6 +27,14 @@ const ready = async (page: Page): Promise<void> => {
   await page.waitForTimeout(600);
 };
 const control = (page: Page, label: string) => page.locator(`.pdf-toolbar-button[aria-label="${label}"]`);
+/** The contents button opens the app's own outline panel: a document's
+ *  contents are an outline, and the app has one place for those. */
+const openContents = async (page: Page): Promise<void> => {
+  await control(page, 'Table of contents').click();
+  await expect(page.locator('body')).toHaveClass(/outline-open/);
+  await page.waitForTimeout(600);
+};
+const contentsRows = (page: Page) => page.locator('#right-panel .tree-item-self');
 const pageWidth = async (page: Page): Promise<number> =>
   Math.round((await page.locator('.pdf-page[data-page="1"]').boundingBox())!.width);
 
@@ -85,16 +93,22 @@ test('the panel lies over the pages, with a thumbnail for every page', async ({ 
   await expect(page.locator('.pdf-counter')).toHaveText('6 / 8');
 });
 
-test('the panel\'s second view is the table of contents', async ({ page }) => {
+test('the contents button opens the app\'s outline panel, not one of its own', async ({ page }) => {
+  // The viewer used to carry a second tree of its own, in a panel of its
+  // own, that looked exactly like the app's outline and did the same
+  // thing. One outline, one place: the button is still in Obsidian's own
+  // spot on the strip and it opens the drawer the app already has.
   await boot(page, 'handout.pdf');
   await ready(page);
-  await control(page, 'Table of contents').click();
-  await expect(page.locator('.pdf-outline-view')).toBeVisible();
-  await expect(page.locator('.pdf-thumbnail-view')).toBeHidden();
-  // Obsidian widens the panel for it: 275px against the thumbnails' 140px
-  expect(Math.round((await page.locator('.pdf-sidebar-container').boundingBox())!.width)).toBe(275);
-  // this document has no bookmarks in it, and it says so rather than sitting empty
-  await expect(page.locator('.pdf-outline-empty')).toHaveText('No table of contents');
+  await openContents(page);
+  await expect(page.locator('#right-panel')).toContainText('handout.pdf');
+  await expect(page.locator('#right-panel')).toContainText('8 pages');
+  // this document has no bookmarks in it, and the panel says so
+  await expect(page.locator('#right-panel')).toContainText('No table of contents');
+  // and the viewer's own panel is not up, nor is there a second tree in
+  // the page at all
+  await expect(page.locator('.pdf-sidebar-container')).toBeHidden();
+  await expect(page.locator('.pdf-outline-view')).toHaveCount(0);
 });
 
 test('the page box says where you are and takes you where you ask', async ({ page }) => {
@@ -260,29 +274,37 @@ test('find marks every match and walks them', async ({ page }) => {
   await expect(page.locator('.pdf-toolbar')).toBeVisible();
 });
 
-test('the two left buttons are two buttons, each saying whether its view is up', async ({ page }) => {
+test('the thumbnails button says whether its panel is up, and the contents button hands over', async ({ page }) => {
   await boot(page, 'handout.pdf');
   await ready(page);
-  const lit = () => page.evaluate(() => ['Thumbnails', 'Table of contents'].map((label) =>
-    document.querySelector(`.pdf-toolbar-button[aria-label="${label}"]`)!.classList.contains('is-active')));
-  expect(await lit()).toEqual([false, false]); // panel shut: neither view is up
+  const lit = () => page.evaluate(() =>
+    document.querySelector('.pdf-toolbar-button[aria-label="Thumbnails"]')!.classList.contains('is-active'));
+  expect(await lit()).toBe(false); // panel shut
 
   await control(page, 'Thumbnails').click();
   await page.waitForTimeout(350);
   await expect(page.locator('.pdf-thumbnail-view')).toBeVisible();
-  expect(await lit()).toEqual([true, false]);
+  expect(await lit()).toBe(true);
 
-  // the other button swaps the view rather than shutting anything
-  await control(page, 'Table of contents').click();
+  // the contents are the app's panel, so the viewer's own goes away as it
+  // opens: two panels over each other is nobody's idea of a reading view
+  await openContents(page);
+  await expect(page.locator('.pdf-sidebar-container')).toBeHidden();
+  expect(await lit()).toBe(false);
+
+  // the drawer is over the strip while it is open, the way every drawer in
+  // the app is: it is put away by the backdrop, not by the button again
+  await page.locator('#backdrop').dispatchEvent('click');
+  await page.waitForTimeout(700);
+
+  // and the button that owns a panel puts it away again
+  await control(page, 'Thumbnails').click();
   await page.waitForTimeout(350);
-  await expect(page.locator('.pdf-outline-view')).toBeVisible();
-  expect(await lit()).toEqual([false, true]);
-
-  // and the button for the view already up puts it away
-  await control(page, 'Table of contents').click();
+  expect(await lit()).toBe(true);
+  await control(page, 'Thumbnails').click();
   await page.waitForTimeout(350);
   await expect(page.locator('.pdf-sidebar-container')).toBeHidden();
-  expect(await lit()).toEqual([false, false]);
+  expect(await lit()).toBe(false);
 });
 
 test('the contents are read from the document, when the document has any', async ({ page }) => {
@@ -297,11 +319,11 @@ test('the contents are read from the document, when the document has any', async
   await page.goto('/');
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
   await ready(page);
-  await control(page, 'Table of contents').click();
-  await expect(page.locator('.pdf-outline-view .tree-item-self')).toHaveCount(3);
-  await expect(page.locator('.pdf-outline-view')).toContainText('Opening');
-  await expect(page.locator('.pdf-outline-view')).toContainText('The end');
-  await expect(page.locator('.pdf-outline-empty')).toHaveCount(0);
+  await openContents(page);
+  await expect(contentsRows(page)).toHaveCount(3, { timeout: 15000 });
+  await expect(page.locator('#right-panel')).toContainText('Opening');
+  await expect(page.locator('#right-panel')).toContainText('The end');
+  await expect(page.locator('#right-panel')).not.toContainText('No table of contents');
 });
 
 /** A document with no bookmarks in it, opened on its own. */
@@ -326,16 +348,15 @@ test('a document with no bookmarks gets a contents list read off its type', asyn
     { chapter: 'Chapter Two', section: 'The argument' },
     {},
   ]));
-  await control(page, 'Table of contents').click();
-  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await openContents(page);
+  const rows = contentsRows(page);
   await expect(rows).toHaveCount(5, { timeout: 15000 });
   await expect(rows.nth(0)).toContainText('Chapter One');
   await expect(rows.nth(1)).toContainText('Why it happened');
   await expect(rows.nth(2)).toContainText('What came next');
   await expect(rows.nth(3)).toContainText('Chapter Two');
-  await expect(page.locator('.pdf-outline-empty')).toHaveCount(0);
   // the body text is not in it, however many lines of it there are
-  await expect(page.locator('.pdf-outline-view')).not.toContainText('the body of the page');
+  await expect(page.locator('#right-panel')).not.toContainText('the body of the page');
 });
 
 test('a derived heading is indented under the one above it and names its page', async ({ page }) => {
@@ -344,22 +365,20 @@ test('a derived heading is indented under the one above it and names its page', 
     { section: 'What came next' },
     { chapter: 'Chapter Two', section: 'The argument' },
   ]));
-  await control(page, 'Table of contents').click();
-  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await openContents(page);
+  const rows = contentsRows(page);
   await expect(rows).toHaveCount(5, { timeout: 15000 });
-  // The chapters sit flush and the sections sit in from them, nested the
-  // way the right sidebar's outline nests its headings: a child row starts
-  // 13px in from its parent — 8 of margin, 4 of padding, and the 1px guide
-  // line between them.
+  // The chapters sit flush and the sections sit in from them, the way the
+  // panel nests a note's headings -- a document's contents are the same
+  // tree as a note's outline, because they are the same panel.
   const lefts = await rows.evaluateAll((list) =>
     list.map((row) => Math.round(row.getBoundingClientRect().left)));
-  expect(lefts.map((left) => left - lefts[0])).toEqual([0, 13, 13, 0, 13]);
+  expect(lefts.map((left) => left - lefts[0])).toEqual([0, 17, 17, 0, 17]);
   // and an English document leaves the tree the way round it already is
-  await expect(page.locator('.pdf-outline-view')).toHaveAttribute('dir', 'ltr');
-  // each one knows the page it is on, and goes there
-  await expect(rows.nth(3).locator('.tree-item-flair')).toHaveText('3');
+  await expect(page.locator('#right-panel .outline-tree')).toHaveAttribute('dir', 'ltr');
+  // a row goes to the page its heading is on
   await rows.nth(3).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(900);
   await expect(page.locator('.pdf-counter')).toHaveText('3 / 3');
 });
 
@@ -373,8 +392,8 @@ test('a formula is not a heading, however large it is set', async ({ page }) => 
     { chapter: 'Counting', formula: 'n! / (r! (n-r)!)', digits: '1' },
     { section: 'Permutations', formula: '5 x 4 x 3 = 60', digits: '2' },
   ]));
-  await control(page, 'Table of contents').click();
-  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await openContents(page);
+  const rows = contentsRows(page);
   await expect(rows).toHaveCount(2, { timeout: 15000 });
   // exactly the two headings: no equation, and no page number either —
   // a line of nothing but figures is not a heading whatever size it is set
@@ -390,8 +409,9 @@ test('the text of a page is not its contents, however it is set', async ({ page 
   // contents and bury the six real headings.
   const pdf = typesetPdf(Array.from({ length: 6 }, (_, i) => ({ chapter: `Part ${i + 1}`, aside: 10 })));
   await bootTypeset(page, pdf);
-  await control(page, 'Table of contents').click();
-  const titles = await page.locator('.pdf-outline-view .tree-item-inner').allInnerTexts();
+  await openContents(page);
+  await expect(contentsRows(page)).toHaveCount(6, { timeout: 15000 });
+  const titles = await page.locator('#right-panel .tree-item-inner').allInnerTexts();
   expect(titles).toEqual(['Part 1', 'Part 2', 'Part 3', 'Part 4', 'Part 5', 'Part 6']);
 });
 
@@ -404,8 +424,8 @@ test('the smallest heading a note can be printed with is still found', async ({ 
     { chapter: 'Integrals', minor: 'A worked example' },
     { minor: 'Another one' },
   ]));
-  await control(page, 'Table of contents').click();
-  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await openContents(page);
+  const rows = contentsRows(page);
   await expect(rows).toHaveCount(3, { timeout: 15000 });
   await expect(rows.nth(1)).toContainText('A worked example');
   await expect(rows.nth(2)).toContainText('Another one');
@@ -417,23 +437,25 @@ test('a document written in Persian turns the whole tree around', async ({ page 
   // flair goes to the left. A document's contents are the same tree, so
   // they answer to the same rule (src/rightSidebar.ts, src/direction.ts).
   await bootTypeset(page, tinyPdf(4, [], ['جلسه اول', 'جلسه دوم', 'جلسه سوم']));
-  await control(page, 'Table of contents').click();
-  const rows = page.locator('.pdf-outline-view .tree-item-self');
+  await openContents(page);
+  const rows = contentsRows(page);
   await expect(rows).toHaveCount(3, { timeout: 15000 });
   await expect(rows.first()).toContainText('جلسه اول');
-  await expect(page.locator('.pdf-outline-view')).toHaveAttribute('dir', 'rtl');
-  // the number is on the left of the row and the title runs to the right edge
-  const flair = (await rows.first().locator('.tree-item-flair').boundingBox())!;
+  await expect(page.locator('#right-panel .outline-tree')).toHaveAttribute('dir', 'rtl');
+  // the tree indents from the right, so a row's title starts well in from
+  // the right edge of the panel rather than at its left
+  const row = (await rows.first().boundingBox())!;
   const inner = (await rows.first().locator('.tree-item-inner').boundingBox())!;
-  expect(flair.x).toBeLessThan(inner.x);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(row.x + row.width + 1);
 });
 
 test('a document with nothing set larger than its body still says so', async ({ page }) => {
   // One size all the way down: there is no heading to find, and the panel
   // says that rather than inventing a list out of the body text.
   await bootTypeset(page, typesetPdf([{}, {}, {}]));
-  await control(page, 'Table of contents').click();
-  await expect(page.locator('.pdf-outline-empty')).toHaveText('No table of contents', { timeout: 15000 });
+  await openContents(page);
+  await expect(page.locator('#right-panel')).toContainText('No table of contents', { timeout: 20000 });
+  await expect(contentsRows(page)).toHaveCount(0);
 });
 
 test('the thumbnails do not slide sideways under a thumb', async ({ page }) => {

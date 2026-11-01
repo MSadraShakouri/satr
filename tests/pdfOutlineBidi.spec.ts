@@ -50,7 +50,7 @@ test('the contents of an exported note keep their brackets and their formulas', 
   await viewer.goto('/');
   await viewer.waitForSelector('#boot-snapshot', { state: 'detached' });
   await viewer.locator('[aria-label="Table of contents"], [title="Table of contents"]').first().click();
-  const items = viewer.locator('.pdf-outline-view .tree-item-inner');
+  const items = viewer.locator('#right-panel .tree-item-inner');
   await expect(items.first()).toBeVisible({ timeout: 30000 });
   const titles = (await items.allTextContents()).map((text) => text.trim());
   await viewer.close();
