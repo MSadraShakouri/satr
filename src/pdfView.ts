@@ -1878,6 +1878,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const scrollable = scroller.scrollHeight > scroller.clientHeight + 4;
     const atEnd = scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 2;
     if (scrollable && atEnd) return slabs.length;
+    // And at the top it is the first page, for the mirror of that reason.
+    // A page shorter than half the screen is never under the middle of it
+    // while it is the first thing showing: a landscape scan or a deck of
+    // slides opened reading 2 and could not be made to read 1 without
+    // scrolling up into nothing. (Gander names both ends the same way.)
+    if (scroller.scrollTop <= 1) return 1;
     const screen = Math.max(0, scroller.clientHeight - chromeTop());
     const anchor = scroller.scrollTop + chromeTop() - columnTop + screen / 2;
     let edge = 0;

@@ -1610,3 +1610,16 @@ test('a tile reaches a fifth past what is on the screen, no further', async ({ p
   expect(tile).toBeLessThan(seen * 1.45); // a quarter of the pane either side would be 1.5
 });
 
+test('at the top of a document, the counter says the first page', async ({ page }) => {
+  // The page named is the one under the middle of the screen, which at
+  // the top of a document zoomed out to a quarter is the third of them.
+  // Scrolled to an end the reader is plainly on the page at that end,
+  // whatever its size; the foot of the document already knew that.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await dragZoom(page, -290); // out to the quarter-width floor
+  await page.waitForTimeout(900);
+  await page.evaluate(() => { (document.querySelector('#preview-pane') as HTMLElement).scrollTop = 0; });
+  await page.waitForTimeout(400);
+  expect(await page.locator('.pdf-counter').textContent()).toBe('1 / 6');
+});
