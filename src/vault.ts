@@ -49,6 +49,11 @@ export interface Backend {
   stat(path: string): Promise<Entry | null>;
   /** A file as a data: URL (images), or null. */
   readDataUrl(path: string): Promise<string | null>;
+  /** A file as its bytes, or null. A document is opened by its bytes and
+   *  nothing else wants them: a 31 MB book spent a third of a second
+   *  being turned into 41 million characters of base64 and back again
+   *  before the engine saw a byte of it. */
+  readBytes(path: string): Promise<Uint8Array | null>;
   /** Bytes straight in, without going through text. The browser vault only:
    *  the device writes a file by its path and has no need of it. */
   writeBytes?(path: string, blob: Blob): Promise<void>;
@@ -160,6 +165,15 @@ class WebBackend implements Backend {
   }
   async read(path: string): Promise<string | null> {
     return this.contents(path);
+  }
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    if (!(path in this.index.files)) return null;
+    const left = localStorage.getItem(fileKey(path));
+    if (left !== null) return left.startsWith('data:') ? base64Bytes(left.slice(left.indexOf(',') + 1)) : null;
+    const value = await getStored(path);
+    if (!value) return null;
+    if ('blob' in value) return new Uint8Array(await value.blob.arrayBuffer());
+    return value.text.startsWith('data:') ? base64Bytes(value.text.slice(value.text.indexOf(',') + 1)) : null;
   }
   async readText(path: string): Promise<TextOpen> {
     const text = await this.contents(path);
@@ -350,6 +364,14 @@ class DeviceBackend implements Backend {
       // Without an encoding the plugin returns the bytes as base64.
       const { data } = await this.fs.readFile({ path, directory: EXTERNAL });
       return `data:${mimeType(path)};base64,${data}`;
+    } catch {
+      return null;
+    }
+  }
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    try {
+      const { data } = await this.fs.readFile({ path, directory: EXTERNAL });
+      return base64Bytes(typeof data === 'string' ? data : '');
     } catch {
       return null;
     }

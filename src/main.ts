@@ -49,7 +49,7 @@ import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupS
 import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
-import { DEFAULT_FOLDER, backend, base64Bytes, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
+import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkNotes, within, type TextOpen } from './vault';
 import { fileKind, isEditableFile } from './fileKinds';
 
 type Mode = 'edit' | 'preview';
@@ -1759,11 +1759,10 @@ function showFile(path: string, content: string, after?: () => void, options?: {
     // file was last left. Its bytes are read once and kept, because pdf.js
     // and the place both want them.
     opening = 'preview';
-    void backend.readDataUrl(path).then((url) => {
-      const base64 = url?.startsWith('data:') ? url.slice(url.indexOf(',') + 1) : '';
-      if (!base64 || filePath !== path) return;
+    void backend.readBytes(path).then((bytes) => {
+      if (!bytes?.byteLength || filePath !== path) return;
       openedDocument.path = path;
-      openedDocument.bytes = base64Bytes(base64);
+      openedDocument.bytes = bytes;
       if (mode === 'preview') renderPreview();
     });
   }

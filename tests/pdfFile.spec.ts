@@ -841,3 +841,34 @@ test('the page in front of the reader is drawn before the pages behind them', as
   // screen -- not page 22, which is where the band above them begins
   expect(first).toBeGreaterThan(28);
 });
+
+test('a document kept as bytes in the store opens', async ({ page }) => {
+  // Anything over a few megabytes lives in IndexedDB as the bytes it is;
+  // only the index stays in localStorage. A 31 MB book turned into a data:
+  // URL and back cost a third of a second of the main thread before the
+  // engine saw a byte of it.
+  await page.addInitScript(() => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/stored.pdf': 1 }, folders: ['Notes'] }));
+    if (!localStorage.getItem('satr:tabs')) localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: '' }], active: 0 }));
+  });
+  await page.goto('/');
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
+  await page.evaluate(async (pdf: string) => {
+    const bytes = Uint8Array.from(atob(pdf.slice(pdf.indexOf(',') + 1)), (letter) => letter.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    await new Promise<void>((done) => {
+      const open = indexedDB.open('satr', 1);
+      open.onupgradeneeded = () => { if (!open.result.objectStoreNames.contains('files')) open.result.createObjectStore('files'); };
+      open.onsuccess = () => {
+        const deal = open.result.transaction('files', 'readwrite');
+        deal.objectStore('files').put({ blob, mime: 'application/pdf' }, 'Notes/stored.pdf');
+        deal.oncomplete = () => done();
+      };
+    });
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/stored.pdf' }], active: 0 }));
+  }, PDF);
+  await page.reload();
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
+  await readThis(page, 'stored.pdf');
+  await expect(page.locator('.pdf-page')).toHaveCount(6);
+});
