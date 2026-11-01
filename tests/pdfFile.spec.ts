@@ -1632,6 +1632,54 @@ test('at the top of a document, the counter says the first page', async ({ page 
   expect(await page.locator('.pdf-counter').textContent()).toBe('1 / 6');
 });
 
+test('a second touch that comes and goes does not end a one-finger zoom', async ({ page }) => {
+  // A dirty screen, a knuckle, the side of a thumb: a contact that is not
+  // the one doing the gesture lands and lifts again. Every pointer up ran
+  // the end of the gesture, whichever pointer it belonged to, so the zoom
+  // stopped dead halfway through with the thumb still on the glass -- and
+  // what it committed was read from a transform the stray contact had
+  // taken over in the meantime.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  const seen = await page.locator('.pdf-page[data-page="1"]').evaluate(async (sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const fire = (type: string, atY: number, id = 1, atX = x): void => {
+      sheet.dispatchEvent(new PointerEvent(type, {
+        pointerId: id, pointerType: 'touch', clientX: atX, clientY: atY, bubbles: true, cancelable: true,
+      }));
+    };
+    const scale = (): number => Number(/scale\(([\d.]+)\)/.exec(
+      (document.querySelector('.pdf-doc') as HTMLElement).style.transform)?.[1] ?? 1);
+    const frame = (): Promise<void> => new Promise((go) => { requestAnimationFrame(() => go()); });
+    fire('pointerdown', y);
+    fire('pointerup', y);
+    await new Promise((go) => setTimeout(go, 40));
+    fire('pointerdown', y);
+    for (let step = 1; step <= 8; step += 1) { fire('pointermove', y + step * 10); await frame(); }
+    const half = scale();
+    // the stray: down and up again, 80px away, while the thumb stays put
+    fire('pointerdown', y - 80, 2, x + 60);
+    await frame();
+    fire('pointerup', y - 80, 2, x + 60);
+    await frame();
+    for (let step = 9; step <= 16; step += 1) { fire('pointermove', y + step * 10); await frame(); }
+    const whole = scale();
+    fire('pointerup', y + 160);
+    return { half, whole };
+  });
+  await page.waitForTimeout(900);
+  // 160px of thumb at the drag constant, less the slop it takes to start
+  const asked = 1.005 ** (160 - 8);
+  expect(seen.half).toBeGreaterThan(1.3); // the first half of the drag was felt
+  expect(seen.whole).toBeGreaterThan(seen.half * 1.3); // and so was the second
+  expect(seen.whole).toBeCloseTo(asked, 1);
+  const zoomed = await widthOf(page, 1);
+  const fit = await page.evaluate(() => (document.querySelector('#preview-pane') as HTMLElement).clientWidth);
+  expect(zoomed / fit).toBeGreaterThan(asked * 0.9); // and the zoom it landed on is the one asked for
+});
+
 test.describe('a sharp tile, drawn in strips', () => {
   test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 3 });
   const PAGES = tinyPdf(6);

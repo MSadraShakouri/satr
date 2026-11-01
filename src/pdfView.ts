@@ -2148,7 +2148,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { span: number; middle: number; across: number; zoom: number; about: number } | null = null;
   /** A one-finger zoom in progress: where it started, and from what. */
-  let hold: { y: number; x: number; zoom: number; moved: boolean; about: number } | null = null;
+  // `id` is the contact the gesture belongs to. Everything about a
+  // one-finger zoom is that one finger's: no other pointer may move it,
+  // and no other pointer may end it.
+  let hold: { id: number; y: number; x: number; zoom: number; moved: boolean; about: number } | null = null;
   let lastTap = { time: 0, x: 0, y: 0 };
   const spanOf = (): { span: number; middle: number; across: number } => {
     const [a, b] = [...touches.values()];
@@ -2327,13 +2330,18 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // finger lifts the gesture is over.
     if (touches.size === 1 && Date.now() - lastTap.time < DOUBLE_TAP_MS
       && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP) {
-      hold = { y: event.clientY, x: event.clientX, zoom, moved: false, about: pageUnder(event.clientY) };
+      hold = { id: event.pointerId, y: event.clientY, x: event.clientX, zoom, moved: false, about: pageUnder(event.clientY) };
       // The origin is set when the drag starts, not here: a tap that turns
       // out to be an ordinary double tap must find the column exactly as
       // the tap handler left it.
       scroller.style.touchAction = 'none';
     }
-    if (touches.size === 2) {
+    // Not while one finger already has the gesture. A second contact
+    // during a one-finger zoom is a knuckle, the side of a thumb, or a
+    // mark on the glass far oftener than it is somebody deciding to
+    // pinch halfway through a drag -- and taking the gesture off the
+    // finger doing it is the worse answer to either.
+    if (touches.size === 2 && !hold) {
       const { span, middle, across } = spanOf();
       pinch = { span, middle, across, zoom, about: pageUnder(middle) };
       // The origin is the point between the fingers in the column's own
@@ -2347,7 +2355,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const onPointerMove = (event: PointerEvent): void => {
     if (!touches.has(event.pointerId)) return;
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (hold && touches.size === 1) {
+    // By the pointer, not by the count: a stray contact elsewhere on the
+    // glass must not stop the finger that is zooming from being heard.
+    if (hold && event.pointerId === hold.id) {
       event.preventDefault();
       const dy = event.clientY - hold.y;
       if (!hold.moved && Math.abs(dy) > DRAG_SLOP) {
@@ -2373,6 +2383,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const endPinch = (event: PointerEvent): void => {
     touches.delete(event.pointerId);
     if (!touches.size) coolLayer();
+    // A contact that is not the one holding the gesture, going away: it
+    // was never part of this, and the zoom carries on under the finger
+    // that is still down. This ran the whole ending -- transform cleared,
+    // zoom committed from whatever the transform then said -- for any
+    // pointer at all, which stopped a zoom dead mid-drag.
+    if (hold && event.pointerId !== hold.id) return;
     if (hold) {
       const held = hold;
       hold = null;
