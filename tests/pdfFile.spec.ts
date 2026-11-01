@@ -776,6 +776,94 @@ test('a page is drawn at the size the finger is holding, before it lifts', async
   await hold('end');
 });
 
+test('a few pages outlive the view, and are back up on the next open', async ({ page }) => {
+  // Reported: "when tab changes, keep stuff cached so tab changes and app
+  // soft refresh wouldn't make it stutter, but very low rather than many
+  // mb, just a few pages and have a limit on most recent X files".
+  test.setTimeout(90000); // two whole openings of a document, and a wait for the shelf
+  await keepMoving(page); // the background crawl stays out of this
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  // Nothing is put down while the reader is still moving -- the shelf is
+  // written from the same quiet half-second the sketch book crawls in.
+  await letGo(page);
+  // One document's shelf, written once the view goes quiet.
+  await expect.poll(async () => page.evaluate(async () => {
+    const open = await new Promise<IDBDatabase | null>((resolve) => {
+      const request = indexedDB.open('satr', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    });
+    if (!open) return 0;
+    const keys = await new Promise<string[]>((resolve) => {
+      const ask = open.transaction('files', 'readonly').objectStore('files').getAllKeys();
+      ask.onsuccess = () => resolve((ask.result as IDBValidKey[]).map(String));
+      ask.onerror = () => resolve([]);
+    });
+    return keys.filter((key) => key.startsWith('\u0000aside/pdf-sketches/')).length;
+  }), { timeout: 15000 }).toBe(1);
+  const kept = await page.evaluate(async () => {
+    const open = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open('satr', 1);
+      request.onsuccess = () => resolve(request.result);
+    });
+    const keys = await new Promise<string[]>((resolve) => {
+      const ask = open.transaction('files', 'readonly').objectStore('files').getAllKeys();
+      ask.onsuccess = () => resolve((ask.result as IDBValidKey[]).map(String));
+    });
+    const key = keys.find((name) => name.startsWith('\u0000aside/pdf-sketches/'))!;
+    const shelved = await new Promise<{ pages: number; leaves: { page: number; shot: Blob }[] }>((resolve) => {
+      const ask = open.transaction('files', 'readonly').objectStore('files').get(key);
+      ask.onsuccess = () => resolve(ask.result);
+    });
+    // Repainted a colour no page of this document could be, so what comes
+    // back up on the next open can be told from anything freshly drawn.
+    const red = await new Promise<Blob>((resolve) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 100;
+      canvas.height = 141;
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = '#ff0000';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => resolve(blob!), 'image/jpeg', 0.9);
+    });
+    const bytes = shelved.leaves.reduce((all, leaf) => all + leaf.shot.size, 0);
+    const marked = { ...shelved, leaves: shelved.leaves.map((leaf) => ({ page: leaf.page, shot: red })) };
+    await new Promise((resolve) => {
+      const ask = open.transaction('files', 'readwrite').objectStore('files').put(marked, key);
+      ask.onsuccess = resolve;
+      ask.onerror = resolve;
+    });
+    return { leaves: shelved.leaves.length, bytes, pages: shelved.pages };
+  });
+  expect(kept.pages).toBe(6);
+  expect(kept.leaves).toBeGreaterThan(0);
+  expect(kept.leaves).toBeLessThanOrEqual(10); // a few pages, not the document
+  expect(kept.bytes).toBeLessThan(60_000); // and kilobytes, not megabytes
+  // The app shut and opened again: memory is gone, and what is left is
+  // what was written down.
+  // keepMoving's script runs again on the reload of its own accord: the
+  // crawl must not draw over what comes back before it is looked at.
+  await reopen(page, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await expect.poll(async () => page.evaluate(() => {
+    const column = document.querySelector('.pdf-doc') as HTMLElement;
+    return Number(column.dataset.recalled ?? 0);
+  }), { timeout: 10000 }).toBeGreaterThan(0);
+  // and they are on the screen, not only in the book
+  await expect.poll(async () => page.evaluate(() => {
+    let red = 0;
+    for (const canvas of document.querySelectorAll<HTMLCanvasElement>('canvas.pdf-rough')) {
+      const context = canvas.getContext('2d');
+      if (!context || !canvas.width) continue;
+      const pixel = context.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+      if (pixel[0] > 200 && pixel[1] < 80 && pixel[2] < 80) red += 1;
+    }
+    return red;
+  }), { timeout: 10000 }).toBeGreaterThan(0);
+  await letGo(page);
+});
+
 /** The second tap of a double tap, held and dragged: Google's own
  *  one-finger zoom, down to zoom in. */
 async function dragZoom(page: Page, by: number, apart = 0): Promise<void> {

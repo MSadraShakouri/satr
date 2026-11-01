@@ -21,6 +21,7 @@ import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfP
 import type { ImageDataLike, Rect as PageRect } from '@embedpdf/models';
 import { imagesOnPage, pdfium, type PageRect as PictureRect } from './pdfiumEngine';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
+import { keepSketches, recallSketches } from './pdfSketchCache';
 
 /** Where the reader was. The page and how far into it, rather than a scroll
  *  offset, so the place survives a different zoom, a rotation, or a wider
@@ -44,6 +45,10 @@ export interface PdfPlace {
 export interface PdfOptions {
   /** The pane that scrolls, which the pages are laid out inside. */
   scroller: HTMLElement;
+  /** What this document is, by its own bytes (pdfKey) rather than by its
+   *  name. The place it was left is remembered against it, and so are the
+   *  few pages kept for the next time it is opened. */
+  key?: string;
   place?: PdfPlace | null;
   /** Called as the reader moves, already settled — the caller writes it down. */
   onPlace?: (place: PdfPlace) => void;
@@ -482,6 +487,9 @@ const DRAG_GRIP_PX = 8;
  *  pane, and is all the way there by the time the page is this fraction of
  *  its fitted width. Continuous, so nothing steps as it crosses. */
 const CENTRE_BY = 0.7;
+/** How long a document will wait, on the way in, for the few pages kept
+ *  from the last time it was open (src/pdfSketchCache.ts). */
+const RECALL_WAIT_MS = 160;
 /** A gesture that has paused for this long, with the finger still down, is
  *  drawn at the size the finger is holding rather than waiting for it to
  *  lift. Long enough that a sweep does not draw thirty times on its way
@@ -1066,6 +1074,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    */
   const sketches = new Map<number, HTMLCanvasElement>();
   let sketchBytes = 0;
+  /** A few of these pages, put down for the next time this document is
+   *  opened. Written at the foot of this function, where the key and the
+   *  page the reader is on are both to hand; called from rest(), so the
+   *  shelf is up to date long before anything as unreliable as an unload
+   *  has to be relied on. */
+  let putDown = (always = false): void => { void always; };
   /** Keep a page's rough picture, and let go of the ones farthest from
    *  the reader if the book is now too heavy to carry. */
   const bank = (index: number, canvas: HTMLCanvasElement): void => {
@@ -1460,7 +1474,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   /** Nothing for half a second: carry on with the sketch book. */
   const rest = (): void => {
     window.clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => { void crawl(); }, IDLE_MS);
+    // Before the walk and after it. Before, because the walk over a long
+    // document runs for half a minute -- his book is four hundred pages
+    // of sketching -- and a refresh in the middle of it would otherwise
+    // find nothing written down at all. After, because by then there is
+    // usually more worth keeping, and nothing else calls rest() again
+    // once the queue has run dry.
+    idleTimer = window.setTimeout(() => { putDown(); void crawl().finally(() => putDown()); }, IDLE_MS);
   };
 
   const drawBand = (): void => {
@@ -2169,7 +2189,66 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   pending = options.place ? { ...options.place, zoom } : null;
   applyPending();
   showCounter();
+  /**
+   * The few pages kept from the last time this document was open, back
+   * into the sketch book (src/pdfSketchCache.ts).
+   *
+   * Waited for, but not for long. If they land before the first plan is
+   * made they are simply what the pages are drawn with, which is the
+   * whole point: the reader comes back to the page they left instead of
+   * to an empty box. Measured on his book, the engine's own first
+   * picture of the page being read is eight hundred milliseconds after
+   * the column appears -- a document that size is a wasm engine, a
+   * thirty-megabyte read and five hundred pages of layout before
+   * anything is drawn at all -- and a store this app has already opened
+   * answers in a fraction of one frame. So it is given a sixth of a
+   * second and no more: a page already drawn is worth waiting a moment
+   * for, an open that hangs on a slow store is not. Anything later is
+   * put up by the plan it makes when it arrives.
+   */
+  let planned = false;
+  const putBack = (kept: { page: number; canvas: HTMLCanvasElement }[]): void => {
+    if (shut || !kept.length) return;
+    let any = 0;
+    for (const { page, canvas } of kept) {
+      if (page < 0 || page >= slabs.length || sketches.has(page)) continue;
+      bank(page, canvas);
+      any += 1;
+    }
+    doc.dataset.recalled = String(any);
+    if (any && planned) drawBand();
+  };
+  if (options.key) {
+    const recalling = recallSketches(options.key, slabs.length).catch(() => []);
+    void recalling.then(putBack);
+    await Promise.race([recalling, new Promise((go) => { window.setTimeout(go, RECALL_WAIT_MS); })]);
+  }
   drawBand();
+  planned = true;
+  /**
+   * And back down again when the app goes away.
+   *
+   * A tab change tears this view down and destroy() does it there. A
+   * refresh does not: the page is simply gone, and on a phone it is
+   * gone without a beforeunload worth relying on. Hidden is the last
+   * moment anything is guaranteed to run, and it is the same moment the
+   * reader has left — so what is written is what they were looking at.
+   */
+  let putDownAt = 0;
+  let putDownWas = '';
+  putDown = (always = false): void => {
+    if (!options.key || !sketches.size) return;
+    // Nothing new to say, and said recently enough: a reader sitting on
+    // one page has the shelf they are going to get.
+    const state = `${sketches.size}:${pageShown()}`;
+    if (!always && state === putDownWas) return;
+    if (!always && Date.now() - putDownAt < 4000) return;
+    putDownAt = Date.now();
+    putDownWas = state;
+    void keepSketches(options.key, slabs.length, pageShown() - 1, sketches);
+  };
+  const onHidden = (): void => { if (document.visibilityState === 'hidden') putDown(); };
+  document.addEventListener('visibilitychange', onHidden);
   // The animation machinery itself, started once on nothing: the first
   // doc.animate() of a page has a cost of its own, and paying it here
   // rather than on the reader's first double tap is free -- this animates
@@ -2380,6 +2459,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       remember();
     },
     destroy: () => {
+      // Before anything is handed back: the pictures are read as they
+      // are encoded, not as they are asked for. Always, here -- a tab
+      // change is the reader leaving, and where they left is the thing
+      // worth keeping even if the shelf was written a moment ago.
+      putDown(true);
+      document.removeEventListener('visibilitychange', onHidden);
       watchers.clear();
       window.clearTimeout(settleTimer);
       window.clearTimeout(idleTimer);

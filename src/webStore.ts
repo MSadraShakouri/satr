@@ -63,7 +63,37 @@ export async function dropStored(path: string): Promise<void> {
 
 export async function storedPaths(): Promise<string[]> {
   const keys = await ask<IDBValidKey[]>('readonly', (store) => store.getAllKeys());
-  return (keys ?? []).map(String);
+  return (keys ?? []).map(String).filter((key) => !key.startsWith(ASIDE));
+}
+
+/**
+ * The same database, for things that are not files.
+ *
+ * The PDF viewer keeps a few pages of the last few documents here so a
+ * tab change and a refresh do not land on an empty page
+ * (src/pdfSketchCache.ts). It is the same store because a second one
+ * would mean a second version of the database, and an open tab on the
+ * old version blocks that upgrade for every tab — including the one
+ * reading the reader's files. The prefix holds a NUL, which no path in
+ * the vault can contain, so nothing a reader can make collides with one
+ * of these and storedPaths leaves them out.
+ */
+const ASIDE = '\u0000aside/';
+
+export const getAside = <T>(key: string): Promise<T | null> =>
+  ask<T>('readonly', (store) => store.get(ASIDE + key));
+
+export async function putAside(key: string, value: unknown): Promise<void> {
+  await ask('readwrite', (store) => store.put(value, ASIDE + key));
+}
+
+export async function dropAside(key: string): Promise<void> {
+  await ask('readwrite', (store) => store.delete(ASIDE + key));
+}
+
+export async function asideKeys(): Promise<string[]> {
+  const keys = await ask<IDBValidKey[]>('readonly', (store) => store.getAllKeys());
+  return (keys ?? []).map(String).filter((key) => key.startsWith(ASIDE)).map((key) => key.slice(ASIDE.length));
 }
 
 /** Text as it is; bytes as the data: URL the rest of the app reads them by. */

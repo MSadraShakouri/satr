@@ -666,6 +666,7 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   document.body.classList.add('is-pdf-chrome');
   const handle = await showPdf(preview, bytes.slice().buffer, {
     scroller: previewPane,
+    key,
     place: readPlace(key),
     onPlace: (place) => writePlace(key, place),
     // Putting a document back where it was is not the reader scrolling: the
