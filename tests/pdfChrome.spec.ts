@@ -519,3 +519,22 @@ test('a match is one band a line, at the height of the line', async ({ page }) =
   // ...and not so far that two lines of a paragraph would touch
   expect(band.high).toBeLessThan(0.07);
 });
+
+test('the field you type into can be told from the bar it sits on', async ({ page }) => {
+  for (const mode of ['light', 'dark'] as const) {
+    await page.addInitScript((theme) => localStorage.setItem('satr:theme', theme as string), mode);
+    await boot(page, 'handout.pdf');
+    await ready(page);
+    await page.locator('#nav-find').click();
+    await expect(page.locator('.pdf-findbar')).toBeVisible();
+    const paint = await page.evaluate(() => {
+      const field = document.querySelector('.pdf-findbar input')!;
+      const bar = document.querySelector('.pdf-findbar')!;
+      return { field: getComputedStyle(field).backgroundColor, bar: getComputedStyle(bar).backgroundColor };
+    });
+    // It was the colour of its own bar behind a hairline: white on white in
+    // the light theme, where it could not be found at all, and three shades
+    // of nearly black in the dark one. A field is filled, as the panel's is.
+    expect(paint.field, mode).not.toBe(paint.bar);
+  }
+});

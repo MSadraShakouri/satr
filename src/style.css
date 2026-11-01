@@ -2783,10 +2783,15 @@ input.mod-no-match {
   min-height: 36px;
   height: auto;
   padding: 8px 16px;
-  border: 1px solid var(--background-modifier-border);
+  /* Filled, like the panel's search field, rather than outlined: an
+     outlined field is the colour of the bar it sits on, so in the light
+     theme it was white on white behind a hairline and could not be found,
+     and in the dark one the field, the bar and the border were three
+     shades of nearly black. A fill names the field in both. */
+  border: 0;
   border-radius: var(--input-radius);
   outline: none;
-  background: var(--background-primary);
+  background: var(--interactive-normal);
   color: var(--text-normal);
   font: inherit;
   font-size: 1rem; /* no zoom-on-focus on phones */
@@ -2801,8 +2806,8 @@ input.mod-no-match {
   padding-inline-end: 72px;
 }
 .document-search-container input:focus {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+  /* the panel's ring, so focus looks the same wherever you search */
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35);
 }
 .document-search-container.mod-no-match .document-search-input input {
   background: rgba(233, 49, 71, 0.12);
