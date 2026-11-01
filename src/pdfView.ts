@@ -441,8 +441,15 @@ function outlineFromType(scanned: TypeLine[], pages: number): PdfOutlineItem[] {
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
 /** Where a double tap lands, and the point below which it zooms in rather
- *  than back out (Gander's rule: the geometric middle of the two). */
-const DOUBLE_TAP_ZOOM = 2.5;
+ *  than back out (Gander's rule: the geometric middle of the two).
+ *
+ *  Twice, which is where Gander and Jetpack's PDF viewer put it, and the
+ *  reason is typographic rather than round: it brings the body of an A4
+ *  page to about the size the phone sets its own text in, and one column
+ *  of a two-column page to the width of the screen. Two and a half, which
+ *  this was, overshoots both and leaves a line needing a sideways scroll
+ *  to finish. */
+const DOUBLE_TAP_ZOOM = 2;
 const DOUBLE_TAP_MS = 300;
 /** Zoom is a float: a page sitting at its own width reads as 0.9999. */
 const ZOOM_EPSILON = 0.005;
@@ -1920,20 +1927,36 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const nowX = sheetNow.left + across * sheetNow.width;
       const nowY = sheetNow.top + found.into * sheetNow.height;
       doc.style.transformOrigin = `${nowX - box.left}px ${nowY - box.top}px`;
-      gliding = doc.animate([
-        { transform: `translate(${acrossAt - nowX}px, ${anchorY - nowY}px) scale(${was / zoom})` },
-        { transform: 'none' },
-      ], { duration: GLIDE_MS, easing: GLIDE_EASE });
+      // Sampled rather than handed two ends, so that the scale travels by
+      // ratio: a page on its way from fit to twice it should grow at an
+      // even rate, and a scale interpolated straight from 1 to 2 does
+      // most of its growing in the first third of the motion however the
+      // time is eased, because what the eye reads is the ratio and the
+      // ratio moves fastest while the number is small. (Gander's double
+      // tap does the same thing, in its words "by ratio, so the page
+      // grows at an even rate rather than fastest at the start".) The
+      // easing is baked into the samples by glideAt, so the steps between
+      // them are linear, and the sideways carry is sampled along the very
+      // same curve so the two stay one motion.
+      const held = was / zoom;
+      const paced = (part: number): number => held ** (1 - glideAt(part));
+      const FRAMES = 12;
+      gliding = doc.animate(Array.from({ length: FRAMES + 1 }, (ignored, step) => {
+        const part = step / FRAMES;
+        const rest = 1 - glideAt(part);
+        return {
+          offset: part,
+          easing: 'linear',
+          transform: `translate(${((acrossAt - nowX) * rest).toFixed(2)}px, ${((anchorY - nowY) * rest).toFixed(2)}px) scale(${paced(part).toFixed(5)})`,
+        };
+      }), { duration: GLIDE_MS });
       // The gaps travel too. The column is scaled over the motion, so the
       // space between two pages would be scaled with it and arrive at
       // eight pixels from somewhere else; each page is walked back along
       // the same curve instead, sampled, so the gap is eight pixels the
       // whole way across. Cleared when the motion ends, like the scale.
       const steps = 10;
-      const slack = (part: number): number => {
-        const factor = (was / zoom) + (1 - was / zoom) * glideAt(part);
-        return GAP * (1 / Math.max(0.01, factor) - 1);
-      };
+      const slack = (part: number): number => GAP * (1 / Math.max(0.01, paced(part)) - 1);
       for (const slab of slabs) {
         if (!standing(slab).rough) continue;
         const paces = slab.page - 1 - (found.page - 1);

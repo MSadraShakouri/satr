@@ -7,6 +7,9 @@ import { tinyPdf } from './support/tinyPdf';
 // recorded one, so the page count and the page size in these assertions are
 // known rather than guessed at.
 
+/** Where a double tap lands, in times the page's fitted width (pdfView's
+ *  DOUBLE_TAP_ZOOM). */
+const DOUBLE_TAP = 2;
 const PDF = tinyPdf(6);
 const OTHER = tinyPdf(3); // a different document, to tell the places apart
 
@@ -383,7 +386,9 @@ test('a double tap that does not drag is still a double tap', async ({ page }) =
   await dragZoom(page, 2); // a thumb never lands perfectly still
   await page.waitForTimeout(600);
   const after = await widthOf(page, 1);
-  expect(after).toBeGreaterThan(fit * 1.6);
+  // Twice the page's width, where Gander and Jetpack's viewer put it: an
+  // A4 page's body text at about the size the phone sets its own in.
+  expect(after).toBeCloseTo(fit * DOUBLE_TAP, -1);
 });
 
 test('the column is made ready to be scaled while the finger is still down', async ({ page }) => {
@@ -1029,7 +1034,7 @@ test('a double tap zooms about the point tapped, not about the middle of the col
   }
   await page.waitForTimeout(400);
   const zoomed = await page.locator('.pdf-page').first().evaluate((box) => box.getBoundingClientRect().width);
-  expect(zoomed).toBeGreaterThan(wide * 2); // it did zoom in, which on a phone it never used to
+  expect(zoomed).toBeGreaterThan(wide * 1.9); // it did zoom in, which on a phone it never used to
   const after = await under(page, at.x, at.y);
   expect(after).not.toBeNull();
   // the same place on the same page is still under the finger, both ways
@@ -1503,3 +1508,57 @@ test.describe('a document far longer than the band that draws it', () => {
     expect(at(later, 22).drawn).toBe(false);
   });
 });
+
+
+test("a double tap's zoom travels by ratio, not by scale", async ({ page }) => {
+  // Gander's note on its own double tap: "By ratio, so the page grows at
+  // an even rate rather than fastest at the start". A scale interpolated
+  // straight from one to two does most of its growing in the first third
+  // of the motion however the time is eased, because what the eye reads
+  // is the ratio and the ratio moves fastest while the number is small.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  // Read off the motion the tap starts, before it has run: the two laws
+  // share an easing and differ only in the path between the two ends.
+  const frames = await pageBox(page, 1).evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const fire = (type: string): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown'); fire('pointerup'); fire('pointerdown'); fire('pointerup');
+    const column = document.querySelector('.pdf-doc') as HTMLElement;
+    const effect = column.getAnimations()[0]?.effect as KeyframeEffect | undefined;
+    return (effect?.getKeyframes() ?? []).map((frame) => ({
+      offset: frame.offset ?? 0,
+      scale: parseFloat(/scale\(([\d.]+)\)/.exec(String((frame as unknown as { transform?: string }).transform ?? ''))?.[1] ?? '0'),
+    }));
+  });
+  expect(frames.length).toBeGreaterThan(5);
+  // pdfView's GLIDE_EASE, walked the same way glideAt() walks it
+  const glideAt = (part: number): number => {
+    let low = 0;
+    let high = 1;
+    let time = part;
+    for (let step = 0; step < 24; step += 1) {
+      time = (low + high) / 2;
+      const rest = 1 - time;
+      const at = 3 * rest * rest * time * 0.22 + 3 * rest * time * time * 0.36 + time * time * time;
+      if (at < part) low = time; else high = time;
+    }
+    const rest = 1 - time;
+    return 3 * rest * rest * time + 3 * rest * time * time + time * time * time;
+  };
+  const held = 1 / DOUBLE_TAP;
+  let apart = 0;
+  for (const frame of frames) {
+    const part = glideAt(frame.offset);
+    expect(frame.scale).toBeCloseTo(held ** (1 - part), 2);
+    apart = Math.max(apart, Math.abs((held + (1 - held) * part) - held ** (1 - part)));
+  }
+  // and the straight-line law really is somewhere else, so the above is
+  // a test of the curve rather than of the two ends it shares
+  expect(apart).toBeGreaterThan(0.03);
+});
+
