@@ -515,7 +515,10 @@ interface Slab {
    * for it again.
    */
   base: HTMLCanvasElement | null;
-  baseFit: number;
+  /** The scale the whole-page picture was drawn at. Below fit width that
+   *  is less than fit: a page shown at a third of its width is drawn at a
+   *  third of its width. */
+  baseScale: number;
   baseTask: PdfTask<Blob> | null;
   /**
    * A rough picture of the whole page, a hundred pixels wide, drawn for a
@@ -546,6 +549,10 @@ interface Slab {
   width: number; // natural, at scale 1
   height: number;
   laid: number;
+  /** Where the page's top edge is down the column, in laid-out pixels.
+   *  Written by layout(), so anything may ask where a page is without
+   *  walking the column to find out. */
+  top: number;
 }
 
 /** A rectangle of a page, in the page's own units (scale 1). */
@@ -675,10 +682,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     box.className = 'pdf-page';
     box.dataset.page = String(index + 1);
     doc.append(box);
-    slabs.push({ page: index + 1, box, proxy: page, base: null, baseFit: 0, baseTask: null,
+    slabs.push({ page: index + 1, box, proxy: page, base: null, baseScale: 0, baseTask: null,
       rough: null, roughTask: null,
       pictures: null, photos: [],
-      detail: null, detailRect: null, detailZoom: 0, detailTask: null, width, height, laid: height });
+      detail: null, detailRect: null, detailZoom: 0, detailTask: null, width, height, laid: height, top: 0 });
   });
 
   const widest = sizes.reduce((most, size) => Math.max(most, size.width), 1);
@@ -755,8 +762,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   const layout = (): void => {
     const scale = scaleNow();
+    let edge = 0;
     for (const slab of slabs) {
       slab.laid = Math.round(slab.height * scale);
+      slab.top = edge;
+      edge += slab.laid + GAP;
       slab.box.style.width = `${Math.round(slab.width * scale)}px`;
       slab.box.style.height = `${slab.laid}px`;
       // the sharp picture goes where the zoom put it, stretched for now and
@@ -847,6 +857,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const letGo = (): void => { pending = null; };
 
   let settleTimer = 0;
+  /** When the pane last moved, so the dearest work can wait for a hand to
+   *  come off the glass. */
+  let movedAt = 0;
+  let replanning = 0;
+  /** Re-plan on the next frame, however many scroll events arrive. */
+  const replan = (): void => {
+    if (replanning) return;
+    replanning = requestAnimationFrame(() => { replanning = 0; drawBand(); });
+  };
 
   /** Everything this slab is holding, handed back. */
   const forget = (slab: Slab): void => {
@@ -857,7 +876,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // of the engine again, so coming back up a document shows the page
     // immediately.
     if (slab.base && !slab.rough) keepRough(slab, slab.base);
-    slab.base?.remove(); slab.base = null; slab.baseFit = 0;
+    slab.base?.remove(); slab.base = null; slab.baseScale = 0;
     slab.detail?.remove(); slab.detail = null; slab.detailRect = null; slab.detailZoom = 0;
   };
   /** Forget a page altogether, rough picture and all: it is far enough away
@@ -948,7 +967,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     let picture: ImageBitmap;
     try { picture = await createImageBitmap(await task.toPromise()); }
     catch { if (slab.roughTask === task) slab.roughTask = null; return; }
-    if (slab.roughTask !== task) { picture.close(); return; }
+    if (slab.roughTask !== task || !standing(slab).rough) { picture.close(); slab.roughTask = null; return; }
     slab.roughTask = null;
     const made = sheet(picture.width, picture.height, 1);
     if (!made) { picture.close(); return; }
@@ -977,34 +996,125 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * was tried before this and abandoned, because with pdf.js a slice cost a
    * page: the engine can draw a rectangle on its own now.
    */
-  const drawBand = (): void => {
+
+  /** Where a page stands in relation to the screen. The three bands are
+   *  what gets drawn, what is kept when it goes by, and what is worth a
+   *  hundred pixels of itself; `away` is how far off the screen it is,
+   *  which is the order a reader wants their pages in. */
+  const standing = (slab: Slab): { seen: boolean; near: boolean; keep: boolean; rough: boolean; away: number } => {
     const screen = scroller.clientHeight;
     const top = scroller.scrollTop - columnTop;
-    let edge = 0;
+    const from = slab.top;
+    const to = slab.top + heightOf(slab);
+    return {
+      seen: to > top && from < top + screen,
+      near: to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen,
+      keep: to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen,
+      rough: to > top - ROUGH_SCREENS * screen && from < top + (1 + ROUGH_SCREENS) * screen,
+      away: Math.max(0, from - (top + screen), top - to),
+    };
+  };
+
+  /** The scale a whole-page picture is worth drawing at: the pane's width.
+   *  Zoomed in it stays there -- the sharp tile is what carries a zoom --
+   *  so zooming asks for nothing again. */
+  const baseWanted = (): number => fit;
+
+  /** Is this page still waiting for this, now? Asked again at the moment
+   *  the work would start, because by then the reader has usually moved. */
+  const stillWanted = (job: Job): boolean => {
+    const where = standing(job.slab);
+    if (!job.slab.proxy) return false;
+    if (job.work === 'rough') return where.rough && !job.slab.rough && !job.slab.roughTask;
+    if (job.work === 'base') return where.near && job.slab.baseScale < baseWanted() * 0.99;
+    return where.near;
+  };
+
+  /**
+   * One page at a time, nearest first, and a frame between each.
+   *
+   * Everything in the band used to be asked for at once, in page order.
+   * The engine takes about a fortieth of a second just to take a page of
+   * his book apart before it draws anything, so a band of twenty-two
+   * pages blocked the thread for most of a second before the first
+   * picture appeared -- and the pages above the screen were asked for
+   * first, because they come first in the document. A flick landed, and
+   * the reader waited while eleven pages they had already passed were
+   * drawn behind them.
+   *
+   * Now the band is a list of jobs sorted by what the reader can see, and
+   * it is worked one at a time with a frame to breathe in between: the
+   * page in front of them is drawn first, every scroll re-sorts what is
+   * left, and a page that has gone by is dropped before it costs
+   * anything.
+   */
+  type Work = 'rough' | 'base' | 'detail';
+  interface Job { slab: Slab; work: Work; rank: number }
+  let queue: Job[] = [];
+  let drawing = false;
+  /** Far enough apart that a page's own distance never outranks its turn. */
+  const PHASE = 1e7;
+
+  /** A frame to itself between one page and the next, so what was just
+   *  drawn is painted and a scroll meanwhile is heard. A pane nobody is
+   *  looking at gets no frames, and falls back to the timer. */
+  const breathe = (): Promise<void> => new Promise((done) => {
+    requestAnimationFrame(() => { window.setTimeout(done, 0); });
+    window.setTimeout(done, 80);
+  });
+
+  const pump = async (): Promise<void> => {
+    if (drawing) return;
+    drawing = true;
+    try {
+      while (queue.length) {
+        const job = queue.shift();
+        if (!job || !stillWanted(job)) continue;
+        if (job.work === 'rough') await paintRough(job.slab);
+        else if (job.work === 'base') await paintBase(job.slab);
+        else {
+          const want = detailWanted(job.slab);
+          if (!want) continue;
+          if (job.slab.detailZoom === zoom && job.slab.detailRect && covers(job.slab.detailRect, want)) continue;
+          await paintDetail(job.slab, want);
+        }
+        await breathe();
+      }
+    } finally { drawing = false; }
+  };
+
+  const drawBand = (): void => {
+    const jobs: Job[] = [];
+    const moving = Date.now() - movedAt < SETTLE_MS;
     for (const slab of slabs) {
-      const height = heightOf(slab);
-      const from = edge;
-      const to = edge + height;
-      edge += height + GAP;
-      const near = to > top - DRAW_SCREENS * screen && from < top + (1 + DRAW_SCREENS) * screen;
-      const keep = to > top - KEEP_SCREENS * screen && from < top + (1 + KEEP_SCREENS) * screen;
-      const rough = to > top - ROUGH_SCREENS * screen && from < top + (1 + ROUGH_SCREENS) * screen;
-      if (!rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
-      if (!keep) { forget(slab); } // out of the sharp band: the rough picture stays
+      const where = standing(slab);
+      if (!where.rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
+      if (!where.keep) forget(slab); // out of the sharp band: the rough picture stays
       if (!slab.proxy) continue;
       // A page anywhere in the wide band gets its rough picture, so a fast
-      // scroll runs into soft pages rather than empty ones.
-      if (!slab.rough && !slab.base) void paintRough(slab);
-      if (!near) continue;
-      if (slab.baseFit !== fit) void paintBase(slab);
+      // scroll runs into soft pages rather than empty ones -- but a page
+      // on the screen with nothing on it at all comes first.
+      if (!slab.rough && !slab.base && !slab.roughTask) {
+        jobs.push({ slab, work: 'rough', rank: (where.seen ? 0 : 4) * PHASE + where.away });
+      }
+      if (!where.near) continue;
+      if (slab.baseScale < baseWanted() * 0.99) {
+        jobs.push({ slab, work: 'base', rank: (where.seen ? 1 : 3) * PHASE + where.away });
+      }
       const want = detailWanted(slab);
       if (!want) {
         if (slab.detail) { stop(slab.detailTask); slab.detailTask = null; slab.detail.remove(); slab.detail = null; slab.detailRect = null; }
         continue;
       }
+      // A screenful at the screen's own pixels is the dearest thing here;
+      // it waits until the scrolling stops rather than being drawn for a
+      // place the reader is already leaving.
+      if (moving) continue;
       if (slab.detailZoom === zoom && slab.detailRect && covers(slab.detailRect, want)) continue;
-      void paintDetail(slab, want);
+      jobs.push({ slab, work: 'detail', rank: 2 * PHASE + where.away });
     }
+    queue = jobs.sort((first, second) => first.rank - second.rank);
+    void pump();
   };
 
   /** The screen's own pixels, unless the picture asked for would cost more
@@ -1033,13 +1143,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     return context ? { canvas, context } : null;
   };
 
-  /** The whole page at the pane's width. Drawn once, stretched thereafter. */
+  /** The whole page at the width it is shown at, stretched thereafter. */
   async function paintBase(slab: Slab): Promise<void> {
-    const drawnFor = fit;
+    const drawnFor = baseWanted();
     const width = Math.round(slab.width * drawnFor);
     const height = Math.round(slab.height * drawnFor);
     if (!slab.proxy || width <= 0 || height <= 0) return;
-    slab.baseFit = drawnFor; // claimed, so the next pass does not ask again
+    slab.baseScale = drawnFor; // claimed, so the next pass does not ask again
     stop(slab.baseTask);
     const raster = rasterFor(width, height);
     const made = sheet(width, height, raster);
@@ -1050,10 +1160,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     try {
       picture = await createImageBitmap(await task.toPromise());
     } catch {
-      if (slab.baseFit === drawnFor) slab.baseFit = 0;
+      if (slab.baseScale === drawnFor) slab.baseScale = 0;
       return; // called off, or the document went away
     }
-    if (slab.baseTask !== task) { picture.close(); return; }
+    // The reader has moved while this was drawing and the page is gone
+    // from the screen: it is not put up, and not kept.
+    if (slab.baseTask !== task || !standing(slab).near) {
+      picture.close();
+      if (slab.baseTask === task) { slab.baseTask = null; slab.baseScale = 0; }
+      return;
+    }
     made.canvas.width = picture.width;
     made.canvas.height = picture.height;
     made.context.drawImage(picture, 0, 0);
@@ -1200,7 +1316,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       showCounter();
       return;
     }
+    movedAt = Date.now();
     showCounter();
+    // The band is re-planned while the hand is still moving, not only when
+    // it stops: that is what calls off the pages being left behind, and
+    // what puts the page coming up at the head of the queue. Planning is
+    // arithmetic over the column -- the engine is not asked for anything
+    // here -- so it is done once a frame and no oftener.
+    replan();
     settle();
     if (!pending) remember();
   };

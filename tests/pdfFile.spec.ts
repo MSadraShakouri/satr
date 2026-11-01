@@ -808,3 +808,36 @@ test('the engine itself is served by the app, whole and from its own origin', as
   expect(response.status).toBe(200);
   expect((await response.arrayBuffer()).byteLength).toBe(4_646_932);
 });
+
+test('the page in front of the reader is drawn before the pages behind them', async ({ page }) => {
+  // The band of pages kept soft reaches eight screens either way, and it
+  // used to be asked for in page order: a reader who jumped into the
+  // middle of a document waited while the engine drew the eight screens
+  // they had already gone past. The engine takes about a fortieth of a
+  // second per page of his book before it draws anything, so that wait is
+  // real: a second of it, measured on a flick of his 528-page book.
+  await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  await page.waitForTimeout(800);
+  // everything drawn so far goes: this is about what gets drawn next
+  const first = await page.evaluate(async () => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
+    for (const canvas of document.querySelectorAll('.pdf-page canvas')) canvas.remove();
+    pane.scrollTop = sheets[29].offsetTop;
+    pane.dispatchEvent(new Event('scroll'));
+    const began = performance.now();
+    return new Promise<number>((done) => {
+      const look = (): void => {
+        const drawn = document.querySelector('.pdf-page canvas');
+        if (drawn) { done(Number((drawn.closest('.pdf-page') as HTMLElement).dataset.page)); return; }
+        if (performance.now() - began > 10000) { done(-1); return; }
+        requestAnimationFrame(look);
+      };
+      look();
+    });
+  });
+  // the page under the reader's eyes, or one of its neighbours on the
+  // screen -- not page 22, which is where the band above them begins
+  expect(first).toBeGreaterThan(28);
+});
