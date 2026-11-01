@@ -7,7 +7,7 @@ import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, history
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind, revealThirdDown } from './findBar';
+import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind, revealThirdDown, setFindQuery } from './findBar';
 import { collectHeadings, type Heading } from './outline';
 import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, Transaction, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
@@ -1598,6 +1598,8 @@ export class SatrEditor {
   }
   get hasFocus(): boolean { return this.view.hasFocus; }
   openFind(replace = false): void { openFind(this.view, replace && !this.isReadOnly); }
+  /** Look for this word, from the search panel: one search, two places. */
+  setFindQuery(query: string): void { setFindQuery(this.view, query); }
   closeFind(): void { closeFind(this.view); }
   get findOpen(): boolean { return isFindOpen(this.view.state); }
   headings(): Heading[] { return collectHeadings(this.view.state); }

@@ -248,6 +248,10 @@ function createPanel(view: EditorView): Panel {
     const invalid = Boolean(s.query) && !searchRegExp(s.query);
     // A right-to-left query (Persian) puts the count on the left, where the
     // text ends, in Persian digits.
+    // The query can be set from outside (the search panel: one word, two
+    // places), and then the field has to say what is being looked for.
+    // Never while it is being typed into.
+    if (find.value !== s.query && document.activeElement !== find) find.value = s.query;
     markQuery(dom, count, s.query);
     count.textContent = invalid ? 'Invalid' : countLabel(s.query, index, matches.length);
     count.style.display = s.query ? '' : 'none';
@@ -262,6 +266,7 @@ function createPanel(view: EditorView): Panel {
     // From the caret (the note's selection start), not from the old match.
     const m = matchFrom(view.state, query, view.state.selection.main.from);
     view.dispatch({ effects: [setFind.of({ query, current: m }), ...scrollTo(view, m)] });
+    told(query);
   };
   const flush = (): void => { if (timer !== undefined) search(); };
   find.addEventListener('input', () => {
@@ -320,6 +325,7 @@ function createPanel(view: EditorView): Panel {
       const s = view.state.field(findField);
       find.value = s.query;
       render(view.state);
+      if (quietly) return; // raised by the search panel, which is being typed into
       (s.replaceMode && s.query ? replace : find).focus();
       if (!(s.replaceMode && s.query)) find.select();
     },
@@ -338,7 +344,23 @@ function createPanel(view: EditorView): Panel {
 export const findBar: Extension = [findField, findDecorations];
 
 /** Open the bar; with replace = true, with the replace row down. */
-export function openFind(view: EditorView, replace = false): void {
+/**
+ * The bar, up and ready to be typed into.
+ *
+ * `focus` is how the search panel opens it: the two are one search in two
+ * places, so a word typed in the panel brings the bar up showing it --
+ * but the reader is typing in the panel, and pulling the caret out of
+ * their hands mid-word would be the opposite of showing them their
+ * search.
+ */
+export function openFind(view: EditorView, replace = false, focus = true): void {
+  quietly = !focus;
+  try { raiseFind(view, replace, focus); } finally { quietly = false; }
+}
+/** Set while the bar is being raised for someone other than the reader,
+ *  so the panel it mounts does not take the keyboard. */
+let quietly = false;
+function raiseFind(view: EditorView, replace: boolean, focus: boolean): void {
   replace = replace && !view.state.readOnly;
   const s = view.state.field(findField);
   // Seed with the selected text (single line), as Obsidian does.
@@ -349,6 +371,7 @@ export function openFind(view: EditorView, replace = false): void {
   if (s.open) {
     // Already open: keep the query (seeding is only on opening).
     view.dispatch({ effects: setFind.of({ replaceMode: replace || s.replaceMode }) });
+    if (!focus) return;
     const input = view.dom.querySelector<HTMLInputElement>(replace ? '.document-replace-input input' : '.document-search-input input');
     input?.focus();
     if (!replace) input?.select();
@@ -361,9 +384,39 @@ export function openFind(view: EditorView, replace = false): void {
   if (current) view.dispatch({ effects: scrollTo(view, current) });
 }
 
+/**
+ * What the bar is looking for, whenever that changes -- for the search
+ * panel, which shows the same word. A plain window event rather than a
+ * wiring: the bar is a CodeMirror panel built deep inside the editor, and
+ * one listener in main.ts is cheaper than a callback threaded through
+ * three constructors.
+ */
+export const FIND_QUERY = 'satr:find-query';
+const told = (query: string): void => {
+  window.dispatchEvent(new CustomEvent(FIND_QUERY, { detail: query }));
+};
+
+/**
+ * Look for this, from outside: the search panel and the find bar are two
+ * views of one search. Nothing to look for closes the bar -- "clear
+ * either, both go quiet".
+ */
+export function setFindQuery(view: EditorView, query: string): void {
+  const s = view.state.field(findField, false);
+  if (!s) return;
+  if (!query) { if (s.open) closeFind(view); return; }
+  if (!s.open) openFind(view, false, false);
+  if (view.state.field(findField).query === query) return;
+  const m = matchFrom(view.state, query, view.state.selection.main.from);
+  view.dispatch({ effects: [setFind.of({ query, current: m }), ...scrollTo(view, m)] });
+}
+
 export function closeFind(view: EditorView): void {
   const s = view.state.field(findField);
   if (!s.open) return;
+  // Shut is the same as empty to everyone watching: the panel's field
+  // clears with this one.
+  told('');
   const panel = view.dom.querySelector('.document-search-container');
   const hadFocus = Boolean(panel && panel.contains(document.activeElement));
   keepingPlace(view, () => view.dispatch({

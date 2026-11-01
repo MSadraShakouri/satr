@@ -9,6 +9,7 @@ import 'katex/dist/katex.min.css';
 import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
+import { FIND_QUERY } from './findBar';
 import { renderMarkdown, sizeListMarkers } from './markdown';
 import { highlightCodeBlocks } from './codeHighlight';
 import { isHtmlFile, showHtmlFile } from './htmlFiles';
@@ -3046,6 +3047,13 @@ document.querySelector('#nav-new')!.addEventListener('click', () => newTab());
 // The bar never takes focus from the note (no keyboard flicker).
 document.querySelector('#navbar')!.addEventListener('mousedown', (event) => event.preventDefault());
 renderNavButtons();
+// The other way round: whatever the note's find bar is looking for, the
+// search panel shows. The document's find bar already tells the panel
+// itself (mountPdfChrome's `told`).
+window.addEventListener(FIND_QUERY, (event) => {
+  if (pdfChrome) return;
+  sidebar.setQuery((event as CustomEvent<string>).detail ?? '');
+});
 // Find: one bar for find and replace (its chevron drops the replace row).
 function find(replace = false): void {
   // A document has no text to edit and no editor to find in: the same
@@ -3192,7 +3200,18 @@ const sidebar = createRightSidebar(rightPanel, {
   // One word for the two of them: what the panel is looking for is what the
   // find bar is looking for, so a reader never has to type it twice and
   // emptying either one calls the whole search off.
-  onQuery: (query) => pdfChrome?.ask(query),
+  // The panel and the nav search are one search in two places, both ways
+  // round: typing in either shows it in the other, and clearing either
+  // quiets both. A document's find bar is told through its chrome; a
+  // note's through the editor's own bar.
+  onQuery: (query) => {
+    if (pdfChrome) { pdfChrome.ask(query); return; }
+    // The bar comes up showing the word, but never takes the keyboard --
+    // the reader is typing in the panel. In the reading view there is no
+    // bar to show: the magnifier switches to the editor for that, and a
+    // keystroke in the panel is not a reader asking to be moved.
+    if (mode === 'edit') editor.setFindQuery(query);
+  },
   onDocumentHit: (index) => {
     toggleOutline(false);
     pdfView?.showHits(documentHits, index);

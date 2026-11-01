@@ -261,6 +261,14 @@ export function mountPdfChrome(handle: PdfHandle, themed: PdfThemeControl, deps:
   function ask(query: string): void {
     if (field.value === query) return;
     field.value = query;
+    // The panel and the bar are one search in two places: a word typed in
+    // the panel brings the bar up showing it, and clearing the panel puts
+    // the bar away. The bar is shown without being focused -- the reader
+    // is typing in the panel, and taking the keyboard off them mid-word
+    // would be the opposite of showing them their search.
+    findbar.classList.toggle('mod-hidden', !query);
+    document.body.classList.toggle('is-pdf-finding', Boolean(query));
+    markQuery(findbar, tally, query);
     if (!query) {
       hits = [];
       at = -1;
