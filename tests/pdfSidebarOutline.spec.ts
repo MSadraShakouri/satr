@@ -189,3 +189,19 @@ test('one row of the contents is marked, where a page carries three headings', a
   await expect(marked).toHaveCount(1);
   await expect(marked).toContainText('A smaller heading');
 });
+
+test('the contents of a Persian document are laid out the way it reads', async ({ page }) => {
+  await bootPdf(page, tinyPdf(4, [], ['جلسه اول', 'جلسه دوم', 'جلسه سوم']));
+  await openOutline(page);
+  const tree = page.locator('#right-panel .outline-tree, #right-panel [class*="tree"]').first();
+  await expect(page.locator('#right-panel .tree-item-self')).toHaveCount(3, { timeout: 20000 });
+  // A document has no text in the editor to take a direction from, so the
+  // tree was laid out left to right over Persian rows: the indent, the
+  // guide line and the chevrons all sat at the end of a line instead of
+  // its start, and the depth could not be seen. It takes the direction of
+  // the contents themselves.
+  await expect(tree).toHaveAttribute('dir', 'rtl');
+  const style = await page.locator('#right-panel .tree-item-self').first()
+    .evaluate((row: HTMLElement) => getComputedStyle(row).direction);
+  expect(style).toBe('rtl');
+});

@@ -3194,7 +3194,15 @@ const sidebar = createRightSidebar(rightPanel, {
   // A note another app handed over is open at a token, not at a path: the
   // rows ask for its real name rather than reading "satr-open" out of it.
   externalName: (path) => (isExternalPath(path) ? displayNameForPath(path) : null),
-  noteDir: () => majorityDirection(editor.getValue()),
+  // The tree is laid out the way its rows read, which for a note is the
+  // note's own majority direction. A document has no text in the editor to
+  // ask -- it was answering "left to right" for a Persian handout, and the
+  // indent, the guide lines and the chevrons all sat on the end of the line
+  // instead of its start, so the depth of the contents could not be seen.
+  // A document answers with its contents instead.
+  noteDir: () => (pdfView
+    ? majorityDirection(pdfHeadings.map((heading) => heading.text).join('\n'))
+    : majorityDirection(editor.getValue())),
   // What the search is actually reading, which is not always what the scope
   // is called: with subfolders off a space searches the open note's own
   // folder, and in All files the walker searches the folder it is standing
