@@ -1825,21 +1825,41 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     const raster = rasterFor(width, height);
     const made = sheet(width, height, raster);
     if (!made) return;
-    const task = engine.renderPageRectRaw(document_, slab.proxy,
-      { origin: { x: rect.x, y: rect.y }, size: { width: rect.width, height: rect.height } },
-      { scaleFactor: scale, dpr: raster, withAnnotations: true });
-    slab.detailTask = task;
-    let picture: Pixels;
-    try {
-      picture = await task.toPromise();
-    } catch {
-      if (slab.detailZoom === drawnAt) slab.detailZoom = 0;
-      return;
+    const tall = made.canvas.height;
+    const slices = slicesFor(made.canvas.width * tall);
+    // In strips, with the thread handed back between them, exactly as the
+    // whole-page picture is drawn. A tile is the largest thing the engine
+    // is ever asked for -- four million pixels of his book at a double
+    // zoom -- and asking for it in one call held the thread for a sixth of
+    // a second in the middle of the gesture that had asked for it.
+    for (let slice = 0; slice < slices; slice += 1) {
+      const from = Math.round((slice * tall) / slices);
+      const to = Math.round(((slice + 1) * tall) / slices);
+      const top = slice ? from - 1 : 0;
+      const began = performance.now();
+      const task = engine.renderPageRectRaw(document_, slab.proxy,
+        { origin: { x: rect.x, y: rect.y + top / (scale * raster) },
+          size: { width: rect.width, height: (to - top) / (scale * raster) } },
+        { scaleFactor: scale, dpr: raster, withAnnotations: true });
+      slab.detailTask = task;
+      let picture: Pixels;
+      try {
+        picture = await task.toPromise();
+      } catch {
+        if (slab.detailZoom === drawnAt) slab.detailZoom = 0;
+        return;
+      }
+      costs(picture.width * picture.height, performance.now() - began);
+      // Left behind between strips, the same as a page is: the rest of
+      // the tile is not drawn and what landed is not put up.
+      if (slab.detailTask !== task || !standing(slab).near) {
+        if (slab.detailTask === task && slab.detailZoom === drawnAt) { slab.detailTask = null; slab.detailZoom = 0; }
+        return;
+      }
+      if (slice === 0 && picture.width !== made.canvas.width) made.canvas.width = picture.width;
+      made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, top);
+      if (slice + 1 < slices) await breathe();
     }
-    if (slab.detailTask !== task) return;
-    made.canvas.width = picture.width;
-    made.canvas.height = picture.height;
-    made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
     drawPhotos(slab, made.canvas, rect);
     made.canvas.className = 'pdf-raster pdf-detail';
     slab.detail?.remove();

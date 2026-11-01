@@ -1623,3 +1623,46 @@ test('at the top of a document, the counter says the first page', async ({ page 
   await page.waitForTimeout(400);
   expect(await page.locator('.pdf-counter').textContent()).toBe('1 / 6');
 });
+
+test.describe('a sharp tile, drawn in strips', () => {
+  test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 3 });
+  const PAGES = tinyPdf(6);
+
+test('a sharp tile is asked for in pieces, so no one of them holds the gesture', async ({ page }) => {
+  await boot(page, { 'book.pdf': PAGES }, 'book.pdf');
+  await page.locator('.pdf-page canvas').first().waitFor();
+  await page.waitForTimeout(600);
+  // The engine the app draws with, not a copy: every rectangle asked of
+  // it from here is written down.
+  await page.evaluate(async () => {
+    const hook = (window as unknown as { __satr: { load: (path: string) => Promise<Record<string, unknown>> } }).__satr;
+    const module_ = await hook.load('/src/pdfiumEngine.ts');
+    const engine = await (module_.pdfium as () => Promise<Record<string, unknown>>)();
+    const asks: { x: number; y: number; height: number; width: number }[] = [];
+    (window as unknown as { __asks: typeof asks }).__asks = asks;
+    const was = (engine.renderPageRectRaw as (...args: unknown[]) => unknown).bind(engine);
+    engine.renderPageRectRaw = (document_: unknown, sheet: unknown,
+      rect: { origin: { x: number; y: number }; size: { height: number; width: number } }, options: unknown) => {
+      asks.push({ x: rect.origin.x, y: rect.origin.y, height: rect.size.height, width: rect.size.width });
+      return was(document_, sheet, rect, options);
+    };
+  });
+  await dragZoom(page, 200); // in, and lifted: the full tile follows
+  await page.waitForTimeout(1600);
+  const asks = await page.evaluate(() => (window as unknown as { __asks: { x: number; y: number; height: number; width: number }[] }).__asks);
+  // A tile is the part of the page the reader can see, and zoomed in
+  // that part starts somewhere in the middle of it. The whole-page
+  // picture always starts at the left edge, which is what tells the two
+  // apart in this list.
+  const tile = asks.filter((ask) => ask.x > 1);
+  expect(tile.length).toBeGreaterThan(1); // in pieces, not in one go
+  // down the tile in order, with no band of it missed out
+  let reach = tile[0].y;
+  for (const ask of tile) {
+    expect(ask.y).toBeLessThanOrEqual(reach + 0.01);
+    reach = Math.max(reach, ask.y + ask.height);
+  }
+  expect(reach).toBeGreaterThan(tile[0].y + 1); // and it covers ground
+});
+});
+
