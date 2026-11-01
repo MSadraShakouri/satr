@@ -595,7 +595,7 @@ const DETAIL_DRIFT = 0.15;
  * than against the part of the page actually showing, which is how a page
  * barely on screen could ask for a tile larger than the budget.
  */
-const DETAIL_MARGIN = 0.2;
+const DETAIL_MARGIN = 0.5;
 /** Between two pages, in CSS pixels at any zoom — a gap that grew with the
  *  zoom would push the pages apart as they were read. */
 const GAP = 8;
@@ -606,6 +606,21 @@ const GAP = 8;
  *  page sharp at a phone's 2.75 or 3 without a canvas the size of a room
  *  when it is zoomed all the way in. */
 const maxCanvasPixels = (): number => (Math.min(window.innerWidth, window.innerHeight) < 600 ? 5_242_880 : 16_777_216);
+/**
+ * And what the sharp tile may cost, which is a different question.
+ *
+ * The page budget above is small on a phone because a whole-page picture
+ * is drawn for every page in the band and held for every page in the
+ * keep band: twenty of them at once. A tile is one per page and only for
+ * the pages at the reader's eyes, and it is the only thing carrying the
+ * sharpness while they are zoomed in -- so it is worth more than a page
+ * is. It is also what decides how far past the screen the sharp layer
+ * reaches: the margin in detailWanted is capped by whatever is left of
+ * this after the screen itself is paid for, so a budget of 5.2 million
+ * on a 390x760 phone at three device pixels to the CSS pixel left room
+ * for a fifth of a screen and no more, whatever DETAIL_MARGIN said.
+ */
+const maxTilePixels = (): number => (Math.min(window.innerWidth, window.innerHeight) < 600 ? 12_582_912 : 16_777_216);
 /** Pages are drawn one screen either side of the one being read, and their
  *  pictures kept until they are this far off it, so turning back a page
  *  costs nothing. Gander draws 3 and keeps 5 — of pages, not screens. */
@@ -1945,13 +1960,19 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     };
     if (!(seen.width > 0) || !(seen.height > 0)) return null;
     const raster = Math.max(1, window.devicePixelRatio || 1);
-    const room = Math.sqrt(maxCanvasPixels() / Math.max(1, seen.width * seen.height * raster * raster));
+    // Measured against the screen, not against however little of this
+    // page is on it. A page coming up from below has a finger's width of
+    // itself visible, and a margin reckoned from that is a margin of
+    // nothing: the page the reader is scrolling into was getting a tile
+    // the height of the sliver it had already shown, which is the one
+    // place the sharpness was most obviously missing.
+    const room = Math.sqrt(maxTilePixels() / Math.max(1, pane.width * pane.height * raster * raster));
     // None at all while a finger is down. The margin buys a tile that
     // survives the small scroll afterwards, and nobody scrolls in the
     // middle of a zoom: under a hand it is pixels bought for a time
     // nobody is in, paid for out of the gesture's own frames.
     const share = sweeping() ? 0 : Math.max(0, Math.min(DETAIL_MARGIN, (room - 1) / 2));
-    const margin = { x: seen.width * share, y: seen.height * share };
+    const margin = { x: pane.width * share, y: pane.height * share };
     const left = clamp((pane.left - margin.x - box.left) / scale, 0, slab.width);
     const right = clamp((pane.right + margin.x - box.left) / scale, 0, slab.width);
     const top = clamp((pane.top - margin.y - box.top) / scale, 0, slab.height);

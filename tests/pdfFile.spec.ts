@@ -1596,12 +1596,18 @@ test('a pinch that drifts a little keeps the tile it already has', async ({ page
   await expect.poll(same, { timeout: 15000 }).toBe(false);
 });
 
-test('a tile reaches a fifth past what is on the screen, no further', async ({ page }) => {
-  // The margin was a quarter of the whole pane, measured against the pane
-  // rather than against the part of the page actually showing, which is
-  // how a page barely on screen could ask for a canvas over the cap --
-  // and the cap was then met by dropping the tile's resolution, which is
-  // the one thing it is drawn for (DETAIL_MARGIN).
+test('a tile reaches well past the screen, and never pays for it in resolution', async ({ page }) => {
+  // The margin used to be reckoned against the part of the page actually
+  // showing, and capped by the budget for a whole page: on a phone that
+  // came to a fifth of a screen and no more, which is what he saw --
+  // "it only has the screen and not much around it". It is reckoned
+  // against the screen now, and against a budget of the tile's own.
+  //
+  // What must not come back is the fault that rule was written for: a
+  // rect so big that the cap is met by dropping the tile's resolution,
+  // which is the one thing a tile is drawn for. Both halves are checked
+  // here -- it reaches past the screen, AND it is still drawn at the
+  // screen's own device pixels.
   await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
   await readThis(page, 'handout.pdf');
   await pinch(page, 3);
@@ -1610,19 +1616,25 @@ test('a tile reaches a fifth past what is on the screen, no further', async ({ p
   // owes a full-resolution replacement as soon as the hand is off. This
   // test is about the one that lands at rest, so wait for the handover.
   await page.waitForTimeout(1200);
-  const { tile, seen } = await page.evaluate(() => {
-    const canvas = document.querySelector('.pdf-detail') as HTMLElement;
+  const { tile, seen, raster, pixels } = await page.evaluate(() => {
+    const canvas = document.querySelector('.pdf-detail') as HTMLCanvasElement;
     const sheet = canvas.closest('.pdf-page') as HTMLElement;
     const pane = document.querySelector('#preview-pane') as HTMLElement;
     const page_ = sheet.getBoundingClientRect();
     const view = pane.getBoundingClientRect();
+    const wide = parseFloat(canvas.style.width);
     return {
-      tile: parseFloat(canvas.style.width),
+      tile: wide,
       seen: Math.min(page_.right, view.right) - Math.max(page_.left, view.left),
+      raster: canvas.width / wide,
+      pixels: canvas.width * canvas.height,
     };
   });
   expect(tile).toBeGreaterThan(seen * 1.3);
-  expect(tile).toBeLessThan(seen * 1.45); // a quarter of the pane either side would be 1.5
+  // Drawn at the screen's own pixels, not shrunk to fit a budget.
+  expect(raster).toBeCloseTo(await page.evaluate(() => window.devicePixelRatio), 1);
+  // And inside the tile's budget, which is what makes that possible.
+  expect(pixels).toBeLessThanOrEqual(12_582_912);
 });
 
 test('at the top of a document, the counter says the first page', async ({ page }) => {
@@ -1917,5 +1929,45 @@ test.describe('the engine on a thread of its own', () => {
     // back would fail this twice over.
     expect(busy.frames).toBeGreaterThan(30);
     expect(busy.worst).toBeLessThan(70);
+  });
+});
+
+test.describe('the sharp layer, while the reader is still moving', () => {
+  test.use({ viewport: { width: 390, height: 760 }, deviceScaleFactor: 3 });
+
+  /** How much of the pane a sharp tile covers right now, 0 to 1, and how
+   *  far past the screen the sharp layer reaches, in screens. */
+  const sharpness = (page: Page) => page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const pan = pane.getBoundingClientRect();
+    let covered = 0;
+    let beyond = 0;
+    for (const tile of document.querySelectorAll('canvas.pdf-detail')) {
+      const box = tile.getBoundingClientRect();
+      const wide = Math.min(pan.right, box.right) - Math.max(pan.left, box.left);
+      const tall = Math.min(pan.bottom, box.bottom) - Math.max(pan.top, box.top);
+      if (wide > 0 && tall > 0) covered += wide * tall;
+      if (box.right > pan.left && box.left < pan.right) {
+        beyond = Math.max(beyond, (pan.top - box.top) + (box.bottom - pan.bottom));
+      }
+    }
+    return { share: covered / Math.max(1, pan.width * pan.height), beyond: beyond / Math.max(1, pan.height) };
+  });
+
+  test('a page zoomed in is drawn well past the edges of the screen', async ({ page }) => {
+    // "I feel like it only has the screen and not much around it." The
+    // tile's margin used to be reckoned as a share of however much of
+    // the page was on the screen, and capped by a pixel budget sized for
+    // whole pages -- which on this phone left a fifth of a screen and no
+    // more, whatever the margin said.
+    await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+    await readThis(page, 'handout.pdf');
+    await dragZoom(page, 147); // twice the fitted width
+    await page.waitForTimeout(1500);
+    const { share, beyond } = await sharpness(page);
+    expect(share).toBeGreaterThan(0.9);
+    // Half a screen either way is the aim; a third of a screen in total
+    // is the line, which the old fifth-of-a-screen fails.
+    expect(beyond).toBeGreaterThan(0.33);
   });
 });
