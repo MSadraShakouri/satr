@@ -818,24 +818,39 @@ test('the page in front of the reader is drawn before the pages behind them', as
   // real: a second of it, measured on a flick of his 528-page book.
   await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
   await readThis(page, 'long.pdf');
-  await page.waitForTimeout(800);
-  // everything drawn so far goes: this is about what gets drawn next
+  // Before the background has begun sketching the rest of the document:
+  // this is about the order pages are asked of the engine in, and a page
+  // already in the sketch book is not asked for at all.
+  await page.waitForTimeout(300);
+  // Everything drawn so far goes: this is about what comes next, and in
+  // what order it arrives -- not what sits earliest in the document. A
+  // whole band of pages can come back out of the sketch book on one
+  // frame, and reading the column top down would always name the page
+  // nearest its head.
   const first = await page.evaluate(async () => {
     const pane = document.querySelector('#preview-pane') as HTMLElement;
     const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
     for (const canvas of document.querySelectorAll('.pdf-page canvas')) canvas.remove();
+    const arrived: number[] = [];
+    const watch = new MutationObserver((changes) => {
+      for (const change of changes) {
+        for (const node of change.addedNodes) {
+          if (!(node instanceof HTMLCanvasElement)) continue;
+          const sheet = node.closest('.pdf-page') as HTMLElement | null;
+          const number = Number(sheet?.dataset.page);
+          if (number) arrived.push(number);
+        }
+      }
+    });
+    watch.observe(document.querySelector('.pdf-doc')!, { childList: true, subtree: true });
     pane.scrollTop = sheets[29].offsetTop;
     pane.dispatchEvent(new Event('scroll'));
     const began = performance.now();
-    return new Promise<number>((done) => {
-      const look = (): void => {
-        const drawn = document.querySelector('.pdf-page canvas');
-        if (drawn) { done(Number((drawn.closest('.pdf-page') as HTMLElement).dataset.page)); return; }
-        if (performance.now() - began > 10000) { done(-1); return; }
-        requestAnimationFrame(look);
-      };
-      look();
-    });
+    while (!arrived.length && performance.now() - began < 10000) {
+      await new Promise((done) => { requestAnimationFrame(() => done(null)); });
+    }
+    watch.disconnect();
+    return arrived[0] ?? -1;
   });
   // the page under the reader's eyes, or one of its neighbours on the
   // screen -- not page 22, which is where the band above them begins
@@ -851,7 +866,7 @@ test('the pages after the one being read are drawn before the pages before it', 
   // they were about to turn to.
   await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
   await readThis(page, 'long.pdf');
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(300); // before the background sketches them
   const order = await page.evaluate(async () => {
     const pane = document.querySelector('#preview-pane') as HTMLElement;
     const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
@@ -958,6 +973,93 @@ test('the pages left behind hand back what they were holding', async ({ page }) 
   expect(held.second).toBe(0);
   expect(held.here).toBeGreaterThan(0); // and the page landed on is drawn
   expect(held.pages).toBeLessThan(24); // the band, not the document
+});
+
+test('the pages nobody has looked at yet are sketched in the background', async ({ page }) => {
+  // His last ask for the reader: the soft pictures should be there
+  // already rather than drawn as the pages go past. The band reaches
+  // eight screens either way; everything beyond it is drawn while
+  // nothing else is happening, outwards from wherever the reader is, and
+  // kept at a hundred pixels a page.
+  await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  await expect(page.locator('.pdf-doc')).toHaveAttribute('data-sketched', '40', { timeout: 60000 });
+});
+
+test('a page sketched already is up on the frame the reader lands on it', async ({ page }) => {
+  // The point of keeping them: arriving at a page thirty down the
+  // document is a canvas going back into a box, on the same frame the
+  // scroll is heard, with nothing asked of the engine and nothing
+  // waiting in a queue.
+  await boot(page, { 'long.pdf': tinyPdf(40) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  await expect(page.locator('.pdf-doc')).toHaveAttribute('data-sketched', '40', { timeout: 60000 });
+  const there = await page.evaluate(async () => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const sheets = [...document.querySelectorAll('.pdf-page')] as HTMLElement[];
+    const target = sheets[29]; // never been on the screen, never been drawn into
+    pane.scrollTop = target.offsetTop;
+    pane.dispatchEvent(new Event('scroll'));
+    // one frame: the band is re-planned on it, and that is all the time
+    // a picture that has already been drawn needs
+    await new Promise((done) => { requestAnimationFrame(() => done(null)); });
+    return target.querySelectorAll('canvas').length;
+  });
+  expect(there).toBeGreaterThan(0);
+});
+
+test('while the reader is still moving, the soft pictures come before the sharp ones', async ({ page }) => {
+  // In his words: prioritise the low quality ones when scrolling. A
+  // sharp page is a fifth of a second of the thread and is drawn for a
+  // place the reader has already left; a soft one is a fiftieth. So
+  // while the view is moving every page's soft picture outranks any
+  // page's sharp one, and the reader's own order -- this page, then
+  // outwards -- comes back the moment they stop.
+  await boot(page, { 'long.pdf': tinyPdf(60) }, 'long.pdf');
+  await readThis(page, 'long.pdf');
+  // straight off, before the background has had time to sketch the
+  // document: every page the flick crosses has to be asked of the engine
+  const seen = await page.evaluate(async () => {
+    const pane = document.querySelector('#preview-pane') as HTMLElement;
+    const soft = new Set<number>();
+    let sharp = 0;
+    let softWhenSharp = -1;
+    const watch = new MutationObserver((changes) => {
+      for (const change of changes) {
+        for (const node of change.addedNodes) {
+          if (!(node instanceof HTMLCanvasElement)) continue;
+          const sheet = node.closest('.pdf-page') as HTMLElement | null;
+          const number = Number(sheet?.dataset.page);
+          if (!number) continue;
+          if (node.classList.contains('pdf-rough')) soft.add(number);
+          else { sharp += 1; if (softWhenSharp < 0) softWhenSharp = soft.size; }
+        }
+      }
+    });
+    watch.observe(document.querySelector('.pdf-doc')!, { childList: true, subtree: true });
+    // a flick: still moving, so the planning happens with the hand down
+    for (let step = 0; step < 12; step += 1) {
+      pane.scrollTop += pane.clientHeight * 2;
+      pane.dispatchEvent(new Event('scroll'));
+      await new Promise((done) => setTimeout(done, 30));
+    }
+    watch.disconnect(); // what follows is the reader having stopped
+    const moving = { soft: soft.size, sharp, softWhenSharp };
+    await new Promise((done) => setTimeout(done, 2000));
+    const landed = document.elementsFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+      .find((el) => el.classList.contains('pdf-page')) as HTMLElement | undefined;
+    return { ...moving, sharpened: landed?.querySelectorAll('canvas.pdf-raster').length ?? 0 };
+  });
+  // The pages flying past went soft, a run of them, and the first
+  // picture to land after the flick began was one of those -- not a
+  // whole page at the screen's own pixels for somewhere already gone.
+  // Measured on the old order, same flick: eight sharp pages drawn back
+  // to back before a single soft one appeared.
+  expect(seen.soft).toBeGreaterThan(6);
+  expect(seen.softWhenSharp).toBeGreaterThan(0);
+  expect(seen.soft).toBeGreaterThan(seen.sharp);
+  // and when they stop, the page they stopped on is drawn properly
+  expect(seen.sharpened).toBeGreaterThan(0);
 });
 
 test('a document kept as bytes in the store opens', async ({ page }) => {

@@ -476,6 +476,18 @@ const KEEP_SCREENS = 2.5;
  *  and a hundred pixels of a page is 40KB where a sharp one is megabytes. */
 const ROUGH_SCREENS = 8;
 const ROUGH_PX = 100;
+/**
+ * How much of the sketch book is worth holding.
+ *
+ * A hundred-pixel picture of an A4 page is 100 by 141, four bytes a
+ * pixel: 56KB. This is about four hundred of them -- the whole of his
+ * 528-page book is 30MB, so a long book is held from wherever he is
+ * reading outwards and the far end of it is let go of first.
+ */
+const SKETCH_BYTES = 24 * 1024 * 1024;
+/** How long nothing at all has to happen before the rest of the document
+ *  is sketched in the background, and how long a touch stops it for. */
+const IDLE_MS = 500;
 /** After the reader stops, before the band is drawn again. */
 const SETTLE_MS = 120;
 /** A step of zoom from the chrome — a button, a fit stop, a double tap —
@@ -879,12 +891,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // rough one, shrunk out of the picture already drawn rather than asked
     // of the engine again, so coming back up a document shows the page
     // immediately.
-    if (slab.base && !slab.rough) keepRough(slab, slab.base);
+    if (slab.base?.isConnected && !slab.rough) keepRough(slab, slab.base);
     slab.base?.remove(); slab.base = null; slab.baseScale = 0;
     slab.detail?.remove(); slab.detail = null; slab.detailRect = null; slab.detailZoom = 0;
   };
-  /** Forget a page altogether, rough picture and all: it is far enough away
-   *  that even a hundred pixels of it is not worth the memory. */
+  /** Forget a page: everything it is holding goes back, and the page box
+   *  is empty again. Its hundred-pixel picture is not thrown away with
+   *  the rest -- that goes to the sketch book, 56KB, and is what makes
+   *  coming back past this page cost nothing. */
   const forgetWhole = (slab: Slab): void => {
     forget(slab);
     stop(slab.roughTask); slab.roughTask = null;
@@ -946,6 +960,59 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     });
   };
 
+  /**
+   * The sketch book: a hundred-pixel picture of every page that has been
+   * drawn, kept by page number and not by slab, so it outlives the page
+   * itself.
+   *
+   * Scrolling fast used to run off the end of what had been drawn -- the
+   * rough pictures reach eight screens either way, and a hard flick
+   * crosses that in a moment -- and what went past was empty boxes until
+   * the engine caught up, a page at a time, twenty-odd milliseconds each.
+   * He asked for them to be there already. A page's picture at this size
+   * costs a fiftieth of what it costs to draw and a fiftieth of what a
+   * sharp one costs to hold, so once the engine has drawn one there is no
+   * reason to ever give it back: coming back past a page, jumping into
+   * the middle of the book, flicking through fifty of them -- all of it
+   * is a canvas going back into the page box, with nothing asked of the
+   * engine at all.
+   *
+   * What is not already drawn gets drawn in the background, outwards from
+   * where the reader is, while nothing else is happening (crawl).
+   */
+  const sketches = new Map<number, HTMLCanvasElement>();
+  let sketchBytes = 0;
+  /** Keep a page's rough picture, and let go of the ones farthest from
+   *  the reader if the book is now too heavy to carry. */
+  const bank = (index: number, canvas: HTMLCanvasElement): void => {
+    const already = sketches.get(index);
+    if (already === canvas) return;
+    if (already) sketchBytes -= already.width * already.height * 4;
+    sketches.set(index, canvas);
+    sketchBytes += canvas.width * canvas.height * 4;
+    if (sketchBytes > SKETCH_BYTES) {
+      const here = pageAt(scroller.scrollTop - columnTop + scroller.clientHeight / 2);
+      const farthest = [...sketches.keys()].sort((first, second) => Math.abs(second - here) - Math.abs(first - here));
+      for (const page of farthest) {
+        if (sketchBytes <= SKETCH_BYTES) break;
+        if (page === index || slabs[page]?.rough) continue; // not one that is up on the screen
+        const old = sketches.get(page);
+        if (!old) continue;
+        sketchBytes -= old.width * old.height * 4;
+        sketches.delete(page);
+        old.width = 0; // hand the bitmap back now rather than at the collector's leisure
+        old.height = 0;
+      }
+    }
+    doc.dataset.sketched = String(sketches.size);
+  };
+  /** Put a page's kept picture back up, with its photographs over it if
+   *  nothing better has drawn them. */
+  const showSketch = (slab: Slab, canvas: HTMLCanvasElement): void => {
+    if (!slab.photos.length) drawPhotos(slab, canvas, { x: 0, y: 0, width: slab.width, height: slab.height });
+    showRough(slab, canvas);
+  };
+
   /** Shrink a picture already drawn into the rough one. */
   const keepRough = (slab: Slab, from: HTMLCanvasElement): void => {
     const width = ROUGH_PX;
@@ -955,29 +1022,43 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     try { made.context.drawImage(from, 0, 0, width, height); } catch { return; }
     showRough(slab, made.canvas);
   };
-  /** Put a rough picture up, underneath whatever sharp one there is. */
+  /** Put a rough picture up, underneath whatever sharp one there is --
+   *  and into the sketch book, which is where it stays. */
   const showRough = (slab: Slab, canvas: HTMLCanvasElement): void => {
     canvas.className = 'pdf-rough';
-    slab.rough?.remove();
+    if (slab.rough && slab.rough !== canvas) slab.rough.remove();
     slab.box.prepend(canvas);
     slab.rough = canvas;
+    bank(slab.page - 1, canvas);
   };
-  /** The whole page at a hundred pixels, for the wide band. */
+  /** The whole page at a hundred pixels, for the wide band -- out of the
+   *  sketch book if it has been drawn before, and otherwise drawn. */
   async function paintRough(slab: Slab): Promise<void> {
     if (!slab.proxy || slab.rough || slab.roughTask) return;
+    const kept = sketches.get(slab.page - 1);
+    if (kept) { showSketch(slab, kept); return; }
+    await sketchPage(slab);
+  }
+
+  /** One page at a hundred pixels, drawn and kept whether or not the page
+   *  is anywhere near the screen: this is the only thing that ever asks
+   *  the engine for a rough picture. */
+  async function sketchPage(slab: Slab): Promise<void> {
+    if (!slab.proxy || slab.roughTask) return;
     const scale = ROUGH_PX / Math.max(1, slab.width);
     const task = engine.renderPageRaw(document_, slab.proxy, { scaleFactor: scale, dpr: 1, withAnnotations: false });
     slab.roughTask = task;
     let picture: Pixels;
     try { picture = await task.toPromise(); }
     catch { if (slab.roughTask === task) slab.roughTask = null; return; }
-    if (slab.roughTask !== task || !standing(slab).rough) { slab.roughTask = null; return; }
-    slab.roughTask = null;
+    if (slab.roughTask === task) slab.roughTask = null;
+    if (shut) return;
     const made = sheet(picture.width, picture.height, 1);
     if (!made) return;
     made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, 0);
-    drawPhotos(slab, made.canvas, { x: 0, y: 0, width: slab.width, height: slab.height });
-    showRough(slab, made.canvas);
+    // On the screen it goes up; off it, it goes straight into the book.
+    if (!slab.rough && standing(slab).rough) showSketch(slab, made.canvas);
+    else bank(slab.page - 1, made.canvas);
   }
 
   /**
@@ -1125,13 +1206,21 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   const baseWanted = (): number => fit * Math.min(1, zoom);
 
   /** Is this page still waiting for this, now? Asked again at the moment
-   *  the work would start, because by then the reader has usually moved. */
+   *  the work would start, because by then the reader has usually moved.
+   *
+   *  While the view is moving, a page is only worth the engine's whole
+   *  attention while it is actually on the screen -- not a screen either
+   *  side of it. A page of his book is a tenth of a second to draw, and
+   *  a flick crosses a screen in less than that: what was being drawn
+   *  was pages the reader had already gone past, with the thread they
+   *  were drawn on being the same one the scroll runs on. */
   const stillWanted = (job: Job): boolean => {
     const where = standing(job.slab);
     if (!job.slab.proxy) return false;
     if (job.work === 'rough') return where.rough && !job.slab.rough && !job.slab.roughTask;
-    if (job.work === 'base') return where.near && job.slab.baseScale < baseWanted() * 0.99;
-    return where.near;
+    const close = Date.now() - movedAt < SETTLE_MS ? where.seen : where.near;
+    if (job.work === 'base') return close && job.slab.baseScale < baseWanted() * 0.99;
+    return close;
   };
 
   /**
@@ -1180,6 +1269,20 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    */
   const KINDS = 3;
   const KIND: Record<Work, number> = { rough: 0, detail: 1, base: 2 };
+  /**
+   * While the reader is still moving, though, that turns over: every
+   * page's rough picture comes before any page's sharp one.
+   *
+   * He asked for this in those words -- the low quality ones first when
+   * scrolling. A sharp page is a fifth of a second of the thread and is
+   * for a place the reader has already left; a rough one is a fiftieth,
+   * and is the difference between a flick that runs over soft pages and
+   * one that runs over empty boxes. The moment they stop, the order is
+   * the reader's own again and the page in front of them is sharpened.
+   */
+  const rank = (work: Work, steps: number, moving: boolean): number => (moving
+    ? KIND[work] * slabs.length * KINDS + steps
+    : steps * KINDS + KIND[work]);
 
   /** A frame to itself between one page and the next, so what was just
    *  drawn is painted and a scroll meanwhile is heard. A pane nobody is
@@ -1189,10 +1292,20 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     window.setTimeout(done, 80);
   });
 
+  /** Something came out of the sketch book on this plan, and has not
+   *  been on the screen yet. */
+  let unpainted = false;
   const pump = async (): Promise<void> => {
     if (drawing) return;
     drawing = true;
     try {
+      // A frame for the pages just put up out of the book, before the
+      // engine is asked for anything. They are already drawn and already
+      // in their boxes; without this they wait behind a whole page of
+      // the engine's time -- a tenth of a second on his book -- and the
+      // reader watches empty boxes for all of it. This is the whole of
+      // what he asked for: the soft ones, now, and the sharp one after.
+      if (unpainted) { unpainted = false; await breathe(); }
       while (queue.length) {
         // The move first, then the work: while a zoom is gliding, the
         // pages travel on the pictures they already have. Drawing one
@@ -1211,11 +1324,59 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
         }
         await breathe();
       }
-    } finally { drawing = false; }
+    } finally { drawing = false; rest(); }
+  };
+
+  /**
+   * The rest of the document, sketched while nobody is looking.
+   *
+   * The band draws what the reader can see and a little either side of
+   * it. This fills in everything else -- outwards from the page they are
+   * on, one page at a time, a frame apart -- so that a flick, a jump or
+   * a scrubbed scrollbar runs into pages that are already there instead
+   * of empty boxes and a queue. It is the cheapest picture there is: a
+   * hundred pixels across, a fiftieth of a page of his book to draw and
+   * a fiftieth of one to hold.
+   *
+   * It yields to everything. A hand on the glass, a glide still running,
+   * a band with work left in it, the sketch book full -- any of those and
+   * it stops where it is; a quiet half second and it starts again from
+   * wherever the reader has got to. The one cost it can impose is the
+   * page it is in the middle of when a finger lands, which on his book is
+   * twenty-odd milliseconds.
+   */
+  let crawling = false;
+  let idleTimer = 0;
+  const wanted = (): boolean => !shut && !drawing && !queue.length
+    && gliding?.playState !== 'running' && Date.now() - movedAt >= IDLE_MS
+    && sketchBytes < SKETCH_BYTES;
+  const crawl = async (): Promise<void> => {
+    if (crawling || !wanted()) return;
+    crawling = true;
+    try {
+      const here = pageAt(scroller.scrollTop - columnTop + scroller.clientHeight / 2);
+      for (let out = 0; out < slabs.length; out += 1) {
+        for (const index of out ? [here + out, here - out] : [here]) {
+          const slab = slabs[index];
+          if (!slab || !slab.proxy || sketches.has(index) || slab.roughTask) continue;
+          if (!wanted()) return; // the reader is back, or the book is full
+          await sketchPage(slab);
+          await breathe();
+        }
+      }
+    } finally { crawling = false; }
+  };
+  /** Nothing for half a second: carry on with the sketch book. */
+  const rest = (): void => {
+    window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => { void crawl(); }, IDLE_MS);
   };
 
   const drawBand = (): void => {
     const jobs: Job[] = [];
+    /** Pages whose picture is already drawn and only has to be put back,
+     *  nearest the reader first like everything else here. */
+    const recalled: { slab: Slab; steps: number; kept: HTMLCanvasElement }[] = [];
     const moving = Date.now() - movedAt < SETTLE_MS;
     // The page in the middle of the screen is the one being read, and
     // everything is ranked by how far from it it is.
@@ -1230,6 +1391,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     bandTo = band.last;
     for (let index = band.first; index <= band.last; index += 1) {
       const slab = slabs[index];
+      // A picture that is not in the document is not a picture this page
+      // has: the box can be emptied from outside -- and what is held is
+      // meant to be what is up.
+      if (slab.rough && !slab.rough.isConnected) slab.rough = null;
+      if (slab.base && !slab.base.isConnected) { slab.base = null; slab.baseScale = 0; }
       const where = standing(slab);
       if (!where.rough) { forgetWhole(slab); continue; } // right out of sight: all of it back
       if (!where.keep) forget(slab); // out of the sharp band: the rough picture stays
@@ -1238,12 +1404,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // scroll runs into soft pages rather than empty ones -- but a page
       // on the screen with nothing on it at all comes first.
       const steps = stepsFrom(slab, here);
-      if (!slab.rough && !slab.base && !slab.roughTask) {
-        jobs.push({ slab, work: 'rough', rank: steps * KINDS + KIND.rough });
+      if (!slab.rough && !slab.base) {
+        // Drawn before, at any point since the document was opened: it
+        // goes back up now, on this frame, without the engine being
+        // asked and without waiting in a queue behind anything.
+        const kept = sketches.get(index);
+        if (kept) recalled.push({ slab, steps, kept });
+        else if (!slab.roughTask) jobs.push({ slab, work: 'rough', rank: rank('rough', steps, moving) });
       }
       if (!where.near) continue;
-      if (slab.baseScale < baseWanted() * 0.99) {
-        jobs.push({ slab, work: 'base', rank: steps * KINDS + KIND.base });
+      if (slab.baseScale < baseWanted() * 0.99 && (!moving || where.seen)) {
+        jobs.push({ slab, work: 'base', rank: rank('base', steps, moving) });
       }
       const want = detailWanted(slab);
       if (!want) {
@@ -1255,7 +1426,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // place the reader is already leaving.
       if (moving) continue;
       if (slab.detailZoom === zoom && slab.detailRect && covers(slab.detailRect, want)) continue;
-      jobs.push({ slab, work: 'detail', rank: steps * KINDS + KIND.detail });
+      jobs.push({ slab, work: 'detail', rank: rank('detail', steps, moving) });
+    }
+    for (const page of recalled.sort((first, second) => first.steps - second.steps)) {
+      showSketch(page.slab, page.kept);
+      unpainted = true;
     }
     queue = jobs.sort((first, second) => first.rank - second.rank);
     void pump();
@@ -1977,6 +2152,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     destroy: () => {
       watchers.clear();
       window.clearTimeout(settleTimer);
+      window.clearTimeout(idleTimer);
       window.clearTimeout(placeTimer);
       shut = true;
       stopGlide();
