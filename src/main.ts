@@ -46,6 +46,11 @@ import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
+import { leaveDocumentsClosed, openedFine, openingUp, startTrouble } from './safeStart';
+
+// Before anything is read back. A start that never finishes leaves its mark
+// here, and the next one reads it and is careful (src/safeStart.ts).
+const howToStart = openingUp();
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
@@ -1700,6 +1705,16 @@ function loadTabs(): void {
     };
     const list = saved.tabs.map(read);
     if (list.some((t) => !t)) return;
+    // A start that is being careful (src/safeStart.ts): the notes come back,
+    // the documents do not. A document is the expensive thing to open and
+    // the thing that was open when this went wrong.
+    if (howToStart === 'session-reset') return;
+    const documents = list.filter((t) => t && isDocument(t.path)).length;
+    if (leaveDocumentsClosed(documents)) {
+      for (let i = 0; i < list.length; i += 1) {
+        if (list[i] && isDocument((list[i] as Tab).path)) list[i] = { path: '' };
+      }
+    }
     // One tab per note.
     const seen = new Set<string>();
     const active = list[Math.min(Math.max(0, saved.active | 0), list.length - 1)];
@@ -3545,6 +3560,14 @@ async function boot(): Promise<void> {
       instant: native,
       done: native ? () => { void SatrSplash.dismiss().catch(() => undefined); } : undefined,
     });
+    // The reader can see a file, so this start counts as one that worked.
+    // Two frames after the cover lifts, not before it: a start that wedges
+    // while the first file is being drawn must still be a start that failed.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      openedFine();
+      const trouble = startTrouble();
+      if (trouble) void showNotice(trouble, 8000);
+    }));
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */

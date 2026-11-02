@@ -5,6 +5,7 @@
 import { loadPrintOptions, savePrintOptions, type PrintOptions } from './printOptions';
 import { setTheme, themeChoice, type ThemeChoice } from './theme';
 import { formatTimestamp, setTimestampStyle, timestampLocaleTag, TIMESTAMP_CALENDARS, TIMESTAMP_LOCALES } from './timestamps';
+import { clearSession } from './safeStart';
 
 export interface Settings {
   fontSize: number;
@@ -295,6 +296,16 @@ export function openSettings(deps: SettingsDeps): void {
           ${toggle('searchDocuments', settings.searchDocuments)}
         </div>
       </div>
+      <div class="setting-group-title">If the app will not start</div>
+      <div class="setting-group">
+        <div class="setting-item">
+          <div class="setting-item-info">
+            <div class="setting-item-name">Start clean</div>
+            <div class="setting-item-description">Closes every tab and forgets the reading places and the shelf of page pictures, then starts the app again. <strong>Your notes and files are not touched</strong> — only where you were. Use it if the app stops answering; it does this by itself after two starts that do not finish.</div>
+          </div>
+          <button type="button" class="mod-warning" data-act="start-clean">Start clean</button>
+        </div>
+      </div>
       <div class="setting-group-title">Keyboard toolbar</div>
       <div class="setting-group">
         ${deps.tools().map((t) => `
@@ -367,6 +378,16 @@ export function openSettings(deps: SettingsDeps): void {
   el.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
     if (target.closest('.settings-back')) { closeSettings(); return; }
+    if (target.closest('[data-act="start-clean"]')) {
+      // The reader's own way out of a session that will not open, and the
+      // same one src/safeStart.ts takes by itself after two bad starts. The
+      // vault is not in what it clears.
+      if (window.confirm('Close every tab and forget the reading places? Your notes are not touched.')) {
+        clearSession();
+        window.location.reload();
+      }
+      return;
+    }
     const themeButton = target.closest<HTMLElement>('[data-theme]');
     if (themeButton) {
       const choice = themeButton.dataset.theme as ThemeChoice;
