@@ -6,7 +6,9 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). **0.18.2.** Notes are files in folders behind one storage
+open-file plugins). The code is **0.18.0**'s: 0.18.1 and 0.18.2 were released
+and withdrawn, and `package.json` is left carrying **0.18.2** so that nothing
+the releases depend on moves backwards. Notes are files in folders behind one storage
 interface: a virtual file system in IndexedDB on the web, and the device's
 own files in the app. GitHub Actions builds a signed debug APK for each `v*`
 tag, signed with one fixed key so every build installs over the last.
@@ -274,45 +276,23 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
 
-### The 0.18.2 round: the picture of the last screen cannot outlive the app (November 2026)
+### 0.18.1 and 0.18.2, released and withdrawn (November 2026)
 
-0.18.1 was wrong about its own bug. It added a watchdog for a start that
-fails, and the start was not failing — the app behind the screen had booted
-perfectly every time. What never left was the cover: the copy of the last
-screen that `index.html` paints before any of the app's code loads, so that a
-cold start is a screen instead of a white flash. It is full screen, it is on
-top of everything, and it passes touches straight through to the app beneath
-it. When it stays, every button still works, files really are created, and
-nothing the reader can see ever changes again. It is kept in localStorage, so
-a force stop brings it back and clearing the cache does not touch it.
+Both tried to make a failed start recoverable — the first by counting failed
+starts and offering a way out, the second by making sure the picture of the last
+screen could not outlive the app behind it. Both were tried on the device and
+both made it worse: the second took away the font sizing that the boot cover's
+root style had been applying before the first frame, and neither one touched the
+fault they were aimed at. The reports that prompted them were real; the fixes
+were guesses, and four things changed at once in the second, which is why its
+regression could not be attributed to any one of them.
 
-It stayed because the app told the watchdog to stand down — `__satrBooted` —
-and only then asked for the cover to be lifted on a frame callback. On the
-device that request is made with the system splash still over the view, and a
-view that is not being painted does not run frame callbacks. One that never
-arrived meant a cover that never left, on every start, for good.
-
-- [x] **Nothing can cancel the watchdog except the cover actually leaving.** The app saying it has started now shortens the leash rather than cutting it: a moment to go gracefully, and then it goes regardless. The lift itself no longer waits on a frame alone — the frames and a timer race, and the first one there wins, so dismissing the system splash cannot hang on a frame either.
-- [x] **A touch takes the cover off.** The reader does not have to know any of this. If the screen is not answering what they do, touching it uncovers the app. Showing a half-painted app a moment early is a bad second; a picture that never goes is the end of the app.
-- [x] **A document is never kept as a picture.** Pages are canvases and a canvas copies as an empty box, so the copy was a blank page frame — the most expensive screen in the app to make a bad picture of, made as the app leaves the foreground, which is exactly when the system is short of memory and choosing what to kill. Three documents open is where this started.
-- [x] **The copy is session, so a reset clears it**, and a start that is not going to restore the last session is not shown a picture of it either.
-- [x] **Coming back to the app no longer asks about a file nobody touched.** "File missing — save my version?" is only worth asking when what is in the editor is not what was last on disk. And a check the reader never asked for that quietly failed now says what it means for them — the file on disk could not be read just now, their own copy is safe — instead of naming the internal step that failed.
-- [x] **Checked.** Five tests for the cover, four of which fail on 0.18.1, including the real one: frame callbacks never arrive and the cover still goes. 238 across the boot, tab, session, note and document specs.
-
-### The 0.18.1 round: the app can start again after a start that failed (November 2026)
-
-An emergency release, and one change only. Reported: three documents open, the
-app stopped answering, and neither a force stop nor a cleared cache brought it
-back. That last part is the whole diagnosis — a force stop throws away
-everything held in memory, so what was wrong was being read back on every
-start, and clearing the cache does not touch the session. The app reopened its
-way into the same corner every time, and had no way to decide that the thing it
-does on every start was the thing stopping it from starting.
-
-- [x] **A start that does not finish is remembered, and the next one is careful.** Starting writes a mark before it restores anything and rubs it out once a file is actually on the screen. One start that never got there and the notes come back but the documents stay closed; two and the session is put back to nothing — one tab, no remembered places, no shelf of page pictures. **The vault is never in what it clears**: notes are not session, and a reset is a reset of where the reader was, never of what they wrote. It says which of the two happened rather than leaving them to wonder.
-- [x] **The first start on a new build leaves several documents closed.** A build that has never run on this device cannot know whether the session it is about to restore is the one that stopped the build before it — and a device that cannot start is a device that cannot be rescued by a fix it never gets to run. One document is the ordinary way to read and is cheap, so an upgrade in the middle of a book does not lose the reader their page; two or more is the rare case, and the one that was open when this went wrong.
-- [x] **"Start clean" in Settings**, under a heading that says what it is for. The same thing the app does by itself, for the reader who wants it sooner — every tab closed, the reading places and the picture shelf let go, the notes untouched.
-- [x] **Checked.** Six tests for the recovery itself, including the one that matters most — the vault is still there after a reset — and 93 across the specs that open documents, restore sessions and launch tabs. `package.json` and the lockfile's two root fields carry **0.18.1**.
+The code is back to 0.18.0's, by reverting forward rather than by rewriting what
+was already published. The APK's version code is the commit count, so history can
+only grow: resetting the branch would have made the next release's version code
+lower than the one already installed on a phone, and Android would have refused
+it. The `v0.18.1` and `v0.18.2` tags stay where they are — they were real
+releases — and `package.json` keeps **0.18.2** until the next number is chosen.
 
 ### The 0.18.0 round: the reader rebuilt on PDFium, and the vault that can finally hold a file (November 2026)
 

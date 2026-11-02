@@ -46,11 +46,6 @@ import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
-import { leaveDocumentsClosed, openedFine, openingUp, startTrouble } from './safeStart';
-
-// Before anything is read back. A start that never finishes leaves its mark
-// here, and the next one reads it and is careful (src/safeStart.ts).
-const howToStart = openingUp();
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
 import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
@@ -897,13 +892,7 @@ async function refreshOnResume(): Promise<void> {
     if (!path || !baseline || (isExternalPath(path) && externalFilesByPath.get(path)?.kind !== 'text')) return;
     const disk = await readDiskVersion(path);
     if (filePath !== path || !disk) {
-      // "File missing -- save my version?" is a question about the reader's
-      // own work, so it is only worth asking when the answer matters: when
-      // what is in the editor is not what was last on disk. Coming back to
-      // the app with nothing unsaved and being asked to re-create a file is
-      // alarming for no reason, and it is the same question every resume.
-      const unsaved = filePath === path && editor.getValue() !== baseline.text;
-      if (unsaved && !disk) offerSaveConflict({ path, remoteText: null, localText: editor.getValue(), mtime: 0 });
+      if (filePath === path && !disk) offerSaveConflict({ path, remoteText: null, localText: editor.getValue(), mtime: 0 });
       return;
     }
     if (disk.text === baseline.text) {
@@ -913,14 +902,8 @@ async function refreshOnResume(): Promise<void> {
     const localText = editor.getValue();
     if (localText === baseline.text) reloadOpenText(path, disk.text, disk.mtime);
     else offerSaveConflict({ path, remoteText: disk.text, localText, mtime: disk.mtime });
-  } catch {
-    // This runs by itself every time the app comes back to the front, and
-    // the reader did not ask for it. Naming the internal step that failed
-    // ("the file exists but could not be read") tells them nothing they can
-    // do anything about; it just says something is wrong with their notes,
-    // which is the one thing it does not mean. Their text is in the editor
-    // and still saves. Say that much and no more.
-    showNotice('Could not check the file on disk for changes. Your copy is safe.', 3000);
+  } catch (error) {
+    showNotice(`Couldn't refresh: ${error instanceof Error ? error.message : String(error)}`, 4000);
   } finally {
     refreshingOnResume = false;
   }
@@ -1717,16 +1700,6 @@ function loadTabs(): void {
     };
     const list = saved.tabs.map(read);
     if (list.some((t) => !t)) return;
-    // A start that is being careful (src/safeStart.ts): the notes come back,
-    // the documents do not. A document is the expensive thing to open and
-    // the thing that was open when this went wrong.
-    if (howToStart === 'session-reset') return;
-    const documents = list.filter((t) => t && isDocument(t.path)).length;
-    if (leaveDocumentsClosed(documents)) {
-      for (let i = 0; i < list.length; i += 1) {
-        if (list[i] && isDocument((list[i] as Tab).path)) list[i] = { path: '' };
-      }
-    }
     // One tab per note.
     const seen = new Set<string>();
     const active = list[Math.min(Math.max(0, saved.active | 0), list.length - 1)];
@@ -3557,12 +3530,7 @@ async function boot(): Promise<void> {
     }
   } finally {
     bootReady = true;
-    // Tells the cover in index.html that the app is up, which *shortens* its
-    // patience -- it must never end it. This line used to cancel that
-    // watchdog outright, leaving the lift below (a frame callback that does
-    // not arrive while the view is unpainted) as the only way off the
-    // screen. See index.html's release().
-    window.__satrBooted = true;
+    window.__satrBooted = true; // the cover in index.html stops waiting for this
     // The real note is on screen: lift the start-up copy.
     //
     // On the device the system splash (android/.../MainActivity.java) is held
@@ -3577,14 +3545,6 @@ async function boot(): Promise<void> {
       instant: native,
       done: native ? () => { void SatrSplash.dismiss().catch(() => undefined); } : undefined,
     });
-    // The reader can see a file, so this start counts as one that worked.
-    // Two frames after the cover lifts, not before it: a start that wedges
-    // while the first file is being drawn must still be a start that failed.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      openedFine();
-      const trouble = startTrouble();
-      if (trouble) void showNotice(trouble, 8000);
-    }));
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
