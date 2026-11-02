@@ -897,7 +897,13 @@ async function refreshOnResume(): Promise<void> {
     if (!path || !baseline || (isExternalPath(path) && externalFilesByPath.get(path)?.kind !== 'text')) return;
     const disk = await readDiskVersion(path);
     if (filePath !== path || !disk) {
-      if (filePath === path && !disk) offerSaveConflict({ path, remoteText: null, localText: editor.getValue(), mtime: 0 });
+      // "File missing -- save my version?" is a question about the reader's
+      // own work, so it is only worth asking when the answer matters: when
+      // what is in the editor is not what was last on disk. Coming back to
+      // the app with nothing unsaved and being asked to re-create a file is
+      // alarming for no reason, and it is the same question every resume.
+      const unsaved = filePath === path && editor.getValue() !== baseline.text;
+      if (unsaved && !disk) offerSaveConflict({ path, remoteText: null, localText: editor.getValue(), mtime: 0 });
       return;
     }
     if (disk.text === baseline.text) {
@@ -907,8 +913,14 @@ async function refreshOnResume(): Promise<void> {
     const localText = editor.getValue();
     if (localText === baseline.text) reloadOpenText(path, disk.text, disk.mtime);
     else offerSaveConflict({ path, remoteText: disk.text, localText, mtime: disk.mtime });
-  } catch (error) {
-    showNotice(`Couldn't refresh: ${error instanceof Error ? error.message : String(error)}`, 4000);
+  } catch {
+    // This runs by itself every time the app comes back to the front, and
+    // the reader did not ask for it. Naming the internal step that failed
+    // ("the file exists but could not be read") tells them nothing they can
+    // do anything about; it just says something is wrong with their notes,
+    // which is the one thing it does not mean. Their text is in the editor
+    // and still saves. Say that much and no more.
+    showNotice('Could not check the file on disk for changes. Your copy is safe.', 3000);
   } finally {
     refreshingOnResume = false;
   }
