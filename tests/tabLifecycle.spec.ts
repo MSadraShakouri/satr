@@ -8,6 +8,11 @@ async function boot(page: Page, tabs: { path: string }[], active = 0) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(({ tabs, active }) => {
     if (localStorage.getItem('satr:test:seeded')) return;
+    // A marker of the spec's own. The seed used to guard on the file key it
+    // writes, but contents live in IndexedDB now and that key is an inbox the
+    // app drains on first read -- so after one reload the guard saw nothing,
+    // re-seeded, and put back the very text, tabs and reading place the test
+    // had just asked the app to remember.
     localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1, 'Notes/B.md': 1, 'Notes/C.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
@@ -77,27 +82,27 @@ test('the tab count sits in the icon square, not the whole button', async ({ pag
   expect(gap.size, JSON.stringify(gap)).toBeLessThan(1);
 });
 
-test('the digit is centred as a digit, not as the line box it is drawn in', async ({ page }) => {
+test('the digit is placed by its ink, not by the box it is drawn in', async ({ page }) => {
+  // Centring the figures means centring the figures, and no box the layout
+  // engine offers is the figures. The line box is the font's ascent and
+  // descent; trimming it to cap height (text-box-trim) is closer but still
+  // wrong, because Vazirmatn draws its figures taller than its caps and they
+  // landed about a pixel low. So the ink is measured with the engine that
+  // draws it and the span is translated by the difference -- centreFigures()
+  // in src/main.ts. This pins that mechanism: the span exists, and something
+  // has moved it off the corner the box model left it in. The pixels
+  // themselves are tests/tabCount.spec.ts's job, off a 6x screenshot, at one,
+  // two and three figures.
   await boot(page, [{ path: 'Notes/A.md' }]);
-  const geo = await page.evaluate(() => {
-    const box = (el: Element) => { const r = el.getBoundingClientRect(); return { h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
-    const button = document.querySelector('#nav-tabs')!;
+  const placed = await page.evaluate(() => {
     const digit = document.querySelector<HTMLElement>('#nav-tabs .mobile-navbar-tabs-digit');
-    // A line box is as tall as the font's ascent and descent; the digits sit on
-    // its baseline with nothing under them, so the box they are drawn in is the
-    // cap height. Where the font puts them in the line box is the font's own
-    // business — 3px high for the one the app uses, which is what this pins.
-    const probe = document.createElement('div');
-    probe.style.cssText = `position:absolute;visibility:hidden;height:1cap;font-size:${digit ? getComputedStyle(digit).fontSize : '14.3px'}`;
-    document.body.appendChild(probe);
-    const cap = probe.getBoundingClientRect().height;
-    probe.remove();
-    return { icon: box(button.querySelector('svg')!), digit: digit ? box(digit) : null, cap };
+    if (!digit) return null;
+    const style = getComputedStyle(digit);
+    return { transform: style.transform, position: style.position };
   });
-  expect(geo.digit, 'the digit has no box of its own: it is centred as a line box').not.toBeNull();
-  expect(geo.digit!.h, 'the digit is not drawn in a cap-height box').toBeCloseTo(geo.cap, 0);
-  expect(Math.abs(geo.digit!.cy - geo.icon.cy), 'the digit is off-centre up or down').toBeLessThan(1);
-  expect(Math.abs(geo.digit!.cx - geo.icon.cx), 'the digit is off-centre sideways').toBeLessThan(1);
+  expect(placed, 'the digit has no element of its own to place').not.toBeNull();
+  expect(placed!.position, 'the digit is laid out in flow, so nothing can place it').toBe('absolute');
+  expect(placed!.transform, 'the digit was left where the box model put it').not.toBe('none');
 });
 
 test('holding the tabs button opens the menu, including Close current tab', async ({ page }) => {

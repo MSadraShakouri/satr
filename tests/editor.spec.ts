@@ -273,15 +273,18 @@ test('the tab number sits in the middle of its icon', async ({ page }) => {
     const icon = button.querySelector('svg')!;
     const number = button.querySelector<HTMLElement>('.mobile-navbar-tabs-number')!;
     const centre = (rect: DOMRect) => ({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-    // The digit's own box — the cap-height box the stylesheet trims the line
-    // box to. A range over the number's contents measures the flex container's
-    // line, which is the font's ascent plus descent, not the digit.
-    const digit = button.querySelector<HTMLElement>('.mobile-navbar-tabs-digit')!;
+    // The digit's own box is deliberately NOT in this list. Trimming the line
+    // box to cap height was the old way and it was not good enough: Vazirmatn
+    // draws its figures taller than its caps, so the trimmed box still landed
+    // them about a pixel low. The span is absolutely placed and moved by the
+    // ink measured with the engine that draws it (centreFigures() in
+    // src/main.ts), which leaves its box where the box model put it. The ink
+    // is what must be centred, and tests/tabCount.spec.ts measures exactly
+    // that, off a 6x screenshot, at one, two and three figures.
     return {
       button: centre(button.getBoundingClientRect()),
       icon: centre(icon.getBoundingClientRect()),
       number: centre(number.getBoundingClientRect()),
-      digit: centre(digit.getBoundingClientRect()),
     };
   });
   for (const [name, point] of Object.entries(centres)) {
