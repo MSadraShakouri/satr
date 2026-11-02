@@ -19,13 +19,39 @@
         // sets __satrBooted as it goes. The cover is only time-limited as a
         // last resort: taking it away at a fixed 6 s uncovered a blank page
         // for as long as a big note still took to open.
+        //
+        // But nothing may cancel this watchdog except the cover actually
+        // leaving the screen. __satrBooted shortens the leash; it must never
+        // cut it. It used to: the app set the flag and then asked for the
+        // cover to be lifted on a frame callback, so a frame callback that
+        // never came -- the view is not painted while the system splash is
+        // still up -- left a full-screen picture of the last screen on top of
+        // a perfectly healthy app, for good. It passes touches straight
+        // through, so every button still worked and nothing on screen ever
+        // changed again. It lives in localStorage, so it came back after a
+        // force stop and after the cache was cleared.
         function release(cover, css) {
-          var tries = 0;
-          var timer = setInterval(function () {
-            if (window.__satrBooted) { clearInterval(timer); return; }
-            tries += 1;
-            if (tries > 60) { clearInterval(timer); cover.remove(); if (css) css.remove(); }
-          }, 500);
+          var waited = 0;
+          var timer = null;
+          function lift() {
+            if (timer) clearInterval(timer);
+            window.removeEventListener('pointerdown', lift, true);
+            window.removeEventListener('keydown', lift, true);
+            cover.remove();
+            if (css) css.remove();
+          }
+          timer = setInterval(function () {
+            if (!cover.isConnected) { lift(); return; }
+            waited += 250;
+            // Once the app says it is up, the cover has a moment to go the
+            // graceful way, and then it goes anyway.
+            if (waited >= (window.__satrBooted ? 1500 : 30000)) lift();
+          }, 250);
+          // And a touch is the reader saying they want the app, not a picture
+          // of it. Uncovering a half-painted app is a bad second; a picture
+          // that never goes is the end of the app.
+          window.addEventListener('pointerdown', lift, true);
+          window.addEventListener('keydown', lift, true);
         }
         function splash(bg) {
           var cover = document.createElement('div');

@@ -87,7 +87,10 @@ test('the first start on a new build leaves several documents closed', async ({ 
   await expect(page.locator('.notice, #notice')).toContainText(/First run of this version/i);
   // ...and having started once, the build is recorded, so the next start is
   // an ordinary one.
-  expect(await page.evaluate(() => localStorage.getItem('satr:boot:build'))).toBe('0.18.1');
+  // ...recorded as whatever this build is. Not spelled out here: a test that
+  // has to be edited for every release is a test that will one day be edited
+  // without being read.
+  expect(await page.evaluate(() => localStorage.getItem('satr:boot:build'))).toMatch(/^\d+\.\d+\.\d+/);
 });
 
 test('one document is not the dangerous case, so a new build still opens it', async ({ page }) => {

@@ -11,6 +11,10 @@
 const KEY = 'satr:snapshot';
 const MAX = 600_000; // characters; a bigger page just isn't kept
 const MIN_COVER_MS = 480;
+/** How long to wait for the two frames before giving up on them and lifting
+ *  the cover anyway. requestAnimationFrame does not run while the view is
+ *  not being painted, which on the device is exactly when this is called. */
+const FRAME_GIVE_UP_MS = 400;
 
 declare global {
   interface Window {
@@ -27,6 +31,15 @@ const KEEP = new Set(['no-line-numbers', 'is-empty-tab']);
 function save(): void {
   const app = document.querySelector<HTMLElement>('#app');
   if (!app || !app.firstElementChild) return;
+  // A document is pages drawn on canvases, and a canvas copies as an empty
+  // box: the picture would be a blank page frame, which is worse than the
+  // logo. It is also the most expensive screen in the app to copy, and this
+  // runs as the app leaves the foreground -- the exact moment the system is
+  // short of memory and deciding what to kill. So don't.
+  if (app.querySelector('.pdf-doc, .pdf-page')) {
+    try { localStorage.removeItem(KEY); } catch { /* nothing to undo */ }
+    return;
+  }
   const scroll: [number, number][] = [];
   app.querySelectorAll<HTMLElement>('*').forEach((el, i) => {
     if (el.scrollTop > 0) scroll.push([i, Math.round(el.scrollTop)]);
@@ -118,19 +131,37 @@ export function dropSnapshot(options: { instant?: boolean; done?: () => void } =
   const { instant = false, done } = options;
   const cover = document.getElementById('boot-snapshot');
   if (!cover) { done?.(); return; }
+  let lifted = false;
   const lift = (): void => {
+    if (lifted) return;
+    lifted = true;
     cover.remove();
     document.getElementById('boot-snapshot-css')?.remove();
     done?.();
   };
+  const once = (then: () => void): (() => void) => {
+    let ran = false;
+    return () => { if (ran) return; ran = true; then(); };
+  };
+  // Two frames, so the app is painted underneath before the cover goes --
+  // but never *only* two frames. A frame callback does not arrive while the
+  // view is not being painted, and on the device this is called with the
+  // system splash still over the top. The cover is a full-screen picture
+  // that passes touches through to the app beneath it, so one frame
+  // callback that never came used to mean a screen that never changed
+  // again, on every start, out of localStorage, through a force stop and a
+  // cleared cache. `done` dismisses the system splash, so it cannot hang on
+  // a frame either. Whichever of the two arrives first wins.
   const twoFrames = (then: () => void): void => {
-    requestAnimationFrame(() => requestAnimationFrame(then));
+    const go = once(then);
+    requestAnimationFrame(() => requestAnimationFrame(go));
+    window.setTimeout(go, FRAME_GIVE_UP_MS);
   };
   if (instant) { twoFrames(lift); return; }
   const wait = Math.max(0, MIN_COVER_MS - (Date.now() - (window.__satrCoverAt ?? 0)));
   window.setTimeout(() => {
     twoFrames(() => {
-      if (!cover.isConnected) { done?.(); return; }
+      if (!cover.isConnected) { lift(); return; }
       cover.style.transition = 'opacity 120ms ease-out';
       cover.style.opacity = '0';
       window.setTimeout(lift, 140);

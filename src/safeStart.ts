@@ -39,7 +39,7 @@
 /** Bumped by hand when a release needs the first start on it to be careful.
  *  Compared, never parsed: any difference means "this build has not run
  *  here before". */
-const BUILD = '0.18.1';
+const BUILD = '0.18.2';
 
 const ATTEMPTS = 'satr:boot:attempts';
 const BUILD_SEEN = 'satr:boot:build';
@@ -103,6 +103,11 @@ export function openingUp(): StartMode {
   if (marks >= 3) mode = 'session-reset';
   else if (marks >= 2) mode = 'documents-closed';
   else mode = 'normal';
+  // A start that is not going to restore the last session must not be shown
+  // a picture of it either: the copy would sit over a screen it no longer
+  // matches, and the whole point of a careful start is that the reader can
+  // see what the app is doing.
+  if (mode !== 'normal') { try { localStorage.removeItem('satr:snapshot'); } catch { /* nothing to do */ } }
   if (mode === 'session-reset') clearSession();
   return mode;
 }
@@ -119,12 +124,16 @@ export function openedFine(): void {
  * store in IndexedDB; neither is touched here, and neither is listed below.
  */
 export function clearSession(): void {
+  // `satr:snapshot` is in here because it is the one piece of session that
+  // can be on the screen without the app's say-so: index.html paints it
+  // before any of this code loads. A picture of the screen that would not
+  // come back is not something to restore.
   try {
     const doomed: string[] = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
       if (!key) continue;
-      if (key === 'satr:tabs' || key === 'satr:spaces'
+      if (key === 'satr:tabs' || key === 'satr:spaces' || key === 'satr:snapshot'
         || key.startsWith('satr:place:') || key.startsWith('satr:view:')) doomed.push(key);
     }
     for (const key of doomed) localStorage.removeItem(key);

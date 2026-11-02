@@ -3545,7 +3545,12 @@ async function boot(): Promise<void> {
     }
   } finally {
     bootReady = true;
-    window.__satrBooted = true; // the cover in index.html stops waiting for this
+    // Tells the cover in index.html that the app is up, which *shortens* its
+    // patience -- it must never end it. This line used to cancel that
+    // watchdog outright, leaving the lift below (a frame callback that does
+    // not arrive while the view is unpainted) as the only way off the
+    // screen. See index.html's release().
+    window.__satrBooted = true;
     // The real note is on screen: lift the start-up copy.
     //
     // On the device the system splash (android/.../MainActivity.java) is held
