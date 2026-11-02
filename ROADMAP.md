@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). **0.18.1.** Notes are files in folders behind one storage
+open-file plugins). **0.18.2.** Notes are files in folders behind one storage
 interface: a virtual file system in IndexedDB on the web, and the device's
 own files in the app. GitHub Actions builds a signed debug APK for each `v*`
 tag, signed with one fixed key so every build installs over the last.
@@ -273,6 +273,31 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Four the writer reported in the panels.** *Reveal current file* is a button now, not a switch that rearranged the panel whenever the note changed — one press takes the panel to the note wherever it lives, and nothing moves it by itself, so reading can no longer change what a search covers or where a new note lands. With **Include subfolders** off, a search roots at the open note's own folder rather than the space top, which in a space whose top level holds folders had returned nothing but the open note. The in-note find draws the current match as Obsidian's reading view does — a 3px accent ring on it, a 2px translucent one on the other 39 — where before every match wore the same ring and you could not tell which one you were on. And the navigation bars only move on a reversal: a thumb's 4–6px wobble landing more than 200 ms after they hid used to walk straight into `restoreNavigation()` and flash them, which tests/navAutoHide.spec.ts:151 now pins.
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
+
+### The 0.18.2 round: the picture of the last screen cannot outlive the app (November 2026)
+
+0.18.1 was wrong about its own bug. It added a watchdog for a start that
+fails, and the start was not failing — the app behind the screen had booted
+perfectly every time. What never left was the cover: the copy of the last
+screen that `index.html` paints before any of the app's code loads, so that a
+cold start is a screen instead of a white flash. It is full screen, it is on
+top of everything, and it passes touches straight through to the app beneath
+it. When it stays, every button still works, files really are created, and
+nothing the reader can see ever changes again. It is kept in localStorage, so
+a force stop brings it back and clearing the cache does not touch it.
+
+It stayed because the app told the watchdog to stand down — `__satrBooted` —
+and only then asked for the cover to be lifted on a frame callback. On the
+device that request is made with the system splash still over the view, and a
+view that is not being painted does not run frame callbacks. One that never
+arrived meant a cover that never left, on every start, for good.
+
+- [x] **Nothing can cancel the watchdog except the cover actually leaving.** The app saying it has started now shortens the leash rather than cutting it: a moment to go gracefully, and then it goes regardless. The lift itself no longer waits on a frame alone — the frames and a timer race, and the first one there wins, so dismissing the system splash cannot hang on a frame either.
+- [x] **A touch takes the cover off.** The reader does not have to know any of this. If the screen is not answering what they do, touching it uncovers the app. Showing a half-painted app a moment early is a bad second; a picture that never goes is the end of the app.
+- [x] **A document is never kept as a picture.** Pages are canvases and a canvas copies as an empty box, so the copy was a blank page frame — the most expensive screen in the app to make a bad picture of, made as the app leaves the foreground, which is exactly when the system is short of memory and choosing what to kill. Three documents open is where this started.
+- [x] **The copy is session, so a reset clears it**, and a start that is not going to restore the last session is not shown a picture of it either.
+- [x] **Coming back to the app no longer asks about a file nobody touched.** "File missing — save my version?" is only worth asking when what is in the editor is not what was last on disk. And a check the reader never asked for that quietly failed now says what it means for them — the file on disk could not be read just now, their own copy is safe — instead of naming the internal step that failed.
+- [x] **Checked.** Five tests for the cover, four of which fail on 0.18.1, including the real one: frame callbacks never arrive and the cover still goes. 238 across the boot, tab, session, note and document specs.
 
 ### The 0.18.1 round: the app can start again after a start that failed (November 2026)
 
