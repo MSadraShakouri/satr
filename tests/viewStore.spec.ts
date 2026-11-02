@@ -102,6 +102,21 @@ test('the store is bounded: the oldest records go, the newest stay', async ({ pa
   expect(result.held).toBeLessThanOrEqual(2000);
 });
 
+test('the app asks that its storage not be thrown away', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __persistAsked: boolean }).__persistAsked = false;
+    if (navigator.storage) {
+      navigator.storage.persist = () => {
+        (window as unknown as { __persistAsked: boolean }).__persistAsked = true;
+        return Promise.resolve(true);
+      };
+      navigator.storage.persisted = () => Promise.resolve(false);
+    }
+  });
+  await boot(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __persistAsked: boolean }).__persistAsked)).toBe(true);
+});
+
 test('a note with no record opens as a note, not as nothing', async ({ page }) => {
   await boot(page);
   await expect(page.locator('body')).toHaveAttribute('data-mode', 'edit');

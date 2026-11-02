@@ -1,6 +1,6 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
-import { dropRecord, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
+import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -3529,6 +3529,7 @@ async function boot(): Promise<void> {
     // is answered from the store rather than guessed at. One read of a few
     // hundred small records; the app is already waiting on the vault.
     await openViewStore();
+    keepStorage();
     if (supportsIncomingFiles()) {
       await onIncomingFile((id) => {
         if (!bootReady) queuedIncomingId = id;

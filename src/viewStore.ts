@@ -186,3 +186,17 @@ export function forgetViews(): void {
     for (const key of going) localStorage.removeItem(key);
   } catch { /* nothing to do */ }
 }
+
+/** Ask that this origin's storage not be thrown away when the device is
+ *  short of room. It covers everything the origin keeps, not just this
+ *  store — on the web that includes the vault itself, which is best-effort
+ *  by default and can be evicted silently, with no event: the app would
+ *  find out when a read came back empty. The browser decides on its own
+ *  heuristics and may refuse; there is nothing to do about that but ask. */
+export function keepStorage(): void {
+  try {
+    void navigator.storage?.persisted?.()
+      .then((already) => (already ? true : navigator.storage.persist()))
+      .catch(() => undefined);
+  } catch { /* no storage manager here */ }
+}
