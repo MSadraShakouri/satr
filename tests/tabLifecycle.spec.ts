@@ -7,7 +7,8 @@ import { expect, test, type Page } from '@playwright/test';
 async function boot(page: Page, tabs: { path: string }[], active = 0) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(({ tabs, active }) => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1, 'Notes/B.md': 1, 'Notes/C.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
     localStorage.setItem('satr:fs:file:Notes/B.md', '# Beta\n\nsecond\n');

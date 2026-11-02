@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { vaultText } from './support/vaultText';
 import type { EditorView } from '@codemirror/view';
 
 declare global { interface Window { appView: EditorView; releaseTestFonts?: () => void } }
@@ -7,7 +8,13 @@ const longNote = Array.from({ length: 180 }, (_, i) => `Paragraph ${i + 1}: A re
 async function boot(page: Page, long = false, mode: 'edit' | 'preview' = 'edit') {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(({ text, mode }) => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    // A marker of the spec's own. The seed used to guard on the file key it
+    // writes, but contents live in IndexedDB now and that key is an inbox the
+    // app drains on first read -- so after one reload the guard saw nothing,
+    // re-seeded, and put back the very text, tabs and reading place the test
+    // had just asked the app to remember.
+    localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1, 'Notes/B.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', text);
     localStorage.setItem('satr:fs:file:Notes/B.md', 'Beta');
@@ -117,7 +124,9 @@ test('closing a tab or restarting ends history, not saved file content', async (
   expect(await text(page)).toBe('Alpha-saved');
   await append(page, '-restart');
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('satr:fs:file:Notes/A.md'))).toBe('Alpha-saved-restart');
+  // The note's text, read from the store the app saves into rather than from
+  // the inbox the seeding used (src/webStore.ts).
+  await expect.poll(() => vaultText(page, 'Notes/A.md')).toBe('Alpha-saved-restart');
   await page.reload(); await attach(page);
   await undo(page);
   expect(await text(page)).toBe('Alpha-saved-restart');

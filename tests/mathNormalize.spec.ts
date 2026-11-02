@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { vaultText } from './support/vaultText';
 import type { SatrEditor } from '../src/editor';
 
 declare global { interface Window { testEditor: SatrEditor } }
@@ -145,7 +146,10 @@ async function boot(page: Page, text: string) {
   await expect(page.locator('#boot-snapshot')).toHaveCount(0);
 }
 
-const stored = (page: Page): Promise<string | null> => page.evaluate(() => localStorage.getItem('satr:fs:file:Notes/Math.md'));
+// A file's contents live in IndexedDB (src/webStore.ts). The
+// `satr:fs:file:<path>` key is an inbox the backend drains on first read, so
+// it answers for what a spec seeded and never for what the app itself wrote.
+const stored = (page: Page): Promise<string | null> => vaultText(page, 'Notes/Math.md');
 
 test('the ≡ sheet normalizes the note it is opened on', async ({ page }) => {
   await boot(page, 'a \\(x\\) b');

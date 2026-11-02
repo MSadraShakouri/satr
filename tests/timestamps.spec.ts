@@ -9,7 +9,13 @@ const NOTE = 'Due <t:1700000000:F> and the rest.\n\nAgo: <t:1700000000:R>\n\n`<t
 async function boot(page: Page) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript((note) => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    // A marker of the spec's own. The seed used to guard on the file key it
+    // writes, but contents live in IndexedDB now and that key is an inbox the
+    // app drains on first read -- so after one reload the guard saw nothing,
+    // re-seeded, and put back the very text, tabs and reading place the test
+    // had just asked the app to remember.
+    localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', note);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
@@ -114,7 +120,8 @@ test('in the editor the time shows, and the code comes back when the cursor is o
 test('a relative timestamp counts down while it is on screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    localStorage.setItem('satr:test:seeded', '1');
     const soon = Math.floor(Date.now() / 1000) + 45;
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', `Soon: <t:${soon}:R>\n`);
@@ -206,7 +213,8 @@ test('Settings → Dates: the rows save and the sample answers at once', async (
 test('chips in the editor and the reading view wear the chosen style', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript((note) => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', note);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));

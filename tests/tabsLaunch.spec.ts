@@ -10,7 +10,13 @@ const SEEN_KEY = 'satr:seenAt';
 async function boot(page: Page, settings: Record<string, unknown>, awayAt?: number, seenAt?: number) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(({ settings, awayAt, seenAt }) => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    // A marker of the spec's own. The seed used to guard on the file key it
+    // writes, but contents live in IndexedDB now and that key is an inbox the
+    // app drains on first read -- so after one reload the guard saw nothing,
+    // re-seeded, and put back the very text, tabs and reading place the test
+    // had just asked the app to remember.
+    localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1, 'Notes/B.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', '# Alpha\n\nfirst\n');
     localStorage.setItem('satr:fs:file:Notes/B.md', '# Beta\n\nsecond\n');

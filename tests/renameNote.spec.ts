@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { vaultText } from './support/vaultText';
 
 // The title's ✓ (Enter, or a blur): the open note's file moves to the new name.
 //
@@ -15,7 +16,13 @@ const NOTE = 'Notes/A.md';
 async function boot(page: Page, body = 'first line\n\nsecond line\n') {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript((body) => {
-    if (localStorage.getItem('satr:fs:file:Notes/A.md')) return;
+    if (localStorage.getItem('satr:test:seeded')) return;
+    // A marker of the spec's own. The seed used to guard on the file key it
+    // writes, but contents live in IndexedDB now and that key is an inbox the
+    // app drains on first read -- so after one reload the guard saw nothing,
+    // re-seeded, and put back the very text, tabs and reading place the test
+    // had just asked the app to remember.
+    localStorage.setItem('satr:test:seeded', '1');
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/A.md': 1 }, folders: ['Notes'] }));
     localStorage.setItem('satr:fs:file:Notes/A.md', body);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/A.md' }], active: 0 }));
@@ -60,8 +67,10 @@ async function editorState(page: Page) {
   });
 }
 
-const fileText = (page: Page, path: string): Promise<string | null> =>
-  page.evaluate((path) => localStorage.getItem(`satr:fs:file:${path}`), path);
+// A file's contents live in IndexedDB (src/webStore.ts). The
+// `satr:fs:file:<path>` key is an inbox the backend drains on first read, so
+// it answers for what a spec seeded and never for what the app itself wrote.
+const fileText = (page: Page, path: string): Promise<string | null> => vaultText(page, path);
 
 /** Type a new name into the title and commit it with the ✓ (Enter). */
 async function rename(page: Page, name: string) {
