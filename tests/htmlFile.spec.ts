@@ -42,11 +42,16 @@ test('the reading view shows a page in a frame of its own, with scripts the only
   // Nothing of Satr's note furniture: no title of ours, no sections.
   expect(await page.locator('#preview .inline-title').count()).toBe(0);
   expect(await page.locator('#preview .md-section').count()).toBe(0);
-  // The frame fills the reading pane.
+  // The frame fills the reading pane under the header. A file that is shown
+  // rather than written carries its name in the top bar and starts below it,
+  // not behind it -- the rule tests/shownFileHeader.spec.ts pins for a
+  // document, and an .html page is shown the same way.
   const pane = (await page.locator('#preview-pane').boundingBox())!;
+  const bar = (await page.locator('.topbar').boundingBox())!;
   const box = (await frame.boundingBox())!;
   expect(Math.round(box.width)).toBe(Math.round(pane.width));
-  expect(Math.round(box.height)).toBe(Math.round(pane.height));
+  expect(Math.round(box.y)).toBe(Math.round(bar.y + bar.height));
+  expect(Math.round(box.y + box.height)).toBe(Math.round(pane.y + pane.height));
 });
 
 test("the file's own styling is what shows, and its script runs", async ({ page }) => {
