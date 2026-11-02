@@ -1,5 +1,6 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
+import { dropRecord, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -1660,6 +1661,10 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit',
 const flush = (): void => {
   if (saveTimer !== undefined) saveNow();
   rememberView();
+  // The view was just written to a database that answers asynchronously,
+  // and the app may be a moment from gone. Leave a synchronous copy where
+  // the next start will pick it up.
+  flushViews();
 };
 window.addEventListener('pagehide', () => { flush(); markAway(); markSeen(); restSeen(); });
 document.addEventListener('visibilitychange', () => {
@@ -1966,17 +1971,24 @@ function pathMoved(from: string, to: string): void {
   for (const tab of [...tabs, ...closedTabs]) tab.path = tab.path && move(tab.path);
   setRecent(recentNotes().map(move));
   saveTabs();
-  const keys: string[] = [];
+  // Where each file was left follows it. View memory lives in the view
+  // store now (src/viewStore.ts); print options are still one small record
+  // per file in localStorage.
+  for (const key of recordKeys()) {
+    if (!key.startsWith('satr:view:') || !within(key.slice('satr:view:'.length), from)) continue;
+    const value = readRecord(key);
+    dropRecord(key);
+    if (value !== null) writeRecord(`satr:view:${move(key.slice('satr:view:'.length))}`, value);
+  }
+  const printKeys: string[] = [];
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i)!;
-    const prefix = ['satr:view:', 'satr:pdf:'].find((p) => key.startsWith(p));
-    if (prefix && within(key.slice(prefix.length), from)) keys.push(key);
+    if (key.startsWith('satr:pdf:') && within(key.slice('satr:pdf:'.length), from)) printKeys.push(key);
   }
-  for (const key of keys) {
+  for (const key of printKeys) {
     const value = localStorage.getItem(key);
     localStorage.removeItem(key);
-    const prefix = key.startsWith('satr:view:') ? 'satr:view:' : 'satr:pdf:';
-    if (value !== null) localStorage.setItem(prefix + move(key.slice(prefix.length)), value);
+    if (value !== null) localStorage.setItem(`satr:pdf:${move(key.slice('satr:pdf:'.length))}`, value);
   }
   if (within(filePath, from)) {
     filePath = move(filePath);
@@ -2095,7 +2107,7 @@ async function newFile(dir = focusedNoteDir()): Promise<void> {
   const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
   try { await backend.write(path, ''); } catch (error) { leftSidebar.hint(error instanceof Error ? error.message : String(error), true); return; }
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
-  localStorage.removeItem(viewKey(path));
+  dropRecord(viewKey(path));
   localStorage.removeItem(printOptionsKey(path));
   rememberRecent(path);
   showFile(path, '');
@@ -3513,6 +3525,10 @@ let queuedIncomingId = '';
 async function boot(): Promise<void> {
   keepSnapshots();
   try {
+    // Before the first file opens, so that a file asking where it was left
+    // is answered from the store rather than guessed at. One read of a few
+    // hundred small records; the app is already waiting on the vault.
+    await openViewStore();
     if (supportsIncomingFiles()) {
       await onIncomingFile((id) => {
         if (!bootReady) queuedIncomingId = id;

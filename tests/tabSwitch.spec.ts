@@ -74,6 +74,7 @@ async function readerTo(page: Page, line: number): Promise<void> {
 /** Where the reader is, and whether the pane has run out of note. */
 const where = (page: Page) => page.evaluate(async () => {
   const { previewScroll, typingTop } = await window.__satr.load('/src/scrollSync.ts');
+  const { readRecord } = await window.__satr.load('/src/viewStore.ts');
   const pane = document.querySelector<HTMLElement>('.preview-pane')!;
   const band = pane.getBoundingClientRect().top + 120;
   let at = '';
@@ -86,7 +87,7 @@ const where = (page: Page) => page.evaluate(async () => {
   return {
     line: previewScroll(pane, document.querySelector('#preview')!, typingTop(window.appView)) ?? -1,
     top: pane.scrollTop, max, bottom: pane.scrollTop >= max - 4, at,
-    saved: JSON.parse(localStorage.getItem('satr:view:Notes/A.md') ?? 'null') as { line: number } | null,
+    saved: JSON.parse(readRecord('satr:view:Notes/A.md') ?? 'null') as { line: number } | null,
   };
 });
 

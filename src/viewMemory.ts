@@ -1,4 +1,11 @@
 // Reading bookmarks persist; CodeMirror undo histories deliberately do not.
+// They are kept in src/viewStore.ts (IndexedDB, read into memory at start)
+// rather than localStorage: one record per file is unbounded by nature, and
+// localStorage is 5 MiB for the whole origin and synchronous on the main
+// thread. The reading and writing here is unchanged -- same keys, same
+// shapes, same validation of anything read back.
+import { dropRecord, readRecord, writeRecord } from './viewStore';
+
 export interface SavedView {
   mode: 'edit' | 'preview';
   line: number;
@@ -17,7 +24,7 @@ export const viewMemoryKey = ({ path, sourceId }: ViewIdentity): string => `satr
 export function readViewMemory(file: ViewIdentity): SavedView | null {
   if (file.temporary) return temporaryViews.get(file.path) ?? null;
   try {
-    const value = JSON.parse(localStorage.getItem(viewMemoryKey(file)) ?? 'null') as Partial<SavedView> | null;
+    const value = JSON.parse(readRecord(viewMemoryKey(file)) ?? 'null') as Partial<SavedView> | null;
     if (!value || (value.mode !== 'edit' && value.mode !== 'preview') || !Number.isFinite(value.line)) return null;
     const cursor = Array.isArray(value.cursor) && value.cursor.length === 2 && value.cursor.every((n) => Number.isInteger(n) && n >= 0)
       ? value.cursor as [number, number] : undefined;
@@ -28,7 +35,7 @@ export function readViewMemory(file: ViewIdentity): SavedView | null {
 
 export function writeViewMemory(file: ViewIdentity, view: SavedView): void {
   if (file.temporary) temporaryViews.set(file.path, view);
-  else localStorage.setItem(viewMemoryKey(file), JSON.stringify(view));
+  else writeRecord(viewMemoryKey(file), JSON.stringify(view));
 }
 
 /** Where a PDF was left: the page, how far into it, and the zoom — kept
@@ -49,7 +56,7 @@ const placeKey = (key: string): string => `satr:place:${key}`;
 
 export function readPlace(key: string): SavedPlace | null {
   try {
-    const value = JSON.parse(localStorage.getItem(placeKey(key)) ?? 'null') as Partial<SavedPlace> | null;
+    const value = JSON.parse(readRecord(placeKey(key)) ?? 'null') as Partial<SavedPlace> | null;
     if (!value || !Number.isFinite(value.page) || !Number.isFinite(value.zoom)) return null;
     return {
       page: Math.max(1, Math.round(value.page as number)),
@@ -65,8 +72,8 @@ export function writePlace(key: string, place: SavedPlace): void {
   // anyway: storing that is a line of storage for nothing.
   const middling = place.across == null || Math.abs(place.across - 0.5) < 0.01;
   if (place.page === 1 && place.into < 0.01 && Math.abs(place.zoom - 1) < 0.01 && middling) {
-    localStorage.removeItem(placeKey(key));
+    dropRecord(placeKey(key));
     return;
   }
-  localStorage.setItem(placeKey(key), JSON.stringify(place));
+  writeRecord(placeKey(key), JSON.stringify(place));
 }

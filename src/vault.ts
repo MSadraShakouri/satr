@@ -280,6 +280,8 @@ class WebBackend implements Backend {
         this.index.files[path] = Date.now();
       }
       localStorage.removeItem(key);
+      // Deliberately still localStorage: this runs before the view store is
+      // read, and openViewStore() adopts whatever it finds there.
       const view = localStorage.getItem(`satr:view:${name}`);
       if (view !== null) {
         localStorage.setItem(`satr:view:${path}`, view);

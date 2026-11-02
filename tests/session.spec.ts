@@ -182,14 +182,16 @@ test('URI bookmarks use source identity, not grant ids or duplicate file names',
   const result = await page.evaluate(async () => {
     const path = '/src/viewMemory.ts';
     const { writeViewMemory, readViewMemory, viewMemoryKey } = await window.__satr.load(path);
+    const { openViewStore, writeRecord } = await window.__satr.load('/src/viewStore.ts');
+    await openViewStore();
     const first = { path: 'satr-open://first-grant/Note.md', sourceId: 'stable-source-one' };
     const reopened = { path: 'satr-open://new-grant/Note.md', sourceId: 'stable-source-one' };
     const other = { path: 'satr-open://other-grant/Note.md', sourceId: 'stable-source-two' };
     writeViewMemory(first, { mode: 'preview', line: 88.75, cursor: [7, 7] });
     const temporary = { path: 'satr-open://shared/Text', temporary: true };
     writeViewMemory(temporary, { mode: 'edit', line: 12 });
-    localStorage.setItem(viewMemoryKey({ path: 'broken.md' }), '{');
-    localStorage.setItem(viewMemoryKey({ path: 'invalid.md' }), JSON.stringify({ mode: 'edit', line: -5, cursor: [-1, 3], folds: [-1, 2, 'bad'] }));
+    writeRecord(viewMemoryKey({ path: 'broken.md' }), '{');
+    writeRecord(viewMemoryKey({ path: 'invalid.md' }), JSON.stringify({ mode: 'edit', line: -5, cursor: [-1, 3], folds: [-1, 2, 'bad'] }));
     return {
       sameKey: viewMemoryKey(first) === viewMemoryKey(reopened),
       reopened: readViewMemory(reopened), other: readViewMemory(other),
@@ -208,6 +210,7 @@ test('URI bookmarks use source identity, not grant ids or duplicate file names',
   await page.reload();
   expect(await page.evaluate(async () => {
     const path = '/src/viewMemory.ts'; const { readViewMemory } = await window.__satr.load(path);
+    await (await window.__satr.load('/src/viewStore.ts')).openViewStore();
     return readViewMemory({ path: 'satr-open://third-grant/Note.md', sourceId: 'stable-source-one' })?.line;
   })).toBe(88.75);
 });
