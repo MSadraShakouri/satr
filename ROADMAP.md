@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). **0.18.0.** Notes are files in folders behind one storage
+open-file plugins). **0.18.1.** Notes are files in folders behind one storage
 interface: a virtual file system in IndexedDB on the web, and the device's
 own files in the app. GitHub Actions builds a signed debug APK for each `v*`
 tag, signed with one fixed key so every build installs over the last.
@@ -273,6 +273,21 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Four the writer reported in the panels.** *Reveal current file* is a button now, not a switch that rearranged the panel whenever the note changed — one press takes the panel to the note wherever it lives, and nothing moves it by itself, so reading can no longer change what a search covers or where a new note lands. With **Include subfolders** off, a search roots at the open note's own folder rather than the space top, which in a space whose top level holds folders had returned nothing but the open note. The in-note find draws the current match as Obsidian's reading view does — a 3px accent ring on it, a 2px translucent one on the other 39 — where before every match wore the same ring and you could not tell which one you were on. And the navigation bars only move on a reversal: a thumb's 4–6px wobble landing more than 200 ms after they hid used to walk straight into `restoreNavigation()` and flash them, which tests/navAutoHide.spec.ts:151 now pins.
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
+
+### The 0.18.1 round: the app can start again after a start that failed (November 2026)
+
+An emergency release, and one change only. Reported: three documents open, the
+app stopped answering, and neither a force stop nor a cleared cache brought it
+back. That last part is the whole diagnosis — a force stop throws away
+everything held in memory, so what was wrong was being read back on every
+start, and clearing the cache does not touch the session. The app reopened its
+way into the same corner every time, and had no way to decide that the thing it
+does on every start was the thing stopping it from starting.
+
+- [x] **A start that does not finish is remembered, and the next one is careful.** Starting writes a mark before it restores anything and rubs it out once a file is actually on the screen. One start that never got there and the notes come back but the documents stay closed; two and the session is put back to nothing — one tab, no remembered places, no shelf of page pictures. **The vault is never in what it clears**: notes are not session, and a reset is a reset of where the reader was, never of what they wrote. It says which of the two happened rather than leaving them to wonder.
+- [x] **The first start on a new build leaves several documents closed.** A build that has never run on this device cannot know whether the session it is about to restore is the one that stopped the build before it — and a device that cannot start is a device that cannot be rescued by a fix it never gets to run. One document is the ordinary way to read and is cheap, so an upgrade in the middle of a book does not lose the reader their page; two or more is the rare case, and the one that was open when this went wrong.
+- [x] **"Start clean" in Settings**, under a heading that says what it is for. The same thing the app does by itself, for the reader who wants it sooner — every tab closed, the reading places and the picture shelf let go, the notes untouched.
+- [x] **Checked.** Six tests for the recovery itself, including the one that matters most — the vault is still there after a reset — and 93 across the specs that open documents, restore sessions and launch tabs. `package.json` and the lockfile's two root fields carry **0.18.1**.
 
 ### The 0.18.0 round: the reader rebuilt on PDFium, and the vault that can finally hold a file (November 2026)
 
