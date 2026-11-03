@@ -2,6 +2,7 @@ import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
 import { startKeeping } from './logStore';
+import * as log from './log';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -642,7 +643,10 @@ function renderPreview(): void {
     previewReady = showHtmlFile(preview, editor.getValue(), page, () => filePath === page);
     return;
   }
-  preview.innerHTML = `${title}${renderMarkdown(asMarkdown(filePath, editor.getValue()))}`;
+  const source = editor.getValue();
+  const built = log.time('file', 'reading view built', { chars: source.length });
+  preview.innerHTML = `${title}${renderMarkdown(asMarkdown(filePath, source))}`;
+  built();
   // A task is ticked where it is read, not only where it is written. The
   // parser hands over a box that cannot be touched; here, and only here, it
   // is live — a card in the tab switcher and an exported page keep theirs
@@ -1184,6 +1188,10 @@ function setMode(requested: Mode, restoredLine?: number): void {
   // reached through any path into it — a tap, a button, or a tab restored
   // from a session that got there before this existed.
   const next: Mode = requested === 'edit' && filePath && !isEditableFile(filePath) ? 'preview' : requested;
+  // "source to preview switch" is one of the slow things on the list, so it
+  // is measured end to end: everything below, the reading view's build
+  // included, happens before this returns.
+  const switched = next === mode ? null : log.time('tabs', `${mode} to ${next}`);
   if (restoredLine === undefined) releaseHold();
   const generation = viewGeneration;
   // Read the position from the pane that is visible *now* — a display:none
@@ -1223,6 +1231,7 @@ function setMode(requested: Mode, restoredLine?: number): void {
   }
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
   rememberViewSoon();
+  switched?.();
 }
 function toggleFiles(open?: boolean): void { drawers.toggle('left', open); }
 function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
@@ -1790,7 +1799,9 @@ function showFile(path: string, content: string, after?: () => void, options?: {
     // file was last left. Its bytes are read once and kept, because pdf.js
     // and the place both want them.
     opening = 'preview';
+    const reading = log.time('pdf', 'bytes read', { path });
     void backend.readBytes(path).then((bytes) => {
+      reading({ bytes: bytes?.byteLength ?? 0 });
       if (!bytes?.byteLength || filePath !== path) return;
       openedDocument.path = path;
       openedDocument.bytes = bytes;
@@ -1884,9 +1895,11 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   }
   // A picture's bytes are not read: as text they are the whole file, base64
   // and all. The reading view shows the picture (showFile reads its data URL).
+  const reading = log.time('file', 'read', { path });
   const opened: TextOpen = isPicture(path) || isDocument(path)
     ? { status: 'text', text: '', clean: true }
     : await backend.readText(path);
+  reading({ bytes: opened.status === 'text' ? opened.text.length : 0, status: opened.status });
   if (opened.status !== 'text') {
     leftSidebar.hint(opened.status === 'too-large'
       ? `“${fileName(path)}” is too large to open here (${formatBytes(opened.size)}).`
@@ -2336,7 +2349,9 @@ async function openTab(tab: Tab, after?: () => void): Promise<void> {
     showFile(tab.path, '', after);
     return;
   }
+  const reading = log.time('file', 'read', { path: tab.path });
   const opened = await backend.readText(tab.path);
+  reading({ bytes: opened.status === 'text' ? opened.text.length : 0, status: opened.status });
   if (curTab() !== tab) return; // a newer tab activation won the read race
   if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }
   // The tour has no file of its own until it is written in: coming back to
@@ -2356,7 +2371,9 @@ async function switchTab(index: number, after?: () => void): Promise<void> {
   if (index === activeTab) { after?.(); return; }
   if (!await leaveCurrent()) return;
   activeTab = index;
+  const switching = log.time('tabs', 'switch', { to: fileName(tabs[index].path) || 'empty tab' });
   await openTab(curTab(), after);
+  switching();
 }
 function newTab(): void {
   void (async () => {
@@ -3546,11 +3563,17 @@ async function boot(): Promise<void> {
   // subscribes and nothing more: nothing is read back here, so the database
   // costs the first screen nothing.
   startKeeping();
+  // The clock on every line is milliseconds since the page began loading, so
+  // these read as a launch from zero without anything having to subtract.
+  log.note('launch', 'cold start', { native: isNative() });
+  const ready = log.time('launch', 'ready to read');
   try {
     // Before the first file opens, so that a file asking where it was left
     // is answered from the store rather than guessed at. One read of a few
     // hundred small records; the app is already waiting on the vault.
+    const places = log.time('launch', 'reading places read');
     await openViewStore();
+    places();
     keepStorage();
     if (supportsIncomingFiles()) {
       await onIncomingFile((id) => {
@@ -3558,7 +3581,9 @@ async function boot(): Promise<void> {
         else void handleIncomingId(id);
       });
     }
+    const first = log.time('launch', 'first file on screen');
     await openFirstNote();
+    first();
     bootReady = true;
     if (supportsIncomingFiles()) {
       const pending = await pendingIncomingFile().catch(() => null);
@@ -3568,6 +3593,7 @@ async function boot(): Promise<void> {
       if (queued && queued !== pending) await handleIncomingId(queued);
     }
   } finally {
+    ready();
     bootReady = true;
     window.__satrBooted = true; // the cover in index.html stops waiting for this
     // The real note is on screen: lift the start-up copy.
@@ -3675,7 +3701,14 @@ async function openFirstNote(): Promise<void> {
   // A picture tab is shown, not read: its bytes as text are the whole file.
   let text: string | null = null;
   if (path && isPicture(path)) text = '';
-  else if (path) text = await backend.read(path);
+  else if (path) {
+    // The launch has its own way in -- not openTab, not openFile -- so it
+    // needs its own line, or the one read that matters most would be the
+    // only one missing from the log.
+    const reading = log.time('file', 'read', { path });
+    text = await backend.read(path);
+    reading({ bytes: text?.length ?? 0, status: text === null ? 'gone' : 'text' });
+  }
   if (text === null) {
     ({ path, text } = await firstNote());
     // There is nothing to open: the space holds no note this tab can show.

@@ -18,6 +18,7 @@
 // reached". Scrolling past the band redraws it; the old picture stays up
 // meanwhile, so there is never a blank page.
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
+import * as log from './log';
 import type { ImageDataLike, Rect as PageRect } from '@embedpdf/models';
 import { imagesOnPage, pdfium, type PageRect as PictureRect } from './pdfiumEngine';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
@@ -895,12 +896,19 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // picture, so there is no worker to wire up and no cmap, font or decoder
   // directory to point at — the one wasm file carries all of it, which is
   // why a scanned page can no longer come out blank for a missing decoder.
+  // "pdf opening is very slow, I think it does something for the file before
+  // opening it" -- so the wasm engine coming up and the document being parsed
+  // are timed apart. The first is paid once a run, the second every open.
+  const starting = log.time('pdf', 'engine ready');
   const engine = await pdfium();
+  starting();
   opened += 1;
   const id = `satr-${opened}`;
+  const parsing = log.time('pdf', 'document parsed', { bytes: typeof source === 'string' ? 0 : source.byteLength });
   const document_: PdfDocumentObject = await (typeof source === 'string'
     ? engine.openDocumentUrl({ id, url: source })
     : engine.openDocumentBuffer({ id, content: source })).toPromise();
+  parsing({ pages: document_.pageCount });
 
   const { scroller } = options;
   const doc = window.document.createElement('div');
