@@ -2065,3 +2065,42 @@ test.describe('the sharp layer, while the reader is still moving', () => {
     expect(flick.meanFrameMs).toBeLessThan(25);
   });
 });
+
+test('a full sweep after a double tap answers the finger the whole way', async ({ page }) => {
+  // Reported: "the single finger zoom stops zooming after a point... it's
+  // happening after double tap". The ceiling was 8, a double tap lands on 2,
+  // and 1.005 per pixel reaches 8 in 278px -- less than one thumb sweep. So
+  // the drag hit the wall mid-gesture and the rest of it did nothing, which
+  // is not a limit, it is a dead gesture.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await readThis(page, 'handout.pdf');
+  await dragZoom(page, 2); // the double tap
+  await page.waitForTimeout(600);
+
+  const trace = await page.locator('.pdf-page[data-page="1"]').evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = Math.max(box.top + 40, Math.min(box.bottom - 40, box.top + box.height / 2));
+    const column = sheet.parentElement as HTMLElement;
+    const fire = (type: string, atY: number): void => {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: atY, bubbles: true, cancelable: true }));
+    };
+    fire('pointerdown', y);
+    fire('pointerup', y);
+    fire('pointerdown', y);
+    const seen: number[] = [];
+    for (let step = 1; step <= 20; step += 1) {
+      fire('pointermove', y + (400 * step) / 20);
+      const matched = /scale\(([\d.]+)\)/.exec(column.style.transform);
+      seen.push(matched ? Number(matched[1]) : 1);
+    }
+    fire('pointerup', y + 400);
+    return seen;
+  });
+
+  // Every step of the sweep moves the page. The failure this pins is not a
+  // small one: at the old ceiling the last fifteen readings were identical.
+  const still = trace.slice(1).filter((now, i) => now <= trace[i]).length;
+  expect(still, `frozen steps in ${trace.map((z) => z.toFixed(2)).join(' ')}`).toBe(0);
+  expect(trace[trace.length - 1]).toBeGreaterThan(trace[0] * 4);
+});

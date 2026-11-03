@@ -437,9 +437,22 @@ function outlineFromType(scanned: TypeLine[], pages: number): PdfOutlineItem[] {
 
 /** His floor, measured on a 52-page handout at 390px: about five pages of it
  *  on the screen at once. Below that a page is no longer recognisable even
- *  by its shape. The ceiling is as far in as the band-drawing stays cheap. */
+ *  by its shape.
+ *
+ *  The ceiling has to be further away than one gesture can travel, or the
+ *  zoom dies under a thumb that is still moving. A double tap lands on
+ *  DOUBLE_TAP_ZOOM, and from there the one-finger drag covers 1.005 per
+ *  pixel: a 400px sweep -- about as far as a thumb goes on a 700px screen --
+ *  multiplies by 7.4 and lands at 14.7. At 8 the wall was 278px away, which
+ *  is less than one sweep, so a double tap followed by a drag hit it every
+ *  time and the last 300px of the drag did nothing at all. (Reported as
+ *  "the single finger zoom stops zooming after a point... it's happening
+ *  after double tap", and measured: the live scale moved for 100px of a
+ *  400px drag and was frozen for the other 300.) 16 is the first round
+ *  number above what one sweep can reach, so the limit is still there and
+ *  is no longer somewhere a reader arrives by accident. */
 const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 16;
 /** Where a double tap lands, and the point below which it zooms in rather
  *  than back out (Gander's rule: the geometric middle of the two).
  *
