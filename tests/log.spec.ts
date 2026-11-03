@@ -194,7 +194,7 @@ test('the whole log reads as text, or as one object a line', async ({ page }) =>
     return { text: log.format('text'), ndjson: log.format('ndjson') };
   });
   expect(out.text).toContain('satr log');
-  expect(out.text).toContain('volume normal');
+  expect(out.text, 'the header says which dial it was, and the dial is recording').toContain('recording normal');
   expect(out.text).toContain('cold start');
   expect(out.text).toContain('! storage  quota refused  needed=4096');
   const rows = out.ndjson.split('\n').map((row) => JSON.parse(row));

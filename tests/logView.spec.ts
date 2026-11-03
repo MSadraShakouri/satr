@@ -46,7 +46,7 @@ async function openLog(page: Page): Promise<void> {
   await page.locator('#files').dispatchEvent('click');
   await page.locator('#settings-button').dispatchEvent('click');
   await expect(page.locator('.settings-screen')).toBeVisible();
-  await page.locator('[data-open="log"] .log-open-button, .log-open-button').first().click();
+  await page.locator('.setting-item[data-open="log"]').click();
   await expect(page.locator('.log-screen')).toBeVisible();
 }
 
@@ -55,21 +55,21 @@ test.beforeEach(async ({ page }) => { await boot(page); });
 test('Settings has a row that opens it, and the log is what is on screen', async ({ page }) => {
   await openLog(page);
   await expect(page.locator('.log-screen .settings-title')).toHaveText('Log');
-  const rows = page.locator('.log-row');
+  const rows = page.locator('.log-row-line');
   await expect(rows).toHaveCount(3);
   await expect(rows.first()).toContainText('bytes read');
   await expect(rows.first()).toContainText('path=books/book.pdf');
   // A failure is marked, so it can be found by eye as well as by filter.
-  await expect(page.locator('.log-row.is-failure')).toHaveText(/quota refused/);
+  await expect(page.locator('.log-row-line.is-failure')).toHaveText(/quota refused/);
 });
 
 test('the search narrows it, and says so when nothing matches', async ({ page }) => {
   await openLog(page);
   await page.locator('.log-search').fill('switch');
-  await expect(page.locator('.log-row')).toHaveCount(1);
-  await expect(page.locator('.log-row')).toContainText('to=B.md');
+  await expect(page.locator('.log-row-line')).toHaveCount(1);
+  await expect(page.locator('.log-row-line')).toContainText('to=B.md');
   await page.locator('.log-search').fill('nothing like this');
-  await expect(page.locator('.log-row')).toHaveCount(0);
+  await expect(page.locator('.log-row-line')).toHaveCount(0);
   await expect(page.locator('.log-note')).toHaveText('Nothing matches.');
 });
 
@@ -77,10 +77,10 @@ test('an area chip takes its lines out and puts them back', async ({ page }) => 
   await openLog(page);
   await page.locator('.log-chip[data-area="pdf"]').click();
   await expect(page.locator('.log-chip[data-area="pdf"]')).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.locator('.log-row')).toHaveCount(2);
-  await expect(page.locator('.log-row', { hasText: 'bytes read' })).toHaveCount(0);
+  await expect(page.locator('.log-row-line')).toHaveCount(2);
+  await expect(page.locator('.log-row-line', { hasText: 'bytes read' })).toHaveCount(0);
   await page.locator('.log-chip[data-area="pdf"]').click();
-  await expect(page.locator('.log-row')).toHaveCount(3);
+  await expect(page.locator('.log-row-line')).toHaveCount(3);
 });
 
 test('the volume is set from here, and it is the log that changes', async ({ page }) => {
@@ -93,23 +93,23 @@ test('the volume is set from here, and it is the log that changes', async ({ pag
     log.note('file', 'read');
     log.fail('file', 'could not read');
   });
-  await expect(page.locator('.log-row', { hasText: 'could not read' })).toHaveCount(1);
-  await expect(page.locator('.log-row', { hasText: /file  *read$/ })).toHaveCount(0);
+  await expect(page.locator('.log-row-line', { hasText: 'could not read' })).toHaveCount(1);
+  await expect(page.locator('.log-row-line', { hasText: /file  *read$/ })).toHaveCount(0);
   await page.locator('[data-volume="normal"]').click();
 });
 
 test('a line written while it is open shows up by itself', async ({ page }) => {
   await openLog(page);
-  await expect(page.locator('.log-row')).toHaveCount(3);
+  await expect(page.locator('.log-row-line')).toHaveCount(3);
   await page.evaluate(() => window.__satr.load('/src/log.ts').note('search', 'queried', { q: 'needle' }));
   // Redrawn on a beat rather than once per line, so this is a poll.
-  await expect(page.locator('.log-row', { hasText: 'q=needle' })).toHaveCount(1, { timeout: 3000 });
+  await expect(page.locator('.log-row-line', { hasText: 'q=needle' })).toHaveCount(1, { timeout: 3000 });
 });
 
 test('what is copied or saved is what the filters left, not the lot', async ({ page }) => {
   await openLog(page);
   await page.locator('.log-search').fill('switch');
-  await expect(page.locator('.log-row')).toHaveCount(1);
+  await expect(page.locator('.log-row-line')).toHaveCount(1);
   const text = await page.evaluate(() => window.__satr.load('/src/logView.ts').shownText());
   expect(text).toContain('satr log');
   expect(text).toContain('to=B.md');
@@ -177,7 +177,7 @@ test('clearing empties the screen and the database behind it', async ({ page }) 
   await page.evaluate(() => window.__satr.load('/src/logStore.ts').flush());
   await openLog(page);
   await page.locator('[data-act="clear"]').click();
-  await expect(page.locator('.log-row')).toHaveCount(0);
+  await expect(page.locator('.log-row-line')).toHaveCount(0);
   const kept = await page.evaluate(async () => {
     const store = window.__satr.load('/src/logStore.ts');
     await store.flush();

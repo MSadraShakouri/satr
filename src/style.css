@@ -102,6 +102,7 @@
   --color-base-70: #5c5c5c;
   --color-base-100: #222222;
   --color-red: #e93147;
+  --color-orange: #ec7500;
   --accent-rgb: 8, 109, 221; /* --color-blue */
   --text-selection: rgba(var(--accent-rgb), 0.2);
   --background-modifier-hover: rgba(var(--mono-rgb-100), 0.067);
@@ -148,6 +149,7 @@
   --color-base-70: #b3b3b3;
   --color-base-100: #dadada;
   --color-red: #fb464c;
+  --color-orange: #e9973f;
   --accent-rgb: 2, 122, 255;
   --text-selection: rgba(var(--accent-rgb), 0.33);
   --background-modifier-hover: rgba(var(--mono-rgb-100), 0.15);
@@ -184,6 +186,7 @@
   --interactive-accent: rgb(var(--accent-rgb));
   --text-on-accent: #fff;
   --text-error: var(--color-red);
+  --text-warning: var(--color-orange);
   --text-highlight-bg: rgba(255, 208, 0, 0.4);
   --caret-color: var(--text-accent); /* .is-mobile */
   --code-background: var(--background-primary-alt);
@@ -5162,95 +5165,168 @@ iframe.html-file {
   pointer-events: none;
 }
 
-/* The log (src/logView.ts): a full-screen page in the Settings style, with
-   the three filters the log itself has. The rows are monospace because they
-   are columns -- a clock, an area and a message -- and a proportional font
-   makes a column of numbers unreadable. */
+/* The log (src/logView.ts). Nothing here is a new kind of control: the
+   search field is the settings dropdown's pill, the chips are the segmented
+   control's track and thumb with more than one choice allowed at a time, and
+   the buttons are the same 44px pills. The list is a card like a settings
+   group, because that is what a screen in this app looks like. */
 .log-screen {
   display: flex;
   flex-direction: column;
 }
+/* The controls live on a card, exactly as a settings group does -- which is
+   also what makes the segmented track visible in light mode, where it is the
+   same grey as the page behind it. */
 .log-controls {
   display: flex;
+  flex-shrink: 0;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 12px 10px;
-  border-bottom: 1px solid var(--divider, rgba(128, 128, 128, 0.25));
+  margin: 12px 16px 0;
+  padding: 16px;
+  border-radius: 30px;
+  background: var(--background-primary);
+}
+.theme-dark .log-controls {
+  background: var(--background-primary-alt, #1e1e1e);
 }
 .log-search {
   width: 100%;
   box-sizing: border-box;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 40px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
   font: inherit;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--divider, rgba(128, 128, 128, 0.3));
-  background: var(--editor);
-  color: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  -webkit-appearance: none;
+  appearance: none;
 }
+.theme-dark .log-list {
+  background: var(--background-primary-alt, #1e1e1e);
+}
+.log-search:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+.log-search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+/* The chip row: the segmented control's own track, wrapping. */
 .log-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 18px;
+  background: var(--interactive-normal);
 }
 .log-chip {
-  font: inherit;
-  font-size: 0.82em;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--divider, rgba(128, 128, 128, 0.35));
+  flex: 1 0 auto;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 15px;
   background: transparent;
-  color: inherit;
-  opacity: 0.45;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 150ms, background-color 150ms;
+  -webkit-tap-highlight-color: transparent;
 }
 .log-chip.is-on {
-  opacity: 1;
-  background: color-mix(in srgb, currentColor 12%, transparent);
+  background: var(--segment-thumb);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  color: var(--text-normal);
 }
-.log-row-of-two {
-  display: flex;
-  gap: 8px;
-}
-.log-row-of-two .segmented-control { flex: 1; min-width: 0; }
-.log-actions {
+.log-row {
   display: flex;
   align-items: center;
+  gap: 12px;
+}
+.log-row .segmented-control {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+}
+.log-row .segmented-control-option {
+  min-height: 28px;
+}
+.log-label {
+  flex: 0 0 72px;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.log-hint {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.log-buttons {
+  display: flex;
   gap: 8px;
 }
-.log-count {
+.log-button {
   flex: 1;
-  font-size: 0.82em;
-  opacity: 0.65;
-}
-.log-action,
-.log-open-button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 40px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
   font: inherit;
-  font-size: 0.9em;
-  padding: 5px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--divider, rgba(128, 128, 128, 0.35));
-  background: transparent;
-  color: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
 }
-.log-action.is-danger { color: var(--danger, #c0392b); }
+.log-button.is-danger {
+  color: var(--text-error);
+}
+.log-count {
+  flex-shrink: 0;
+  padding: 6px 20px 2px;
+  text-align: end;
+}
 .log-list {
   flex: 1;
   min-height: 0;
+  margin: 0 16px calc(16px + var(--safe-bottom, 0px));
+  padding: 14px 16px;
   overflow: auto;
-  padding: 8px 12px calc(var(--safe-bottom, 0px) + 16px);
-  font-family: var(--font-monospace, ui-monospace, monospace);
-  font-size: 12px;
-  line-height: 1.55;
+  border-radius: 20px;
+  background: var(--background-primary);
+  font-family: var(--font-monospace);
+  font-size: 0.75rem;
+  line-height: 1.6;
   -webkit-user-select: text;
   user-select: text;
 }
-.log-row {
+.log-row-line {
   white-space: pre-wrap;
   word-break: break-word;
+  color: var(--text-muted);
 }
-.log-row.is-warning { color: var(--warning, #b8860b); }
-.log-row.is-failure { color: var(--danger, #c0392b); }
+.log-row-line.is-warning { color: var(--text-warning); }
+.log-row-line.is-failure { color: var(--text-error); }
 .log-note {
   padding: 6px 0;
-  font-size: 0.85em;
-  opacity: 0.6;
+  color: var(--text-faint);
+  font-family: var(--font-interface, inherit);
+  font-size: 0.75rem;
+}
+/* The Settings row that leads here: a row that goes somewhere, with the
+   chevron that says so, and the whole row is the target. */
+.setting-item[data-open] {
+  cursor: pointer;
+}
+.setting-item[data-open] .setting-item-icon {
+  color: var(--text-faint);
+}
+[dir="rtl"] .setting-item[data-open] .setting-item-icon svg {
+  transform: scaleX(-1);
 }

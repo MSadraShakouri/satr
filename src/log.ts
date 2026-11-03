@@ -35,6 +35,9 @@ export type Kind = 'note' | 'warning' | 'failure';
 
 /** quiet: failures only. normal: everything but the verbose extras.
  *  verbose: all of it, for a hunt. */
+/** How much is written down as it happens -- not how much is shown. A line
+ *  the volume refuses is never recorded, so it cannot be read back later at
+ *  a louder setting; the viewer's search and chips are the showing side. */
 export type Volume = 'quiet' | 'normal' | 'verbose';
 
 /** The varying part of a line. Numbers and short strings only: this is held
@@ -205,7 +208,7 @@ export function format(as: 'text' | 'ndjson' = 'text', some: Line[] = lines()): 
   if (as === 'ndjson') return some.map((line) => JSON.stringify(line)).join('\n');
   const head = [
     `satr log — ${new Date(startedAt).toISOString()}`,
-    `${some.length} lines${lost ? `, ${lost} older ones dropped` : ''}, volume ${level}`,
+    `${some.length} lines${lost ? `, ${lost} older ones dropped` : ''}, recording ${level}`,
     '',
   ];
   return head.concat(some.map(lineText)).join('\n');

@@ -112,6 +112,8 @@ export interface SettingsDeps {
 
 const icon = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 const BACK = icon('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>');
+/** A row that leads somewhere, in the direction the app is written in. */
+const CHEVRON = icon('<path d="m9 18 6-6-6-6"/>');
 const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 
 let page: HTMLElement | null = null;
@@ -313,7 +315,7 @@ export function openSettings(deps: SettingsDeps): void {
             <div class="setting-item-name">Log</div>
             <div class="setting-item-description">What the app did, with how long each thing took. Open it when something is slow or goes wrong, and send it on from there.</div>
           </div>
-          <button type="button" class="log-open-button" data-open="log">Open</button>
+          <div class="setting-item-icon">${CHEVRON}</div>
         </div>
       </div>
       <div class="setting-group-footer">Satr keeps its settings on this device; nothing is written into your folders.</div>

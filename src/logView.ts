@@ -68,7 +68,7 @@ function rowsHtml(some: Line[]): string {
   const over = some.length - shown.length;
   const head = over > 0 ? `<div class="log-note">${over} older line${over === 1 ? '' : 's'} above, not drawn. Search to narrow it.</div>` : '';
   if (!some.length) return '<div class="log-note">Nothing matches.</div>';
-  return head + shown.map((line) => `<div class="log-row is-${line.kind}">${escapeHtml(lineText(line))}</div>`).join('');
+  return head + shown.map((line) => `<div class="log-row-line is-${line.kind}">${escapeHtml(lineText(line))}</div>`).join('');
 }
 
 function draw(): void {
@@ -153,37 +153,42 @@ export function download(): void {
 }
 
 function controlsHtml(): string {
+  // The chip row is the segmented control generalised to more than one
+  // choice: the same track, the same thumb, the same height. Nothing here
+  // invents a control the rest of the app does not already have.
   const chips = AREAS.map((area) =>
     `<button type="button" class="log-chip${muted.has(area) ? '' : ' is-on'}" data-area="${area}" aria-pressed="${!muted.has(area)}">${area}</button>`).join('');
   const level = volume();
+  const segment = (label: string, options: [string, string][], chosenOne: string, key: string): string => `
+      <div class="log-row">
+        <span class="log-label">${label}</span>
+        <div class="segmented-control" role="radiogroup" aria-label="${label}" style="--count: ${options.length}; --index: ${options.findIndex(([value]) => value === chosenOne)}">
+          <div class="segmented-control-thumb"></div>
+          ${options.map(([value, said]) => `<button type="button" class="segmented-control-option" role="radio" data-${key}="${value}" aria-checked="${value === chosenOne}">${said}</button>`).join('')}
+        </div>
+      </div>`;
   return `
     <div class="log-controls">
       <input type="search" class="log-search" placeholder="Search the log" aria-label="Search the log" value="${escapeHtml(query)}">
       <div class="log-chips">${chips}</div>
-      <div class="log-row-of-two">
-        <div class="segmented-control" role="radiogroup" aria-label="Volume" style="--count: 3; --index: ${VOLUMES.indexOf(level)}">
-          <div class="segmented-control-thumb"></div>
-          ${VOLUMES.map((v) => `<button type="button" class="segmented-control-option" role="radio" data-volume="${v}" aria-checked="${v === level}">${v}</button>`).join('')}
-        </div>
-        <div class="segmented-control" role="radiogroup" aria-label="Which runs" style="--count: 2; --index: ${source === 'run' ? 0 : 1}">
-          <div class="segmented-control-thumb"></div>
-          <button type="button" class="segmented-control-option" role="radio" data-source="run" aria-checked="${source === 'run'}">This run</button>
-          <button type="button" class="segmented-control-option" role="radio" data-source="all" aria-checked="${source === 'all'}">Everything</button>
-        </div>
+      ${segment('Showing', [['run', 'This run'], ['all', 'Everything']], source, 'source')}
+      ${segment('Recording', VOLUMES.map((v) => [v, v] as [string, string]), level, 'volume')}
+      <div class="log-hint">Recording is what gets written down as it happens, not what you see here — a line nobody recorded cannot be read back. Quiet keeps failures only.</div>
+      <div class="log-buttons">
+        <button type="button" class="log-button" data-act="copy">Copy</button>
+        <button type="button" class="log-button" data-act="save">${canShare() ? 'Share' : 'Save'}</button>
+        <button type="button" class="log-button is-danger" data-act="clear">Clear</button>
       </div>
-      <div class="log-actions">
-        <span class="log-count"></span>
-        <button type="button" class="log-action" data-act="copy">Copy</button>
-        <button type="button" class="log-action" data-act="save">${canShare() ? 'Share' : 'Save'}</button>
-        <button type="button" class="log-action is-danger" data-act="clear">Clear</button>
-      </div>
-    </div>`;
+    </div>
+    <div class="search-summary log-count"></div>`;
 }
 
 function redrawControls(): void {
   if (!page) return;
   const holder = page.querySelector<HTMLElement>('.log-controls');
-  if (!holder) return;
+  const count = page.querySelector<HTMLElement>('.log-count');
+  if (!holder || !count) return;
+  count.remove();
   const focused = document.activeElement instanceof HTMLInputElement && document.activeElement.classList.contains('log-search');
   const at = focused ? (document.activeElement as HTMLInputElement).selectionStart : null;
   holder.outerHTML = controlsHtml();
