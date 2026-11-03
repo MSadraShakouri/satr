@@ -503,7 +503,12 @@ body {
 .preview-pane article {
   max-width: calc(var(--file-line-width) + 48px);
   margin: auto;
-  padding: var(--view-top-spacing-markdown) 24px calc(50vh + var(--fold-slack, 0px));
+  /* The same tail as the source (.cm-content, src/editor.ts): the room under
+     the last line is what lets it be brought up the screen, and a switch
+     carries the reader's place in that room across (roomUnderNote,
+     src/scrollSync.ts). Different tails meant the same place could not exist
+     in both views. */
+  padding: var(--view-top-spacing-markdown) 24px calc(50vh + 96px + var(--fold-slack, 0px));
   font-size: var(--note-font-size);
   line-height: var(--note-line-height);
   direction: ltr;

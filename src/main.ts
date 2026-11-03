@@ -15,7 +15,7 @@ import { renderMarkdown, sizeListMarkers } from './markdown';
 import { highlightCodeBlocks } from './codeHighlight';
 import { isHtmlFile, showHtmlFile } from './htmlFiles';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
-import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, typingTop } from './scrollSync';
+import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, roomUnderNote, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
@@ -1189,6 +1189,11 @@ function setMode(requested: Mode, restoredLine?: number): void {
   // pane reports scrollTop 0, which is what used to send preview to the top.
   const y = scrollBand();
   const position = restoredLine ?? (mode === 'preview' ? (placeLeftInSource ?? previewScroll(previewPane, preview, y)) : editorScroll(editor.view, y));
+  // Leaving the source from the room under the last line: what the reader can
+  // see is the foot of the note, not a line, so the reading view is given the
+  // room rather than a line to map. Only on a switch they made themselves — a
+  // restored line is a place from another session and keeps the old rule.
+  const room = restoredLine === undefined && mode === 'edit' ? roomUnderNote(editor.view) : null;
   // Kept on the way out of the source, spent on the way back into it.
   placeLeftInSource = restoredLine === undefined && mode === 'edit' && typeof position === 'number' ? position : null;
   mode = next;
@@ -1210,7 +1215,7 @@ function setMode(requested: Mode, restoredLine?: number): void {
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
-    if (position !== null && !documentOpen()) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y);
+    if (position !== null && !documentOpen()) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y, room);
   } else if (position !== null) {
     applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);

@@ -210,3 +210,92 @@ test('a line further down a note never lands higher up the screen', async ({ pag
     expect(Math.max(...run.landings), why).toBeLessThanOrEqual(run.foot + 1);
   }
 });
+
+// The foot of a note, where the two views disagreed. Both keep a tail under
+// the last line (50vh + 96px) so it can be brought up the screen and still be
+// written at. The reader standing in that tail is not looking at a line any
+// more, and v0.15.0's clamp — the note's last line at the foot of the screen,
+// written for a note that opened on an empty screen — had no way to say so:
+// switching to the reading view from the foot of the source dropped the end of
+// the note most of a screen down the glass. Going back was always exact
+// (placeLeftInSource, src/main.ts), which is how it showed up as one-way.
+test.describe('the foot of a note', () => {
+  test.use({ viewport: { width: 390, height: 700 } });
+
+  const NOTE = Array.from({ length: 120 }, (_, i) => `line ${i} of prose with enough words in it to wrap onto a second visual row in a narrow column`).join('\n\n');
+
+  async function openLongNote(page: import('@playwright/test').Page) {
+    await page.addInitScript((text) => {
+      localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/Long.md': 1 }, folders: ['Notes'] }));
+      localStorage.setItem('satr:fs:file:Notes/Long.md', text);
+      localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/Long.md' }], active: 0 }));
+      localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
+      localStorage.setItem('satr:test:seeded', '1');
+    }, NOTE);
+    await page.goto('/');
+    await expect(page.locator('#app .cm-file-name')).toHaveText(/Long/);
+    await expect(page.locator('#boot-snapshot')).toHaveCount(0);
+    await page.waitForTimeout(1500);
+  }
+
+  /** Where the last written line sits, in px below the top of the visible
+   *  pane — the one thing a reader at the foot of a note can actually see. */
+  const endOnScreen = (page: import('@playwright/test').Page) => page.evaluate(() => {
+    const preview = document.body.dataset.mode === 'preview';
+    const pane = document.querySelector<HTMLElement>(preview ? '#preview-pane' : '.cm-scroller')!;
+    const holder = document.querySelector<HTMLElement>(preview ? '#preview-pane article' : '.cm-content')!;
+    const written = Array.from(holder.querySelectorAll<HTMLElement>('*'))
+      .filter((el) => el.textContent && el.textContent.trim().length > 0 && el.getClientRects().length);
+    const last = written[written.length - 1];
+    return Math.round(last.getBoundingClientRect().bottom - pane.getBoundingClientRect().top);
+  });
+
+  const switchView = async (page: import('@playwright/test').Page, to: 'preview' | 'edit') => {
+    // The button is pointer-events:none while the bars are away, which is the
+    // point of them being away (tests/navAutoHide.spec.ts).
+    await page.locator('#preview-toggle').dispatchEvent('click');
+    await expect(page.locator('body')).toHaveAttribute('data-mode', to);
+    await page.waitForTimeout(900);
+  };
+
+  test('the end of a note stays where it is when the view changes', async ({ page }) => {
+    await openLongNote(page);
+    await page.evaluate(() => {
+      const s = document.querySelector<HTMLElement>('.cm-scroller')!;
+      s.scrollTop = s.scrollHeight - s.clientHeight;
+      s.dispatchEvent(new Event('scroll'));
+    });
+    await page.waitForTimeout(600);
+    const inSource = await endOnScreen(page);
+    // Really in the tail: the end of the note is up the screen, not at its foot.
+    expect(inSource).toBeLessThan(400);
+    await switchView(page, 'preview');
+    const inPreview = await endOnScreen(page);
+    // Was 430px before the room was carried across; what is left is the
+    // reading view's own trailing margin under the last paragraph.
+    expect(Math.abs(inPreview - inSource), `source ${inSource} preview ${inPreview}`).toBeLessThanOrEqual(24);
+    await switchView(page, 'edit');
+    expect(await endOnScreen(page)).toBe(inSource);
+  });
+
+  test('a place halfway down is still mapped by its line, not by the room', async ({ page }) => {
+    await openLongNote(page);
+    await page.evaluate(() => {
+      const s = document.querySelector<HTMLElement>('.cm-scroller')!;
+      s.scrollTop = Math.round((s.scrollHeight - s.clientHeight) / 2);
+      s.dispatchEvent(new Event('scroll'));
+    });
+    await page.waitForTimeout(600);
+    const lineAtBand = () => page.evaluate(() => {
+      const preview = document.body.dataset.mode === 'preview';
+      const pane = document.querySelector<HTMLElement>(preview ? '#preview-pane' : '.cm-scroller')!;
+      const el = document.elementFromPoint(195, pane.getBoundingClientRect().top + 150);
+      const m = (el?.textContent || '').trim().match(/line (\d+)/);
+      return m ? Number(m[1]) : null;
+    });
+    const before = await lineAtBand();
+    expect(before).not.toBeNull();
+    await switchView(page, 'preview');
+    expect(await lineAtBand()).toBe(before);
+  });
+});

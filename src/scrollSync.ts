@@ -29,6 +29,21 @@ function textBlock(block: BlockInfo): BlockInfo {
 
 /** The fractional line at the top edge of the editor, or — with an anchor —
  * at `anchor` pixels below it (the outline reads the line two thirds down). */
+/** The empty room the reader has under the last line of the note, in px, or
+ *  null when the end of the note is not on screen. Both views keep a tail
+ *  below a note (50vh + 96px: .cm-content in src/editor.ts, .preview-pane
+ *  article in src/style.css) so that the last line can be brought up the
+ *  screen and still be written at. A reader standing in that room is not
+ *  looking at a line any more — every line is above them — so a line is the
+ *  wrong thing to carry across a switch: the foot of the note is the thing
+ *  they can see, and this is where it sits. */
+export function roomUnderNote(view: EditorView): number | null {
+  const end = view.coordsAtPos(view.state.doc.length);
+  if (!end) return null;
+  const room = view.scrollDOM.getBoundingClientRect().bottom - end.bottom;
+  return room > 1 ? room : null;
+}
+
 export function editorScroll(view: EditorView, anchor = 0): number {
   const top = view.scrollDOM.getBoundingClientRect().top + anchor;
   const height = top - view.documentTop;
@@ -180,7 +195,7 @@ export function heldPreviewPlace(pane: HTMLElement): number | null {
   return holding && holding.pane === pane ? holding.position : null;
 }
 
-export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0): void {
+export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0, room: number | null = null): void {
   // What this last asked the pane for, as the pane was able to answer it
   // (short of the end of a note it scrolls to the end instead). The reader
   // moving a single pixel of their own is the one thing that ends the
@@ -247,6 +262,22 @@ export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, posi
     // reader higher up the page than the line before it.
     const tail = Math.max(end, (preview.lastElementChild ?? preview).getBoundingClientRect().bottom);
     const foot = Math.max(0, pane.scrollTop + tail - paneTop - pane.clientHeight);
+    // The reader standing in the room under the last line asked for the foot
+    // of the note, that far up the screen — not for a line. Answer it with
+    // the same room here, and lift the limit below to do it: that limit is
+    // the note's last line at the foot of the screen, which is the whole of
+    // the room, held back. Both views keep the same tail, so the end of a
+    // note sits in the same place in either. Nothing else passes room —
+    // opening a note and restoring a place still stop at the note's end,
+    // which is the empty screen that limit was written for.
+    if (room !== null && room > 0) {
+      const ceiling = pane.scrollHeight - pane.clientHeight;
+      const here = Math.min(foot + room, ceiling);
+      scrollInstantly(pane, here);
+      placed = pane.scrollTop;
+      reached = Math.abs(placed - here) <= 1;
+      return;
+    }
     // A note shorter than the screen has no foot to stop at: stopping there
     // would be the top of the note for every line in it, which is the jump a
     // reader sees as "it went back to the beginning". The place is kept

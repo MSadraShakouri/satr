@@ -107,8 +107,21 @@ test('reading on from a switch does not end up at the bottom of the note', async
   expect(after.bottom).toBe(false);
 });
 
-test('the tail of a note is the foot of the screen, not one line and a blank page', async ({ page }) => {
-  // A note that ends the way notes end: a block, then nothing.
+test('the foot of the source is the foot of the reading view', async ({ page }) => {
+  // This used to read "the tail of a note is the foot of the screen, not one
+  // line and a blank page", and it asked that the reading view show less than
+  // a third of a screen of padding under the note. That was the wrong way to
+  // say it, and it was measured against the wrong thing: in this very
+  // scenario the source shows 607px of blank under the last line of an 844px
+  // screen, because the reader has scrolled down into the room both views
+  // keep under a note. Asking the reading view for less than 281px was asking
+  // it to show something the reader was not looking at, and that is the fault
+  // reported later -- the reading view had no bottom to scroll to.
+  //
+  // The rule that catches the original bug and this one: the foot of the
+  // source is the foot of the reading view. Placing the end of the note at
+  // the typing band, which is what the original report was, leaves the pane
+  // short of its own foot and fails here.
   await open(page, `${note(12)}\n\n`);
   await page.evaluate(() => {
     const scroller = document.querySelector<HTMLElement>('#app .cm-scroller')!;
@@ -118,15 +131,10 @@ test('the tail of a note is the foot of the screen, not one line and a blank pag
   await page.waitForTimeout(500);
   await toPreview(page);
   await page.waitForTimeout(700);
-  const filled = await page.evaluate(() => {
+  const landed = await page.evaluate(() => {
     const pane = document.querySelector<HTMLElement>('#app .preview-pane')!;
-    const sections = [...pane.querySelectorAll<HTMLElement>('.md-section')];
-    const last = sections[sections.length - 1]!.getBoundingClientRect();
-    const box = pane.getBoundingClientRect();
-    // How much of the screen below the note's last line is empty padding.
-    return { blankBelow: Math.round(box.bottom - last.bottom), pane: Math.round(box.height) };
+    return { top: Math.round(pane.scrollTop), max: Math.round(pane.scrollHeight - pane.clientHeight) };
   });
-  // The end of the last section used to be placed at the typing band, with
-  // half a screen of the article's bottom padding under it.
-  expect(filled.blankBelow).toBeLessThan(filled.pane / 3);
+  expect(landed.max, JSON.stringify(landed)).toBeGreaterThan(0);
+  expect(landed.max - landed.top, JSON.stringify(landed)).toBeLessThanOrEqual(2);
 });
