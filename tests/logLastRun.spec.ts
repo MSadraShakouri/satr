@@ -93,3 +93,17 @@ test('it is read before the heartbeat starts again, or every launch would look c
   const seen = await page.evaluate(() => Number(localStorage.getItem('satr:seenAt')));
   expect(seen).toBeGreaterThan(now - 60_000);
 });
+
+test('asking Android why costs a browser nothing and never throws', async ({ page }) => {
+  await boot(page, { awayAt: Date.now() - 600_000, seenAt: Date.now() - 300_000 });
+  const lines = await page.evaluate(async () => {
+    const diagnostics = window.__satr.load('/src/diagnostics.ts') as unknown as { tellWhyItDied(): Promise<void> };
+    const log = window.__satr.load('/src/log.ts');
+    await diagnostics.tellWhyItDied();
+    return log.lines().filter((line) => line.area === 'native');
+  });
+  // Nothing to say off a phone, and in particular no failure: an answer that
+  // only Android 11 can give must not read as a fault on anything else.
+  expect(lines.filter((line) => line.kind === 'failure')).toHaveLength(0);
+  expect(lines.some((line) => line.text.includes('the system says'))).toBe(false);
+});

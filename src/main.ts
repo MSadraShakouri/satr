@@ -4,6 +4,7 @@ import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRe
 import { startKeeping } from './logStore';
 import * as log from './log';
 import { openLog } from './logView';
+import { tellWhyItDied } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -3570,6 +3571,9 @@ async function boot(): Promise<void> {
   log.note('launch', 'cold start', { native: isNative() });
   // Read before the heartbeat starts again and overwrites the marks.
   tellHowTheLastRunEnded();
+  // And the rung above it: why, where the phone can say. Not waited on --
+  // the launch owes it nothing, and the line lands when it lands.
+  void tellWhyItDied();
   const ready = log.time('launch', 'ready to read');
   try {
     // Before the first file opens, so that a file asking where it was left

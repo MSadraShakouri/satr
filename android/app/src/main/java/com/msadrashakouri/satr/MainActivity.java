@@ -29,6 +29,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OpenFilePlugin.class);
         registerPlugin(SplashPlugin.class);
         registerPlugin(SharePlugin.class);
+        registerPlugin(DiagnosticsPlugin.class);
         super.onCreate(savedInstanceState);
         splashScreen.setKeepOnScreenCondition(() -> !splashDismissed);
         new android.os.Handler(android.os.Looper.getMainLooper())
