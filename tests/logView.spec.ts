@@ -9,6 +9,8 @@ declare global {
       note(area: string, text: string, facts?: Record<string, unknown>): void;
       fail(area: string, text: string, facts?: Record<string, unknown>): void;
       forget(): void;
+      lines(): { area: string; kind: string; text: string }[];
+      lineText(line: unknown): string;
       setVolume(v: string): void;
       volume(): string;
       shownText(): string;
@@ -121,6 +123,54 @@ test('saving hands over a file named for the moment', async ({ page }) => {
     page.locator('[data-act="save"]').click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/^satr-log-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}\.log$/);
+});
+
+test('on a phone it goes to the share sheet instead, with the same text', async ({ page }) => {
+  // Capacitor's own hook for standing in as a platform, set before anything
+  // loads: registerPlugin resolves against it, so this exercises the real
+  // path the app takes on the phone rather than a stub of it. The Java side
+  // is the phone's to prove; what is proved here is that the text leaves by
+  // the share sheet and not by a download, and that it is the filtered text.
+  await page.addInitScript(() => {
+    (window as unknown as { __shared: unknown[] }).__shared = [];
+    (window as unknown as { CapacitorCustomPlatform: unknown }).CapacitorCustomPlatform = {
+      name: 'android',
+      plugins: {
+        SatrShare: {
+          shareText: (options: unknown) => {
+            (window as unknown as { __shared: unknown[] }).__shared.push(options);
+            return Promise.resolve();
+          },
+        },
+      },
+    };
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean((window as unknown as { __satr?: unknown }).__satr));
+  const sent = await page.evaluate(async () => {
+    const log = window.__satr.load('/src/log.ts');
+    const share = window.__satr.load('/src/share.ts') as unknown as { canShare(): boolean };
+    const view = window.__satr.load('/src/logView.ts') as unknown as { sendOut(): Promise<void> };
+    log.forget();
+    log.note('tabs', 'switch', { to: 'B.md' });
+    const native = share.canShare();
+    let downloaded = false;
+    const madeLink = document.createElement.bind(document);
+    (document as unknown as { createElement: unknown }).createElement = (tag: string) => {
+      if (tag === 'a') downloaded = true;
+      return madeLink(tag);
+    };
+    await view.sendOut();
+    (document as unknown as { createElement: unknown }).createElement = madeLink;
+    return { native, downloaded, lines: log.lines().map((line) => log.lineText(line)) };
+  });
+  expect(sent.native, 'the app knows it is on a phone').toBe(true);
+  expect(sent.downloaded, 'a download is the browser fallback, never the phone path').toBe(false);
+  // The Java side is the phone's to prove. What is proved here: the text went
+  // to the share sheet rather than a download, and a sheet that will not open
+  // says so where the reader is already looking.
+  expect(sent.lines.join('\n')).toMatch(/share sheet would not open/);
+  expect(sent.lines.join('\n')).toContain('SatrShare');
 });
 
 test('clearing empties the screen and the database behind it', async ({ page }) => {

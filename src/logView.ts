@@ -12,10 +12,11 @@
 // showing, rather than quietly drawing half of it.
 
 import {
-  dropped, forget, format, lineText, lines as liveLines, onLine, setVolume, volume,
+  dropped, fail, forget, format, lineText, lines as liveLines, onLine, setVolume, volume,
   type Area, type Line, type Volume,
 } from './log';
 import { earlier, flush, forgetStored } from './logStore';
+import { shareText, canShare } from './share';
 
 const AREAS: Area[] = ['launch', 'file', 'pdf', 'tabs', 'search', 'storage', 'native'];
 const VOLUMES: Volume[] = ['quiet', 'normal', 'verbose'];
@@ -119,8 +120,26 @@ async function copyOut(button: HTMLElement): Promise<void> {
   setTimeout(() => { button.textContent = was; }, 1400);
 }
 
-/** A file, for a browser. The app's own share sheet is a separate step; this
- *  is what the web build does and what the tests can check. */
+/** Off the phone: the share sheet where there is one, a downloaded file in a
+ *  browser. The same text either way -- what the filters left. */
+export async function sendOut(): Promise<void> {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  if (canShare()) {
+    try {
+      await shareText(shownText(), `satr-log-${stamp}.log`, 'Send the log');
+    } catch (error) {
+      // There is no second way off a phone -- a browser download does nothing
+      // inside a WebView -- so the only useful thing left is to say so, in
+      // the log, on the screen the reader is already looking at.
+      fail('native', 'the share sheet would not open', { why: String(error) });
+      draw();
+    }
+    return;
+  }
+  download();
+}
+
+/** A file, for a browser, and the fallback when the share sheet is not there. */
 export function download(): void {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
   const blob = new Blob([shownText()], { type: 'text/plain;charset=utf-8' });
@@ -155,7 +174,7 @@ function controlsHtml(): string {
       <div class="log-actions">
         <span class="log-count"></span>
         <button type="button" class="log-action" data-act="copy">Copy</button>
-        <button type="button" class="log-action" data-act="save">Save</button>
+        <button type="button" class="log-action" data-act="save">${canShare() ? 'Share' : 'Save'}</button>
         <button type="button" class="log-action is-danger" data-act="clear">Clear</button>
       </div>
     </div>`;
@@ -222,7 +241,7 @@ export function openLog(): void {
     }
     const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
     if (act === 'copy') { void copyOut(target.closest<HTMLElement>('[data-act]')!); return; }
-    if (act === 'save') { download(); return; }
+    if (act === 'save') { void sendOut(); return; }
     if (act === 'clear') {
       forget();
       older = [];
