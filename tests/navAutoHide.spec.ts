@@ -400,3 +400,50 @@ test('the navbar does not travel when the keyboard comes up', async ({ page }) =
     expect(frame.transform, JSON.stringify(seen)).toBe('none');
   }
 });
+
+test('a note\'s floating buttons go with the bars, and come back with them', async ({ page }) => {
+  // Reported: "the two floating buttons no longer hide when scrolling down in
+  // text files... check with an older version like 0.16". They did until
+  // b068fba, which stopped the header moving so that a document could not be
+  // left nameless. A note is named by its own inline title, not by the header.
+  await boot(page);
+  const topbar = page.locator('.topbar');
+  const away = () => topbar.evaluate((bar) => {
+    const style = getComputedStyle(bar);
+    return { opacity: Number(style.opacity), lifted: !style.transform.startsWith('none') };
+  });
+
+  expect(await away()).toMatchObject({ opacity: 1 });
+  await scrollBy(page, 200);
+  await expect.poll(() => hidden(page)).toBe(true);
+  await expect.poll(async () => (await away()).opacity).toBe(0);
+  expect((await away()).lifted).toBe(true);
+
+  await scrollBy(page, -200);
+  await expect.poll(() => hidden(page)).toBe(false);
+  await expect.poll(async () => (await away()).opacity).toBe(1);
+});
+
+test('a drawer open keeps the buttons there, bars away or not', async ({ page }) => {
+  // The header slides aside with the note when a drawer opens, and the button
+  // that closes it has to be pressable.
+  await boot(page);
+  await scrollBy(page, 200);
+  await expect.poll(() => hidden(page)).toBe(true);
+  // dispatched, not clicked: while the bars are away the button is
+  // pointer-events:none, which is the point of it being away.
+  await page.locator('#files').dispatchEvent('click');
+  await expect(page.locator('body')).toHaveClass(/files-open/);
+  await expect.poll(() => page.locator('.topbar').evaluate((bar) => Number(getComputedStyle(bar).opacity))).toBe(1);
+  expect(await page.locator('.topbar > *').first().evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('auto');
+});
+
+test('a file whose header says its name keeps the header', async ({ page }) => {
+  // The other half of the line: a view with no text of ours has nothing else
+  // to say which file it is, so its header does not leave.
+  await boot(page);
+  await page.evaluate(() => document.body.classList.add('is-named-file'));
+  await scrollBy(page, 200);
+  await expect.poll(() => hidden(page)).toBe(true);
+  expect(await page.locator('.topbar').evaluate((bar) => Number(getComputedStyle(bar).opacity))).toBe(1);
+});

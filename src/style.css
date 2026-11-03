@@ -1926,6 +1926,39 @@ body[data-mode="preview"] .workspace > .preview-pane {
   box-shadow: var(--shadow-xs), var(--raised-edge);
   pointer-events: auto;
 }
+/* The floating buttons go with the bars -- but only where the header is not
+   saying which file this is. A note carries its own inline title, so its
+   header is two buttons over the text and belongs to the chrome that gets
+   out of a reader's way; a document or a picture has no text of ours at all
+   and would be left a nameless page. That is the line nameInChrome already
+   draws (src/main.ts): "the views whose header says the name are exactly the
+   views whose header never leaves". 0.18.0 stopped the header moving for
+   everything, to stop a document losing its name; this gives a note its own
+   answer back without taking the document's. */
+body:not(.is-named-file).is-hidden-nav .topbar {
+  /* .is-hidden-nav .view-header: slide up by its own height and fade */
+  transform: translateY(calc(-44px - max(12px, var(--safe-top))));
+  opacity: 0;
+}
+body:not(.is-named-file).is-hidden-nav .topbar > * {
+  pointer-events: none;
+}
+/* A drawer open outranks it: the button that closes the drawer has to be
+   there to be pressed. */
+body:not(.is-named-file).files-open.is-hidden-nav .topbar {
+  transform: translate3d(var(--drawer-width), 0, 0);
+}
+body:not(.is-named-file).outline-open.is-hidden-nav .topbar {
+  transform: translate3d(calc(-1 * var(--drawer-width)), 0, 0);
+}
+body:not(.is-named-file).files-open.is-hidden-nav .topbar,
+body:not(.is-named-file).outline-open.is-hidden-nav .topbar {
+  opacity: 1;
+}
+body:not(.is-named-file).files-open.is-hidden-nav .topbar > *,
+body:not(.is-named-file).outline-open.is-hidden-nav .topbar > * {
+  pointer-events: auto;
+}
 .is-hidden-nav .mobile-navbar,
 .keyboard-open .mobile-navbar,
 .keyboard-up .mobile-navbar,
