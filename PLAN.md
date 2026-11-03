@@ -3,7 +3,9 @@
 The author's list, as it stands after 0.18.0 and the two rounds since it, plus
 the findings he asked be added from this side (marked *(found here)*) — do not
 invent any others. Web first, then APK. Lint and GitHub stay deferred. Italic
-notes are the state of play, not new work.
+notes are the state of play, not new work. **Android 6 and up, always** — the
+newest phone gets the best path and the oldest gets a working one, decided at
+runtime; never a lowest common denominator for everybody.
 
 Closed cases do not live here. What shipped is written up release by release in
 ROADMAP.md. **A tick survives here only while it is still unconfirmed** — a fix
@@ -84,7 +86,7 @@ rather than a tidy-up. Designed, not started; the whole of it is written up in
 the round notes.
 
 - [ ] verbose and non verbose logging, and search and filters and stuff too (export is very important to have), I don't know if I need different levels and stuff — *three dials rather than five levels: volume (quiet, normal, verbose), kind (note, warning, failure — a failure is never dropped, whatever the volume), and an area tag on every line (launch, file, pdf, tabs, search, storage, native). Every line carries a clock and a timed line carries what it took, so the record and the stopwatch are one stream rather than two features.*
-- [ ] something system level for the APK — *two of them, and the second is the better one. `logcat -d` run from inside the app returns our own lines with no root and no permission, which is the only way to see what happens underneath the page — plugins, the renderer, a kill. It was never part of the SDK, so it is not promised; with root, `pm grant READ_LOGS` gives the whole system log to the same plugin. And `ApplicationExitInfo`, which is official and answers **why the last run ended**: crashed, froze, or was killed because the phone wanted the memory. That last one would settle the new-tab item in "seen once" without ever reproducing it.*
+- [ ] something system level for the APK, on every version and not only 11+ — *two of them, and the second is the better one. `logcat -d` run from inside the app returns our own lines with no root and no permission, which is the only way to see what happens underneath the page — plugins, the renderer, a kill. It was never part of the SDK, so it is not promised; with root, `pm grant READ_LOGS` gives the whole system log to the same plugin. And `ApplicationExitInfo`, which is official and answers **why the last run ended**: crashed, froze, or was killed because the phone wanted the memory. That last one would settle the new-tab item in "seen once" without ever reproducing it. It needs Android 11, so it is the top rung of three and not the mechanism: **that** the app was killed, and when, comes from a heartbeat stamped while it is alive against a clean stamp on the way out — which costs nothing, works on Android 6, and is the only rung that also works in the browser where this gets tested. Android 11 adds the reason, Android 12 adds the trace. `logcat` and the share sheet need no ladder at all: both reach back past our floor. Measured, so it is not a guess — minSdk is 23, and the oldest WebView an Android 6 phone can hold is 105 against the chrome87 we compile for.*
 - [ ] an app level thing — *a ring of 2,000 lines in memory, flushed to IndexedDB in batches and on the way to the background, so it survives a crash as far as the last flush. Not localStorage: that one blocks the screen on every write, which is the crime under investigation.*
 - [ ] the web version — *gets all of it except the two native sources, and is where the logger is built and tested, because Playwright can read the log back out and assert on what it says.*
 - [ ] export — *into the vault as `Logs/<date>.log`, so it lands in git where it can be read on this side; plus the share sheet and the clipboard. Plain text, with ndjson for when something has to parse it.*
