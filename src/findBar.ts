@@ -240,6 +240,18 @@ function createPanel(view: EditorView): Panel {
   const count = dom.querySelector<HTMLElement>('.document-search-count')!;
   let timer: number | undefined;
 
+  // Enter is done with the field, but the bar stays up with the term in it --
+  // and a text field left on the screen is one the browser can decide to put
+  // the keyboard back for. It restores the last field focus was taken from,
+  // and a swipe is enough to ask it to; a tap is not, because a tap lands
+  // somewhere and answers the question itself. Every other field in the app
+  // has gone with its drawer by the time the reader swipes. This one has not,
+  // so it stops being a field instead: read-only raises no keyboard, and
+  // there is nothing left to restore. A finger on it hands it straight back.
+  const putAway = (): void => { find.readOnly = true; find.blur(); };
+  const takeUp = (): void => { find.readOnly = false; };
+  find.addEventListener('pointerdown', takeUp);
+
   const render = (state: EditorState): void => {
     const s = state.field(findField);
     dom.classList.toggle('mod-replace-mode', s.replaceMode);
@@ -284,7 +296,7 @@ function createPanel(view: EditorView): Panel {
     event.preventDefault();
     flush();
     if (event.altKey && (event.ctrlKey || event.metaKey)) { replaceEvery(view, replace.value); return; }
-    if (!hasPhysicalKeyboard()) { find.blur(); return; }
+    if (!hasPhysicalKeyboard()) { putAway(); return; }
     go(view, event.shiftKey ? -1 : 1);
   });
   replace.addEventListener('keydown', (event) => {
@@ -326,6 +338,7 @@ function createPanel(view: EditorView): Panel {
       find.value = s.query;
       render(view.state);
       if (quietly) return; // raised by the search panel, which is being typed into
+      takeUp();
       (s.replaceMode && s.query ? replace : find).focus();
       if (!(s.replaceMode && s.query)) find.select();
     },
@@ -373,6 +386,7 @@ function raiseFind(view: EditorView, replace: boolean, focus: boolean): void {
     view.dispatch({ effects: setFind.of({ replaceMode: replace || s.replaceMode }) });
     if (!focus) return;
     const input = view.dom.querySelector<HTMLInputElement>(replace ? '.document-replace-input input' : '.document-search-input input');
+    if (input) input.readOnly = false;
     input?.focus();
     if (!replace) input?.select();
     return;

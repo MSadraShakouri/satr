@@ -97,3 +97,80 @@ test('closing the bar leaves a caret after the match, not a selection', async ({
   expect(sel.text, 'nothing is selected: no selection bar, no handles').toBe('');
   expect(sel.head, 'the caret sits where the reader can carry on typing').toBe(MATCH + 'needlep'.length);
 });
+
+// The keyboard coming back on its own: "after searching with nav button and
+// pressing enter, any touch on the screen (swipes, not taps, taps work as
+// expected) trigger the keyboard while it shouldn't", and "the issue gets
+// fixed after closing the keyboard after it comes up". Closing the bar
+// stops it, which is what names the cause: the field is still on the screen
+// when every other field in the app has gone with its drawer, so it is still
+// what the browser restores focus to. It is read-only between searches
+// instead -- nothing a keyboard can be raised for -- and a finger hands it
+// straight back. The browser's own restoring cannot be driven from here, so
+// what is pinned is the state it would restore into.
+test.describe('the field is not left waiting to be given the keyboard back', () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  test('enter puts the field away, and leaves the bar and the term alone', async ({ page }) => {
+    await boot(page);
+    await page.locator('#app #nav-find').tap();
+    await expect(page.locator('#app .document-search-container')).toBeVisible();
+    const field = page.locator('#app .document-search-input input');
+    await page.keyboard.type('needlep');
+    await expect(page.locator('#app .obsidian-search-match-highlight')).toBeVisible();
+    expect(await field.evaluate((el: HTMLInputElement) => el.readOnly), 'typeable while being typed into').toBe(false);
+
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(250);
+    expect(await field.evaluate((el: HTMLInputElement) => el.readOnly), 'read-only: no keyboard can be raised for it').toBe(true);
+    expect(await field.evaluate((el: HTMLInputElement) => document.activeElement === el), 'and not focused either').toBe(false);
+    // Everything the reader can see is unchanged.
+    await expect(page.locator('#app .document-search-container')).toBeVisible();
+    await expect(field).toHaveValue('needlep');
+    await expect(page.locator('#app .obsidian-search-match-highlight')).toBeVisible();
+  });
+
+  test('a finger on the field hands it straight back', async ({ page }) => {
+    await boot(page);
+    await page.locator('#app #nav-find').tap();
+    const field = page.locator('#app .document-search-input input');
+    await page.keyboard.type('needlep');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(250);
+    expect(await field.evaluate((el: HTMLInputElement) => el.readOnly)).toBe(true);
+
+    await field.tap();
+    await page.waitForTimeout(150);
+    expect(await field.evaluate((el: HTMLInputElement) => el.readOnly), 'tapping it makes it a field again').toBe(false);
+    expect(await field.evaluate((el: HTMLInputElement) => document.activeElement === el), 'and the caret is in it').toBe(true);
+    await page.keyboard.type('x');
+    await expect(field).toHaveValue('needlepx');
+  });
+
+  test('the Find button opens it ready to type, however it was last left', async ({ page }) => {
+    await boot(page);
+    await page.locator('#app #nav-find').tap();
+    const field = page.locator('#app .document-search-input input');
+    await page.keyboard.type('needlep');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(250);
+    expect(await field.evaluate((el: HTMLInputElement) => el.readOnly)).toBe(true);
+
+    // The deliberate press on the button must still raise the keyboard, so
+    // the field has to be a field again by the time it takes focus.
+    await page.locator('#app #nav-find').tap();
+    await page.waitForTimeout(250);
+    expect(await field.evaluate((el: HTMLInputElement) => el.readOnly), 'asked for again: typeable').toBe(false);
+    expect(await field.evaluate((el: HTMLInputElement) => document.activeElement === el)).toBe(true);
+  });
+});
+
+test('with a real keyboard, enter still walks the matches and never locks the field', async ({ page }) => {
+  await boot(page);
+  await find(page, 'needlep');
+  const field = page.locator('#app .document-search-input input');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  expect(await field.evaluate((el: HTMLInputElement) => el.readOnly), 'a fine pointer never puts the field away').toBe(false);
+  expect(await field.evaluate((el: HTMLInputElement) => document.activeElement === el), 'and keeps the caret for the next Enter').toBe(true);
+});
