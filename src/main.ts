@@ -3,7 +3,6 @@ import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, 
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
 import { startKeeping } from './logStore';
 import * as log from './log';
-import { openLog } from './logView';
 import { tellWhyItDied } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
@@ -45,8 +44,6 @@ import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAc
 import { onThemeChange } from './theme';
 import type { PdfChrome, PdfTheme } from './pdfChrome';
 import { setHighlightAll } from './findBar';
-import { exportPdf } from './exportPdf';
-import { createFolderExport } from './folderExport';
 import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
@@ -1779,7 +1776,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // never saved back over the original.
   const lossy = options?.lossy ?? (incoming ? Boolean(incoming.lossy) : looksBinary(content));
   externalFileScreen.hidden = true;
-  folderExport.close();
+  folderExport?.close();
   document.body.classList.remove('external-file-active', 'is-empty-tab');
   renderMenuButton();
   // Another note never opens the keyboard or shows the caret: it comes back
@@ -2856,6 +2853,7 @@ async function exportCurrentPdf(): Promise<void> {
   const options = loadPrintOptions(path);
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
+    const { exportPdf } = await import('./exportPdf');
     await exportPdf(name, markdown, isExternalPath(path) ? '' : path, options);
   } catch (error) {
     showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
@@ -2878,6 +2876,7 @@ async function exportFilePdf(path: string): Promise<void> {
   const options = loadPrintOptions(path);
   const notice = showNotice('Preparing the PDF…', 60000);
   try {
+    const { exportPdf } = await import('./exportPdf');
     await exportPdf(name, markdown, path, options);
   } catch (error) {
     showNotice(`Couldn't export: ${error instanceof Error ? error.message : String(error)}`, 5000);
@@ -3458,11 +3457,24 @@ settingsButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d=
 // The folder export's page (src/folderExport.ts). Its entrances are the file
 // tree's own long-press menus: a folder row exports the folder, a text file
 // row exports that file (src/leftSidebar.ts).
+// Built the first time a folder is exported, and not before: the page and
+// everything under it -- the exporter, Paged.js's bridge, KaTeX's stylesheet
+// carried as text -- is a tenth of the app's code and none of it is on the
+// way from tapping the icon to reading a note. Until then isOpen() is false
+// and close() is nothing to do, which is exactly what it would answer anyway.
 const folderExportScreen = document.querySelector<HTMLElement>('#folder-export-screen')!;
-const folderExport = createFolderExport(folderExportScreen, {
-  noteOptions: (path) => loadPrintOptions(path),
-  notice: (message: string, ms?: number) => showNotice(message, ms),
-});
+let folderExport: Awaited<ReturnType<typeof loadFolderExport>> | null = null;
+async function loadFolderExport() {
+  const { createFolderExport } = await import('./folderExport');
+  return createFolderExport(folderExportScreen, {
+    noteOptions: (path) => loadPrintOptions(path),
+    notice: (message: string, ms?: number) => showNotice(message, ms),
+  });
+}
+async function openFolderExport(folder: string): Promise<void> {
+  folderExport ??= await loadFolderExport();
+  folderExport.open(folder);
+}
 settingsButton.addEventListener('click', () => showSettings());
 function showSettings(): void {
   toggleFiles(false);
@@ -3470,7 +3482,10 @@ function showSettings(): void {
     notePath: hasNote() ? filePath : undefined,
     noteName: hasNote() ? displayNameForPath(filePath) : undefined,
     apply: applySettings,
-    openLog,
+    // Fetched when it is asked for. The log's screen is not on the path from
+    // tapping the icon to reading a note, so it has no business being parsed
+    // on the way there (src/logView.ts).
+    openLog: () => { void import('./logView').then((viewer) => viewer.openLog()); },
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });
 }
@@ -3478,7 +3493,7 @@ function showSettings(): void {
 // Left sidebar: spaces and the file explorer (src/leftSidebar.ts).
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
   currentPath: () => filePath,
-  exportFolder: (folder) => { toggleFiles(false); folderExport.open(folder); },
+  exportFolder: (folder) => { toggleFiles(false); void openFolderExport(folder); },
   openFolderTabs: (folder, replace) => { toggleFiles(false); void openFolderTabs(folder, replace); },
   exportNote: (path) => { void exportFilePdf(path); },
   open: (path) => { toggleFiles(false); void openFile(path); },
@@ -3508,7 +3523,7 @@ function handleBack(): boolean {
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
   else if (isSettingsOpen()) closeSettings();
-  else if (folderExport.isOpen()) folderExport.close();
+  else if (folderExport?.isOpen()) folderExport.close();
   else if (document.querySelector('#save-conflict-dialog')) closeSaveConflict();
   else if (document.body.classList.contains('external-file-active')) returnFromIncomingFile();
   else if (editor.findOpen) editor.closeFind();
@@ -3571,6 +3586,7 @@ async function boot(): Promise<void> {
   log.note('launch', 'cold start', { native: isNative() });
   // Read before the heartbeat starts again and overwrites the marks.
   tellHowTheLastRunEnded();
+  tellHowThePageLoaded();
   // And the rung above it: why, where the phone can say. Not waited on --
   // the launch owes it nothing, and the line lands when it lands.
   void tellWhyItDied();
@@ -3666,6 +3682,31 @@ function dueEmptyTab(): boolean {
   const since = Math.max(Number(localStorage.getItem(AWAY_KEY)) || 0, Number(localStorage.getItem(SEEN_KEY)) || 0);
   const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
+}
+/** Where a launch went before the app had any say in it.
+ *
+ *  Every line's clock is milliseconds since the page began loading, so the
+ *  first line already says how long the app waited to exist. This says what
+ *  that time was spent on: fetching the page, then fetching, parsing and
+ *  running the scripts. Measured here at six times slower than this desktop,
+ *  the scripts were a second of it and the app's own boot a third of that --
+ *  but a simulation is not a phone, and this is the line that settles it on
+ *  the phone.
+ *
+ *  Read after the load event, because none of these numbers are final until
+ *  then; an old WebView without the timeline simply says nothing. */
+function tellHowThePageLoaded(): void {
+  const say = (): void => {
+    const nav = performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (!nav || !nav.domContentLoadedEventEnd) return;
+    log.note('launch', 'the page before the app', {
+      page: Math.round(nav.responseEnd),
+      scriptsDone: Math.round(nav.domContentLoadedEventEnd),
+      loaded: Math.round(nav.loadEventEnd),
+    });
+  };
+  if (document.readyState === 'complete') say();
+  else window.addEventListener('load', () => setTimeout(say, 0), { once: true });
 }
 /** Two beats of slack: one may be missed to a throttled timer without the
  *  run being called a casualty. */
