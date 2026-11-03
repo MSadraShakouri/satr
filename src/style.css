@@ -5087,6 +5087,13 @@ body.external-file-active .notice {
 .preview-pane.is-page {
   overflow: hidden; /* the page scrolls inside its own frame */
   scrollbar-gutter: auto; /* and the pane's reserved gutter is the page's to use */
+  /* No fade at the edges either. A note fades out under the floating buttons
+     because it slides under them; a page does not slide anywhere -- it sits
+     still inside its own frame, so the fade is only a dimmed strip of
+     somebody else's design. Its own source keeps the fade: that is a note
+     being read, like any other text file. */
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 .preview-pane.is-page,
 #preview.is-page {

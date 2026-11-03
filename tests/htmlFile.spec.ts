@@ -117,3 +117,36 @@ test('a page being read says its name in the header, since the page itself will 
   await expect(page.locator('#topbar-title')).toBeHidden();
   await expect(page.locator('.cm-file-title')).toContainText('page.html');
 });
+
+// "right now, in app it has a slight fade at the top and bottom, this is good
+// but I don't want this for html rendered, only that". A note fades out under
+// the floating buttons because it slides under them. A page does not slide
+// anywhere: it sits inside its own frame, so the fade is a dimmed strip of
+// somebody else's design. Everything else keeps it, the page's own source
+// included.
+test('a page is shown without the edge fade a note is read behind', async ({ page }) => {
+  await open(page, { 'Notes/brochure.html': STYLED, 'Notes/A.md': '# A note\n\nwords\n' });
+  const maskOf = (sel: string) => page.locator(sel).evaluate((el) => {
+    const s = getComputedStyle(el);
+    return s.maskImage === 'none' ? s.webkitMaskImage ?? 'none' : s.maskImage;
+  });
+
+  // The page: no fade.
+  await expect(page.locator('#preview-pane')).toHaveClass(/is-page/);
+  expect(await maskOf('#preview-pane'), 'the rendered page has no fade').toBe('none');
+
+  // The same file's source: the fade, like any other text file.
+  await page.locator('#preview-toggle').dispatchEvent('click');
+  await expect(page.locator('#preview-pane')).toBeHidden();
+  expect(await maskOf('.editor-pane'), "the page's own source keeps it").toContain('gradient');
+
+  // And a note, both ways round, keeps it.
+  await page.locator('#nav-tabs').evaluate((el: HTMLButtonElement) => el.click());
+  await page.locator('.mobile-tab-title').getByText('A', { exact: true }).click();
+  await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
+  expect(await maskOf('.editor-pane'), 'a note in source mode keeps it').toContain('gradient');
+  await page.locator('#preview-toggle').dispatchEvent('click');
+  await expect(page.locator('#preview-pane')).toBeVisible();
+  await expect(page.locator('#preview-pane')).not.toHaveClass(/is-page/);
+  expect(await maskOf('#preview-pane'), 'a note in the reading view keeps it').toContain('gradient');
+});
