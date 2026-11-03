@@ -2323,6 +2323,18 @@ async function openTab(tab: Tab, after?: () => void): Promise<void> {
     showFile(tab.path, '', after);
     return;
   }
+  // Nor is a document read as text. showFile throws that text away for one
+  // anyway (`if (imageTab || documentTab) content = ''`) and reads the bytes
+  // itself -- but readText stats the file first and refuses anything over
+  // MAX_EDIT_BYTES, and the refusal below closes the tab. A book is always
+  // over 8MB, so switching to its tab shut it and left the reader on the
+  // note they came from: "note to pdf switch closes the pdf tab and never
+  // opens it actually, just stays on the note tab".
+  if (isDocument(tab.path)) {
+    if (curTab() !== tab) return;
+    showFile(tab.path, '', after);
+    return;
+  }
   const opened = await backend.readText(tab.path);
   if (curTab() !== tab) return; // a newer tab activation won the read race
   if (opened.status === 'text') { showFile(tab.path, opened.text, after, { lossy: !opened.clean }); return; }

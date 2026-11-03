@@ -2104,3 +2104,54 @@ test('a full sweep after a double tap answers the finger the whole way', async (
   expect(still, `frozen steps in ${trace.map((z) => z.toFixed(2)).join(' ')}`).toBe(0);
   expect(trace[trace.length - 1]).toBeGreaterThan(trace[0] * 4);
 });
+
+// "note to pdf switch closes the pdf tab and never opens it actually, just
+// stays on the note tab". openTab read every tab's file as text before
+// showing it, documents included -- and readText stats the file first and
+// refuses anything over MAX_EDIT_BYTES (8MB), after which the tab is spliced
+// out of the list. showFile throws that text away for a document anyway and
+// reads the bytes itself, so the read was only ever a way to lose the tab.
+// A book is always over the limit, which is why it went from sometimes to
+// always. readText is made to answer the way it does for one here, because a
+// file that large cannot be put in a test vault.
+test('a book-sized pdf opens from a note tab instead of losing its tab', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('satr:tabs', JSON.stringify({
+      tabs: [{ path: 'Notes/A.md' }, { path: 'Notes/handout.pdf' }], active: 0,
+    }));
+  });
+  await boot(page, { 'A.md': '# A note\n\nwords\n', 'handout.pdf': PDF }, 'A.md');
+  await expect(page.locator('#app .cm-file-name')).toHaveText('A');
+
+  const asked = await page.evaluate(() => {
+    const { backend } = window.__satr.load('/src/vault.ts') as unknown as {
+      backend: { readText(path: string, max?: number): Promise<unknown> };
+    };
+    const seen: string[] = [];
+    (window as unknown as { seen: string[] }).seen = seen;
+    const real = backend.readText.bind(backend);
+    backend.readText = async (path: string, max?: number) => {
+      seen.push(path);
+      // What a 31MB book answers: too large to be held as text.
+      if (path.endsWith('.pdf')) return { status: 'too-large', size: 31_016_653 };
+      return real(path, max);
+    };
+    return seen.length;
+  });
+  expect(asked).toBe(0);
+
+  await page.locator('#nav-tabs').evaluate((el: HTMLButtonElement) => el.click());
+  await page.locator('.mobile-tab-title').getByText('handout.pdf', { exact: true }).click();
+  await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
+
+  // The tab is still there and the document is drawn in it.
+  await expect(page.locator('.pdf-page')).not.toHaveCount(0, { timeout: 15000 });
+  await expect.poll(async () => page.locator('.pdf-page canvas').count(), { timeout: 15000 }).toBeGreaterThan(0);
+  const open = await page.evaluate(() => JSON.parse(localStorage.getItem('satr:tabs') ?? 'null'));
+  expect(open.tabs.map((t: { path: string }) => t.path), 'both tabs are still open').toEqual(['Notes/A.md', 'Notes/handout.pdf']);
+  expect(open.active, 'and the pdf is the one being shown').toBe(1);
+
+  // And its text was never asked for, which is the fix itself.
+  const seen = await page.evaluate(() => (window as unknown as { seen: string[] }).seen);
+  expect(seen.filter((p) => p.endsWith('.pdf')), 'a document is never read as text').toEqual([]);
+});
