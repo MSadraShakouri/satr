@@ -90,7 +90,7 @@ const ICONS = {
 export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   root.innerHTML = `
     <div class="workspace-drawer-inner">
-      <div class="search-input-container nav-filter">${ICONS.search}<input type="search" class="nav-filter-input" dir="auto" placeholder="Filter by name" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="search-input-container nav-filter">${ICONS.search}<input type="search" class="nav-filter-input" dir="auto" placeholder="Filter by name" enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" class="search-input-clear-button" aria-label="Clear filter" hidden></button></div>
       <div class="workspace-drawer-tab-container">
         <div class="nav-files-container" role="tree"></div>
         <div class="nav-buttons-container">
@@ -122,6 +122,19 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   const locateButton = root.querySelector<HTMLButtonElement>('[data-act="locate"]')!;
   const filterInput = root.querySelector<HTMLInputElement>('.nav-filter-input')!;
   const filterQuery = (): string => filterInput.value.trim().toLocaleLowerCase();
+  // The same way out of a filter that the search field has: a phone keyboard
+  // draws no clear button of its own, so without one the only way to empty
+  // the field is to select the text and delete it.
+  const filterClear = root.querySelector<HTMLButtonElement>('.nav-filter .search-input-clear-button')!;
+  const showFilterClear = (): void => { filterClear.hidden = filterInput.value === ''; };
+  const clearFilter = (focus: boolean): void => {
+    if (!filterInput.value) return;
+    filterInput.value = '';
+    showFilterClear();
+    void render();
+    if (focus) filterInput.focus();
+  };
+  filterClear.addEventListener('click', () => clearFilter(true));
 
   let scope: Scope = currentScope();
   let sort: Sort = (localStorage.getItem(SORT_KEY) as Sort | null) ?? 'name';
@@ -321,10 +334,10 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     }).join('');
   }
   let filterTimer: number | undefined;
-  filterInput.addEventListener('input', () => { window.clearTimeout(filterTimer); filterTimer = window.setTimeout(() => void render(), 120); });
+  filterInput.addEventListener('input', () => { showFilterClear(); window.clearTimeout(filterTimer); filterTimer = window.setTimeout(() => void render(), 120); });
   filterInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') { event.preventDefault(); filterInput.blur(); }
-    if (event.key === 'Escape' && filterInput.value) { event.preventDefault(); filterInput.value = ''; void render(); }
+    if (event.key === 'Escape' && filterInput.value) { event.preventDefault(); clearFilter(false); }
   });
   const rowOf = (path: string): HTMLElement | null => list.querySelector<HTMLElement>(`.tree-item-self[data-path="${CSS.escape(path)}"]`);
 
@@ -604,6 +617,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     if (filterQuery() && kind === 'folder') {
       // A found folder: back to the tree, opened at it.
       filterInput.value = '';
+      showFilterClear();
       if (scope.kind === 'all') setWalkDir(path);
       else {
         for (let dir = path; dir && within(dir, scope.space.path) && dir !== scope.space.path; dir = dirname(dir)) expanded.add(dir);

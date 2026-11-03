@@ -174,6 +174,31 @@ test('a filter narrows the list but not the space the counts describe', async ({
   await expect.poll(async () => (await header(page, '#file-panel')).count?.text).toBe('2 files, 1 folder');
 });
 
+test('the filter field can be emptied from where it is', async ({ page }) => {
+  await seed(page, {
+    [`${PHYSICS}/lecture 1.md`]: '# one\n',
+    [`${PHYSICS}/terms/alpha.md`]: 'a\n',
+  }, [{ id: 'notes', name: 'Physics', path: PHYSICS }], `${PHYSICS}/lecture 1.md`);
+  await openFiles(page);
+  const filter = page.locator('#app #file-panel .nav-filter-input');
+  const clear = page.locator('#app #file-panel .nav-filter .search-input-clear-button');
+  const rows = page.locator('#app #file-panel .nav-file-title-content');
+  const whole = await rows.count();
+  // Nothing typed, nothing to clear: the button is not in the way of the field.
+  await expect(clear).toBeHidden();
+  await filter.fill('lecture');
+  await expect(page.locator('#app #file-panel')).toHaveClass(/mod-filtering/);
+  await expect(clear).toBeVisible();
+  await expect(rows).toHaveCount(1);
+  // The way out of a filter a phone keyboard gives no way out of.
+  await clear.click();
+  await expect(filter).toHaveValue('');
+  await expect(clear).toBeHidden();
+  await expect(page.locator('#app #file-panel')).not.toHaveClass(/mod-filtering/);
+  // The whole list is back, not just the field.
+  await expect(rows).toHaveCount(whole);
+});
+
 test('browsing a folder counts what is in it', async ({ page }) => {
   const uni = 'Documents/Uni/Semester 3';
   await seed(page, {
