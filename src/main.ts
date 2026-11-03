@@ -1,6 +1,7 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
+import { startKeeping } from './logStore';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -3541,6 +3542,10 @@ let bootReady = false;
 let queuedIncomingId = '';
 async function boot(): Promise<void> {
   keepSnapshots();
+  // First of all, so that whatever the boot itself has to say is kept. It
+  // subscribes and nothing more: nothing is read back here, so the database
+  // costs the first screen nothing.
+  startKeeping();
   try {
     // Before the first file opens, so that a file asking where it was left
     // is answered from the store rather than guessed at. One read of a few
