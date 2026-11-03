@@ -3568,6 +3568,8 @@ async function boot(): Promise<void> {
   // The clock on every line is milliseconds since the page began loading, so
   // these read as a launch from zero without anything having to subtract.
   log.note('launch', 'cold start', { native: isNative() });
+  // Read before the heartbeat starts again and overwrites the marks.
+  tellHowTheLastRunEnded();
   const ready = log.time('launch', 'ready to read');
   try {
     // Before the first file opens, so that a file asking where it was left
@@ -3660,6 +3662,38 @@ function dueEmptyTab(): boolean {
   const since = Math.max(Number(localStorage.getItem(AWAY_KEY)) || 0, Number(localStorage.getItem(SEEN_KEY)) || 0);
   const minutes = settings.newTabAfterMinutes;
   return minutes > 0 && since > 0 && Date.now() - since >= minutes * 60_000;
+}
+/** Two beats of slack: one may be missed to a throttled timer without the
+ *  run being called a casualty. */
+const GOODBYE_SLACK_MS = SEEN_EVERY_MS * 3;
+/** How the run before this one ended, said once at launch.
+ *
+ *  The two marks are written together on the way out, so a run that was told
+ *  it was going away leaves them equal. A run that was killed while someone
+ *  was looking at it leaves the heartbeat ahead of the goodbye -- it went on
+ *  beating after the last thing that was announced. That gap is the only
+ *  evidence an ordinary phone gives of a crash or a low-memory kill, and it
+ *  is evidence every version gives: no API, no permission, no floor.
+ *
+ *  What it cannot say is why. Asking the system that needs API 30 and is a
+ *  rung above this one; this rung is the one that always answers. */
+function tellHowTheLastRunEnded(): void {
+  const away = Number(localStorage.getItem(AWAY_KEY)) || 0;
+  const seen = Number(localStorage.getItem(SEEN_KEY)) || 0;
+  if (!seen && !away) return; // a first run has nothing to report
+  const last = Math.max(seen, away);
+  const ago = Math.round((Date.now() - last) / 1000);
+  // A clock that went backwards (the phone's time changed, or a restore)
+  // would otherwise be reported as a run that ended in the future.
+  if (ago < 0) return;
+  if (seen - away > GOODBYE_SLACK_MS) {
+    log.warn('launch', 'the last run ended without a goodbye', {
+      secondsAgo: ago,
+      unannouncedFor: Math.round((seen - away) / 1000),
+    });
+    return;
+  }
+  log.note('launch', 'the last run ended cleanly', { secondsAgo: ago });
 }
 function onBackground(): void { flush(); markAway(); markSeen(); restSeen(); }
 /** Home / recents leave the WebView alive: boot does not run again. Android
