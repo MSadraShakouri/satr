@@ -33,6 +33,7 @@ been seen working on the phone — or comes back to life if it has not been.
 - [ ] when a new tab is going to get opened on app launch (not the new tab button, rather the app launch planning to go there), it takes long, I think it's the app trying to open the last used page first then switch to tab, though I can't recall if this has been resolved or not, I believe it has been, I tested locally and it doesn't take longer than other files now
 - [ ] app launch is slow and heavily depends on the file, should be made something async or something which displays the light stuff first then the heavier stuff after it instead of making it wait, right now empty tab page opens so much quicker than any other file and that alone matters a lot for UX
 - [ ] instead of 1/3 of screen exactly, maybe define a small range and align one of them that are in the range exactly instead of just clinging to whatever exists there (will be better for math heavy or long lines and stuff)
+- [x] right now, in app it has a slight fade at the top and bottom, this is good but I don't want this for html rendered, only that — *done. The fade is one rule on the two panes; a note fades out under the floating buttons because it slides under them, and a page does not slide anywhere — it sits inside its own frame, so the fade was a dimmed strip of somebody else's design. The pane already carries `is-page` for an html file and nothing else, and that rule already strips the padding, the width limit and the typography a note is given; the mask is now one more thing it gives up. Source mode keeps it, for the page's own source as for any other text file. Waiting on the phone.*
 - [ ] opening is slow for big files, I have an idea for it: don't do it all at once, do the current expected screen and then go upwards and downwards (do one direction with a higher priority if scrolling while still loading), maybe even make loading math a separate thread from text, this alone will do a lot, but I still want the entire thing to load at the end rather than making it load dynamically, though maybe we'll have to make sacrifices for big files over something depending on phone specs or something? or maybe load to a size, or something relative to scrolling (faster than the user can scroll or something) (this is repeated, but explained in more detail)
 - [ ] change file takes a moment to sync when at the bottom of file (might be at other places too, not tested) (I can't recall the last time this happened, strange)
 
@@ -73,6 +74,22 @@ been seen working on the phone — or comes back to life if it has not been.
 ## launch and scrolling
 
 - slowness of launch, needs reorganizing notes
+
+## the logger
+
+*"I need logging."* Two items above are really this one — the pdf that is slow
+for a reason nobody can see, and the data worth keeping for decisions. The app
+writes nothing at all today, not one `console.log`, so this is a new sense
+rather than a tidy-up. Designed, not started; the whole of it is written up in
+the round notes.
+
+- [ ] verbose and non verbose logging, and search and filters and stuff too (export is very important to have), I don't know if I need different levels and stuff — *three dials rather than five levels: volume (quiet, normal, verbose), kind (note, warning, failure — a failure is never dropped, whatever the volume), and an area tag on every line (launch, file, pdf, tabs, search, storage, native). Every line carries a clock and a timed line carries what it took, so the record and the stopwatch are one stream rather than two features.*
+- [ ] something system level for the APK — *two of them, and the second is the better one. `logcat -d` run from inside the app returns our own lines with no root and no permission, which is the only way to see what happens underneath the page — plugins, the renderer, a kill. It was never part of the SDK, so it is not promised; with root, `pm grant READ_LOGS` gives the whole system log to the same plugin. And `ApplicationExitInfo`, which is official and answers **why the last run ended**: crashed, froze, or was killed because the phone wanted the memory. That last one would settle the new-tab item in "seen once" without ever reproducing it.*
+- [ ] an app level thing — *a ring of 2,000 lines in memory, flushed to IndexedDB in batches and on the way to the background, so it survives a crash as far as the last flush. Not localStorage: that one blocks the screen on every write, which is the crime under investigation.*
+- [ ] the web version — *gets all of it except the two native sources, and is where the logger is built and tested, because Playwright can read the log back out and assert on what it says.*
+- [ ] export — *into the vault as `Logs/<date>.log`, so it lands in git where it can be read on this side; plus the share sheet and the clipboard. Plain text, with ndjson for when something has to parse it.*
+- [ ] what it records on day one — *the five already complained about: launch, opening a file, pdf open, tab switch, source to preview. Each one as a duration, so "pdf opening is very slow, I think it does something for the file before opening it" gets a number instead of a suspicion.*
+- [ ] it must not become the slowness itself — *nothing formatted when written, `performance.now()` only, writes batched off the path being timed, and a quiet log call is one comparison and a return. Its own cost gets measured both ways like everything else.*
 
 ## seen once, waiting for it to happen again
 
