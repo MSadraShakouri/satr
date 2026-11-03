@@ -3,6 +3,7 @@ import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, 
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
 import { startKeeping } from './logStore';
 import * as log from './log';
+import { openLog } from './logView';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -3468,6 +3469,7 @@ function showSettings(): void {
     notePath: hasNote() ? filePath : undefined,
     noteName: hasNote() ? displayNameForPath(filePath) : undefined,
     apply: applySettings,
+    openLog,
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });
 }

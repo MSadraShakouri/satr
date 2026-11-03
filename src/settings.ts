@@ -104,6 +104,8 @@ export interface SettingsDeps {
   notePath?: string;
   noteName?: string;
   apply(settings: Settings): void;
+  /** Show the log (src/logView.ts). */
+  openLog(): void;
   /** Keyboard toolbar buttons: command name, label and icon. */
   tools(): { command: string; label: string; icon: string }[];
 }
@@ -304,6 +306,16 @@ export function openSettings(deps: SettingsDeps): void {
           ${toggle(`tool:${t.command}`, !settings.hiddenTools.includes(t.command))}
         </div>`).join('')}
       </div>
+      <div class="setting-group-title">Troubleshooting</div>
+      <div class="setting-group">
+        <div class="setting-item" data-open="log">
+          <div class="setting-item-info">
+            <div class="setting-item-name">Log</div>
+            <div class="setting-item-description">What the app did, with how long each thing took. Open it when something is slow or goes wrong, and send it on from there.</div>
+          </div>
+          <button type="button" class="log-open-button" data-open="log">Open</button>
+        </div>
+      </div>
       <div class="setting-group-footer">Satr keeps its settings on this device; nothing is written into your folders.</div>
     </div>`;
 
@@ -367,6 +379,7 @@ export function openSettings(deps: SettingsDeps): void {
   el.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
     if (target.closest('.settings-back')) { closeSettings(); return; }
+    if (target.closest('[data-open="log"]')) { deps.openLog(); return; }
     const themeButton = target.closest<HTMLElement>('[data-theme]');
     if (themeButton) {
       const choice = themeButton.dataset.theme as ThemeChoice;

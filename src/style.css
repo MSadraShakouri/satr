@@ -5161,3 +5161,96 @@ iframe.html-file {
   border-inline-start: var(--indentation-guide-width, 0.5px) solid var(--indentation-guide-color);
   pointer-events: none;
 }
+
+/* The log (src/logView.ts): a full-screen page in the Settings style, with
+   the three filters the log itself has. The rows are monospace because they
+   are columns -- a clock, an area and a message -- and a proportional font
+   makes a column of numbers unreadable. */
+.log-screen {
+  display: flex;
+  flex-direction: column;
+}
+.log-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--divider, rgba(128, 128, 128, 0.25));
+}
+.log-search {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--divider, rgba(128, 128, 128, 0.3));
+  background: var(--editor);
+  color: inherit;
+}
+.log-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.log-chip {
+  font: inherit;
+  font-size: 0.82em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--divider, rgba(128, 128, 128, 0.35));
+  background: transparent;
+  color: inherit;
+  opacity: 0.45;
+}
+.log-chip.is-on {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.log-row-of-two {
+  display: flex;
+  gap: 8px;
+}
+.log-row-of-two .segmented-control { flex: 1; min-width: 0; }
+.log-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.log-count {
+  flex: 1;
+  font-size: 0.82em;
+  opacity: 0.65;
+}
+.log-action,
+.log-open-button {
+  font: inherit;
+  font-size: 0.9em;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--divider, rgba(128, 128, 128, 0.35));
+  background: transparent;
+  color: inherit;
+}
+.log-action.is-danger { color: var(--danger, #c0392b); }
+.log-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px calc(var(--safe-bottom, 0px) + 16px);
+  font-family: var(--font-monospace, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.log-row {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-row.is-warning { color: var(--warning, #b8860b); }
+.log-row.is-failure { color: var(--danger, #c0392b); }
+.log-note {
+  padding: 6px 0;
+  font-size: 0.85em;
+  opacity: 0.6;
+}
