@@ -19,6 +19,7 @@
 // meanwhile, so there is never a blank page.
 import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfPageObject, type PdfTask, type PdfTextRun, type PdfFontInfo } from '@embedpdf/models';
 import * as log from './log';
+import { sayMemory } from './vitals';
 import type { ImageDataLike, Rect as PageRect } from '@embedpdf/models';
 import { imagesOnPage, pdfium, type PageRect as PictureRect } from './pdfiumEngine';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
@@ -915,7 +916,15 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // actually on the glass -- which is the one a reader would call "opened".
   const building = log.time('pdf', 'column built', { pages: document_.pageCount });
   let firstPicture: ReturnType<typeof log.time> | null = log.time('pdf', 'first page on glass');
-  const drewSomething = (): void => { firstPicture?.(); firstPicture = null; };
+  const drewSomething = (): void => {
+    if (!firstPicture) return;
+    firstPicture();
+    firstPicture = null;
+    // The reading that explains a kill. A page of a book is a canvas, the
+    // sharp tile over it is another, and neither is on the JavaScript heap:
+    // this is the only place the app can see what a document costs it.
+    sayMemory('document open');
+  };
 
   const { scroller } = options;
   const doc = window.document.createElement('div');

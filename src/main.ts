@@ -32,6 +32,7 @@ import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
 import { inALoop, launchBegan, launchFinished, type BadStart } from './launchGuard';
+import { sayMemory, watchForTrouble } from './vitals';
 import { mathFaultAt } from './mathSource';
 import { closeTimestampPicker, letNoteGo, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
@@ -971,7 +972,9 @@ async function performSave(path: string, text: string, authorization?: SaveConfl
       showNotice('This file isn’t plain text; Satr won’t write over it.', 5000);
       return false;
     }
+    const writing = log.time('file', 'written', { path });
     await backend.write(path, text);
+    writing({ bytes: text.length });
     const entry = await backend.stat(path);
     setDiskBaseIfCurrent(path, { text, mtime: entry?.mtime ?? Date.now() });
   }
@@ -2001,7 +2004,9 @@ async function moveNote(from: string, to: string, oldBase: string): Promise<void
 async function moveFile(from: string, to: string, onDisk: string): Promise<void> {
   try {
     try {
+      const moving = log.time('file', 'renamed', { from: fileName(from), to: fileName(to) });
       await backend.rename(from, to);
+      moving();
     } catch (error) {
       // A name the disk already has is the rename refusing, and that refusal is
       // what the reader is told. A file that is not there to move (deleted
@@ -2450,6 +2455,7 @@ function newTab(): void {
  *  so the switcher can redraw from the new list. */
 async function closeTab(index: number): Promise<void> {
   if (!tabs[index]) return;
+  log.note('tabs', 'closed', { what: fileName(tabs[index].path) || 'empty tab', open: tabs.length });
   if (tabs.length < 2) {
     // The last tab: it becomes the empty tab, and the note it had can come back.
     if (!tabs[index].path) return; // already the default tab
@@ -3219,6 +3225,9 @@ function searchRoot(): string {
  *  being browsed) — or, with subfolders off, in the open note's folder — and
  *  the open one's live text when a note is open. */
 async function allNotes(): Promise<{ path: string; text: string }[]> {
+  // Every note read off the disk, every time: the half of a search that
+  // actually costs something, and it had no line of its own.
+  const gathering = log.time('search', 'notes gathered');
   const root = searchRoot();
   const recursive = loadSettings().recursiveSearch ?? true;
   const notes: { path: string; text: string }[] = [];
@@ -3229,6 +3238,9 @@ async function allNotes(): Promise<{ path: string; text: string }[]> {
     if (text !== null) notes.push({ path, text });
   }
   if (loadSettings().searchDocuments ?? true) notes.push(...await documentsIn(root, recursive));
+  let chars = 0;
+  for (const note of notes) chars += note.text.length;
+  gathering({ notes: notes.length, chars });
   return notes;
 }
 
@@ -3651,6 +3663,9 @@ let badStart: BadStart = { times: 0, path: '' };
 let rescued = '';
 async function boot(): Promise<void> {
   keepSnapshots();
+  // Before anything that can break: an error during the launch is the one
+  // most worth having, and the handlers cost nothing until something throws.
+  watchForTrouble();
   // Before anything can go wrong again: the mark is written now and lifted
   // when the first file is on screen, so a launch that never arrives leaves
   // it behind for the next one to find.
@@ -3692,6 +3707,7 @@ async function boot(): Promise<void> {
     // This far is far enough to call it a launch: the reader has something
     // on screen. Anything that goes wrong after this is not a start-up loop.
     launchFinished();
+    sayMemory('launched');
     bootReady = true;
     if (supportsIncomingFiles()) {
       const pending = await pendingIncomingFile().catch(() => null);
@@ -3738,7 +3754,14 @@ function watchSeen(): void {
   markSeen();
   if (seenTimer !== undefined) return;
   seenTimer = window.setInterval(() => {
-    if (document.visibilityState === 'visible') markSeen();
+    if (document.visibilityState !== 'visible') return;
+    markSeen();
+    // A reading rides along with the beat that was already happening, so
+    // the cost of knowing is one DOM query a half minute. Without this
+    // there is no way to tell a kill that came out of nowhere from one the
+    // app walked into: "low memory" in the exit reasons and nothing to set
+    // beside it was exactly the state of play.
+    sayMemory('still reading');
   }, SEEN_EVERY_MS);
 }
 function restSeen(): void {
@@ -3824,12 +3847,23 @@ function tellHowTheLastRunEnded(): void {
   }
   log.note('launch', 'the last run ended cleanly', { secondsAgo: ago });
 }
-function onBackground(): void { flush(); markAway(); markSeen(); restSeen(); }
+function onBackground(): void {
+  // The last thing written before the phone may decide to end the run: what
+  // was being held when it went away is the reading a kill is judged by.
+  sayMemory('going away');
+  log.note('app', 'went to the background');
+  flush();
+  markAway();
+  markSeen();
+  restSeen();
+}
 /** Home / recents leave the WebView alive: boot does not run again. Android
  *  often skips visibilitychange; Capacitor appStateChange is the pause/resume
  *  we can trust. One in-flight switch so the two signals cannot open two tabs. */
 let launchTabInFlight = false;
 function onForeground(): void {
+  const away = Number(localStorage.getItem(AWAY_KEY)) || 0;
+  log.note('app', 'came back', away ? { awayFor: Math.round((Date.now() - away) / 1000) } : undefined);
   void refreshOnResume();
   // Asked before the heartbeat starts again: one beat from now would say the
   // app had been running all along and no absence would ever be long enough.

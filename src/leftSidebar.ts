@@ -16,6 +16,7 @@ import {
 } from './spaces';
 import { backend, basename, dirname, extension, freeName, isNote, joinPath, within, type Entry } from './vault';
 import { fileKind } from './fileKinds';
+import * as log from './log';
 import { shortenPath, siblingList } from './pathShort';
 
 /** How much of the list is left showing under a name being typed. */
@@ -477,7 +478,8 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   }
   function remove(path: string, isFolder: boolean): void {
     confirmMenu(`Delete “${basename(path)}”${isFolder ? ' and everything in it' : ''}? This can't be undone.`, 'Delete', async () => {
-      try { await backend.remove(path); } catch (error) { alertError(error); return; }
+      try { await backend.remove(path); } catch (error) { log.fail('file', 'could not be deleted', { path: basename(path), why: String(error) }); alertError(error); return; }
+      log.note('file', 'deleted', { what: basename(path), folder: isFolder });
       if (isFolder) {
         for (const s of loadSpaces()) if (within(s.path, path)) removeSpace(s.id);
       }
