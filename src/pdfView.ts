@@ -635,12 +635,28 @@ const maxCanvasPixels = (): number => (Math.min(window.innerWidth, window.innerH
  * on a 390x760 phone at three device pixels to the CSS pixel left room
  * for a fifth of a screen and no more, whatever DETAIL_MARGIN said.
  */
-const maxTilePixels = (): number => (Math.min(window.innerWidth, window.innerHeight) < 600 ? 12_582_912 : 16_777_216);
-/** Pages are drawn one screen either side of the one being read, and their
- *  pictures kept until they are this far off it, so turning back a page
- *  costs nothing. Gander draws 3 and keeps 5 — of pages, not screens. */
-const DRAW_SCREENS = 1;
-const KEEP_SCREENS = 2.5;
+const maxTilePixels = (): number => (Math.min(window.innerWidth, window.innerHeight) < 600 ? 6_000_000 : 16_777_216);
+/**
+ * How far past the screen a page is drawn, and how far past that its
+ * picture is kept.
+ *
+ * A page's picture is the dearest thing the reader holds: fitted to a
+ * 390-point phone at three device pixels to the point it is 1170 by 1653,
+ * four bytes a pixel, **7.7 MB a page**. At two and a half screens either
+ * side that was about seven pages -- 54 MB of pictures for a reader
+ * looking at one of them -- and on a phone that is being killed for
+ * memory it is the first thing that should go.
+ *
+ * Half a screen either side is drawn and one screen either side kept, on
+ * the author's instruction: "the ones on the screen should stay and
+ * nothing more than it… loading is fast". Three pages, about 23 MB. The
+ * keep band is deliberately wider than the draw band -- keeping exactly
+ * what is drawn means a page thrown away at the same moment it leaves the
+ * draw band and drawn again the instant the reader scrolls back a finger's
+ * width.
+ */
+const DRAW_SCREENS = 0.5;
+const KEEP_SCREENS = 1;
 /** How far out the rough pictures go, and how wide one is. Eight screens
  *  either way is about as far as a fast flick carries before it settles,
  *  and a hundred pixels of a page is 40KB where a sharp one is megabytes. */
@@ -649,12 +665,13 @@ const ROUGH_PX = 100;
 /**
  * How much of the sketch book is worth holding.
  *
- * A hundred-pixel picture of an A4 page is 100 by 141, four bytes a
- * pixel: 56KB. This is about four hundred of them -- the whole of his
- * 528-page book is 30MB, so a long book is held from wherever he is
- * reading outwards and the far end of it is let go of first.
+ * A hundred-pixel picture of an A4 page is a three-kilobyte jpeg on the
+ * shelf and 56KB once a browser has decoded it. Twenty-four megabytes of
+ * them was most of a 528-page book kept against a flick that might never
+ * come; eight is about a hundred and forty pages, held outwards from
+ * wherever the reader is, and the far end let go of first.
  */
-const SKETCH_BYTES = 24 * 1024 * 1024;
+const SKETCH_BYTES = 8 * 1024 * 1024;
 /**
  * How long one go at the engine may hold the thread for.
  *
