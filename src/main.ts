@@ -3543,7 +3543,14 @@ function showSettings(): void {
     // Fetched when it is asked for. The log's screen is not on the path from
     // tapping the icon to reading a note, so it has no business being parsed
     // on the way there (src/logView.ts).
-    openLog: () => { void import('./logView').then((viewer) => viewer.openLog()); },
+    openLog: () => {
+      void import('./logView').then((viewer) => viewer.openLog({
+        // Where notes live for the space that is open: a saved log is a file
+        // in the vault like any other, and it belongs where the rest are.
+        folder: notesHome(),
+        wrote: () => { void leftSidebar.refresh(); },
+      }));
+    },
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });
 }

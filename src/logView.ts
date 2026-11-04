@@ -17,6 +17,8 @@ import {
 } from './log';
 import { earlier, flush, forgetStored } from './logStore';
 import { shareText, canShare } from './share';
+import { backend } from './vault';
+import { showNotice } from './notice';
 
 const AREAS: Area[] = ['launch', 'file', 'pdf', 'tabs', 'search', 'storage', 'native'];
 const VOLUMES: Volume[] = ['quiet', 'normal', 'verbose'];
@@ -30,6 +32,10 @@ const BACK = icon('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>');
 const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 
 let page: HTMLElement | null = null;
+/** Where a saved log goes, and who to tell afterwards. The folder is the
+ *  caller's business: only the app knows which space is open and where its
+ *  notes live. Without one, the log can still be copied and shared. */
+let into: { folder: string; wrote?(path: string): void } | null = null;
 let unwatch: (() => void) | null = null;
 let redrawSoon: ReturnType<typeof setTimeout> | null = null;
 
@@ -152,6 +158,35 @@ export function download(): void {
   setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
 }
 
+/** Into the vault, as a file the reader can open in the app itself, mail to
+ *  somebody later, or keep. The share sheet hands the log to another app and
+ *  is gone; this leaves it somewhere.
+ *
+ *  Same text as the other two ways out: what the filters left, not the lot. */
+export async function keepInNotes(button?: HTMLElement): Promise<void> {
+  const was = button?.textContent;
+  const say = (said: string): void => {
+    if (!button) return;
+    button.textContent = said;
+    setTimeout(() => { button.textContent = was ?? 'To notes'; }, 1400);
+  };
+  if (!into) return;
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const path = `${into.folder ? `${into.folder}/` : ''}Logs/satr-${stamp}.log`;
+  try {
+    await backend.write(path, shownText());
+    say('Saved');
+    showNotice(`Saved as ${path}`, 4000);
+    into.wrote?.(path);
+  } catch (error) {
+    // The one way out that can fail quietly -- a full disk, a folder the app
+    // cannot write -- so it says so twice: on the button and in the log.
+    fail('storage', 'the log could not be saved', { path, why: String(error) });
+    say('Could not save');
+    draw();
+  }
+}
+
 function controlsHtml(): string {
   // The chip row is the segmented control generalised to more than one
   // choice: the same track, the same thumb, the same height. Nothing here
@@ -176,7 +211,8 @@ function controlsHtml(): string {
       <div class="log-hint">Recording is what gets written down as it happens, not what you see here — a line nobody recorded cannot be read back. Quiet keeps failures only.</div>
       <div class="log-buttons">
         <button type="button" class="log-button" data-act="copy">Copy</button>
-        <button type="button" class="log-button" data-act="save">${canShare() ? 'Share' : 'Save'}</button>
+        <button type="button" class="log-button" data-act="send">${canShare() ? 'Share' : 'Download'}</button>
+        ${into ? '<button type="button" class="log-button" data-act="keep">To notes</button>' : ''}
         <button type="button" class="log-button is-danger" data-act="clear">Clear</button>
       </div>
     </div>
@@ -200,7 +236,8 @@ function redrawControls(): void {
   draw();
 }
 
-export function openLog(): void {
+export function openLog(where?: { folder: string; wrote?(path: string): void }): void {
+  into = where ?? null;
   if (page) return;
   const el = document.createElement('div');
   el.className = 'settings-screen log-screen';
@@ -246,7 +283,8 @@ export function openLog(): void {
     }
     const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
     if (act === 'copy') { void copyOut(target.closest<HTMLElement>('[data-act]')!); return; }
-    if (act === 'save') { void sendOut(); return; }
+    if (act === 'send') { void sendOut(); return; }
+    if (act === 'keep') { void keepInNotes(target.closest<HTMLElement>('[data-act]')!); return; }
     if (act === 'clear') {
       forget();
       older = [];
