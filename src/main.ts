@@ -701,6 +701,7 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   const handle = await showPdf(preview, bytes.slice().buffer, {
     scroller: previewPane,
     key,
+    cardFor: path,
     // A search result names a page, and that beats where the document
     // was left: it is given as the place it opens at rather than scrolled
     // to afterwards, because the remembered place is restored over
@@ -2007,6 +2008,9 @@ async function moveFile(from: string, to: string, onDisk: string): Promise<void>
       const moving = log.time('file', 'renamed', { from: fileName(from), to: fileName(to) });
       await backend.rename(from, to);
       moving();
+      // The card is filed under the path, so it moves with the file by
+      // being dropped: the next read of the document files a new one.
+      void import('./pdfCard').then(({ forgetCard }) => forgetCard(from));
     } catch (error) {
       // A name the disk already has is the rename refusing, and that refusal is
       // what the reader is told. A file that is not there to move (deleted
@@ -2820,6 +2824,34 @@ function showTabs(): void {
         if (isExternalPath(path)) {
           const file = externalFilesByPath.get(path);
           return `<div class="inline-title" dir="auto">${escapeText(file?.name ?? 'Incoming file')}</div><p>${escapeText(file?.mimeType ?? 'External file')}</p>`;
+        }
+        // A document is never read for a card.
+        //
+        // This read the whole file and decoded it to text -- the author's
+        // 31 MB book became a string of forty-one million characters, which
+        // is eighty megabytes of memory and several seconds of phone -- and
+        // then kept the first 1500 characters of the mess that makes. It is
+        // why the tabs button was slow with a book open, and it is a spike
+        // big enough to be one of the kills in his log. What a document's
+        // card shows instead is the small picture the reader itself put
+        // down for the page he was on: a three-kilobyte read, no engine, no
+        // file. A document never opened on this phone has no picture yet
+        // and shows its name.
+        if (isDocument(path)) {
+          const { recallCard } = await import('./pdfCard');
+          const card = await recallCard(path);
+          const name = `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>`;
+          if (!card) return `${name}<p class="tab-card-note">PDF</p>`;
+          // The URL is let go of as soon as the browser has the picture;
+          // holding one per tab is a leak of exactly the kind being fixed.
+          return `${name}<img class="tab-card-page" src="${card.url}" alt="">`
+            + `<p class="tab-card-note">Page ${card.page}${card.pages ? ` of ${card.pages}` : ''}</p>`;
+        }
+        // Nor is a picture: its own file is the card.
+        if (isPicture(path)) {
+          const url = await backend.readDataUrl(path).catch(() => null);
+          const name = `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>`;
+          return url ? `${name}<img class="tab-card-page" src="${url}" alt="">` : name;
         }
         const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
         const card = isHtmlFile(path) ? `<pre class="card-source">${escapeText(text.slice(0, 1500))}</pre>`

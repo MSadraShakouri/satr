@@ -3597,6 +3597,22 @@ input.mod-no-match {
 .mobile-tab-preview-page .heading-collapse-indicator {
   display: none;
 }
+/* A document or a picture shows itself rather than its text. The card is
+   drawn at half size (the scale above), so the picture is given the card's
+   whole width in the card's own units and the page's own proportions. */
+.mobile-tab-preview-page .tab-card-page {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(var(--mono-rgb-100), 0.08);
+  background: var(--background-primary-alt);
+}
+.mobile-tab-preview-page .tab-card-note {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
 .mobile-tab .close-button {
   position: absolute;
   z-index: 2;

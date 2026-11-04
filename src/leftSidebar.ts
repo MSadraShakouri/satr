@@ -480,6 +480,9 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     confirmMenu(`Delete “${basename(path)}”${isFolder ? ' and everything in it' : ''}? This can't be undone.`, 'Delete', async () => {
       try { await backend.remove(path); } catch (error) { log.fail('file', 'could not be deleted', { path: basename(path), why: String(error) }); alertError(error); return; }
       log.note('file', 'deleted', { what: basename(path), folder: isFolder });
+      // Its tab card goes with it: a picture of the inside of a file that
+      // no longer exists is worse than no picture.
+      void import('./pdfCard').then(({ forgetCard }) => forgetCard(path));
       if (isFolder) {
         for (const s of loadSpaces()) if (within(s.path, path)) removeSpace(s.id);
       }

@@ -51,6 +51,9 @@ export interface PdfOptions {
    *  name. The place it was left is remembered against it, and so are the
    *  few pages kept for the next time it is opened. */
   key?: string;
+  /** The file's path, only so that the small picture a tab card shows can
+   *  be filed under it. The document itself is known by its bytes. */
+  cardFor?: string;
   place?: PdfPlace | null;
   /** Called as the reader moves, already settled — the caller writes it down. */
   onPlace?: (place: PdfPlace) => void;
@@ -2832,6 +2835,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     putDownAt = Date.now();
     putDownWas = state;
     void keepSketches(options.key, slabs.length, pageShown() - 1, sketches);
+    // And one of them, filed under the path, so the tab switcher can show
+    // this document without reading a byte of it.
+    const here = sketches.get(pageShown() - 1);
+    if (options.cardFor && here) {
+      void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here));
+    }
   };
   const onHidden = (): void => { if (document.visibilityState === 'hidden') putDown(); };
   document.addEventListener('visibilitychange', onHidden);
