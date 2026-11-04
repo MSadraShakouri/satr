@@ -46,7 +46,13 @@ export async function tellWhyItDied(limit = 5): Promise<void> {
       log.loud('native', 'this Android cannot say why a run ended');
       return;
     }
-    const exits = (answer.exits ?? []).filter((exit) => Date.now() - exit.at < RECENT_MS);
+    const exits = (answer.exits ?? [])
+      .filter((exit) => Date.now() - exit.at < RECENT_MS)
+      // An isolated process ending is not the app ending. Android reports
+      // the WebView's own sandboxed renderer alongside the real exits, and
+      // on the author's phone two of the five lines were that -- noise that
+      // reads exactly like a death notice for the app.
+      .filter((exit) => !(exit.said ?? '').includes('ISOLATED NOT NEEDED'));
     if (!exits.length) {
       log.loud('native', 'the system remembers no recent exit');
       return;
