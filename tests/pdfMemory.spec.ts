@@ -79,3 +79,35 @@ test('reading down a document does not keep every page it has been past', async 
   expect(atTop).toBeGreaterThan(1);
   expect(atEnd).toBeGreaterThan(1);
 });
+
+test('a double tap still zooms when the thread was busy between the taps', async ({ page }) => {
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  const width = async (): Promise<number> => (await page.locator('.pdf-page[data-page="1"]').boundingBox())?.width ?? 0;
+  const before = await width();
+
+  // Two taps 120 ms apart on the clock the browser stamps them with -- but
+  // with the main thread held for 250 ms in between, so the second handler
+  // does not run until long after DOUBLE_TAP_MS has passed. This is the
+  // scanned-page case: a page of his scan is 65 ms a megapixel, so the
+  // engine is routinely mid-draw when the second tap lands.
+  await page.evaluate(() => {
+    const doc = document.querySelector('.pdf-doc')!;
+    const tap = (at: number): void => {
+      const common = { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: 195, clientY: 350 };
+      const up = new PointerEvent('pointerup', common);
+      // The browser stamps timeStamp itself; override it to say when the
+      // finger really left the glass, which is what the fix reads.
+      Object.defineProperty(up, 'timeStamp', { value: at });
+      doc.dispatchEvent(up);
+    };
+    tap(1000);
+    // Longer than DOUBLE_TAP_MS, which is the whole point: a 6-million-pixel
+    // tile of a scan at 65 ms a megapixel is around 400 ms of held thread.
+    const until = performance.now() + 420;
+    while (performance.now() < until) { /* the engine, holding the thread */ }
+    tap(1120);
+  });
+
+  await expect.poll(width, { timeout: 4000 }).toBeGreaterThan(before * 1.5);
+});

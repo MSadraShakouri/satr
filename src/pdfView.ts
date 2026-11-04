@@ -2601,7 +2601,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // gesture Google's own apps answer to and the one a reader's thumb
     // already knows. Armed here, on the way down, because by the time the
     // finger lifts the gesture is over.
-    if (touches.size === 1 && Date.now() - lastTap.time < DOUBLE_TAP_MS
+    if (touches.size === 1 && event.timeStamp - lastTap.time < DOUBLE_TAP_MS
       && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP) {
       hold = { id: event.pointerId, y: event.clientY, x: event.clientX, zoom, moved: false, about: pageUnder(event.clientY) };
       // The origin is set when the drag starts, not here: a tap that turns
@@ -2715,7 +2715,20 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // back to the page's own width.
   const onTap = (event: PointerEvent): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    const now = Date.now();
+    // The event's own clock, not the wall clock read here.
+    //
+    // Reported: the double tap works on a typeset pdf and never on a
+    // scanned one. It is not about the document -- it is about what the
+    // thread was doing between the two taps. `event.timeStamp` is stamped
+    // by the browser when the finger actually left the glass; Date.now()
+    // read inside the handler is stamped whenever the app got round to it.
+    // A page of the author's scan costs about 65ms a megapixel against 8ms
+    // for a typeset page, so on a scan the engine is routinely mid-draw
+    // when the second tap arrives, the handler runs late, and a gap of
+    // 180ms of real time reads as 400ms of handler time -- over
+    // DOUBLE_TAP_MS, so the second tap was never a double tap at all. The
+    // taps were fine; the stopwatch was being started late.
+    const now = event.timeStamp;
     const quick = now - lastTap.time < DOUBLE_TAP_MS;
     const near = Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP;
     lastTap = { time: now, x: event.clientX, y: event.clientY };
