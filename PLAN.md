@@ -28,19 +28,31 @@ said what the app was holding, so there was nothing to blame.
   half that matters and the half nothing could see — they are not on the JS
   heap, so the heap figure can read 60 MB while the process holds ten times
   that. One full-screen tile on your phone is eleven megabytes.*
-- [ ] find out what the 990 MB is — *the suspects, in order: `SKETCH_BYTES`, a
-  24 MB budget for the soft under-layer; the sharp tiles drawn over it, which
-  are two and a half screens' worth by `KEEP_SCREENS`; and the document's own
-  bytes, now deliberately held across a tab switch. **To check:** open the book,
-  read a few pages, switch to a note and back, then read the log — the
-  `holding` lines tell the story on their own. If `pictureMb` climbs and does
-  not come back down when you leave the tab, the pages are not being let go.*
-- [ ] the five-second freezes — *no instrument for these yet. They are a main
-  thread held by something; the candidates with numbers against them are
-  `edit to preview` at 231-536 ms (rising with the size of the note) and a
-  search reading every note off the disk, neither of which is five seconds on
-  its own. A long-task watcher is the next rung if the holding lines do not
-  explain it.*
+- [x] find out what the 990 MB is — *found, and most of it was not a leak but
+  a budget. A page's picture on your phone is **7.7 MB**; the app kept about
+  seven of them (54 MB), a sharp tile of up to 50 MB, and 24 MB of sketches.
+  On top of that the tab switcher read the whole book as text to draw a card,
+  which is 80 MB of string on its own. The budgets are now 23 MB of pages, a
+  24 MB tile and 8 MB of sketches, and the card reads nothing.*
+- [ ] confirm it on the phone — ***this is the one thing I cannot check
+  here.*** **To check:** open the book, read a few pages, press the tabs
+  button, switch to a note and back, then send the log. The `holding` lines
+  carry `pictureMb`; it should stay in the tens now and come back down when
+  you leave the tab. If it climbs past a couple of hundred, the pages are not
+  being let go and the band is not the whole story.
+- [ ] the five-second freezes — *one cause found and fixed by accident: the
+  tabs button read the whole book as text on the main thread, which is
+  seconds of held thread on a 31 MB file and exactly what "not responding"
+  means. Whether that was all of them, only the phone can say. The other
+  candidates with numbers against them are `edit to preview` at 231-536 ms
+  (rising with the size of the note) and a search reading every note off the
+  disk. A long-task watcher is the next rung if they come back.*
+- [x] what a held thread was quietly breaking — *the double tap on a scanned
+  pdf. It compared wall-clock readings taken inside the handler, so a render
+  holding the thread between the two taps made them look 400 ms apart when
+  they were 180. Fixed by reading the event's own stamp. Worth keeping here as
+  a shape to look for: **any gesture timed by `Date.now()` inside its own
+  handler is timing the app's availability, not the finger.***
 
 ## waiting on a test on the phone
 
@@ -85,7 +97,7 @@ the phone — or comes back to life if it has not been.
 ## sidebar, tabs and files
 
 - [ ] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me (I have an idea right now: show the current dir at the top of the new tab page, will be really good)
-- [ ] cache tabs and stuff in memory, after adding pdf and stuff I've been switching tabs much more often, a recent X tabs should probably be kept fresh, maybe the choice in settings or something smart (tab switch is slow) — *started, for the one that was costing seconds: the open document's bytes are kept while you are in another tab, so coming back to a book does not read it again. A note is not kept — on your phone a note reads in 14-45 ms, so there is nothing there worth holding yet. The rest of a tab (its editor state, its reading view) is still rebuilt, and that is where the remaining 114-147 ms of a switch goes.*
+- [ ] cache tabs and stuff in memory, after adding pdf and stuff I've been switching tabs much more often, a recent X tabs should probably be kept fresh, maybe the choice in settings or something smart (tab switch is slow) — *two thirds done. The open document's bytes are kept while you are in another tab, so coming back to a book does not read it again. And opening the switcher itself no longer reads every tab's file to draw its card — which on a book was the whole file, decoded to text; that was the slow part you could feel. A note is not kept in memory — on your phone a note reads in 14-45 ms, so there is nothing there worth holding yet. The rest of a tab (its editor state, its reading view) is still rebuilt, and that is where the remaining 114-147 ms of a switch goes.*
 - [ ] pdf thumbnails in tabs part
 
 ## images
