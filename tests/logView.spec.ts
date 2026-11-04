@@ -192,3 +192,16 @@ test('the back arrow leaves it, and Settings is still there behind', async ({ pa
   await expect(page.locator('.log-screen')).toHaveCount(0);
   await expect(page.locator('.settings-screen')).toBeVisible();
 });
+
+test('the back press closes the log, not the Settings underneath it', async ({ page }) => {
+  // The phone's own back button, and the browser's: both arrive here. The
+  // log was not in the list of things a press closes, so the press went
+  // past it and shut Settings behind its back -- leaving the log on screen
+  // over nothing, and no way out of it but the arrow.
+  await openLog(page);
+  await page.evaluate(() => document.dispatchEvent(new Event('satr:back')));
+  await expect(page.locator('.log-screen'), 'the log goes first').toHaveCount(0);
+  await expect(page.locator('.settings-screen'), 'and what it was opened from is still there').toBeVisible();
+  await page.evaluate(() => document.dispatchEvent(new Event('satr:back')));
+  await expect(page.locator('.settings-screen'), 'the next press closes that').toHaveCount(0);
+});

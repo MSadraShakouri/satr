@@ -3544,12 +3544,18 @@ function showSettings(): void {
     // tapping the icon to reading a note, so it has no business being parsed
     // on the way there (src/logView.ts).
     openLog: () => {
-      void import('./logView').then((viewer) => viewer.openLog({
+      void import('./logView').then((viewer) => {
+        // Kept, so that a back press can close it. The module is only ever
+        // here once the log has been opened, which is the only time there is
+        // anything to close -- the laziness costs the back button nothing.
+        logViewer = viewer;
+        viewer.openLog({
         // Where notes live for the space that is open: a saved log is a file
         // in the vault like any other, and it belongs where the rest are.
-        folder: notesHome(),
-        wrote: () => { void leftSidebar.refresh(); },
-      }));
+          folder: notesHome(),
+          wrote: () => { void leftSidebar.refresh(); },
+        });
+      });
     },
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),
   });
@@ -3574,7 +3580,7 @@ const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file
   headerIcons: [settingsButton],
 });
 // The Android back button, in Obsidian's order: close whatever is on top
-// (menu, popover, tab switcher, settings, the find bar), then the left
+// (menu, popover, tab switcher, the log, settings, the find bar), then the left
 // drawer, then the right one. With nothing left to close, the first press
 // shows "Press back again to exit." for five seconds and a second press
 // within them leaves the app (minimised, as Obsidian does, so it comes back
@@ -3582,11 +3588,15 @@ const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file
 // through a guard entry in the page history; the exit press really leaves.
 let exitArmedAt = 0;
 let exitNotice: NoticeHandle | null = null;
+/** src/logView.ts once it has been fetched, so that back can close the log
+ *  screen the same way it closes everything else. */
+let logViewer: { isLogOpen(): boolean; closeLog(): void } | null = null;
 /** Returns true when the press should leave the app. */
 function handleBack(): boolean {
   if (isMenuOpen()) closeMenu();
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
+  else if (logViewer?.isLogOpen()) logViewer.closeLog();
   else if (isSettingsOpen()) closeSettings();
   else if (folderExport?.isOpen()) folderExport.close();
   else if (document.querySelector('#save-conflict-dialog')) closeSaveConflict();
