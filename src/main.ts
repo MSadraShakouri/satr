@@ -1940,7 +1940,9 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   // and all. The reading view shows the picture (showFile reads its data URL).
   const reading = log.time('file', 'read', { path });
   const opened: TextOpen = isPicture(path) || isDocument(path)
-    ? { status: 'text', text: '', clean: true }
+    // Not read, only asked after: a picture or a document that is no longer
+    // there must say so in the sidebar rather than open an empty tab for it.
+    ? (await backend.stat(path).catch(() => null) ? { status: 'text', text: '', clean: true } : { status: 'unreadable' })
     : await backend.readText(path);
   reading({ bytes: opened.status === 'text' ? opened.text.length : 0, status: opened.status });
   if (opened.status !== 'text') {
@@ -2375,21 +2377,24 @@ async function handleIncomingId(id: string): Promise<void> {
 async function openTab(tab: Tab, after?: () => void): Promise<void> {
   if (!tab.path) { showEmptyTab(); return; }
   if (isExternalPath(tab.path)) { await openIncomingPath(tab.path, after); return; }
-  if (isPicture(tab.path)) { // nothing is read for it: it is shown, not solved
-    if (curTab() !== tab) return;
-    showFile(tab.path, '', after);
-    return;
-  }
-  // Nor is a document read as text. showFile throws that text away for one
-  // anyway (`if (imageTab || documentTab) content = ''`) and reads the bytes
-  // itself -- but readText stats the file first and refuses anything over
-  // MAX_EDIT_BYTES, and the refusal below closes the tab. A book is always
-  // over 8MB, so switching to its tab shut it and left the reader on the
-  // note they came from: "note to pdf switch closes the pdf tab and never
-  // opens it actually, just stays on the note tab".
-  if (isDocument(tab.path)) {
-    if (curTab() !== tab) return;
-    showFile(tab.path, '', after);
+  // Neither a picture nor a document is read as text. showFile throws that
+  // text away for one anyway (`if (imageTab || documentTab) content = ''`)
+  // and reads the bytes itself -- but readText stats the file first and
+  // refuses anything over MAX_EDIT_BYTES, and the refusal closes the tab. A
+  // book is always over 8MB, so switching to its tab shut it and left the
+  // reader on the note they came from: "note to pdf switch closes the pdf
+  // tab and never opens it actually, just stays on the note tab".
+  //
+  // Skipping the read skipped the one useful thing it did say, though:
+  // whether the file is still there. A deleted pdf kept its tab and showed
+  // an empty frame in it, where a deleted note has always closed its own.
+  // A stat is a millisecond and answers only that question -- it has no
+  // opinion about size, which is what went wrong before.
+  if (isPicture(tab.path) || isDocument(tab.path)) {
+    const there = await backend.stat(tab.path).catch(() => null);
+    if (curTab() !== tab) return; // a newer tab activation won the race
+    if (there) { showFile(tab.path, '', after); return; }
+    await closeGoneTab(tab, after);
     return;
   }
   const reading = log.time('file', 'read', { path: tab.path });
@@ -2402,8 +2407,14 @@ async function openTab(tab: Tab, after?: () => void): Promise<void> {
   // missing.
   if (onlyOnScreen?.path === tab.path) { showFile(tab.path, onlyOnScreen.text, after); return; }
   if (opened.status === 'too-large') leftSidebar.hint(`“${fileName(tab.path)}” is too large to open here (${formatBytes(opened.size)}).`, true);
-  if (tabs.length > 1) {
-    const at = tabs.indexOf(tab);
+  await closeGoneTab(tab, after);
+}
+/** A tab whose file cannot be opened any more, because it is gone or because
+ *  it is too big to be: the tab closes, and the reader lands on the next one
+ *  along. The last tab has nowhere to land, so it becomes the empty tab. */
+async function closeGoneTab(tab: Tab, after?: () => void): Promise<void> {
+  const at = tabs.indexOf(tab);
+  if (tabs.length > 1 && at >= 0) {
     tabs.splice(at, 1);
     activeTab = Math.min(at, tabs.length - 1);
   } else { tab.path = ''; tab.session = undefined; }
