@@ -132,3 +132,26 @@ test('opening a document separates the engine coming up from the file being pars
   expect(parsed!.ms).toBeGreaterThanOrEqual(0);
   expect(bytes!.at).toBeLessThanOrEqual(parsed!.at);
 });
+
+test('coming back says whether the page can draw at all', async ({ page }) => {
+  // The freeze after a screenshot or a trip to recents: the system brings
+  // the app back and the page goes on believing it is hidden, so it never
+  // runs another animation frame and never paints again -- while still
+  // hearing touches and still scrolling under them. Nothing in the log said
+  // so, because the heartbeat writes only while visible: the whole episode
+  // was 86 seconds of nothing, and the shape of the hole was the only
+  // evidence there was. These two lines are that hole filled in.
+  await boot(page, { 'A.md': NOTE }, 'A.md');
+  await page.evaluate(() => { document.dispatchEvent(new Event('visibilitychange')); });
+
+  const back = find(await read(page), 'app', 'came back');
+  expect(back, 'coming back is written down').toBeTruthy();
+  // What the page itself thinks, at the moment the system says it is back.
+  expect(back!.facts?.visibility).toBe('visible');
+
+  // And then the only question that matters: can it draw?
+  await expect.poll(async () => find(await read(page), 'app', 'drew a frame after coming back'), { timeout: 5000 })
+    .toBeTruthy();
+  const drew = find(await read(page), 'app', 'drew a frame after coming back');
+  expect(drew!.facts?.afterMs as number).toBeLessThan(1000);
+});

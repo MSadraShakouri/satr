@@ -3786,7 +3786,16 @@ function watchSeen(): void {
   markSeen();
   if (seenTimer !== undefined) return;
   seenTimer = window.setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') {
+      // Worth a line only when the two disagree: the system has told us we
+      // are in front of the reader and the page says otherwise. An app
+      // genuinely in the background says nothing, as before -- this is not
+      // a heartbeat that runs behind your back, it is the one reading that
+      // explains a silence. Before it, a freeze left 86 seconds of nothing
+      // in the log and the shape of the hole was the only evidence.
+      if (systemSaysActive) sayMemory('awake, but the page says it is hidden');
+      return;
+    }
     markSeen();
     // A reading rides along with the beat that was already happening, so
     // the cost of knowing is one DOM query a half minute. Without this
@@ -3887,7 +3896,22 @@ function tellHowTheLastRunEnded(): void {
   }
   log.note('launch', 'the last run ended cleanly', { secondsAgo: ago });
 }
+/**
+ * What the system last told us, as against what the page itself believes.
+ *
+ * On Android these can disagree, and when they do the app looks dead. A
+ * page's visibility is the WebView's window visibility -- `visible =
+ * !paused && (!attached to window || window visible)` -- and Capacitor
+ * never pauses the WebView, so it rides entirely on a window visibility
+ * signal that a screenshot or a trip to recents can disturb. A page left
+ * believing it is hidden never runs another animation frame: it cannot
+ * paint, though it still hears touches, and the compositor still scrolls
+ * it and still slides its drawers. Which is an app showing a still
+ * picture of itself and ignoring everything, exactly as reported.
+ */
+let systemSaysActive = true;
 function onBackground(): void {
+  systemSaysActive = false;
   // The last thing written before the phone may decide to end the run: what
   // was being held when it went away is the reading a kill is judged by.
   sayMemory('going away');
@@ -3902,8 +3926,21 @@ function onBackground(): void {
  *  we can trust. One in-flight switch so the two signals cannot open two tabs. */
 let launchTabInFlight = false;
 function onForeground(): void {
+  systemSaysActive = true;
   const away = Number(localStorage.getItem(AWAY_KEY)) || 0;
-  log.note('app', 'came back', away ? { awayFor: Math.round((Date.now() - away) / 1000) } : undefined);
+  log.note('app', 'came back', {
+    ...(away ? { awayFor: Math.round((Date.now() - away) / 1000) } : {}),
+    // The page's own opinion, at the moment the system says otherwise.
+    visibility: document.visibilityState,
+  });
+  // And then the only question that matters: can it draw? A frame asked
+  // for here is run by the browser on the next paint, and a page that is
+  // still in the background has no next paint -- so this line arriving
+  // late, or not at all, is the whole diagnosis. It costs one callback.
+  const asked = performance.now();
+  requestAnimationFrame(() => {
+    log.note('app', 'drew a frame after coming back', { afterMs: Math.round(performance.now() - asked) });
+  });
   void refreshOnResume();
   // Asked before the heartbeat starts again: one beat from now would say the
   // app had been running all along and no absence would ever be long enough.
