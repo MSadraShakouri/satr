@@ -3549,12 +3549,7 @@ function showSettings(): void {
         // here once the log has been opened, which is the only time there is
         // anything to close -- the laziness costs the back button nothing.
         logViewer = viewer;
-        viewer.openLog({
-        // Where notes live for the space that is open: a saved log is a file
-        // in the vault like any other, and it belongs where the rest are.
-          folder: notesHome(),
-          wrote: () => { void leftSidebar.refresh(); },
-        });
+        viewer.openLog();
       });
     },
     tools: () => [...toolbar.querySelectorAll<HTMLElement>('button[data-command]')].map((b) => ({ command: b.dataset.command!, label: b.getAttribute('aria-label') ?? b.dataset.command!, icon: b.querySelector('svg')?.outerHTML ?? '' })),

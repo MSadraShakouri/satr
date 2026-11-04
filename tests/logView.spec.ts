@@ -120,7 +120,7 @@ test('saving hands over a file named for the moment', async ({ page }) => {
   await openLog(page);
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.locator('[data-act="send"]').click(),
+    page.locator('[data-act="save"]').click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/^satr-log-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}\.log$/);
 });
