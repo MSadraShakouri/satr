@@ -86,6 +86,15 @@ test('a document that has been read shows the page it was left on', async ({ pag
   const card = page.locator('.mobile-tab-preview-page .tab-card-page');
   await expect(card, 'the card is a picture of the page').toHaveCount(1, { timeout: 5000 });
   await expect(page.locator('.mobile-tab-preview-page .tab-card-note')).toContainText(/Page \d+ of 12/);
-  // A real picture, not a broken one.
-  expect(await card.evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  // A real picture, not a broken one -- and a real *size*. The first
+  // version of this used the hundred-pixel sketch the flick layer keeps,
+  // which stretched across a card looks exactly as rough as it sounds:
+  // "thumbnail quality is really bad". It is taken from the page's own
+  // picture now and kept at the card's own resolution.
+  const shot = await card.evaluate((img) => ({
+    wide: (img as HTMLImageElement).naturalWidth,
+    tall: (img as HTMLImageElement).naturalHeight,
+  }));
+  expect(shot.wide, 'wide enough for a card on a 3x phone').toBeGreaterThan(400);
+  expect(shot.tall / shot.wide, 'and the page\u2019s own shape').toBeCloseTo(842 / 595, 1);
 });

@@ -29,24 +29,45 @@ interface Card {
   at: number;
 }
 
+/**
+ * How wide the picture is kept, in pixels.
+ *
+ * A card is about 150 points across on the phone, which at three device
+ * pixels is 450 -- so this is that with a little to spare, and a jpeg of it
+ * is thirty kilobytes or so. The first version of this took the hundred-pixel
+ * sketch the flick layer uses, because it was already there and free; the
+ * author's verdict on that was "thumbnail quality is really bad", and he is
+ * right. A hundred pixels stretched across a card is exactly as rough as a
+ * hundred pixels stretched across a page.
+ */
+const CARD_PX = 520;
+
 /** Copied, synchronously, before anything is awaited: the canvas handed in
  *  belongs to a page that may be drawn over or thrown away the moment this
- *  yields. (The same trap the sketch shelf documents.) */
+ *  yields. (The same trap the sketch shelf documents.)
+ *
+ *  Scaled to the card's own size on the way through -- taken from the page's
+ *  real picture rather than its rough one, and shrunk, which is the cheap
+ *  direction. */
 function copyOf(canvas: HTMLCanvasElement): HTMLCanvasElement | null {
   try {
+    const scale = Math.min(1, CARD_PX / Math.max(1, canvas.width));
     const copy = document.createElement('canvas');
-    copy.width = canvas.width;
-    copy.height = canvas.height;
+    copy.width = Math.max(1, Math.round(canvas.width * scale));
+    copy.height = Math.max(1, Math.round(canvas.height * scale));
     const context = copy.getContext('2d');
     if (!context) return null;
-    context.drawImage(canvas, 0, 0);
+    // The browser's own downscale, which on a shrink this size is a mile
+    // better than drawing it small in the first place.
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(canvas, 0, 0, copy.width, copy.height);
     return copy;
   } catch { return null; }
 }
 
 const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
   new Promise((resolve) => {
-    try { canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.6); } catch { resolve(null); }
+    try { canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.82); } catch { resolve(null); }
   });
 
 /** Put down what this document looks like where the reader left it. */
