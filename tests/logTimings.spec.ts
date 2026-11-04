@@ -14,7 +14,7 @@ import { tinyPdf } from './support/tinyPdf';
 interface Line { at: number; area: string; kind: string; text: string; facts?: Record<string, number | string | boolean>; ms?: number }
 
 declare global {
-  interface Window { __satr: { load(path: string): { lines(): Line[]; setVolume(v: string): void; forget(): void } } }
+  interface Window { __satr: { load(path: string): { lines(): Line[]; setDetail(v: string): void; forget(): void } } }
 }
 
 const NOTE = `# A note\n\n${'words and more words. '.repeat(400)}\n`;

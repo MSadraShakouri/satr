@@ -14,7 +14,7 @@ interface LogModule {
   fail(area: string, text: string, facts?: Record<string, unknown>): void;
   lines(): Line[];
   forget(): void;
-  setVolume(v: string): void;
+  setDetail(v: string): void;
   startedAt: number;
 }
 interface StoreModule {
@@ -24,7 +24,7 @@ interface StoreModule {
   startKeeping(): void;
   stopKeeping(): void;
   keeping(): boolean;
-  KEEP_STORED: number;
+  KEEP_STORED_BYTES: number;
 }
 
 declare global {
@@ -47,7 +47,7 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(async () => {
     const store = window.__satr.load('/src/logStore.ts');
     const line = window.__satr.load('/src/log.ts');
-    line.setVolume('normal');
+    line.setDetail('normal');
     await store.forgetStored();
     line.forget();
   });
@@ -111,17 +111,28 @@ test('the stored log has a bound, and it is the oldest that go', async ({ page }
     const store = window.__satr.load('/src/logStore.ts');
     // Past the bound in batches, so the ring in memory is not the thing
     // under test here.
-    const over = 300;
-    for (let written = 0; written < store.KEEP_STORED + over; written += 1000) {
-      for (let i = 0; i < 1000; i += 1) line.note('file', 'read', { i: written + i });
+    // The bound is ten megabytes, so the rows are fat on purpose: reaching
+    // it with ordinary lines would take two hundred thousand of them.
+    const fat = 'x'.repeat(5000);
+    let wrote = 0;
+    for (let batch = 0; batch < 5; batch += 1) {
+      for (let i = 0; i < 500; i += 1, wrote += 1) line.note('file', 'read', { i: wrote, blob: fat });
       await store.flush();
       line.forget();
     }
     const kept = await store.earlier();
-    return { held: kept.length, first: kept[0]?.facts?.i, bound: store.KEEP_STORED };
+    let bytes = 0;
+    for (const row of kept) bytes += JSON.stringify(row).length;
+    return { held: kept.length, wrote, bytes, first: kept[0]?.facts?.i, bound: store.KEEP_STORED_BYTES };
   });
-  expect(out.held).toBeLessThanOrEqual(out.bound);
-  expect(out.held).toBeGreaterThan(out.bound - 1100);
+  // More went in than the bound allows, and what came back is inside it --
+  // near enough. The running total is an estimate on purpose: weighing every
+  // row by turning it into text would cost more than the cap saves, so the
+  // promise is "about ten megabytes", not a byte-exact ceiling.
+  expect(out.wrote * 5000).toBeGreaterThan(out.bound);
+  expect(out.bytes).toBeLessThan(out.bound * 1.05);
+  expect(out.bytes, 'and it did not trim down to nothing').toBeGreaterThan(out.bound / 2);
+  expect(out.held, 'it did not throw the lot away to get there').toBeGreaterThan(500);
   // The front of the stored log is gone, not the back.
   expect(Number(out.first)).toBeGreaterThan(0);
 });

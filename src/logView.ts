@@ -1,10 +1,11 @@
 // The log, on screen. A full-screen page in the same style as Settings --
 // the same header, the same groups -- opened from a row in it.
 //
-// Three filters, because three dials is what the log has: a search over the
-// words, the areas as chips, and the volume. Plus one more that is not a
-// filter but a choice of source: this run, or everything the database still
-// holds from the runs before it.
+// Four filters, and all four act here rather than at the pen: a search over
+// the words, the areas as chips, how much detail to show, and a choice of
+// source -- this run, or everything the database still holds from the runs
+// before it. Nothing on this screen can make the app record less; the log
+// records everything and these decide what you are looking at.
 //
 // The list is capped at what a phone can lay out without stuttering. A log
 // is read from the bottom -- the last thing that happened is the thing being
@@ -12,14 +13,14 @@
 // showing, rather than quietly drawing half of it.
 
 import {
-  dropped, fail, forget, format, lineText, lines as liveLines, onLine, setVolume, volume,
-  type Area, type Line, type Volume,
+  detail, dropped, fail, forget, format, lineText, lines as liveLines, onLine, setDetail, shows, weight,
+  type Area, type Detail, type Line,
 } from './log';
 import { earlier, flush, forgetStored } from './logStore';
 import { shareText, canShare } from './share';
 
-const AREAS: Area[] = ['launch', 'file', 'pdf', 'tabs', 'search', 'storage', 'native'];
-const VOLUMES: Volume[] = ['quiet', 'normal', 'verbose'];
+const AREAS: Area[] = ['launch', 'app', 'file', 'pdf', 'tabs', 'search', 'storage', 'native'];
+const DETAILS: Detail[] = ['quiet', 'normal', 'verbose'];
 /** Rows drawn at once. Two thousand <div>s is a visible pause on a phone,
  *  and nobody reads two thousand rows: they read the last few dozen and
  *  search for the rest. */
@@ -56,7 +57,9 @@ export function closeLog(): void {
 function chosen(): Line[] {
   const all = source === 'all' ? older.concat(liveLines()) : liveLines();
   const wanted = query.trim().toLowerCase();
+  const at = detail();
   return all.filter((line) => {
+    if (!shows(line, at)) return false;
     if (muted.has(line.area)) return false;
     if (!wanted) return true;
     return lineText(line).toLowerCase().includes(wanted);
@@ -85,7 +88,14 @@ function draw(): void {
   const count = page.querySelector<HTMLElement>('.log-count');
   if (count) {
     const lost = dropped();
-    count.textContent = `${some.length} line${some.length === 1 ? '' : 's'}${lost ? `, ${lost} dropped` : ''}`;
+    const mb = weight() / 1_000_000;
+    const all = liveLines().length;
+    // Shown out of kept, always both. A reader at the quiet setting sees one
+    // line on screen; if the count said "1 line" he would reasonably believe
+    // one line was all the app had, which is the misreading the old dial
+    // actually earned.
+    const how = some.length === all ? `${all} line${all === 1 ? '' : 's'}` : `${some.length} of ${all} lines`;
+    count.textContent = `${how} · ${mb < 0.1 ? '<0.1' : mb.toFixed(1)}MB kept${lost ? `, ${lost} dropped` : ''}`;
   }
 }
 
@@ -158,7 +168,7 @@ function controlsHtml(): string {
   // invents a control the rest of the app does not already have.
   const chips = AREAS.map((area) =>
     `<button type="button" class="log-chip${muted.has(area) ? '' : ' is-on'}" data-area="${area}" aria-pressed="${!muted.has(area)}">${area}</button>`).join('');
-  const level = volume();
+  const level = detail();
   const segment = (label: string, options: [string, string][], chosenOne: string, key: string): string => `
       <div class="log-row">
         <span class="log-label">${label}</span>
@@ -172,8 +182,8 @@ function controlsHtml(): string {
       <input type="search" class="log-search" placeholder="Search the log" aria-label="Search the log" value="${escapeHtml(query)}">
       <div class="log-chips">${chips}</div>
       ${segment('Showing', [['run', 'This run'], ['all', 'Everything']], source, 'source')}
-      ${segment('Recording', VOLUMES.map((v) => [v, v] as [string, string]), level, 'volume')}
-      <div class="log-hint">Recording is what gets written down as it happens, not what you see here — a line nobody recorded cannot be read back. Quiet keeps failures only.</div>
+      ${segment('Detail', DETAILS.map((v) => [v, v] as [string, string]), level, 'detail')}
+      <div class="log-hint">Everything is always recorded; this decides how much of it you are shown, and what Copy and Share carry. Quiet leaves failures and warnings only. The log keeps the last megabyte in memory and ten on the device, oldest lines first out.</div>
       <div class="log-buttons">
         <button type="button" class="log-button" data-act="copy">Copy</button>
         <button type="button" class="log-button" data-act="save">${canShare() ? 'Share' : 'Save'}</button>
@@ -226,8 +236,8 @@ export function openLog(): void {
       redrawControls();
       return;
     }
-    const level = target.closest<HTMLElement>('[data-volume]');
-    if (level) { setVolume(level.dataset.volume as Volume); redrawControls(); return; }
+    const level = target.closest<HTMLElement>('[data-detail]');
+    if (level) { setDetail(level.dataset.detail as Detail); redrawControls(); return; }
     const which = target.closest<HTMLElement>('[data-source]');
     if (which) {
       source = which.dataset.source === 'all' ? 'all' : 'run';

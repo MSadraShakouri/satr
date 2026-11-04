@@ -11,8 +11,8 @@ declare global {
       forget(): void;
       lines(): { area: string; kind: string; text: string }[];
       lineText(line: unknown): string;
-      setVolume(v: string): void;
-      volume(): string;
+      setDetail(v: string): void;
+      detail(): string;
       shownText(): string;
       forgetStored(): Promise<void>;
       flush(): Promise<unknown>;
@@ -33,7 +33,7 @@ async function boot(page: Page): Promise<void> {
   await page.evaluate(async () => {
     const log = window.__satr.load('/src/log.ts');
     const store = window.__satr.load('/src/logStore.ts');
-    log.setVolume('normal');
+    log.setDetail('normal');
     await store.forgetStored();
     log.forget();
     log.note('pdf', 'bytes read', { path: 'books/book.pdf' });
@@ -83,11 +83,12 @@ test('an area chip takes its lines out and puts them back', async ({ page }) => 
   await expect(page.locator('.log-row-line')).toHaveCount(3);
 });
 
-test('the volume is set from here, and it is the log that changes', async ({ page }) => {
+test('the detail dial hides lines from the screen without losing them', async ({ page }) => {
   await openLog(page);
-  await page.locator('[data-volume="quiet"]').click();
-  expect(await page.evaluate(() => window.__satr.load('/src/log.ts').volume())).toBe('quiet');
-  // Quiet from now on: a note written after it is refused, a failure is not.
+  await page.locator('[data-detail="quiet"]').click();
+  expect(await page.evaluate(() => window.__satr.load('/src/log.ts').detail())).toBe('quiet');
+  // Quiet from now on: a note written after it is off the screen, a failure
+  // is not.
   await page.evaluate(() => {
     const log = window.__satr.load('/src/log.ts');
     log.note('file', 'read');
@@ -95,7 +96,22 @@ test('the volume is set from here, and it is the log that changes', async ({ pag
   });
   await expect(page.locator('.log-row-line', { hasText: 'could not read' })).toHaveCount(1);
   await expect(page.locator('.log-row-line', { hasText: /file  *read$/ })).toHaveCount(0);
-  await page.locator('[data-volume="normal"]').click();
+
+  // And it was never thrown away: turning the dial back up finds the line
+  // that was written while the dial was down. This is the whole of the
+  // change -- a question asked after the fact can still be answered.
+  await page.locator('[data-detail="normal"]').click();
+  await expect(page.locator('.log-row-line', { hasText: /file  *read$/ })).toHaveCount(1);
+});
+
+test('the count says what is on screen out of everything kept, in bytes', async ({ page }) => {
+  await openLog(page);
+  await page.locator('[data-detail="quiet"]').click();
+  // Three lines were seeded, one of them a failure: at quiet exactly one is
+  // on screen and the count still owns up to all three.
+  await expect(page.locator('.log-count')).toHaveText(/1 of 3 lines/);
+  await expect(page.locator('.log-count'), 'and what the ring weighs').toHaveText(/MB kept/);
+  await page.locator('[data-detail="normal"]').click();
 });
 
 test('a line written while it is open shows up by itself', async ({ page }) => {

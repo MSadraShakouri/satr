@@ -21,15 +21,19 @@
 // the app keeps logging to memory and simply keeps less. Same fall-through as
 // the view store.
 
-import { type Line, onLine, startedAt } from './log';
+import { type Line, onLine, startedAt, weigh } from './log';
 
 const DB_NAME = 'satr-log';
 const STORE = 'lines';
-/** Lines kept across runs. Each is a small object; this is a couple of MB at
- *  the very worst, against a quota that is a share of the disk. The bound is
- *  here for the same reason the view store has one: "grows forever" is what
- *  went wrong the last time something kept a record. */
-export const KEEP_STORED = 20000;
+/** What the database is allowed to hold, as the exported text would measure
+ *  it. Ten megabytes: the author's own number, and a sensible one -- it is
+ *  weeks of ordinary use, it is still a file a share sheet will carry, and
+ *  it is nothing against a quota that is a share of the disk.
+ *
+ *  A bound in bytes rather than in lines, because bytes are what actually
+ *  runs out, and because the lines are no longer all the same size now that
+ *  everything is recorded. */
+export const KEEP_STORED_BYTES = 10_000_000;
 /** How long after a line arrives the batch goes out, when the phone never
  *  gets round to being idle. */
 const FLUSH_AFTER_MS = 4000;
@@ -44,9 +48,10 @@ let waiting: StoredLine[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let idle = 0;
 let watching: (() => void) | null = null;
-/** Counted rather than queried: a count() on every flush would be a
- *  transaction we do not need. */
-let stored = -1;
+/** Weighed rather than queried: a walk of the whole store on every flush
+ *  would be a transaction we do not need. Negative means "not yet known",
+ *  and the first flush of a run finds out. */
+let storedBytes = -1;
 
 function db(): Promise<IDBDatabase | null> {
   if (opening) return opening;
@@ -93,34 +98,44 @@ export async function earlier(): Promise<StoredLine[]> {
 /** Everything the database holds, thrown away. The viewer's "clear". */
 export async function forgetStored(): Promise<void> {
   waiting = [];
-  stored = 0;
+  storedBytes = 0;
   await queue(() => ask('readwrite', (store) => store.clear()));
 }
 
-/** Once the store has more than it should, the oldest keys go. Auto-increment
- *  keys are in order of writing, so the cursor walks from the oldest.
+/** Once the store holds more than it should, the oldest lines go until it
+ *  does not. Auto-increment keys are in order of writing, so the cursor
+ *  walks from the oldest, and each row is weighed as it leaves.
  *
  *  This cannot go through ask(): a cursor answers once per step and ask()
  *  resolves on the first answer, so it would delete one row and call it done.
  *  The transaction finishing is the only honest end of a walk. */
-function trim(over: number): Promise<void> {
+function trim(overBytes: number): Promise<void> {
   return db().then((open) => new Promise<void>((resolve) => {
     if (!open) { resolve(); return; }
     let transaction: IDBTransaction;
     try { transaction = open.transaction(STORE, 'readwrite'); } catch { resolve(); return; }
     const request = transaction.objectStore(STORE).openCursor();
-    let left = over;
+    let left = overBytes;
     request.onsuccess = () => {
       const at = request.result;
       if (!at || left <= 0) return;
+      left -= weigh(at.value as Line);
       at.delete();
-      left -= 1;
       at.continue();
     };
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
     transaction.onabort = () => resolve();
   }));
+}
+
+/** What everything in the database weighs. Walked once a run, on the first
+ *  flush, and kept up to date by hand after that. */
+async function weighStore(): Promise<number> {
+  const rows = await ask<StoredLine[]>('readonly', (store) => store.getAll());
+  let total = 0;
+  for (const row of rows ?? []) total += weigh(row);
+  return total;
 }
 
 /** Write what has been waiting. Safe to call at any time; does nothing when
@@ -143,11 +158,13 @@ export function flush(): Promise<unknown> {
       transaction.onerror = () => resolve();
       transaction.onabort = () => resolve();
     });
-    if (stored < 0) stored = (await ask<number>('readonly', (s) => s.count())) ?? going.length;
-    else stored += going.length;
-    if (stored > KEEP_STORED) {
-      const over = stored - KEEP_STORED;
-      stored -= over;
+    let added = 0;
+    for (const line of going) added += weigh(line);
+    if (storedBytes < 0) storedBytes = await weighStore();
+    else storedBytes += added;
+    if (storedBytes > KEEP_STORED_BYTES) {
+      const over = storedBytes - KEEP_STORED_BYTES;
+      storedBytes -= over;
       await trim(over);
     }
   });
