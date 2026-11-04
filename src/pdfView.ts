@@ -909,6 +909,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     ? engine.openDocumentUrl({ id, url: source })
     : engine.openDocumentBuffer({ id, content: source })).toPromise();
   parsing({ pages: document_.pageCount });
+  // Reading the bytes, building the engine and parsing the document turned
+  // out to be the small half of an open. These two are the other half: the
+  // column of boxes being built and laid out, and the moment a page is
+  // actually on the glass -- which is the one a reader would call "opened".
+  const building = log.time('pdf', 'column built', { pages: document_.pageCount });
+  let firstPicture: ReturnType<typeof log.time> | null = log.time('pdf', 'first page on glass');
+  const drewSomething = (): void => { firstPicture?.(); firstPicture = null; };
 
   const { scroller } = options;
   const doc = window.document.createElement('div');
@@ -1297,6 +1304,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       dropPhotos(slab, index, (photo) => whole || inside(photo.part, part));
       slab.photos.push({ canvas: made.canvas, index, part, whole });
       slab.box.append(made.canvas);
+      drewSomething();
     });
   };
   /** Which pages have a question outstanding, so a page being drawn
@@ -1961,6 +1969,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // is never a column of empty boxes
     slab.base?.remove();
     slab.box.prepend(made.canvas);
+    drewSomething();
     slab.base = made.canvas;
     slab.baseTask = null;
   }
@@ -2749,10 +2758,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     doc.dataset.recalled = String(any);
     if (any && planned) drawBand();
   };
+  building();
   if (options.key) {
+    // Capped at RECALL_WAIT_MS, so this can cost the open that much and no
+    // more -- worth its own line, because on a document that has been read
+    // before it is the one part of an open that grows with how much of it
+    // was read.
+    const shelving = log.time('pdf', 'shelf waited for');
     const recalling = recallSketches(options.key, slabs.length).catch(() => []);
     void recalling.then(putBack);
     await Promise.race([recalling, new Promise((go) => { window.setTimeout(go, RECALL_WAIT_MS); })]);
+    shelving();
   }
   drawBand();
   planned = true;

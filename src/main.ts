@@ -610,9 +610,13 @@ function renderPreview(): void {
     previewReady = (async () => {
       try {
         await mountPdf(path, bytes);
-      } catch {
+      } catch (error) {
         // Not a PDF after all, or one pdf.js will not read: say so where the
         // pages would have been, rather than leaving an empty reading view.
+        // And say it in the log too: a refusal used to leave the record
+        // ending at "engine ready" with no reason, which reads like a hang
+        // rather than an answer.
+        log.fail('pdf', 'could not be opened', { path, bytes: bytes?.byteLength ?? 0, why: String(error).slice(0, 120) });
         if (filePath !== path) return;
         preview.innerHTML = `<p class="pdf-unreadable">“${escapeText(fileName(path))}” could not be opened.</p>`;
       }
