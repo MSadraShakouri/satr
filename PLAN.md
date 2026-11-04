@@ -1,6 +1,6 @@
 # The plan
 
-The author's list, as it stands after 0.18.0 and the two rounds since it, plus
+The author's list, as it stands after 0.18.4, plus
 the findings he asked be added from this side (marked *(found here)*) — do not
 invent any others. Web first, then APK. Lint and GitHub stay deferred. Italic
 notes are the state of play, not new work. **Android 6 and up, always** — the
