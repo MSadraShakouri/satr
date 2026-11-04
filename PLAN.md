@@ -1,6 +1,6 @@
 # The plan
 
-The author's list, as it stands after 0.18.5, plus
+The author's list, as it stands after 0.18.6, plus
 the findings he asked be added from this side (marked *(found here)*) — do not
 invent any others. Web first, then APK. Lint and GitHub stay deferred. Italic
 notes are the state of play, not new work. **Android 6 and up, always** — the
@@ -13,6 +13,35 @@ waiting on the phone, a fix that cannot be checked until something else is
 built, or a bug believed fixed and being watched for its return — **or while it
 records a decision** worth not making twice. Everything else has been removed.
 
+## the phone is being killed for memory
+
+Not reported — found in the log you sent on 4 November, which is the whole
+argument for having one. Across twenty runs: six exits the system calls **low
+memory**, two spells of *"Input dispatching timed out… Waited 5000ms"* (the app
+not answering a touch for five seconds, which is what an ANR dialog is made
+of), and a resident set that reached **990 MB**. Nothing in those 544 lines
+said what the app was holding, so there was nothing to blame.
+
+- [x] something to blame it on — *the log now says, at every launch, every half
+  minute, when a document's first page lands and on the way to the background:
+  the JavaScript heap and the pixels behind every canvas. Canvas pixels are the
+  half that matters and the half nothing could see — they are not on the JS
+  heap, so the heap figure can read 60 MB while the process holds ten times
+  that. One full-screen tile on your phone is eleven megabytes.*
+- [ ] find out what the 990 MB is — *the suspects, in order: `SKETCH_BYTES`, a
+  24 MB budget for the soft under-layer; the sharp tiles drawn over it, which
+  are two and a half screens' worth by `KEEP_SCREENS`; and the document's own
+  bytes, now deliberately held across a tab switch. **To check:** open the book,
+  read a few pages, switch to a note and back, then read the log — the
+  `holding` lines tell the story on their own. If `pictureMb` climbs and does
+  not come back down when you leave the tab, the pages are not being let go.*
+- [ ] the five-second freezes — *no instrument for these yet. They are a main
+  thread held by something; the candidates with numbers against them are
+  `edit to preview` at 231-536 ms (rising with the size of the note) and a
+  search reading every note off the disk, neither of which is five seconds on
+  its own. A long-task watcher is the next rung if the holding lines do not
+  explain it.*
+
 ## waiting on a test on the phone
 
 Fixes the browser cannot check, because the code that was wrong only runs in the
@@ -23,7 +52,6 @@ the phone — or comes back to life if it has not been.
 - [ ] the read that happened every time — *the browser proves the file is not read twice; only the phone can say what that is worth, because only the phone reads at 9 MB/s. **To check:** open the book, switch to a note, switch back, and read the log. The second open should say `pdf bytes kept` where it used to say `pdf bytes read`, and should be about three and a half seconds quicker. If it still says `bytes read`, the modified time the device backend reports is not stable across opens and the cache has to be keyed on something else.*
 - [ ] the launch that stopped reading a book to find out it was there — *the saving only exists where there is a big file and a slow read, so it cannot be measured here. **To check:** leave the book's tab as the open one, force-stop the app, and launch it. The log should go from `cold start` to `first file on screen` without a `file read` line for the pdf at all.*
 - [ ] the app getting itself out of a launch loop — *a browser tab is not killed in the middle of starting, so the guard can only be proved on the phone by hand. **To check:** force-stop the app twice while the splash is still up, then launch it a third time. It should open on the empty tab with a sentence naming the file, and the log should carry "started on an empty tab after a bad start". If it fires when it should not — after an ordinary force stop of a running app, say — the mark is being left behind somewhere it should not be.*
-- [ ] the log saved into the vault — *the write goes through the device backend, which is Java and a real folder rather than a database. **To check:** Settings → Troubleshooting → Log → To notes; a `Logs` folder should appear in the file tree with a `satr-<date>.log` in it that opens in the app as text.*
 
 ## typing and the keyboard
 
@@ -92,13 +120,13 @@ Built, released in 0.18.4, and proved on the phone: the author's own log came
 back as a file through the share sheet, with the exit reasons in it. One half
 is left, ticked below — `logcat`.
 
-- [x] verbose and non verbose logging, and search and filters and stuff too (export is very important to have), I don't know if I need different levels and stuff — *built. Three dials rather than five levels: volume (quiet, normal, verbose), kind (note, warning, failure — a failure is never dropped, whatever the volume), and an area tag on every line (launch, file, pdf, tabs, search, storage, native). Every line carries a clock and a timed line carries what it took, so the record and the stopwatch are one stream rather than two features.*
+- [x] verbose and non verbose logging, and search and filters and stuff too (export is very important to have), I don't know if I need different levels and stuff — *built, then corrected by you and rebuilt: "the buttons should only decide what level of logs is shown rather than how much is logged." **Everything is recorded, always; the dial filters the view and the export.** Worth not deciding twice — a line refused when it is written cannot answer a question asked afterwards, and afterwards is when a log gets read. What keeps it bounded is size instead: a megabyte or five thousand lines in memory, about ten megabytes in the database, oldest out first. Three dials still: detail (quiet, normal, verbose), kind (note, warning, failure), and an area tag on every line (launch, app, file, pdf, tabs, search, storage, native).*
 - [ ] something system level for the APK, on every version and not only 11+ — ***`logcat` is the half still missing.*** The other half is built: a launch says how the last run ended — cleanly, or with the heartbeat still running past the last goodbye, which is a kill — on every version and in the browser, and on Android 11 and up `ApplicationExitInfo` adds the reason beside it. The notes below are why it was built that way round. *Two of them, and the second is the better one. `logcat -d` run from inside the app returns our own lines with no root and no permission, which is the only way to see what happens underneath the page — plugins, the renderer, a kill. It was never part of the SDK, so it is not promised; with root, `pm grant READ_LOGS` gives the whole system log to the same plugin. And `ApplicationExitInfo`, which is official and answers **why the last run ended**: crashed, froze, or was killed because the phone wanted the memory. That last one would settle the new-tab item in "seen once" without ever reproducing it. It needs Android 11, so it is the top rung of three and not the mechanism: **that** the app was killed, and when, comes from a heartbeat stamped while it is alive against a clean stamp on the way out — which costs nothing, works on Android 6, and is the only rung that also works in the browser where this gets tested. Android 11 adds the reason, Android 12 adds the trace. `logcat` and the share sheet need no ladder at all: both reach back past our floor. Measured, so it is not a guess — minSdk is 23, and the oldest WebView an Android 6 phone can hold is 105 against the chrome87 we compile for.*
-- [x] an app level thing — *built, and it is what everything else sits on. A ring of 2,000 lines in memory, flushed to IndexedDB in batches and on the way to the background, so it survives a crash as far as the last flush. Not localStorage: that one blocks the screen on every write, which is the crime under investigation.*
+- [x] an app level thing — *built, and it is what everything else sits on. A ring of a megabyte in memory, flushed to IndexedDB in batches and on the way to the background, so it survives a crash as far as the last flush. Not localStorage: that one blocks the screen on every write, which is the crime under investigation.*
 - [x] the web version — *built first, and 37 tests of it read the log back and assert on what it says. Gets all of it except the two native sources, and is where the logger is built and tested, because Playwright can read the log back out and assert on what it says.*
-- [x] export — *all of it, now. Into the vault as `Logs/satr-<date>.log` under the open space's notes folder ("To notes"), the share sheet on the phone, a downloaded file in the browser, and copy — each carrying what the filters left rather than the whole log, since a log narrowed to the thing being asked about is the useful one to send. The vault file is the one that lands a log in git where it can be read on this side. Plain text, with ndjson for when something has to parse it.*
+- [x] export — *the share sheet on the phone, a downloaded file in the browser, and copy — each carrying what the filters left rather than the whole log, since a log narrowed to the thing being asked about is the useful one to send. Plain text, with ndjson for when something has to parse it. (A fourth way, writing the log into the vault as a note, was built and then removed at your word: "remove the save to notes, i do not need that at all.")*
 - [x] what it records on day one — *built, and the pdf one came apart into three numbers rather than one: reading the bytes, the wasm engine coming up (once a run), and the document being parsed (every open). The five already complained about: launch, opening a file, pdf open, tab switch, source to preview. Each one as a duration, so "pdf opening is very slow, I think it does something for the file before opening it" gets a number instead of a suspicion.*
-- [x] it must not become the slowness itself — *measured: a kept line costs under 0.05 ms and a refused one under 0.01 ms. Nothing formatted when written, `performance.now()` only, writes batched off the path being timed, and a quiet log call is one comparison and a return. Its own cost gets measured both ways like everything else.*
+- [x] it must not become the slowness itself — *re-measured now that nothing is refused, which is when it would have started to matter: a line costs under 0.05 ms whatever the dial says, and a verbose measurement — really taken now, rather than skipped — under 0.08 ms. Nothing is formatted when it is written, `performance.now()` only, writes batched off the path being timed, and the weighing that keeps the ring inside its budget reads lengths rather than building text.*
 
 ## seen once, waiting for it to happen again
 
