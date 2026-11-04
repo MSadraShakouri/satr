@@ -46,6 +46,22 @@ test('a run that was killed while it was being read leaves the heartbeat ahead o
   expect(lines.some((line) => line.text.includes('ended cleanly'))).toBe(false);
 });
 
+test('a run with no goodbye on record at all is not reported as unannounced since 1970', async ({ page }) => {
+  const now = Date.now();
+  // The heartbeat is there, the goodbye mark is not -- which is the ordinary
+  // state after openFirstNote clears it. Subtracting the missing mark read it
+  // as zero and gave "unannouncedFor=1793778808", a number that said nothing
+  // and appeared in his log at every launch.
+  await boot(page, { seenAt: now - 4 * 60_000 });
+  const lines = await launchLines(page);
+  const told = lines.find((line) => line.text.includes('without a goodbye'));
+  expect(told, 'it is still reported as an unclean end').toBeTruthy();
+  expect(Number(told!.facts!.secondsAgo)).toBeGreaterThanOrEqual(235);
+  expect(told!.facts!.everSaidGoodbye, 'and it says what it does not know').toBe(false);
+  expect(told!.facts!.unannouncedFor, 'rather than inventing a duration').toBeUndefined();
+  expect(JSON.stringify(told)).not.toContain('17937');
+});
+
 test('a run that was told it was going away ends cleanly', async ({ page }) => {
   const now = Date.now();
   // The two marks are written together on the way out, which is what a clean

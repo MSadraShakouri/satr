@@ -3838,6 +3838,14 @@ function tellHowTheLastRunEnded(): void {
   // A clock that went backwards (the phone's time changed, or a restore)
   // would otherwise be reported as a run that ended in the future.
   if (ago < 0) return;
+  if (!away) {
+    // No goodbye was ever recorded -- not a late one, none at all. The
+    // subtraction below would have read the missing value as zero and
+    // reported the run as having been unannounced since 1970, which is how
+    // "unannouncedFor=1793778808" got into his log.
+    log.warn('launch', 'the last run ended without a goodbye', { secondsAgo: ago, everSaidGoodbye: false });
+    return;
+  }
   if (seen - away > GOODBYE_SLACK_MS) {
     log.warn('launch', 'the last run ended without a goodbye', {
       secondsAgo: ago,
