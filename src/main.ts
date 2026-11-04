@@ -3834,9 +3834,15 @@ async function openFirstNote(): Promise<void> {
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
   if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
-  // A picture tab is shown, not read: its bytes as text are the whole file.
+  // A picture or a document is shown, not read: its bytes as text are the
+  // whole file. Only the picture was spared that, and the launch is the
+  // worst place to pay it -- a book-sized pdf in the tab the app opens on
+  // was read end to end into a base64 string, 41 million characters of it
+  // for a 31MB book, and then thrown away: showFile keeps no text for a
+  // document, and the bytes are read again properly a moment later. All
+  // the launch needs to know is whether the file is still there.
   let text: string | null = null;
-  if (path && isPicture(path)) text = '';
+  if (path && (isPicture(path) || isDocument(path))) text = await backend.stat(path).catch(() => null) ? '' : null;
   else if (path) {
     // The launch has its own way in -- not openTab, not openFile -- so it
     // needs its own line, or the one read that matters most would be the
