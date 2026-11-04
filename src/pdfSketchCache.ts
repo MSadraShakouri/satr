@@ -13,9 +13,18 @@
  * So a handful of those pictures outlive the view. Deliberately a
  * handful: he asked for this to be small, and small is also what makes
  * it fast — the pages he is on, of the documents he is actually reading,
- * and nothing else. Ten pages of four documents, as JPEG at a hundred
- * pixels, is under a hundred kilobytes all told, which is a third of one
- * page of his book as the engine draws it.
+ * and nothing else.
+ *
+ * One of them is a good picture and the rest are rough. Ten pages at a
+ * hundred pixels is a document that comes back as a smear and sharpens a
+ * beat later, which is what he saw and did not like: "shouldn't we make
+ * the current view good quality". The page he is actually looking at is
+ * kept at nine hundred pixels, which on a phone is most of the way to
+ * the real thing and about 250 kB of JPEG; its four nearest neighbours
+ * stay rough, because they are only ever seen for the moment a flick
+ * passes over them. Four documents of that is about a megabyte on disk,
+ * against a hundred kilobytes before — still nothing next to one page of
+ * his book as the engine draws it, which is 7.7 MB of memory.
  *
  * Two shelves hold the same thing. The one in memory answers a tab
  * change, which happens inside one page and would be slower through a
@@ -29,13 +38,26 @@ import { asideKeys, dropAside, getAside, putAside } from './webStore';
  *  win; a fifth one pushes the oldest out, rather than every PDF ever
  *  opened staying on the phone forever. */
 const FILES = 4;
-/** How many pages of each: the ones nearest where the reader was, which
- *  is where they will be when they come back. */
-const PAGES = 10;
+/** How many rough pages of each: the ones nearest where the reader was,
+ *  which is where a flick will go when they come back. */
+const ROUGH = 4;
+/** And the page they were on, kept properly. Nine hundred pixels is not
+ *  the 1170 a phone at three device pixels draws a page with, but it is
+ *  near enough that it reads as the page rather than as a picture of it,
+ *  and it is a quarter of the bytes. */
+const SHARP_PX = 900;
+/** The width pdfView's own sketch book keeps (ROUGH_PX there). Anything
+ *  handed over wider than this is shrunk on the way down: a page recalled
+ *  sharp sits in that book at its own size until the engine redraws it,
+ *  and it must not be filed away again as though it were a sketch. */
+const ROUGH_PX = 100;
 /** A hundred-pixel page is three kilobytes at this quality and four at
  *  0.8; what it is for is being stretched across a whole page while a
  *  sharp one is drawn, and at that size the difference cannot be seen. */
 const QUALITY = 0.6;
+/** The good one is looked at, so it is kept at the quality the tab cards
+ *  use. */
+const SHARP_QUALITY = 0.82;
 
 const SHELF = 'pdf-sketches/';
 const LIST = 'pdf-sketches-list';
@@ -55,24 +77,27 @@ const shelves = new Map<string, Shelf>();
 const readList = async (): Promise<Record<string, number>> =>
   (await getAside<Record<string, number>>(LIST)) ?? {};
 
-const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
+const asJpeg = (canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> =>
   new Promise((resolve) => {
-    try { canvas.toBlob((blob) => resolve(blob), 'image/jpeg', QUALITY); }
+    try { canvas.toBlob((blob) => resolve(blob), 'image/jpeg', quality); }
     catch { resolve(null); }
   });
 
-/** A copy of a picture, taken now. The canvases handed in belong to a
- *  view that is usually being torn down around us, and toBlob reads them
- *  when it gets to them rather than when it is asked: by then the page
- *  they came from can have handed its bitmap back. */
-const copyOf = (from: HTMLCanvasElement): HTMLCanvasElement | null => {
+/** A copy of a picture, no wider than asked for, taken now. The canvases
+ *  handed in belong to a view that is usually being torn down around us,
+ *  and toBlob reads them when it gets to them rather than when it is
+ *  asked: by then the page they came from can have handed its bitmap
+ *  back. Anything already narrow enough is copied at its own size. */
+const copyOf = (from: HTMLCanvasElement, widest: number): HTMLCanvasElement | null => {
   if (!from.width || !from.height) return null;
+  const scale = Math.min(1, widest / from.width);
   const canvas = document.createElement('canvas');
-  canvas.width = from.width;
-  canvas.height = from.height;
+  canvas.width = Math.max(1, Math.round(from.width * scale));
+  canvas.height = Math.max(1, Math.round(from.height * scale));
   const context = canvas.getContext('2d');
   if (!context) return null;
-  try { context.drawImage(from, 0, 0); } catch { return null; }
+  context.imageSmoothingQuality = 'high';
+  try { context.drawImage(from, 0, 0, canvas.width, canvas.height); } catch { return null; }
   return canvas;
 };
 
@@ -97,25 +122,31 @@ async function prune(): Promise<void> {
 /**
  * Put a document's nearest pages down, for the next time it is opened.
  *
- * `near` is the page the reader is on, as an index from zero, and the
- * pictures kept are the ones closest to it on either side.
+ * `near` is the page the reader is on, as an index from zero. `good` is
+ * that page as the engine actually drew it, and is the only one kept at
+ * a size worth looking at; the rest are the rough sketches nearest it on
+ * either side, for a flick.
  */
 export async function keepSketches(
   key: string,
   pages: number,
   near: number,
   book: Map<number, HTMLCanvasElement>,
+  good?: HTMLCanvasElement | null,
 ): Promise<void> {
-  if (!key || !book.size) return;
-  const chosen = [...book.keys()]
-    .sort((first, second) => Math.abs(first - near) - Math.abs(second - near))
-    .slice(0, PAGES);
+  if (!key || (!book.size && !good)) return;
   // Copied first, every one of them, before a single await: see copyOf.
-  const copies = chosen.map((page) => ({ page, canvas: copyOf(book.get(page)!) }));
+  const sharp = good ? copyOf(good, SHARP_PX) : null;
+  const chosen = [...book.keys()]
+    .filter((page) => !(sharp && page === near))
+    .sort((first, second) => Math.abs(first - near) - Math.abs(second - near))
+    .slice(0, ROUGH);
+  const copies = chosen.map((page) => ({ page, canvas: copyOf(book.get(page)!, ROUGH_PX), quality: QUALITY }));
+  if (sharp) copies.unshift({ page: near, canvas: sharp, quality: SHARP_QUALITY });
   const leaves: Leaf[] = [];
-  for (const { page, canvas } of copies) {
+  for (const { page, canvas, quality } of copies) {
     if (!canvas) continue;
-    const shot = await asJpeg(canvas);
+    const shot = await asJpeg(canvas, quality);
     if (shot) leaves.push({ page, shot });
   }
   if (!leaves.length) return;
@@ -161,8 +192,8 @@ export async function recallSketches(
   // the browser's own and happens off this thread, but each promise has
   // to be picked up on it -- and the thread it has to be picked up on is
   // the one the engine is drawing the first page with, a hundred
-  // milliseconds at a time. Ten pages in a row waited for ten of those
-  // turns and arrived half a second late, which on a document this size
+  // milliseconds at a time. Pages in a row waited for one of those turns
+  // each and arrived half a second late, which on a document this size
   // is after the engine had drawn the page itself: the whole point of
   // keeping them is to be there first.
   const painted = await Promise.all(shelf.leaves.map(async (leaf) => ({ page: leaf.page, canvas: await paint(leaf.shot) })));

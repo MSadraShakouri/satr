@@ -2834,7 +2834,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!always && Date.now() - putDownAt < 4000) return;
     putDownAt = Date.now();
     putDownWas = state;
-    void keepSketches(options.key, slabs.length, pageShown() - 1, sketches);
+    // With the page he is on as the engine drew it, not as the sketch book
+    // keeps it: coming back to a document should show the page, not a
+    // hundred-pixel smear of it that sharpens a beat later.
+    void keepSketches(options.key, slabs.length, pageShown() - 1, sketches, slabs[pageShown() - 1]?.base ?? null);
     // And a picture of the page he is on, filed under the path, so the tab
     // switcher can show this document without reading a byte of it. From
     // the page's real picture where there is one -- the rough sketch is a
