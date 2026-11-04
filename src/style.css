@@ -4596,6 +4596,26 @@ body.is-pdf-finding .pdf-toolbar { visibility: hidden; }
    pictures, which are opaque, so it is seen only where there is nothing
    better yet. A class of its own, not the sharp one's: they are told
    apart by what they are. */
+/* A page's pictures are looks only, and the finger must never be holding
+   one of them.
+
+   A touch is captured, implicitly, by the element it lands on, and the
+   browser cancels the whole gesture if that element is taken out of the
+   page. Every picture here is taken out of the page constantly: the
+   sharp tile is replaced by a sharper one at every step of a zoom
+   (placeDetail), the rough one by the real page as it is drawn. So a
+   one-finger zoom died under the finger that was making it -- after a
+   double tap and not before (a tile exists only above 1.01 zoom), on a
+   typeset document and not a scanned one (8 ms a megapixel against 65:
+   only the fast one lands while the finger is still moving).
+
+   Out of hit-testing, the touch lands on .pdf-page, which stays where it
+   is while its pictures are swapped underneath, and the gesture is never
+   interrupted. Nothing on a page is tappable in its own right -- taps are
+   answered by where they are, not by what they hit (pageUnder). */
+.pdf-page canvas {
+  pointer-events: none;
+}
 .pdf-rough {
   position: absolute;
   inset: 0;
