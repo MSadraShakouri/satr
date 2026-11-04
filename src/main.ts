@@ -1,6 +1,6 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
-import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews } from './viewStore';
+import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews, forgetViews } from './viewStore';
 import { startKeeping } from './logStore';
 import * as log from './log';
 import { tellWhyItDied } from './diagnostics';
@@ -31,6 +31,7 @@ import { initDrawers } from './drawers';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
+import { inALoop, launchBegan, launchFinished, type BadStart } from './launchGuard';
 import { mathFaultAt } from './mathSource';
 import { closeTimestampPicker, letNoteGo, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
@@ -1806,6 +1807,7 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
 }
 
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  rescued = ''; // a file is open: the empty tab has nothing left to explain
   if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
   ++viewGeneration;
   placeLeftInSource = null; // another note: the line left in the last one is not about this one
@@ -2640,6 +2642,7 @@ async function renderEmptyTab(): Promise<void> {
   emptyTab.innerHTML = `
     <div class="empty-state-container${emptyQuery ? ' has-query' : ''}">
       <div class="empty-state-title">No file is open</div>
+      ${rescued === '' ? '' : `<div class="empty-state-note">Satr did not finish starting twice${rescued === 'nothing' ? '' : ` while opening “${escapeText(rescued)}”`}, so it opened here instead and forgot where files were left. Everything else is where it was.</div>`}
       <div class="empty-state-search">
         <button type="button" class="empty-state-search-icon" data-act="search" aria-label="Search notes">${SEARCH_ICON}</button>
         <input type="search" class="empty-state-search-field" dir="auto" placeholder="Search notes" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${escapeText(emptyQuery)}">
@@ -3630,8 +3633,16 @@ keepTimestampsCurrent(); // the relative timestamps ("in 3 hours") in the note a
 const SatrSplash = registerPlugin<{ dismiss(): Promise<void> }>('SatrSplash');
 let bootReady = false;
 let queuedIncomingId = '';
+/** What the launches before this one did, and whether this one is a rescue
+ *  (src/launchGuard.ts). Read once, at the top of boot. */
+let badStart: BadStart = { times: 0, path: '' };
+let rescued = '';
 async function boot(): Promise<void> {
   keepSnapshots();
+  // Before anything can go wrong again: the mark is written now and lifted
+  // when the first file is on screen, so a launch that never arrives leaves
+  // it behind for the next one to find.
+  badStart = launchBegan(curTab().path);
   // First of all, so that whatever the boot itself has to say is kept. It
   // subscribes and nothing more: nothing is read back here, so the database
   // costs the first screen nothing.
@@ -3639,6 +3650,9 @@ async function boot(): Promise<void> {
   // The clock on every line is milliseconds since the page began loading, so
   // these read as a launch from zero without anything having to subtract.
   log.note('launch', 'cold start', { native: isNative() });
+  if (badStart.times) {
+    log.warn('launch', 'the last launch did not finish', { times: badStart.times, file: fileName(badStart.path) || 'nothing' });
+  }
   // Read before the heartbeat starts again and overwrites the marks.
   tellHowTheLastRunEnded();
   tellHowThePageLoaded();
@@ -3663,6 +3677,9 @@ async function boot(): Promise<void> {
     const first = log.time('launch', 'first file on screen');
     await openFirstNote();
     first();
+    // This far is far enough to call it a launch: the reader has something
+    // on screen. Anything that goes wrong after this is not a start-up loop.
+    launchFinished();
     bootReady = true;
     if (supportsIncomingFiles()) {
       const pending = await pendingIncomingFile().catch(() => null);
@@ -3818,7 +3835,18 @@ async function openFirstNote(): Promise<void> {
   // A new empty tab at launch: the setting asks for one, or the app was away
   // long enough. Show it before file access, so the last note never sits
   // on screen behind a permission sheet.
-  const openEmpty = dueEmptyTab();
+  // Twice the app has started and not arrived. Whatever it was doing, it was
+  // doing it before the first screen, and the two things it can take back
+  // are the file it opens on and where every file was left. Both go. The
+  // tabs stay: the book is still in its tab, one tap away, and this is a way
+  // past the loop rather than a way of losing the reader's work.
+  const loop = inALoop(badStart);
+  if (loop) {
+    rescued = fileName(badStart.path);
+    forgetViews();
+    log.warn('launch', 'started on an empty tab after a bad start', { times: badStart.times, file: rescued || 'nothing' });
+  }
+  const openEmpty = loop || dueEmptyTab();
   localStorage.removeItem(AWAY_KEY);
   // From here the app is running and being looked at: the clock starts again.
   watchSeen();
