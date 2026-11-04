@@ -207,6 +207,24 @@ const picture = { path: '', url: '' };
 /** The PDF open in the tab, as its own bytes: pdf.js reads them, and the
  *  place is remembered against them. */
 const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
+/**
+ * The last document's bytes, kept so that coming back to its tab does not
+ * read the whole file off the disk again.
+ *
+ * Measured on the author's phone, from the app's own log: a 2.2MB pdf takes
+ * 216-268ms to read, every single time, and it was being re-read on every
+ * switch back to its tab -- more than the engine, the parse and the column
+ * put together. It is per byte, so his 31MB book is about three and a half
+ * seconds of it before anything else can start.
+ *
+ * One document and no more. The switch a reader actually makes is between a
+ * note and the one book it is about; a second book kept alongside the first
+ * is not a cache but a leak, on a phone that already holds the pages it has
+ * drawn. It is handed out only when the file on disk is the same file --
+ * same path, same modified time -- so a document replaced underneath the app
+ * is read again.
+ */
+let keptDocument: { path: string; mtime: number; bytes: Uint8Array } | null = null;
 let pdfView: PdfHandle | null = null;
 let pdfChrome: PdfChrome | null = null;
 /** The contents of the PDF in the tab, in the shape the outline panel reads
@@ -1758,6 +1776,35 @@ async function leaveCurrent(): Promise<boolean> {
   if (saved && leaving === displayedTab) { rememberView(); if (leaving) leaving.session = editor.view.state; }
   return saved;
 }
+
+/** A document's bytes: the kept ones when the file has not changed, read
+ *  from disk when they have. The stat costs a millisecond or two and saves
+ *  the whole read, which on a phone is the largest part of opening a pdf. */
+async function openDocumentBytes(path: string): Promise<void> {
+  const entry = await backend.stat(path);
+  const kept = keptDocument;
+  if (entry && kept && kept.path === path && kept.mtime === entry.mtime) {
+    log.note('pdf', 'bytes kept', { path, bytes: kept.bytes.byteLength });
+    useDocumentBytes(path, kept.bytes);
+    return;
+  }
+  const reading = log.time('pdf', 'bytes read', { path });
+  const bytes = await backend.readBytes(path);
+  reading({ bytes: bytes?.byteLength ?? 0 });
+  if (!bytes?.byteLength) return;
+  keptDocument = { path, mtime: entry?.mtime ?? 0, bytes };
+  useDocumentBytes(path, bytes);
+}
+
+/** Only if the reader is still on that file: a slow read can land after they
+ *  have moved on, and the document showing must be the tab showing. */
+function useDocumentBytes(path: string, bytes: Uint8Array): void {
+  if (filePath !== path) return;
+  openedDocument.path = path;
+  openedDocument.bytes = bytes;
+  if (mode === 'preview') renderPreview();
+}
+
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
   if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
   ++viewGeneration;
@@ -1802,14 +1849,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
     // file was last left. Its bytes are read once and kept, because pdf.js
     // and the place both want them.
     opening = 'preview';
-    const reading = log.time('pdf', 'bytes read', { path });
-    void backend.readBytes(path).then((bytes) => {
-      reading({ bytes: bytes?.byteLength ?? 0 });
-      if (!bytes?.byteLength || filePath !== path) return;
-      openedDocument.path = path;
-      openedDocument.bytes = bytes;
-      if (mode === 'preview') renderPreview();
-    });
+    void openDocumentBytes(path);
   }
   if (imageTab) {
     // A picture has no text mode to be in: the reading view shows it, whatever
