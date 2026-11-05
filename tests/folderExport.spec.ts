@@ -101,6 +101,8 @@ test('the folder row’s own menu carries the export, on its own line', async ({
     '---',
     'Rename… | Move to…',
     '---',
+    'Sort this folder…',
+    '---',
     'Use as a space',
     '---',
     'Open all notes in tabs | Replace tabs with this folder',

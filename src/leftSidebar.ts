@@ -10,6 +10,7 @@
 //   new folder, rename (in place), move, delete, use a folder as a space.
 // - A floating row of buttons at the bottom: new note, new folder, sort,
 //   collapse all (or go up, in the walker).
+import { folderTime } from './folderTimes';
 import { closeMenu, confirmMenu, openMenu, type MenuEntry } from './menu';
 import {
   addSpace, currentScope, loadSpaces, moveSpaces, removeSpace, scopeName, scopeRoot, setScope, setWalkDir, walkDir, type Scope,
@@ -51,13 +52,50 @@ export interface LeftSidebarDeps {
 }
 
 type Sort = 'name' | 'name-desc' | 'mtime' | 'mtime-old';
+/** What a folder was told to do. Either half may be missing, and a
+ *  missing half is the folder above's business. */
+interface Rule { sort?: Sort; foldersFirst?: boolean }
+/** The rule for the whole vault, as it has always been stored: a folder
+ *  with nothing of its own, and nothing above it with anything of its
+ *  own, sorts by this. */
 const SORT_KEY = 'satr:sort';
+/**
+ * The rules folders were given, by path.
+ *
+ * "When I set a rule, the rule exists for every subfolder unless they
+ * have an override." So a folder is not asked what it does -- the nearest
+ * folder at or above it that was ever told anything is. The vault root is
+ * the empty path, and a space is a folder like any other ("spaces are
+ * technically folders too"), so a rule set on the folder a space points
+ * at is the rule inside that space, and a rule set at the root reaches
+ * every space that has not been told otherwise.
+ */
+const RULES_KEY = 'satr:sort-rules';
+/** Folders above files, which until now was a law rather than a choice. */
+const FOLDERS_FIRST = true;
 /** A path the app made up for a file another app handed over
  *  ("satr-open://…", src/main.ts) is not a folder on the phone. */
 const isIncomingPath = (path: string): boolean => path.includes('://');
 const SORT_LABEL: Record<Sort, string> = {
   name: 'File name (A to Z)', 'name-desc': 'File name (Z to A)', mtime: 'Modified time (new to old)', 'mtime-old': 'Modified time (old to new)',
 };
+
+function readRules(): Record<string, Rule> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RULES_KEY) ?? '{}') as Record<string, Rule>;
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
+function writeRules(rules: Record<string, Rule>): void {
+  try { localStorage.setItem(RULES_KEY, JSON.stringify(rules)); } catch { /* the vault's rule still applies */ }
+}
+/** Every folder from this one up to the vault root, nearest first. */
+function upwards(dir: string): string[] {
+  const chain = [dir];
+  for (let at = dir; at.includes('/');) { at = at.slice(0, at.lastIndexOf('/')); chain.push(at); }
+  if (chain[chain.length - 1] !== '') chain.push('');
+  return chain;
+}
 const escapeHtml = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 const icon = (paths: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 // Lucide icons, as Obsidian uses.
@@ -67,6 +105,8 @@ const ICONS = {
   newNote: icon('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>'),
   newFolder: icon('<path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
   sort: icon('<path d="m3 16 4 4 4-4M7 20V4M11 4h10M11 8h7M11 12h4"/>'),
+  // "Same as the folder above": the rule this folder was given, undone.
+  undo: icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
   // "Reveal current file": a crosshair on the file being read.
   locate: icon('<circle cx="12" cy="12" r="7"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>'),
   collapseAll: icon('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
@@ -140,6 +180,28 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   let scope: Scope = currentScope();
   let sort: Sort = (localStorage.getItem(SORT_KEY) as Sort | null) ?? 'name';
   if (!(sort in SORT_LABEL)) sort = 'name';
+  let rules: Record<string, Rule> = readRules();
+  /** What this folder actually does: its own rule, or the nearest one
+   *  above it, or the vault's. */
+  const ruleFor = (dir: string): Required<Rule> => {
+    const chain = upwards(dir);
+    const own = (pick: (rule: Rule) => Sort | boolean | undefined): Sort | boolean | undefined => {
+      for (const at of chain) {
+        const value = pick(rules[at] ?? {});
+        if (value !== undefined) return value;
+      }
+      return undefined;
+    };
+    const chosen = own((rule) => rule.sort) as Sort | undefined;
+    const first = own((rule) => rule.foldersFirst) as boolean | undefined;
+    return { sort: chosen && chosen in SORT_LABEL ? chosen : sort, foldersFirst: first ?? FOLDERS_FIRST };
+  };
+  const setRule = (dir: string, rule: Rule | null): void => {
+    rules = readRules();
+    if (rule === null) delete rules[dir];
+    else rules[dir] = { ...rules[dir], ...rule };
+    writeRules(rules);
+  };
   const expandedKey = (): string => `satr:expanded:${scope.kind === 'space' ? scope.space.id : 'all'}`;
   let expanded = new Set<string>();
   const loadExpanded = (): void => {
@@ -160,18 +222,35 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     locateButton.disabled = !reading || isIncomingPath(reading);
   };
 
-  const sorted = (entries: Entry[]): Entry[] => entries
-    .filter((e) => !e.name.startsWith('.'))
-    .sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
-      switch (sort) {
-        case 'name-desc': return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' });
-        case 'mtime': if (a.kind === 'file' && b.mtime !== a.mtime) return b.mtime - a.mtime; break;
-        case 'mtime-old': if (a.kind === 'file' && b.mtime !== a.mtime) return a.mtime - b.mtime; break;
-      }
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    });
-  const list$ = async (dir: string): Promise<Entry[]> => sorted(await backend.list(dir).catch(() => [] as Entry[]));
+  /**
+   * The rows of one folder, in the order that folder was told to use.
+   *
+   * Two things changed here, both of them the author's: folders above
+   * files is a choice now rather than a law ("the folders first thing...
+   * it should be a toggle"), and sorting by time no longer leaves folders
+   * out of it. A folder's time is the newest of what the phone says about
+   * the folder itself and what the app knows about its insides
+   * (src/folderTimes.ts) -- so a folder whose notes he rewrote this
+   * morning sorts where he would look for it, and nothing is walked to
+   * work that out.
+   */
+  const sorted = (entries: Entry[], dir: string): Entry[] => {
+    const rule = ruleFor(dir);
+    const when = (entry: Entry): number => (entry.kind === 'folder' ? folderTime(entry.path, entry.mtime) : entry.mtime);
+    const byName = (a: Entry, b: Entry): number => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    return entries
+      .filter((e) => !e.name.startsWith('.'))
+      .sort((a, b) => {
+        if (rule.foldersFirst && a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+        switch (rule.sort) {
+          case 'name-desc': return byName(b, a);
+          case 'mtime': if (when(b) !== when(a)) return when(b) - when(a); break;
+          case 'mtime-old': if (when(b) !== when(a)) return when(a) - when(b); break;
+        }
+        return byName(a, b);
+      });
+  };
+  const list$ = async (dir: string): Promise<Entry[]> => sorted(await backend.list(dir).catch(() => [] as Entry[]), dir);
 
   function rowHtml(entry: Entry, opts: { collapsed?: boolean; walker?: boolean } = {}): string {
     const current = deps.currentPath();
@@ -504,6 +583,9 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       { title: 'Rename…', icon: ICONS.pencil, action: () => startRename(path) },
       { title: 'Move to…', icon: ICONS.move, action: () => { void moveTo(path, isFolder); } },
     );
+    // On its own line: how a folder is ordered is not a thing done to the
+    // folder, and the two around it are.
+    if (isFolder) entries.push('separator', { title: 'Sort this folder…', icon: ICONS.sort, action: () => sortMenu(path, basename(path)) });
     if (isFolder) entries.push('separator', { title: 'Use as a space', icon: ICONS.vault, action: () => switchTo({ kind: 'space', space: addSpace(path) }) });
     // Every note of a folder as tabs, in alphabetical order. \"Replace\" also
     // closes the tabs that are open now (they can be reopened).
@@ -560,11 +642,42 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     }
     openMenu(entries, { title: 'Spaces' });
   }
-  function sortMenu(): void {
-    openMenu((Object.keys(SORT_LABEL) as Sort[]).map((key) => ({
-      title: SORT_LABEL[key], checked: key === sort,
-      action: () => { sort = key; localStorage.setItem(SORT_KEY, key); void render(); },
-    })), { title: 'Sort by' });
+  /**
+   * Sort by, for one folder.
+   *
+   * The button at the top of the tree asks for the folder the tree is
+   * rooted at -- the vault, or the space, or the folder being walked --
+   * and a folder's own long-press menu asks for that folder. Either way
+   * the answer travels downwards: "when I set a rule, the rule exists for
+   * every subfolder unless they have an override". A folder that has been
+   * given one can hand the question back up again.
+   */
+  function sortMenu(dir: string, label?: string): void {
+    const inForce = ruleFor(dir);
+    const own = rules[dir] ?? {};
+    const entries: MenuEntry[] = (Object.keys(SORT_LABEL) as Sort[]).map((key) => ({
+      title: SORT_LABEL[key], checked: key === inForce.sort,
+      action: () => {
+        // The root of the whole vault keeps writing the old key as well,
+        // so a version of the app without this still sorts the way he
+        // last asked, and so that a folder with no rule anywhere above it
+        // has something to fall back to.
+        if (!dir) { sort = key; localStorage.setItem(SORT_KEY, key); }
+        setRule(dir, { sort: key });
+        void render();
+      },
+    }));
+    entries.push('separator', {
+      title: 'Folders first', checked: inForce.foldersFirst,
+      action: () => { setRule(dir, { foldersFirst: !inForce.foldersFirst }); void render(); },
+    });
+    if (dir && (own.sort !== undefined || own.foldersFirst !== undefined)) {
+      entries.push('separator', {
+        title: 'Same as the folder above', icon: ICONS.undo,
+        action: () => { setRule(dir, null); void render(); },
+      });
+    }
+    openMenu(entries, { title: label ? `Sort “${label}”` : 'Sort by' });
   }
   function showError(message: string): void { showHint(message, true); }
   function alertError(error: unknown): void { showError(error instanceof Error ? error.message : String(error)); }
@@ -590,7 +703,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     switch (button.dataset.act) {
       case 'new-note': deps.createNote(baseDir()); break;
       case 'new-folder': void newFolder(baseDir()); break;
-      case 'sort': sortMenu(); break;
+      case 'sort': sortMenu(baseDir(), baseDir() ? basename(baseDir()) : undefined); break;
       case 'locate': void locate(); break;
       case 'collapse':
         if (scope.kind === 'all') { setWalkDir(dirname(walkDir())); void render(); break; }
