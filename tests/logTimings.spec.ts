@@ -296,3 +296,15 @@ test('the engine is warmed before a book is asked for', async ({ page }) => {
   // The note is what is on screen: no document was opened to do it.
   expect(find(await read(page), 'pdf', 'document parsed'), 'and no document was opened').toBeFalsy();
 });
+
+test('the log says which build wrote it', async ({ page }) => {
+  // Every log that has come back off the phone was a date and nothing
+  // else, so which APK produced it was inferred -- by me, out loud, more
+  // than once. CI already names each build (a tag, or the tag plus the run
+  // number); the page carries the same name now.
+  await boot(page, { 'A.md': NOTE }, 'A.md');
+  const head = await page.evaluate(() => window.__satr.load('/src/log.ts').format('text').split('\n')[0]);
+  expect(head, 'the first line names the build').toMatch(/^satr log — \S+ — \d{4}-/);
+  const start = await read(page).then((lines) => find(lines, 'launch', 'cold start'));
+  expect(start?.facts?.build, 'and so does the launch line').toBeTruthy();
+});

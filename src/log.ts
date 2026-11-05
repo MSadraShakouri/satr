@@ -266,11 +266,26 @@ export function lineText(line: Line): string {
   return `${pad(clock, 8)}${mark} ${pad(line.area, 8)} ${body}${took}`;
 }
 
+/**
+ * Which build wrote this log.
+ *
+ * Set at build time from the name CI gives the APK: the tag for a tagged
+ * build, the tag plus the run number for an untagged one (0.19.1-41), and
+ * package.json's version for a build made by hand. Until now every log that
+ * came back off a phone was a date and nothing else, and which APK it came
+ * from was guessed at -- including by me, out loud, more than once.
+ */
+export function build(): string {
+  try {
+    return typeof __SATR_BUILD__ === 'string' && __SATR_BUILD__ ? __SATR_BUILD__ : 'unknown';
+  } catch { return 'unknown'; }
+}
+
 /** The whole log, as text to read or as one json object a line to parse. */
 export function format(as: 'text' | 'ndjson' = 'text', some: Line[] = lines()): string {
   if (as === 'ndjson') return some.map((line) => JSON.stringify(line)).join('\n');
   const head = [
-    `satr log — ${new Date(startedAt).toISOString()}`,
+    `satr log — ${build()} — ${new Date(startedAt).toISOString()}`,
     `${some.length} lines${lost ? `, ${lost} older ones dropped` : ''}, showing ${shownAt} of everything recorded`,
     '',
   ];

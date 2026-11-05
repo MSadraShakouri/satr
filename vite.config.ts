@@ -28,7 +28,26 @@ function pdfiumAsset(): Plugin {
   };
 }
 
+/**
+ * What this build calls itself, for the first line of the log.
+ *
+ * Every log that has come back off the phone has been anonymous: a date and
+ * nothing else, so which APK produced it was a thing to be inferred rather
+ * than read. CI already names each build -- the tag for a tagged one, the
+ * tag plus the run number otherwise (0.19.1-41) -- and passes that name to
+ * Gradle; this hands the same name to the page, falling back to the
+ * version in package.json for a local build.
+ */
+function buildName(): string {
+  const fromCi = process.env.SATR_VERSION ?? process.env.VERSION_NAME;
+  if (fromCi) return fromCi;
+  try {
+    return createRequire(import.meta.url)('./package.json').version as string;
+  } catch { return 'dev'; }
+}
+
 export default defineConfig({
+  define: { __SATR_BUILD__: JSON.stringify(buildName()) },
   plugins: [pdfiumAsset()],
   server: { host: '0.0.0.0', port: 5173, strictPort: true, allowedHosts: true },
   preview: { host: '0.0.0.0', port: 5173, strictPort: true, allowedHosts: true },

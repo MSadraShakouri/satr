@@ -3796,7 +3796,7 @@ async function boot(): Promise<void> {
   startKeeping();
   // The clock on every line is milliseconds since the page began loading, so
   // these read as a launch from zero without anything having to subtract.
-  log.note('launch', 'cold start', { native: isNative() });
+  log.note('launch', 'cold start', { native: isNative(), build: log.build() });
   if (badStart.times) {
     log.warn('launch', 'the last launch did not finish', { times: badStart.times, file: fileName(badStart.path) || 'nothing' });
   }
