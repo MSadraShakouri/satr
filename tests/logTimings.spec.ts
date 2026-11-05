@@ -218,3 +218,25 @@ test('coming back says which wiring said so, and is written down at once', async
   // Well inside the four-second flush timer, which is the whole point.
   await expect.poll(onDisk, { timeout: 2500, intervals: [100, 200, 300] }).toContain('came back');
 });
+
+test('coming back does not build the document all over again', async ({ page }) => {
+  // Every resume read the open file back as text, found a string that did
+  // not match the one the tab was opened with -- a pdf is not text -- and
+  // adopted the "new" version, which tears the whole viewer down and builds
+  // it again. Lock the screen and unlock it and his book was re-parsed and
+  // every page re-rasterised, on a phone already short of memory.
+  await boot(page, { 'handout.pdf': tinyPdf(5) }, 'handout.pdf');
+  await expect(page.locator('.pdf-page')).not.toHaveCount(0, { timeout: 15000 });
+  const pages = await page.locator('.pdf-page').count();
+
+  await page.evaluate(() => { document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(1500); // past the 600ms nothing-painted backstop
+
+  const lines = await read(page);
+  expect(lines.filter((line) => line.text === 'document parsed').length, 'parsed once, at the open').toBe(1);
+  expect(lines.filter((line) => line.text === 'bytes read').length, 'and read once').toBe(1);
+  // And the backstop knows the difference between a resume that did not
+  // paint and one that did: this one painted.
+  expect(find(lines, 'app', 'came back and nothing painted: building the document again')).toBeFalsy();
+  expect(await page.locator('.pdf-page').count(), 'the pages that were there are still there').toBe(pages);
+});

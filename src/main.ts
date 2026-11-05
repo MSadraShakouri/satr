@@ -940,7 +940,19 @@ async function refreshOnResume(): Promise<void> {
     void refreshLinkIndex();
     const path = filePath;
     const baseline = diskBase?.path === path ? diskBase : null;
-    if (!path || !baseline || (isExternalPath(path) && externalFilesByPath.get(path)?.kind !== 'text')) return;
+    // A pdf or a picture is not text and must never go through this. Read
+    // back as text a document gives a string that does not match the one
+    // the tab was opened with, so every single resume decided the file had
+    // changed on disk and adopted it -- which for a pdf means the whole
+    // viewer is torn down and built again: engine, parse, column, every
+    // page rasterised from nothing. On this harness that is 130 ms a resume
+    // for a five-page document; on his phone it is a 10 MB book, forty-odd
+    // canvases and 43 MB of pictures, on a device the system is already
+    // reclaiming memory from, and it happens when he locks the screen and
+    // unlocks it. The document's own bytes are checked against the file's
+    // modified time when it opens, which is where that belongs.
+    if (!path || !baseline || isDocument(path) || isPicture(path)) return;
+    if (isExternalPath(path) && externalFilesByPath.get(path)?.kind !== 'text') return;
     const disk = await readDiskVersion(path);
     if (filePath !== path || !disk) {
       if (filePath === path && !disk) offerSaveConflict({ path, remoteText: null, localText: editor.getValue(), mtime: 0 });
