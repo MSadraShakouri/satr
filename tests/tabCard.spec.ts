@@ -274,3 +274,43 @@ test('going away keeps the page you are on, seconds after the last save', async 
   expect(note, 'the card is the page he left on, not the page he started on').not.toContain('Page 1 of');
 });
 
+test('pressing tabs after a zoom shows that zoom, not the card from before it', async ({ page }) => {
+  // "The zoom, I think it doesn't happen at the moment... it has a delay
+  // or something, I think you'll need to change tab for it to happen." A
+  // card is filed when the reader goes idle or the app is put away, and
+  // the throttle that stops a reader sitting still from rewriting the
+  // shelf treated a zoom on the same page as nothing new to say -- so the
+  // card stayed the one from before the zoom, for as long as he stayed on
+  // the page. No visibilitychange in this test: the tabs button is the
+  // whole of it.
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  await drawnOnScreen(page);
+
+  // A card of the sheet is filed first, so there is a stale one to beat.
+  await openSwitcher(page);
+  const card = page.locator('.mobile-tab-preview-page .tab-card-page');
+  await expect(card).toHaveCount(1, { timeout: 5000 });
+  const sheetShot = await card.evaluate((img) => (img as HTMLImageElement).naturalHeight / (img as HTMLImageElement).naturalWidth);
+  expect(sheetShot, 'the whole sheet, as A4').toBeCloseTo(842 / 595, 1);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
+
+  // Zoom, and go straight back -- inside the throttle's four seconds.
+  const sheet = page.locator('.pdf-page[data-page="1"]');
+  const before = (await sheet.boundingBox())!;
+  await sheet.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const x = box.left + box.width / 2; const y = box.top + 160;
+    for (const type of ['pointerdown', 'pointerup', 'pointerdown', 'pointerup']) {
+      el.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }
+  });
+  await expect.poll(async () => (await sheet.boundingBox())?.width ?? 0, { timeout: 5000 }).toBeGreaterThan(before.width * 1.4);
+  await drawnOnScreen(page);
+
+  await openSwitcher(page);
+  await expect(card).toHaveCount(1, { timeout: 5000 });
+  const zoomShot = await card.evaluate((img) => (img as HTMLImageElement).naturalHeight / (img as HTMLImageElement).naturalWidth);
+  expect(zoomShot, 'the zoom he is looking at, shaped to the card').toBeCloseTo(200 / 175, 1);
+});

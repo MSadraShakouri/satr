@@ -96,6 +96,19 @@ export interface PdfHit {
 export interface PdfHandle {
   pages: number;
   place(): PdfPlace;
+  /**
+   * File the tab's card for what is on the screen right now, and wait for
+   * it to be written.
+   *
+   * The card used to be filed only when the reader went idle or the app
+   * was put away, so pressing the tabs button straight after a zoom showed
+   * the card from before it -- "it has a delay or something, I think
+   * you'll need to change tab for it to happen". The switcher asks for one
+   * on the way open. It costs nothing when nothing has changed: the page,
+   * the zoom and the place on the page are the card's identity, and an
+   * identical one is not drawn again.
+   */
+  keepNow(): Promise<void>;
   /** Where the reader is on the page's own scale: the page, and how far
    *  down it in the units an outline row's `top` is given in. */
   reading(): { page: number; top: number };
@@ -2835,11 +2848,24 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    */
   let putDownAt = 0;
   let putDownWas = '';
+  /** Everything a filed card and shelf depend on: the page, the zoom, and
+   *  where on the page that zoom is sitting. */
+  const cardState = (): string => {
+    const here = placeNow();
+    return `${sketches.size}:${here.page}:${Math.round(here.zoom * 100)}`
+      + `:${Math.round(here.into * 200)}:${Math.round((here.across ?? 0) * 200)}`;
+  };
+  /** The last card write, so the tab switcher can wait for a fresh one. */
+  let carding: Promise<unknown> = Promise.resolve();
   putDown = (always = false): void => {
     if (!options.key || !sketches.size) return;
     // Nothing new to say, and said recently enough: a reader sitting on
     // one page has the shelf they are going to get.
-    const state = `${sketches.size}:${pageShown()}`;
+    // The zoom is part of what is being filed now: the card is the part of
+    // the page he is looking at, so a zoom with no page turn is new, and
+    // the throttle was treating it as nothing to say. ("I think you'll
+    // need to change tab for it to happen.")
+    const state = cardState();
     if (!always && state === putDownWas) return;
     if (!always && Date.now() - putDownAt < 4000) return;
     putDownAt = Date.now();
@@ -2866,7 +2892,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // the thing he called "really bad", so one is allowed to make a card
       // where there is none and never to replace a real one.
       const rough = !drawn;
-      void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here, { dark, crop, rough }));
+      carding = import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here, { dark, crop, rough }));
+      void carding;
     }
   };
   /**
@@ -3002,6 +3029,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
 
   const handle: PdfHandle = {
     pages: document_.pageCount,
+    keepNow: async (): Promise<void> => {
+      if (cardState() !== putDownWas) putDown(true);
+      await carding.catch(() => undefined);
+    },
     place: placeNow,
     /** Where the reader is, finely: the page, and how far down it in the
      *  page's own units -- the same units an outline row's `top` is in, so

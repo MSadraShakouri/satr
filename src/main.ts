@@ -2897,6 +2897,13 @@ function showTabs(): void {
         // file. A document never opened on this phone has no picture yet
         // and shows its name.
         if (isDocument(path)) {
+          // The open document files a fresh one on the way in. It was
+          // filed only when the reader went idle or the app was put away,
+          // so pressing tabs straight after a zoom showed the card from
+          // before it -- and nothing at all until you had changed tab.
+          // Costs nothing when the page, the zoom and the place are the
+          // ones already filed.
+          if (path === filePath && pdfView) await pdfView.keepNow().catch(() => undefined);
           const { recallCard } = await import('./pdfCard');
           const card = await recallCard(path);
           const name = `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>`;
