@@ -4568,13 +4568,13 @@ preview.addEventListener('click', (event) => {
     });
     return;
   }
-  // Heading chevron (at the end of the heading line): fold / unfold.
+  // Heading arrow (before the heading, in the page's margin): fold / unfold.
   const heading = target.closest<HTMLElement>('.md-section > .has-fold');
   if (heading) {
     const box = heading.getBoundingClientRect();
     const rtl = getComputedStyle(heading).direction === 'rtl';
     const lineHeight = parseFloat(getComputedStyle(heading).lineHeight) || box.height;
-    const onChevron = (rtl ? event.clientX <= box.left + 36 : event.clientX >= box.right - 36) && event.clientY <= box.top + lineHeight + 4;
+    const onChevron = (rtl ? event.clientX >= box.right - 34 : event.clientX <= box.left + 34) && event.clientY <= box.top + lineHeight + 4;
     if (onChevron) {
       event.preventDefault();
       ownScroll();

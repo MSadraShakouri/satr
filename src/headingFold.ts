@@ -1,8 +1,11 @@
 // Heading folding, after Obsidian's "Fold heading": a heading hides
 // everything under it down to the next heading of the same or a higher
-// level. The fold control is a chevron at the end of the heading line (the
-// left edge for a Persian heading, the right edge for an English one), so it
-// never sits on top of the "#" or the first word the way a gutter arrow does.
+// level. The fold control is an arrow before the heading, hanging in the
+// page's own side margin -- Obsidian's placement, asked for by name: "make
+// it like obsidian where it next to it closes it and remove the current >
+// button next to the name". It was at the end of the heading line, where it
+// read as part of the words. The heading text does not move for it, and
+// tapping the words still only places the caret.
 // Tapping it folds without placing the caret, so the keyboard stays down.
 // Folds are CodeMirror folds (@codemirror/language), so they move with edits;
 // the preview mirrors them (src/main.ts) and they are remembered per note.
@@ -61,8 +64,11 @@ function chevronLine(view: EditorView, event: MouseEvent): HTMLElement | null {
   if (!line || !view.contentDOM.contains(line)) return null;
   const box = line.getBoundingClientRect();
   const rtl = getComputedStyle(line).direction === 'rtl';
-  const zone = 36; // the 24px chevron plus a forgiving margin
-  return (rtl ? event.clientX <= box.left + zone : event.clientX >= box.right - zone) ? line : null;
+  // The arrow sits before the heading now, in the margin the line reaches
+  // into: the leading 34px of the line's box, which is the 22px it hangs in
+  // plus a little of the text's own side for thumbs.
+  const zone = 34;
+  return (rtl ? event.clientX >= box.right - zone : event.clientX <= box.left + zone) ? line : null;
 }
 
 // CodeMirror pins the view to the bottom of the document whenever the height

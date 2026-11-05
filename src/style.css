@@ -41,6 +41,11 @@
   --list-indent: 2.25em;
   --file-line-width: 700px;
   --file-margin-x: max(24px, calc((100% - var(--file-line-width)) / 2));
+  /* The margin a heading's fold arrow hangs in: 22 of the 24px the page keeps
+     at its sides. Obsidian's own number, read out of the APK --
+     `.markdown-preview-view .heading-collapse-indicator{margin-inline-start:-22px}`
+     (reference/obsidian-1.14.4-findings.md). */
+  --fold-arrow-room: 22px;
   --h1-size: 1.618em;
   --h2-size: 1.462em;
   --h3-size: 1.318em;
@@ -2055,34 +2060,53 @@ body:not(.is-named-file).outline-open.is-hidden-nav .topbar > * {
    the line (right in LTR, left in RTL) and in full text colour when folded,
    like Obsidian's collapse indicator. Its box is one line of the heading
    tall, so it lines up with the first line of a wrapped heading. */
+/* A reading-view section paints under containment (content-visibility, far
+   above), and containment clips to the padding box -- an arrow hanging in the
+   page's margin would be cut off and, worse, deaf to a tap. The section
+   reaches into the same margin and pads itself back, so nothing inside it
+   moves and the arrow is inside the box that clips. */
+.preview-pane .md-section {
+  margin-inline-start: calc(-1 * var(--fold-arrow-room));
+  padding-inline-start: var(--fold-arrow-room);
+}
 .cm-editor .cm-line.cm-heading-fold,
 .preview-pane .md-section > .has-fold {
   position: relative;
-  padding-inline-end: 32px;
+  /* The arrow lives in the page's own margin, before the heading, the way
+     Obsidian's does -- not after the words, where it read as punctuation.
+     The line is widened into the margin and padded back by the same amount,
+     so the text does not move and the wrap width is unchanged, while the
+     box that answers a tap now covers the arrow. */
+  margin-inline-start: calc(-1 * var(--fold-arrow-room));
+  padding-inline-start: var(--fold-arrow-room);
 }
 .cm-heading-fold::after,
 .preview-pane .md-section > .has-fold::after {
   content: "";
   position: absolute;
   top: 0;
-  inset-inline-end: 0;
-  width: 24px;
+  inset-inline-start: 0;
+  width: var(--fold-arrow-room);
   height: var(--fold-line, 1lh);
   background: var(--text-faint);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 18px no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 18px no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 16px no-repeat;
   opacity: 0.7;
   cursor: pointer;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  /* Obsidian's own 100ms ease-in-out on the arrow. */
+  transition: transform 0.1s ease-in-out, opacity 0.1s ease-in-out;
 }
 /* Editor heading lines have the space above the heading as padding; the
    chevron sits below it, on the first line. */
 .cm-editor .cm-line.cm-heading-fold::after {
   top: var(--p-spacing);
 }
+/* A folded heading's arrow is accented, not merely darker: Obsidian's own
+   --collapse-icon-color-collapsed. It is the only sign left on the page that
+   something is hidden under this line. */
 .cm-heading-fold.is-folded::after,
 .preview-pane .md-section > .has-fold.is-folded::after {
-  background: var(--text-muted);
+  background: var(--text-accent, var(--text-muted));
   opacity: 1;
   transform: rotate(-90deg);
 }

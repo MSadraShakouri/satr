@@ -97,6 +97,10 @@ const chevronBox = async (page: Page, selector: string) => {
   return (await heads.nth((await heads.count()) - 1).boundingBox())!;
 };
 
+/** Where the fold arrow is: before the heading, which for these Persian
+ *  headings is their right-hand end. */
+const onArrow = (box: { x: number; y: number; width: number }): [number, number] => [box.x + box.width - 14, box.y + 16];
+
 test('the reader keeps their place when a section is folded and opened at the foot of a note', async ({ page }) => {
   await boot(page, { 'Notes/L.md': NOTE }, 'Notes/L.md');
   await wheelToFoot(page, '#app .cm-scroller');
@@ -104,7 +108,7 @@ test('the reader keeps their place when a section is folded and opened at the fo
   expect(before.slack, 'nothing has borrowed room yet').toBe('');
 
   const box = await chevronBox(page, '#app .cm-line.cm-heading-fold');
-  await page.mouse.click(box.x + 16, box.y + 16);
+  await page.mouse.click(...onArrow(box));
   await page.waitForTimeout(600);
   const folded = await editorPlace(page);
   expect(before.heading).toContain('آخر');
@@ -115,7 +119,7 @@ test('the reader keeps their place when a section is folded and opened at the fo
   expect(parseFloat(folded.slack), 'the room the fold took').toBeGreaterThan(100);
 
   const box2 = await chevronBox(page, '#app .cm-line.cm-heading-fold');
-  await page.mouse.click(box2.x + 16, box2.y + 16);
+  await page.mouse.click(...onArrow(box2));
   await page.waitForTimeout(600);
   const opened = await editorPlace(page);
   expect(opened.heading).not.toContain('…');
@@ -129,7 +133,7 @@ test('the room lent to a fold is given back as soon as the reader scrolls clear 
   await boot(page, { 'Notes/L.md': NOTE }, 'Notes/L.md');
   await wheelToFoot(page, '#app .cm-scroller');
   const box = await chevronBox(page, '#app .cm-line.cm-heading-fold');
-  await page.mouse.click(box.x + 16, box.y + 16);
+  await page.mouse.click(...onArrow(box));
   await page.waitForTimeout(500);
   const folded = await editorPlace(page);
   expect(parseFloat(folded.slack)).toBeGreaterThan(100);
@@ -150,7 +154,7 @@ test('a fold away from the foot leaves the page alone', async ({ page }) => {
   const before = await editorPlace(page);
   const head = page.locator('#app .cm-line.cm-heading-fold').first();
   const box = (await head.boundingBox())!;
-  await page.mouse.click(box.x + 16, box.y + 16);
+  await page.mouse.click(...onArrow(box));
   await page.waitForTimeout(500);
   const after = await editorPlace(page);
   samePlace(before, after, 'folding a section in the middle of the note');
@@ -166,14 +170,14 @@ test('the reading view keeps the reader’s place across the same fold and open'
   expect(before.slack).toBe('');
 
   const box = await chevronBox(page, '#app .preview-pane .md-section > .has-fold');
-  await page.mouse.click(box.x + 16, box.y + 12);
+  await page.mouse.click(box.x + box.width - 14, box.y + 12);
   await page.waitForTimeout(600);
   const folded = await previewPlace(page);
   samePlace(before, folded, 'folding the last title in the reading view');
   expect(parseFloat(folded.slack), 'the room the fold took').toBeGreaterThan(0);
 
   const box2 = await chevronBox(page, '#app .preview-pane .md-section > .has-fold');
-  await page.mouse.click(box2.x + 16, box2.y + 12);
+  await page.mouse.click(box2.x + box2.width - 14, box2.y + 12);
   await page.waitForTimeout(600);
   const opened = await previewPlace(page);
   samePlace(before, opened, 'opening the last title again in the reading view');
