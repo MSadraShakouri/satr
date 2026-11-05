@@ -27,7 +27,18 @@ interface Card {
   pages: number;
   shot: Blob;
   at: number;
+  /**
+   * This page was authored dark -- a slide deck, a dark poster -- and must
+   * not be inverted a second time by the dark theme. Measured off the drawn
+   * pixels by the reader, the same fact its own `is-dark-page` carries.
+   *
+   * Absent on cards filed before this was recorded, which reads as false:
+   * the overwhelming majority of pages are paper-coloured, and the first
+   * card the reader files puts it right either way.
+   */
+  dark?: boolean;
 }
+
 
 /**
  * How wide the picture is kept, in pixels.
@@ -51,16 +62,17 @@ const CARD_PX = 520;
  *  direction. */
 function copyOf(canvas: HTMLCanvasElement): HTMLCanvasElement | null {
   try {
-    const scale = Math.min(1, CARD_PX / Math.max(1, canvas.width));
+    const from = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+    const scale = Math.min(1, CARD_PX / Math.max(1, from.width));
     const copy = document.createElement('canvas');
-    copy.width = Math.max(1, Math.round(canvas.width * scale));
-    copy.height = Math.max(1, Math.round(canvas.height * scale));
+    copy.width = Math.max(1, Math.round(from.width * scale));
+    copy.height = Math.max(1, Math.round(from.height * scale));
     const context = copy.getContext('2d');
     if (!context) return null;
     // The browser's own downscale, which on a shrink this size is a mile
     // better than drawing it small in the first place.
     context.imageSmoothingQuality = 'high';
-    context.drawImage(canvas, 0, 0, copy.width, copy.height);
+    context.drawImage(canvas, from.x, from.y, from.width, from.height, 0, 0, copy.width, copy.height);
     return copy;
   } catch { return null; }
 }
@@ -71,18 +83,21 @@ const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
   });
 
 /** Put down what this document looks like where the reader left it. */
-export async function keepCard(path: string, page: number, pages: number, canvas: HTMLCanvasElement): Promise<void> {
+export async function keepCard(
+  path: string, page: number, pages: number, canvas: HTMLCanvasElement,
+  how?: { dark?: boolean },
+): Promise<void> {
   if (!path) return;
   const copy = copyOf(canvas);
   if (!copy) return;
   const shot = await asJpeg(copy);
   if (!shot) return;
-  await putAside(CARD + path, { page, pages, shot, at: Date.now() } satisfies Card);
+  await putAside(CARD + path, { page, pages, shot, at: Date.now(), dark: how?.dark === true } satisfies Card);
 }
 
 /** What to put on a tab's card, or null if this document has never been
  *  opened on this phone. The URL is the caller's to revoke. */
-export async function recallCard(path: string): Promise<{ page: number; pages: number; url: string } | null> {
+export async function recallCard(path: string): Promise<{ page: number; pages: number; url: string; dark: boolean } | null> {
   if (!path) return null;
   const card = await getAside<Card>(CARD + path).catch(() => null);
   if (!card?.shot) return null;
@@ -93,7 +108,7 @@ export async function recallCard(path: string): Promise<{ page: number; pages: n
     // four books in it would otherwise leave four behind every time it was
     // opened -- a leak of exactly the kind this file exists to fix.
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    return { page: card.page, pages: card.pages, url };
+    return { page: card.page, pages: card.pages, url, dark: card.dark === true };
   } catch { return null; }
 }
 

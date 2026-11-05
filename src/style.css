@@ -3608,6 +3608,16 @@ input.mod-no-match {
   box-shadow: 0 0 0 1px rgba(var(--mono-rgb-100), 0.08);
   background: var(--background-primary-alt);
 }
+/* A document's card is a picture of the page, and the page in this theme
+   is inverted -- so the card is too, by the same filter and the same
+   amount, or the switcher hands back a sheet of white paper in a dark app.
+   Applied here rather than baked into the stored picture: the picture is
+   the paper as the engine drew it, and turning the theme over turns every
+   card over with it, without redrawing one of them. (A page authored dark
+   carries its own class and is left alone, exactly as on the page.) */
+body.is-pdf-themed .mobile-tab-preview-page .tab-card-page:not(.is-dark-page) {
+  filter: invert(0.86) hue-rotate(180deg);
+}
 .mobile-tab-preview-page .tab-card-note {
   margin: 10px 0 0;
   color: var(--text-muted);

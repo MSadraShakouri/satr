@@ -43,6 +43,25 @@ async function readThis(page: Page): Promise<void> {
   await expect.poll(async () => page.locator('.pdf-page canvas').count(), { timeout: 15000 }).toBeGreaterThan(0);
 }
 
+/** Every page touching the pane has its own picture, not just the
+ *  hundred-pixel sketch: the card is filed from whatever is drawn at the
+ *  instant the app is put away, and which page counts as the one being
+ *  read is the reader's own business (pageShown, which measures from the
+ *  middle of the screen below the chrome). */
+async function drawnOnScreen(page: Page): Promise<void> {
+  await expect.poll(async () => page.evaluate(() => {
+    const pane = document.querySelector('#preview-pane')!.getBoundingClientRect();
+    const sheets = [...document.querySelectorAll('.pdf-page')].filter((sheet) => {
+      const box = sheet.getBoundingClientRect();
+      return box.bottom > pane.top + 4 && box.top < pane.bottom - 4;
+    });
+    if (!sheets.length) return 0;
+    return Math.min(...sheets.map((sheet) => Math.max(0, ...[...sheet.querySelectorAll('canvas')]
+      .map((c) => (c as HTMLCanvasElement).width))));
+  }), { timeout: 15000 }).toBeGreaterThan(400);
+  await page.waitForTimeout(400);
+}
+
 test('opening the tab switcher with a book open does not read the book', async ({ page }) => {
   await boot(page, { 'book.pdf': PDF, 'notes.md': '# Notes\n\nsome words\n' }, 'book.pdf');
   await readThis(page);
@@ -72,7 +91,7 @@ test('a document that has been read shows the page it was left on', async ({ pag
   // Down a few pages, then let the reader put its sketches down -- which is
   // what also files the card.
   await page.locator('#preview-pane').evaluate((pane) => { pane.scrollTop += pane.clientHeight * 3; });
-  await page.waitForTimeout(1200);
+  await drawnOnScreen(page);
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
     document.dispatchEvent(new Event('visibilitychange'));
@@ -98,3 +117,40 @@ test('a document that has been read shows the page it was left on', async ({ pag
   expect(shot.wide, 'wide enough for a card on a 3x phone').toBeGreaterThan(400);
   expect(shot.tall / shot.wide, 'and the page\u2019s own shape').toBeCloseTo(842 / 595, 1);
 });
+
+/** Put the reader's sketches and card down, which is what a trip to the
+ *  background does on the phone. */
+async function putDown(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForTimeout(700);
+}
+
+const openSwitcher = async (page: Page): Promise<void> => {
+  await page.locator('#nav-tabs').dispatchEvent('click');
+  await expect(page.locator('.mobile-tab-switcher')).toBeVisible();
+};
+
+test('the card is dark when the pages are dark', async ({ page }) => {
+  // The stored picture is the paper as the engine drew it -- white -- and
+  // in a dark app the switcher was handing back a white rectangle among
+  // dark ones. The page's own filter goes over the card.
+  await page.addInitScript(() => { localStorage.setItem('satr:pdf-theme', 'dark'); });
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  await putDown(page);
+  await openSwitcher(page);
+
+  const card = page.locator('.mobile-tab-preview-page .tab-card-page');
+  await expect(card).toHaveCount(1, { timeout: 5000 });
+  const filter = await card.evaluate((img) => getComputedStyle(img).filter);
+  expect(filter, 'the card wears the page\u2019s own inversion').toContain('invert');
+  // The same filter the page is wearing, not an approximation of it.
+  const onPage = await page.locator('.pdf-page canvas').first().evaluate((el) => getComputedStyle(el).filter);
+  expect(filter).toBe(onPage);
+});
+

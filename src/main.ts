@@ -2903,7 +2903,12 @@ function showTabs(): void {
           if (!card) return `${name}<p class="tab-card-note">PDF</p>`;
           // The URL is let go of as soon as the browser has the picture;
           // holding one per tab is a leak of exactly the kind being fixed.
-          return `${name}<img class="tab-card-page" src="${card.url}" alt="">`
+          // The page's own dark rule travels with the card: the stored
+          // picture is the paper as the engine drew it, white, and the
+          // dark theme's filter is put over it here exactly as it is put
+          // over the page -- so a card follows the theme without being
+          // drawn again, and a page that was authored dark is left alone.
+          return `${name}<img class="tab-card-page${card.dark ? ' is-dark-page' : ''}" src="${card.url}" alt="">`
             + `<p class="tab-card-note">Page ${card.page}${card.pages ? ` of ${card.pages}` : ''}</p>`;
         }
         // Nor is a picture: its own file is the card.
