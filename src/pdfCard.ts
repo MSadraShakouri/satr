@@ -43,6 +43,9 @@ interface Card {
   rough?: boolean;
 }
 
+/** The part of the page to keep, in the pixels of the picture it is cropped
+ *  from; absent for the whole page. */
+export interface Crop { x: number; y: number; width: number; height: number }
 
 /**
  * How wide the picture is kept, in pixels.
@@ -64,9 +67,11 @@ const CARD_PX = 520;
  *  Scaled to the card's own size on the way through -- taken from the page's
  *  real picture rather than its rough one, and shrunk, which is the cheap
  *  direction. */
-function copyOf(canvas: HTMLCanvasElement): HTMLCanvasElement | null {
+function copyOf(canvas: HTMLCanvasElement, crop?: Crop | null): HTMLCanvasElement | null {
   try {
-    const from = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+    const from = crop && crop.width >= 8 && crop.height >= 8
+      ? crop
+      : { x: 0, y: 0, width: canvas.width, height: canvas.height };
     const scale = Math.min(1, CARD_PX / Math.max(1, from.width));
     const copy = document.createElement('canvas');
     copy.width = Math.max(1, Math.round(from.width * scale));
@@ -86,10 +91,20 @@ const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
     try { canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.82); } catch { resolve(null); }
   });
 
-/** Put down what this document looks like where the reader left it. */
+/**
+ * Put down what this document looks like where the reader left it.
+ *
+ * Where he left it, not what page he was on: a reader zoomed into a figure
+ * or a column of a two-column paper was shown the whole sheet on the card,
+ * shrunk to a hundred and fifty points, which is the one view of that page
+ * he had deliberately zoomed out of. The crop is the part of the page that
+ * was actually on his screen, and it is taken from the sharpest picture
+ * that covers it -- the zoom tile where there is one, the whole-page
+ * picture otherwise.
+ */
 export async function keepCard(
   path: string, page: number, pages: number, canvas: HTMLCanvasElement,
-  how?: { dark?: boolean; rough?: boolean },
+  how?: { dark?: boolean; crop?: Crop | null; rough?: boolean },
 ): Promise<void> {
   if (!path) return;
   // A sketch does not paint over a picture. The reader files its card as
@@ -103,7 +118,7 @@ export async function keepCard(
     const have = await getAside<Card>(CARD + path).catch(() => null);
     if (have?.shot && have.rough !== true) return;
   }
-  const copy = copyOf(canvas);
+  const copy = copyOf(canvas, how?.crop);
   if (!copy) return;
   const shot = await asJpeg(copy);
   if (!shot) return;

@@ -2854,19 +2854,77 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // hundred pixels wide and looks it -- and from the sketch only when the
     // page has not been drawn properly yet.
     const slab = slabs[pageShown() - 1];
-    const drawn = slab?.base ?? null;
+    const looked = slab ? lookedAt(slab) : null;
+    const drawn = looked?.canvas ?? slab?.base ?? null;
     const here = drawn ?? sketches.get(pageShown() - 1);
     if (options.cardFor && here) {
       const dark = slab?.box.classList.contains('is-dark-page') === true;
+      const crop = looked?.crop ?? null;
       // Said plainly when it is the hundred-pixel sketch and not the page:
       // this runs the moment the app is put away, and a page scrolled to a
       // second earlier may still be being drawn. A smear across a card is
       // the thing he called "really bad", so one is allowed to make a card
       // where there is none and never to replace a real one.
       const rough = !drawn;
-      void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here, { dark, rough }));
+      void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here, { dark, crop, rough }));
     }
   };
+  /**
+   * What the reader was last looking at on this page, and the picture to
+   * cut it out of.
+   *
+   * The card was always the whole sheet. Zoomed into one column of a paper
+   * or one figure of a page, he was handed back the view he had zoomed out
+   * of, at a hundred and fifty points across: "the pdf thumbnail doesn't
+   * show zoom, I wanted it to show the last zoom rather than the entire
+   * page."
+   *
+   * The rectangle is the pane's own, clipped to the page, in the page's
+   * units -- the same units detailWanted works in, and without its margin
+   * or its snapping, because this is what is on the glass rather than what
+   * is worth drawing. It is cut from the zoom tile when the tile covers it,
+   * which is the sharp picture the reader is actually looking at, and from
+   * the whole-page picture otherwise. A page that is all but entirely on
+   * screen is kept whole: the common case is not a zoom, and a sheet with
+   * its last millimetre cropped off is a worse card than the sheet.
+   */
+  const lookedAt = (slab: Slab): { canvas: HTMLCanvasElement; crop: Rect | null } | null => {
+    const canvas = slab.base;
+    if (!canvas || !canvas.width || !canvas.height) return null;
+    // Only when he is zoomed in. At the fitted width the whole sheet is
+    // the honest card even when it is half off the top of the screen: the
+    // page is what he is reading, the scroll position is where he happens
+    // to have stopped, and a sheet with its head cut off is a worse
+    // picture of this document than the sheet.
+    if (zoom * living <= 1.01) return { canvas, crop: null };
+    const scale = liveScaleOf(slab);
+    if (!(scale > 0)) return null;
+    const box = slab.box.getBoundingClientRect();
+    const pane = scroller.getBoundingClientRect();
+    const left = clamp((pane.left - box.left) / scale, 0, slab.width);
+    const right = clamp((pane.right - box.left) / scale, 0, slab.width);
+    const top = clamp((pane.top - box.top) / scale, 0, slab.height);
+    const bottom = clamp((pane.bottom - box.top) / scale, 0, slab.height);
+    const seen: Rect = { x: left, y: top, width: right - left, height: bottom - top };
+    if (!(seen.width > 1) || !(seen.height > 1)) return { canvas, crop: null };
+    // Zoomed, but with the whole sheet still on the glass: keep the sheet.
+    if (seen.width > slab.width * 0.92 && seen.height > slab.height * 0.92) return { canvas, crop: null };
+    const cut = (from: HTMLCanvasElement, rect: Rect, per: number): { canvas: HTMLCanvasElement; crop: Rect } => ({
+      canvas: from,
+      crop: {
+        x: Math.max(0, Math.round((seen.x - rect.x) * per)),
+        y: Math.max(0, Math.round((seen.y - rect.y) * per)),
+        width: Math.min(from.width, Math.round(seen.width * per)),
+        height: Math.min(from.height, Math.round(seen.height * per)),
+      },
+    });
+    const tile = slab.detail;
+    if (tile && slab.detailRect && !slab.detailQuick && covers(slab.detailRect, seen) && slab.detailRect.width > 0) {
+      return cut(tile, slab.detailRect, tile.width / slab.detailRect.width);
+    }
+    return cut(canvas, { x: 0, y: 0, width: slab.width, height: slab.height }, canvas.width / slab.width);
+  };
+
   /**
    * The pages go while the app is away, and come back when it is.
    *

@@ -154,6 +154,50 @@ test('the card is dark when the pages are dark', async ({ page }) => {
   expect(filter).toBe(onPage);
 });
 
+test('the card is the part of the page that was on the screen', async ({ page }) => {
+  // "The pdf thumbnail doesn't show zoom, I wanted it to show the last zoom
+  // rather than the entire page." Zoomed into a figure, the card showed the
+  // whole sheet -- the one view he had deliberately zoomed out of.
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  const pageBox = (await page.locator('.pdf-page[data-page="1"]').boundingBox())!;
+
+  // Double tap to zoom, the way he does it, and let the tile land.
+  await page.locator('.pdf-page[data-page="1"]').evaluate((sheet) => {
+    const box = sheet.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + 120;
+    for (const type of ['pointerdown', 'pointerup', 'pointerdown', 'pointerup']) {
+      sheet.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }
+  });
+  await expect.poll(async () => (await page.locator('.pdf-page[data-page="1"]').boundingBox())?.width ?? 0, { timeout: 5000 })
+    .toBeGreaterThan(pageBox.width * 1.4);
+  await page.waitForTimeout(900);
+  const zoomed = (await page.locator('.pdf-page[data-page="1"]').boundingBox())!;
+  await drawnOnScreen(page);
+
+  await putDown(page);
+  await openSwitcher(page);
+  const card = page.locator('.mobile-tab-preview-page .tab-card-page');
+  await expect(card).toHaveCount(1, { timeout: 5000 });
+  const shot = await card.evaluate((img) => ({
+    wide: (img as HTMLImageElement).naturalWidth,
+    tall: (img as HTMLImageElement).naturalHeight,
+  }));
+  // Not the sheet: an A4 page is 1.41 times as tall as it is wide, and what
+  // was on the screen is nothing like that shape.
+  expect(shot.tall / shot.wide, 'not the whole sheet any more').not.toBeCloseTo(842 / 595, 1);
+  // It is the shape of what was on the glass, within the page's edges.
+  const pane = (await page.locator('#preview-pane').boundingBox())!;
+  const seen = {
+    width: Math.min(pane.x + pane.width, zoomed.x + zoomed.width) - Math.max(pane.x, zoomed.x),
+    height: Math.min(pane.y + pane.height, zoomed.y + zoomed.height) - Math.max(pane.y, zoomed.y),
+  };
+  expect(shot.tall / shot.wide, 'the shape of the screenful').toBeCloseTo(seen.height / seen.width, 0);
+  expect(shot.wide, 'and still a card-sized picture').toBeGreaterThan(300);
+});
+
 test('going away keeps the page you are on, seconds after the last save', async ({ page }) => {
   // The reader files its card as the app is put away, and putDown has a
   // four-second throttle so that sitting still does not rewrite the shelf
