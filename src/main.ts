@@ -1,7 +1,7 @@
 import { asMarkdown } from './csv';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews, forgetViews } from './viewStore';
-import { startKeeping } from './logStore';
+import { startKeeping, flush as flushLog } from './logStore';
 import * as log from './log';
 import { tellWhyItDied } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
@@ -1730,8 +1730,8 @@ const flush = (): void => {
 };
 window.addEventListener('pagehide', () => { flush(); markAway(); markSeen(); restSeen(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') onBackground();
-  else if (document.visibilityState === 'visible') onForeground();
+  if (document.visibilityState === 'hidden') onBackground('page');
+  else if (document.visibilityState === 'visible') onForeground('page');
 });
 
 (document.querySelector('#preview-toggle') as HTMLButtonElement).onclick = () => setMode(mode === 'edit' ? 'preview' : 'edit');
@@ -3686,8 +3686,8 @@ function handleBack(): boolean {
 if (Capacitor.isNativePlatform()) {
   void CapacitorApp.addListener('backButton', () => { handleBack(); });
   void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-    if (isActive) onForeground();
-    else onBackground();
+    if (isActive) onForeground('native');
+    else onBackground('native');
   });
 } else {
   // The guard entry: back pops it (popstate), we handle the press and put it
@@ -3932,12 +3932,17 @@ function tellHowTheLastRunEnded(): void {
  * picture of itself and ignoring everything, exactly as reported.
  */
 let systemSaysActive = true;
-function onBackground(): void {
+/** Which of the two wirings is speaking. They disagree -- that disagreement
+ *  is how the freeze was found -- and a line that does not say which one
+ *  wrote it cannot be read when one of them goes missing, which is exactly
+ *  what a frozen resume looks like from here. */
+type Wiring = 'native' | 'page';
+function onBackground(from: Wiring): void {
   systemSaysActive = false;
   // The last thing written before the phone may decide to end the run: what
   // was being held when it went away is the reading a kill is judged by.
   sayMemory('going away');
-  log.note('app', 'went to the background');
+  log.note('app', 'went to the background', { from });
   flush();
   markAway();
   markSeen();
@@ -3947,14 +3952,21 @@ function onBackground(): void {
  *  often skips visibilitychange; Capacitor appStateChange is the pause/resume
  *  we can trust. One in-flight switch so the two signals cannot open two tabs. */
 let launchTabInFlight = false;
-function onForeground(): void {
+function onForeground(from: Wiring): void {
   systemSaysActive = true;
   const away = Number(localStorage.getItem(AWAY_KEY)) || 0;
   log.note('app', 'came back', {
+    from,
     ...(away ? { awayFor: Math.round((Date.now() - away) / 1000) } : {}),
     // The page's own opinion, at the moment the system says otherwise.
     visibility: document.visibilityState,
   });
+  // Written to the database now rather than within four seconds. A frozen
+  // resume is one the reader ends by throwing the app out of recents, and
+  // everything still waiting in memory dies with it -- which is why the
+  // frozen resumes in his log left no line at all, while the ones that
+  // recovered left two. The evidence has to outlive the app.
+  void flushLog();
   // And then the only question that matters: can it draw? A frame asked
   // for here is run by the browser on the next paint, and a page that is
   // still in the background has no next paint -- so this line arriving
@@ -3962,6 +3974,7 @@ function onForeground(): void {
   const asked = performance.now();
   requestAnimationFrame(() => {
     log.note('app', 'drew a frame after coming back', { afterMs: Math.round(performance.now() - asked) });
+    void flushLog();
   });
   void refreshOnResume();
   // Asked before the heartbeat starts again: one beat from now would say the

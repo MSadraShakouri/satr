@@ -180,3 +180,41 @@ test('two documents are kept, so swapping between two books reads neither again'
   expect(String(kept!.facts?.path)).toContain('A.pdf');
   expect(find(lines, 'pdf', 'bytes read'), 'and it was not read again').toBeFalsy();
 });
+
+test('coming back says which wiring said so, and is written down at once', async ({ page }) => {
+  // Two wirings report the same resume -- Capacitor's appStateChange and the
+  // page's own visibilitychange -- and they disagree, which is how the
+  // freeze was found. A line that does not say which one wrote it cannot be
+  // read when one of them goes missing, and in his log the frozen resumes
+  // are exactly the ones where lines are missing.
+  // A page that believes it is hidden is given no idle time, which is the
+  // one thing this harness has in abundance: take it away, or the store
+  // flushes on idle within a millisecond and the test proves nothing.
+  await page.addInitScript(() => { Reflect.deleteProperty(window, 'requestIdleCallback'); });
+  await boot(page, { 'A.md': NOTE }, 'A.md');
+  await page.evaluate(() => { document.dispatchEvent(new Event('visibilitychange')); });
+
+  const back = find(await read(page), 'app', 'came back');
+  expect(back, 'coming back is written down').toBeTruthy();
+  expect(back!.facts?.from, 'and says which wiring said so').toBe('page');
+
+  // And it is in the database now, not within four seconds: a frozen resume
+  // is one he ends by throwing the app out of recents, and anything still
+  // waiting in memory dies with it. That is why the frozen resumes in his
+  // log left no line at all while the ones that recovered left two. Read
+  // straight out of IndexedDB, because the store's own reader flushes
+  // before it looks and would pass against any build at all.
+  const onDisk = async (): Promise<string[]> => page.evaluate(async () => new Promise<string[]>((resolve) => {
+    const open = indexedDB.open('satr-log');
+    open.onerror = () => resolve([]);
+    open.onsuccess = () => {
+      const db = open.result;
+      if (!db.objectStoreNames.contains('lines')) { resolve([]); return; }
+      const all = db.transaction('lines', 'readonly').objectStore('lines').getAll();
+      all.onerror = () => resolve([]);
+      all.onsuccess = () => resolve((all.result as { text: string }[]).map((line) => line.text));
+    };
+  }));
+  // Well inside the four-second flush timer, which is the whole point.
+  await expect.poll(onDisk, { timeout: 2500, intervals: [100, 200, 300] }).toContain('came back');
+});
