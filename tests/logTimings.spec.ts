@@ -272,3 +272,18 @@ test('coming back does not build the document all over again', async ({ page }) 
   expect(find(lines, 'app', 'came back and nothing painted: building the document again')).toBeFalsy();
   expect(await page.locator('.pdf-page').count(), 'the pages that were there are still there').toBe(pages);
 });
+
+test('opening a document does not build an empty reading view first', async ({ page }) => {
+  // Every pdf open rendered markdown of an empty string before the bytes
+  // arrived -- "reading view built chars=0" and an "edit to preview"
+  // behind it, two measurements of nothing and a flash of an empty note in
+  // front of the book.
+  await boot(page, { 'handout.pdf': tinyPdf(5) }, 'handout.pdf');
+  await expect(page.locator('.pdf-page')).not.toHaveCount(0, { timeout: 15000 });
+
+  const lines = await read(page);
+  expect(lines.filter((line) => line.text === 'reading view built'), 'nothing is built for a document').toHaveLength(0);
+  // And the check that the file is still there says it is a check.
+  expect(find(lines, 'file', 'read'), 'a document is not read as text').toBeFalsy();
+});
+

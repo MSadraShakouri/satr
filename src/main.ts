@@ -640,6 +640,17 @@ function renderPreview(): void {
     preview.classList.remove('is-document');
     previewPane.classList.remove('is-document');
   }
+  // A document whose bytes have not arrived yet: nothing is built. The
+  // reading view used to be rendered as markdown of an empty string first
+  // -- "reading view built chars=0", and an "edit to preview" behind it --
+  // which is a flash of an empty note in front of every pdf he opens, and
+  // two measurements in the log that describe nothing.
+  if (isDocument(filePath) && openedDocument.path !== filePath) {
+    preview.classList.add('is-document');
+    previewPane.classList.add('is-document');
+    preview.innerHTML = '';
+    return;
+  }
   // A PDF: pdf.js draws its pages into the pane, which scrolls them, and the
   // place it was left at comes back with it (src/pdfView.ts).
   if (openedDocument.bytes && openedDocument.path === filePath) {
@@ -1978,13 +1989,19 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   }
   // A picture's bytes are not read: as text they are the whole file, base64
   // and all. The reading view shows the picture (showFile reads its data URL).
-  const reading = log.time('file', 'read', { path });
-  const opened: TextOpen = isPicture(path) || isDocument(path)
-    // Not read, only asked after: a picture or a document that is no longer
-    // there must say so in the sidebar rather than open an empty tab for it.
+  // A picture or a document is not read here, only asked after -- one that
+  // is no longer there must say so in the sidebar rather than open an empty
+  // tab for it. Said as what it is: "read bytes=0 status=text" against a
+  // ten-megabyte book is a line that has misled every reading of this log,
+  // including mine.
+  const asking = isPicture(path) || isDocument(path);
+  const reading = log.time('file', asking ? 'checked' : 'read', { path });
+  const opened: TextOpen = asking
     ? (await backend.stat(path).catch(() => null) ? { status: 'text', text: '', clean: true } : { status: 'unreadable' })
     : await backend.readText(path);
-  reading({ bytes: opened.status === 'text' ? opened.text.length : 0, status: opened.status });
+  reading(asking
+    ? { there: opened.status === 'text' }
+    : { bytes: opened.status === 'text' ? opened.text.length : 0, status: opened.status });
   if (opened.status !== 'text') {
     leftSidebar.hint(opened.status === 'too-large'
       ? `“${fileName(path)}” is too large to open here (${formatBytes(opened.size)}).`
@@ -3961,7 +3978,6 @@ function onBackground(from: Wiring): void {
   // was being held when it went away is the reading a kill is judged by.
   sayMemory('going away');
   log.note('app', 'went to the background', { from });
-  flush();
   markAway();
   markSeen();
   restSeen();
