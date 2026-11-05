@@ -77,6 +77,32 @@ test('the far end of the heading no longer folds anything', async ({ page }) => 
   expect(await isFolded(page, PREVIEW_HEAD)).toBe(false);
 });
 
+/** The ink in the margin: the arrow's own opacity, 0 when it is not there. */
+const arrowInk = (page: Page, selector: string): Promise<string> =>
+  page.locator(selector).first().evaluate((el) => getComputedStyle(el, '::after').opacity);
+
+test('there is no arrow until the heading is folded', async ({ page }) => {
+  // Obsidian's default, asked for by name: nothing in the margin while the
+  // section is open, and the arrow is the mark of a section that is shut.
+  await boot(page);
+  expect(await arrowInk(page, EDITOR_HEAD), 'nothing in the margin to begin with').toBe('0');
+  const box = await headBox(page, EDITOR_HEAD);
+  await page.mouse.click(box.x + 10, box.y + box.height - 10);
+  await page.waitForTimeout(400);
+  expect(await isFolded(page, EDITOR_HEAD)).toBe(true);
+  expect(await arrowInk(page, EDITOR_HEAD), 'a folded heading shows its arrow').toBe('1');
+});
+
+test('the reading view hides it the same way', async ({ page }) => {
+  await boot(page);
+  await toReading(page);
+  expect(await arrowInk(page, PREVIEW_HEAD)).toBe('0');
+  const box = await headBox(page, PREVIEW_HEAD);
+  await page.mouse.click(box.x + 10, box.y + 10);
+  await page.waitForTimeout(400);
+  expect(await arrowInk(page, PREVIEW_HEAD)).toBe('1');
+});
+
 test('the heading text stays where it was, level with the paragraphs', async ({ page }) => {
   await boot(page);
   const where = await page.evaluate(() => {

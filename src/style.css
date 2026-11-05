@@ -2091,10 +2091,25 @@ body:not(.is-named-file).outline-open.is-hidden-nav .topbar > * {
   background: var(--text-faint);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 16px no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 16px no-repeat;
-  opacity: 0.7;
+  /* Nothing in the margin until something is folded -- their default, asked
+     for by name: "the default of the thing is hidden in obsidian, it only
+     shows when it's down rather than our always". A heading with its section
+     open says so by having its section open; the arrow is the mark of a
+     section that is shut. The tap stays where the arrow would be, so the
+     margin folds whether or not there is ink in it. */
+  opacity: 0;
   cursor: pointer;
   /* Obsidian's own 100ms ease-in-out on the arrow. */
   transition: transform 0.1s ease-in-out, opacity 0.1s ease-in-out;
+}
+/* A pointer that can hover is a desktop browser, and there the heading
+   under it shows its arrow -- `@media (hover: hover)` in their own CSS.
+   A phone never matches this. */
+@media (hover: hover) {
+  .cm-editor .cm-line.cm-heading-fold:not(.is-folded):hover::after,
+  .preview-pane .md-section > .has-fold:not(.is-folded):hover::after {
+    opacity: 0.7;
+  }
 }
 /* Editor heading lines have the space above the heading as padding; the
    chevron sits below it, on the first line. */
