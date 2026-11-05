@@ -203,6 +203,10 @@ function nameInChrome(): void {
   document.body.classList.toggle('is-named-file', named);
   const title = document.querySelector<HTMLElement>('#topbar-title');
   if (title) title.textContent = named ? fileBase : '';
+  // Opening a pdf while the bars are away must bring the status bar back
+  // with its header, and leaving one for a note must let it go again:
+  // which file is open decides whether the header hides at all.
+  syncStatusBar();
 }
 /** A picture the reading view can show: the data: URL of the file open in the
  *  tab (a photo from the file manager, or an image found in the folders). */
@@ -1393,6 +1397,10 @@ const navHeld = (hide: boolean): number => (hide ? NAV_HELD_AWAY : NAV_HELD_BACK
 let navHidden = false;
 let navPending: { el: HTMLElement; hide: boolean; at: number } | null = null;
 let navSliding = false;
+/** What the phone was last asked for, so a bar that is already away is
+ *  never asked to go away again -- the asking is what restarts the
+ *  animation, and a restarted animation is the flash he reported. */
+let statusBarAway = false;
 let navSlideAt = 0;
 let navSlideTimer = 0;
 const navSettling = (): boolean => navSliding;
@@ -1421,13 +1429,40 @@ for (const bar of navBars()) {
     navStopped();
   });
 }
+/**
+ * The phone's own status bar does whatever our header does.
+ *
+ * Reported: "the status bar vanishes on scroll while a pdf's header
+ * stays". Scrolling has always taken the status bar away with the app's
+ * bars, which is right for a note -- its header slides up and the clock
+ * goes with it, and what is left is the page. A named file's header never
+ * slides (it is the only thing saying which file this is, see
+ * nameInChrome), so on a pdf, an html file or a picture the clock and the
+ * battery were taken away while the thing that covers them stayed exactly
+ * where it was: the app's header sitting in the space the status bar had
+ * just left. His update: html does not misbehave, but it should be
+ * covered by the rule rather than by luck -- so this asks one question
+ * for all of them, and the answer is the header's.
+ *
+ * The class is the app's own record of what it asked the phone for, so
+ * the rule can be read on a desktop where there is no status bar to
+ * watch; the plugin call is the thing itself (SystemBarsPlugin.java,
+ * which hides Type.statusBars() and nothing else).
+ */
+function syncStatusBar(): void {
+  const away = navHidden && !namedFile;
+  if (away === statusBarAway) return;
+  statusBarAway = away;
+  document.body.classList.toggle('is-status-bar-away', away);
+  void (away ? systemBars()?.hide() : systemBars()?.show())?.catch(() => undefined);
+}
 function hideNavigation(): void {
   if (navHidden) return;
   navHidden = true;
   navMoving();
   trace(`BARS AWAY   hand:${hand()}`);
   document.body.classList.add('is-hidden-nav');
-  void systemBars()?.hide().catch(() => undefined);
+  syncStatusBar();
 }
 function restoreNavigation(): void {
   if (!navHidden) return;
@@ -1435,7 +1470,7 @@ function restoreNavigation(): void {
   navMoving();
   trace(`BARS BACK   hand:${hand()}`);
   document.body.classList.remove('is-hidden-nav');
-  void systemBars()?.show().catch(() => undefined);
+  syncStatusBar();
 }
 /** The move a slide held back, remembered; applied when the slide is over if
  *  the note is still on the side it asked for (navStopped). */

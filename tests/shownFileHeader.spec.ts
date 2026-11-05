@@ -26,6 +26,12 @@ async function boot(page: Page, files: Record<string, string>, open: string): Pr
 }
 
 const hidden = (page: Page) => page.evaluate(() => document.body.classList.contains('is-hidden-nav'));
+/** What the app last asked the phone for. The status bar itself belongs to
+ *  Android (SystemBarsPlugin.java hides Type.statusBars()), and there is
+ *  none of it in a browser -- the class is the app's own record of the
+ *  request, set in the same breath as the request (syncStatusBar,
+ *  src/main.ts). */
+const statusBarAway = (page: Page) => page.evaluate(() => document.body.classList.contains('is-status-bar-away'));
 
 /** Scroll the reading pane the way a reader does. A wheel over the pane,
  *  not an assignment to scrollTop: the bars answer to the reader's own
@@ -57,6 +63,53 @@ test('a document keeps its header however far it is scrolled', async ({ page }) 
   expect(await hidden(page)).toBe(true);
   await scrollPane(page, -2);
   expect(await hidden(page)).toBe(false);
+});
+
+test('the phone\'s status bar stays when the header stays', async ({ page }) => {
+  // Reported: the status bar vanishes on scroll while a pdf's header
+  // stays. Scrolling took the clock away and left our header standing in
+  // the space it had just left. The rule now: the native bars do what the
+  // header does, and a document's header never leaves.
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  expect(await statusBarAway(page)).toBe(false);
+  await scrollPane(page, 3);
+  // The pill did go -- this is a scroll that moved the app's own bars.
+  expect(await hidden(page)).toBe(true);
+  expect(await statusBarAway(page), 'the clock is still there, because the header is').toBe(false);
+});
+
+test('a note\'s status bar leaves with its header, and comes back with it', async ({ page }) => {
+  // The other half: a note's header slides up and out, so the clock goes
+  // with it and the reader gets the whole screen. This is the behaviour
+  // that was always right and must not be lost in fixing the other one.
+  await boot(page, { 'note.md': LONG }, 'note.md');
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('.preview-pane article')).toBeVisible();
+  expect(await statusBarAway(page)).toBe(false);
+  await scrollPane(page, 3);
+  expect(await hidden(page)).toBe(true);
+  expect(await statusBarAway(page)).toBe(true);
+  await scrollPane(page, -2);
+  expect(await hidden(page)).toBe(false);
+  expect(await statusBarAway(page)).toBe(false);
+});
+
+test('opening a document while the bars are away brings the status bar back with the header', async ({ page }) => {
+  // The rule is asked again whenever the open file changes, because which
+  // file is open is what decides whether the header hides at all: scroll a
+  // note until the clock is gone, open a pdf, and the pdf's header arrives
+  // -- so the clock has to arrive with it.
+  await boot(page, { 'note.md': LONG, 'handout.pdf': PDF }, 'note.md');
+  await page.locator('#preview-toggle').click();
+  await expect(page.locator('.preview-pane article')).toBeVisible();
+  await scrollPane(page, 3);
+  expect(await statusBarAway(page)).toBe(true);
+  await page.locator('#files').dispatchEvent('click');
+  await page.locator('.nav-file-title', { hasText: 'handout.pdf' }).click();
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('body')).toHaveClass(/is-named-file/);
+  expect(await statusBarAway(page), 'the document brought the clock back with its header').toBe(false);
 });
 
 test('a note still hides the pill in reading view, not only in source', async ({ page }) => {
