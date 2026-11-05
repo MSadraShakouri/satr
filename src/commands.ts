@@ -2,7 +2,7 @@
 // line touched by the selection and keeps the caret after the inserted
 // prefix, so tapping "-" on an empty line leaves you typing the item.
 import { deleteLine, moveLineDown, moveLineUp, redo, undo } from '@codemirror/commands';
-import { EditorSelection, type ChangeSpec, type Line } from '@codemirror/state';
+import { EditorSelection, type ChangeSpec, type Line, type Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { insertDelimiter } from './delimiterInput';
 import { createTimestampPicker } from './datePicker';
@@ -49,10 +49,43 @@ function setPrefix(line: Line, prefix: string): ChangeSpec {
   return { from: line.from + indent, to: line.from + end, insert: prefix };
 }
 
+/**
+ * The level of the nearest heading above a line, or 0 when there is none.
+ *
+ * His line: "have something for headers and maybe have something to repeat
+ * the same header as the last one". Writing a long note is writing the same
+ * level over and over -- every section of a lecture is an H2 -- and the
+ * button always started again at H1, so every new section cost five more
+ * presses than it should have.
+ *
+ * Read off the text rather than the syntax tree, which may not have been
+ * built this far yet, so fenced code is tracked by hand: `# not a heading`
+ * is an ordinary comment in half the code anyone writes.
+ */
+function levelAbove(doc: Text, upto: number): number {
+  let level = 0;
+  let fence = '';
+  for (let n = 1; n < upto; n += 1) {
+    const text = doc.line(n).text;
+    const edge = /^\s{0,3}(`{3,}|~{3,})/.exec(text);
+    if (fence) {
+      if (edge && edge[1][0] === fence) fence = '';
+      continue;
+    }
+    if (edge) { fence = edge[1][0]; continue; }
+    const match = HEADING.exec(text);
+    if (match) level = match[1].length;
+  }
+  return level;
+}
+
 export function cycleHeading(view: EditorView): boolean {
   return apply(view, touchedLines(view).map((line) => {
     const match = HEADING.exec(line.text);
-    if (!match) return { from: line.from, insert: '# ' };
+    // A plain line becomes the level last used above it, so one press
+    // continues the shape of the note; pressing again still walks up the
+    // levels from there, which is how a level gets changed.
+    if (!match) return { from: line.from, insert: `${'#'.repeat(levelAbove(view.state.doc, line.number) || 1)} ` };
     const level = match[1].length;
     return { from: line.from, to: line.from + match[0].length, insert: level >= 6 ? '' : `${'#'.repeat(level + 1)} ` };
   }), 'input.heading');
