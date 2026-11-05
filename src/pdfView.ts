@@ -972,12 +972,23 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // that is drawing; nothing said which part.
   let firstEngineMs = 0;
   let firstPixels = 0;
+  /** When the first drawing plan was made, so the wait between a laid-out
+   *  column and a picture on it has a name. The device log's worst case is
+   *  226ms with no engine facts at all -- a page off the shelf, drawn by
+   *  nobody-said-what. */
+  let planningAt = 0;
   const drewSomething = (): void => {
     if (!firstPicture) return;
-    firstPicture(firstPixels ? {
-      engineMs: Math.round(firstEngineMs),
-      megapixels: Math.round(firstPixels / 1e5) / 10,
-    } : undefined);
+    firstPicture({
+      // Where the first picture came from: the engine drew it, or it came
+      // back off the shelf (pdfSketchCache) already drawn.
+      from: firstPixels ? 'engine' : 'shelf',
+      ...(firstPixels ? {
+        engineMs: Math.round(firstEngineMs),
+        megapixels: Math.round(firstPixels / 1e5) / 10,
+      } : {}),
+      ...(planningAt ? { plan: Math.round(performance.now() - planningAt) } : {}),
+    });
     firstPicture = null;
     // The reading that explains a kill. A page of a book is a canvas, the
     // sharp tile over it is another, and neither is on the JavaScript heap:
@@ -2884,6 +2895,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     await Promise.race([recalling, new Promise((go) => { window.setTimeout(go, RECALL_WAIT_MS); })]);
     shelving();
   }
+  planningAt = performance.now();
   drawBand();
   planned = true;
   /**
