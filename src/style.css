@@ -360,12 +360,26 @@ body.is-named-file .topbar-title {
    --view-top-spacing tall (12/safe + 44 + 8), which is the room the content
    below has been asked to leave, so the two meet with no seam. */
 body.is-named-file .topbar {
-  background: var(--raised-background);
-  backdrop-filter: var(--raised-blur);
-  -webkit-backdrop-filter: var(--raised-blur);
   padding-bottom: 8px;
   /* A bar takes the taps that land on it; the content is below it now. */
   pointer-events: auto;
+}
+/* The pane of glass is painted by a layer of its own rather than by the bar,
+   so that it can be moved on its own. When the controls hide while a
+   document is read, this slides up by their height and the name above it
+   does not move a pixel -- a transform, which the compositor can do, where
+   animating the bar's height would have been a layout every frame (and read
+   as the stutter it was). z-index -1 keeps it behind the name and the
+   buttons, inside the bar's own stacking context. */
+body.is-named-file .topbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--raised-background);
+  backdrop-filter: var(--raised-blur);
+  -webkit-backdrop-filter: var(--raised-blur);
+  transition: transform 0.3s ease-in-out;
 }
 #file-actions {
   display: none;
@@ -4656,18 +4670,39 @@ body.is-pdf-chrome .preview-pane article.is-document {
    the pages under it are already there: taking it away uncovers them, where
    changing the pane's padding would shove the page under the reader's thumb
    mid-scroll. */
+/* How far the glass has to travel to leave the name behind: the controls
+   row and the 8px that separates it from the buttons above. */
+:root {
+  --pdf-controls-room: calc(var(--pdf-toolbar-height) + 8px);
+}
 .pdf-toolbar {
-  transition: height 0.18s ease, margin-top 0.18s ease, opacity 0.18s ease;
+  /* The header's own tokens, so this leaves at the speed everything else in
+     the app leaves at: opacity 0.2s, movement 0.3s, both ease-in-out. */
+  transition:
+    opacity 0.2s ease-in-out,
+    transform 0.3s ease-in-out;
+}
+body.is-pdf-chrome.is-hidden-nav:not([data-doc-chrome="stays"]) .topbar::before {
+  transform: translateY(calc(-1 * var(--pdf-controls-room)));
 }
 body.is-pdf-chrome.is-hidden-nav:not([data-doc-chrome="stays"]) .pdf-toolbar {
-  height: 0;
-  margin-top: 0;
+  transform: translateY(calc(-1 * var(--pdf-controls-room)));
   opacity: 0;
-  overflow: hidden;
   pointer-events: none;
 }
+/* The bar's box is still as tall as it was -- nothing in it moved -- so the
+   strip of page the glass just uncovered would still be taking the taps
+   meant for the page. It stops taking them; the name and the buttons, which
+   are still there, keep taking theirs. */
+body.is-pdf-chrome.is-hidden-nav:not([data-doc-chrome="stays"]) .topbar {
+  pointer-events: none;
+}
+body.is-pdf-chrome.is-hidden-nav:not([data-doc-chrome="stays"]) .topbar > *:not(.pdf-toolbar) {
+  pointer-events: auto;
+}
 body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="all"] .topbar {
-  transform: translateY(calc(-44px - max(12px, var(--safe-top))));
+  /* The whole strip, controls included, not the 44px a note's header is. */
+  transform: translateY(calc(-1 * var(--view-top-spacing) - var(--pdf-toolbar-height)));
   opacity: 0;
 }
 body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="all"] .topbar > * {

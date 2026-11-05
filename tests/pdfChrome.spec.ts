@@ -509,15 +509,24 @@ test('the header and the strip are one pane of glass', async ({ page }) => {
   const look = await page.evaluate(() => {
     const strip = getComputedStyle(document.querySelector('.pdf-toolbar')!);
     const bar = getComputedStyle(document.querySelector('.topbar')!);
+    // The surface is painted by a layer of the header's own (.topbar::before)
+    // rather than by the header, so that hiding the controls can slide it up
+    // without moving the name: one pane either way, and this follows it.
+    const pane = getComputedStyle(document.querySelector('.topbar')!, '::before');
     return { stripTint: strip.backgroundColor, stripBlur: strip.backdropFilter,
       barTint: bar.backgroundColor, barBlur: bar.backdropFilter,
+      paneTint: pane.backgroundColor, paneBlur: pane.backdropFilter,
+      panes: document.querySelectorAll('.topbar, .pdf-toolbar').length,
       height: Math.round(document.querySelector('.topbar')!.getBoundingClientRect().height) };
   });
   // the strip paints nothing of its own: one surface, so no line can appear
   // between them whatever is behind
   expect(look.stripTint).toBe('rgba(0, 0, 0, 0)');
   expect(look.stripBlur).toBe('none');
-  expect(look.barBlur).not.toBe('none');
+  expect(look.barTint, 'the bar itself paints nothing either').toBe('rgba(0, 0, 0, 0)');
+  expect(look.barBlur).toBe('none');
+  expect(look.paneBlur, 'the one pane carries the blur').not.toBe('none');
+  expect(look.paneTint).not.toBe('rgba(0, 0, 0, 0)');
   expect(look.height).toBe(104); // 12 + 44 + 8 + 40, the strip included
 });
 
