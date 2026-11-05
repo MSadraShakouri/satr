@@ -32,7 +32,21 @@ const ICON = {
   into: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
   up: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5l-7 7 7 7"/></svg>',
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  empty: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
 };
+
+/**
+ * The path with everything above the last folder dimmed. The folder being
+ * stood in is the answer to "where am I"; the ones above it are only there
+ * so the answer means something, and reading as one dense line made the
+ * head of the sheet the busiest thing in it.
+ */
+function pathHtml(label: string): string {
+  const parts = label.split('/');
+  const here = escapeHtml(parts.pop() ?? label);
+  if (!parts.length) return here;
+  return `<span class="dir-walk-above">${escapeHtml(parts.join('/'))}/</span>${here}`;
+}
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
 
@@ -103,13 +117,16 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
       <div class="menu-grabber"></div>
       <div class="menu-title">${escapeHtml(options.title)}</div>
       <div class="dir-walk-path">
-        ${at === ceiling ? '' : `<button type="button" class="clickable-icon dir-walk-up" data-up aria-label="Up one folder">${ICON.up}</button>`}
-        <span class="dir-walk-here" dir="auto">${escapeHtml(options.label(at))}</span>
-        <button type="button" class="clickable-icon dir-walk-add" data-add aria-label="New folder here">${ICON.plus}</button>
+        ${at === ceiling ? '' : `<button type="button" class="dir-walk-round dir-walk-up" data-up aria-label="Up one folder">${ICON.up}</button>`}
+        <span class="dir-walk-here" dir="auto">${pathHtml(options.label(at))}</span>
+        <button type="button" class="dir-walk-round dir-walk-add" data-add aria-label="New folder here">${ICON.plus}</button>
       </div>
       <div class="menu-scroll">
         ${naming ? `<div class="dir-walk-name"><input type="text" class="dir-walk-input" placeholder="Folder name" dir="auto" autocomplete="off" spellcheck="false"></div>` : ''}
-        ${rows ? `<div class="menu-group">${rows}</div>` : '<div class="dir-walk-empty">No folders in here</div>'}
+        ${rows ? `<div class="menu-group">${rows}</div>` : `<div class="dir-walk-empty">${ICON.empty}
+          <span class="dir-walk-empty-say">No folders in here</span>
+          <span class="dir-walk-empty-how">Notes will go in this one, or make another with +</span>
+        </div>`}
       </div>
       <div class="dir-walk-foot">
         <button type="button" class="dir-walk-confirm" data-confirm>${escapeHtml(options.confirm)}</button>

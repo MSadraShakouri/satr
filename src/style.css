@@ -3858,30 +3858,67 @@ textarea,
   color: var(--text-normal);
   font-weight: 600;
 }
-/* The folder walker (src/dirPicker.ts): the bottom sheet's own chrome, with
-   a path line above the folders and a button that commits below them. */
+/* The folder walker (src/dirPicker.ts). The sheet's own gutter is 16px and
+   lives on .menu-scroll, so the path line above the folders and the button
+   below them carry it themselves -- without it they ran edge to edge and
+   looked stuck to the glass. Everything else follows the sheet's language:
+   24px corners, the same hover as every other control, 1.75 stroke icons. */
 .dir-walk-path {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px 10px;
+  gap: 4px;
+  padding: 2px 16px 12px;
 }
 .dir-walk-here {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
+  padding: 0 6px;
   color: var(--text-normal);
-  font-size: 0.9375rem;
+  font-size: 1.0625rem;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
   unicode-bidi: plaintext;
 }
-/* No way up from the ceiling, so the name takes the button's place. */
-.dir-walk-here:first-child {
-  padding-left: 8px;
+/* The folders above the one being stood in: there for orientation, not to
+   be read, so they stay out of the way. */
+.dir-walk-here .dir-walk-above {
+  color: var(--text-faint);
+  font-weight: 500;
 }
-.dir-walk-up svg,
-.dir-walk-add svg {
+.dir-walk-round {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dir-walk-round svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dir-walk-round:active {
+  background: var(--background-modifier-border-hover);
+}
+.dir-walk .menu-scroll {
+  padding-bottom: 4px;
+}
+.dir-walk .menu-item {
+  padding: 13px 16px;
+}
+.dir-walk .menu-item-icon svg {
   width: 20px;
   height: 20px;
 }
@@ -3890,46 +3927,75 @@ textarea,
   color: var(--text-faint);
 }
 .dir-walk .menu-item-icon.mod-into svg {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
 }
 .dir-walk-empty {
-  padding: 18px 16px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 26px 16px 22px;
+  border-radius: 24px;
+  background: var(--background-primary);
   color: var(--text-muted);
-  font-size: 0.9375rem;
   text-align: center;
 }
+.dir-walk-empty svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dir-walk-empty-say {
+  font-size: 0.9375rem;
+}
+.dir-walk-empty-how {
+  color: var(--text-faint);
+  font-size: 0.8125rem;
+}
 .dir-walk-name {
-  padding: 0 0 8px;
+  padding: 0 0 10px;
 }
 .dir-walk-input {
   width: 100%;
-  padding: 12px 16px;
-  border: 1px solid var(--background-modifier-border-hover);
-  border-radius: 12px;
+  padding: 13px 18px;
+  border: 1px solid transparent;
+  border-radius: 24px;
   background: var(--background-primary);
   color: var(--text-normal);
   font-size: 1rem;
   font-family: inherit;
 }
+.dir-walk-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+.dir-walk-input::placeholder {
+  color: var(--text-faint);
+}
 .dir-walk-foot {
-  padding: 10px 0 2px;
+  padding: 10px 16px max(16px, var(--safe-bottom));
 }
 .dir-walk-confirm {
+  display: block;
   width: 100%;
-  padding: 13px 16px;
+  padding: 15px 16px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 24px;
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   font-size: 1rem;
   font-family: inherit;
   font-weight: 600;
+  letter-spacing: 0.01em;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 .dir-walk-confirm:active {
-  filter: brightness(0.94);
+  filter: brightness(0.93);
 }
 
 .empty-state-where.is-plain {
