@@ -496,6 +496,23 @@ const ZOOM_EPSILON = 0.005;
  *  than its press, so a slow first tap does not eat the window. */
 const DOUBLE_TAP_SLOP = 64;
 /**
+ * How far two fingers may wander and still have been a tap rather than a
+ * pinch. Tighter than DOUBLE_TAP_SLOP on purpose: a double tap is two
+ * separate landings and the second one is aimed by a thumb in flight,
+ * while a two-finger tap is one landing that either moved or did not.
+ * Measured against the span as well as the middle -- fingers that rotate
+ * about their own centre are a pinch the span alone would not see.
+ */
+const TWO_FINGER_SLOP = 16;
+/**
+ * And how much zoom a tap may have asked for and still have been a tap.
+ * Distance alone is not enough: a deliberate tenth of a pinch moves each
+ * finger five pixels, which is inside anybody's idea of still, and a test
+ * in pdfFile.spec.ts pinches exactly that to prove a tile survives it.
+ * The gesture either changed the zoom or it did not, and a tap did not.
+ */
+const TWO_FINGER_STILL = 0.05;
+/**
  * A one-finger zoom: how far the finger may wander before it is a drag
  * rather than a tap, and how much of the zoom one pixel of drag is worth.
  *
@@ -2446,6 +2463,11 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // be wrong anyway.
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { span: number; middle: number; across: number; zoom: number; about: number } | null = null;
+  // Every pinch begins as a possible two-finger tap and stops being one
+  // the moment the fingers move. Kept beside the pinch, not inside it,
+  // because the pinch is rebuilt on every frame's arithmetic and this
+  // must remember where the fingers first landed.
+  let twoTap: { at: number; span: number; middle: number; across: number } | null = null;
   /** A one-finger zoom in progress: where it started, and from what. */
   // `id` is the contact the gesture belongs to. Everything about a
   // one-finger zoom is that one finger's: no other pointer may move it,
@@ -2649,6 +2671,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // which the old one did not, and the pages slid at every pinch.
       const column = doc.getBoundingClientRect();
       doc.style.transformOrigin = `${across - column.left}px ${middle - column.top}px`;
+      twoTap = { at: event.timeStamp, span, middle, across };
     }
   };
   const onPointerMove = (event: PointerEvent): void => {
@@ -2673,7 +2696,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     }
     if (!pinch || touches.size !== 2) return;
     event.preventDefault();
-    const { span } = spanOf();
+    const { span, middle, across } = spanOf();
+    if (twoTap && (Math.abs(span - twoTap.span) > TWO_FINGER_SLOP
+      || Math.hypot(across - twoTap.across, middle - twoTap.middle) > TWO_FINGER_SLOP)) twoTap = null;
     const factor = giveAt((span / pinch.span) * pinch.zoom) / pinch.zoom;
     doc.style.transform = `scale(${factor})`;
     spaceOut(factor, pinch.about);
@@ -2713,7 +2738,31 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       return;
     }
     if (!pinch || touches.size >= 2) return;
-    const factor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
+    const tapFactor = parseFloat(/scale\(([\d.]+)\)/.exec(doc.style.transform)?.[1] ?? '1');
+    // Two fingers that landed and lifted without going anywhere: a tap,
+    // and the zoom goes back to the page's own width. His own line --
+    // "a single tap with two fingers reset zoom". The double tap already
+    // comes back down, but it comes back about the point it lands on, so
+    // it has to be aimed; this is the one gesture here that can be made
+    // anywhere on the glass without looking.
+    if (twoTap && event.timeStamp - twoTap.at < DOUBLE_TAP_MS
+      && Math.abs(tapFactor - 1) < TWO_FINGER_STILL) {
+      const { middle, across } = twoTap;
+      doc.style.transform = '';
+      doc.style.transformOrigin = '';
+      unspace();
+      pinch = null;
+      twoTap = null;
+      stopLiving();
+      // The other finger is still down and will lift in a moment. Its
+      // lift reaches the tap handler, which would otherwise pair it with
+      // this one and zoom straight back in.
+      lastTap.time = 0;
+      zoomTo(1, middle, across, true);
+      return;
+    }
+    twoTap = null;
+    const factor = tapFactor;
     doc.style.transform = '';
     doc.style.transformOrigin = '';
     unspace();
