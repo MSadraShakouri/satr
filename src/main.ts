@@ -1900,6 +1900,9 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
   if (mode === 'preview') renderPreview();
 }
 
+/** Milliseconds since a mark, whole, for a log fact. */
+const since = (mark: number): number => Math.round(performance.now() - mark);
+
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
   rescued = ''; // a file is open: the empty tab has nothing left to explain
   if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
@@ -1969,6 +1972,8 @@ function showFile(path: string, content: string, after?: () => void, options?: {
     });
   }
   restoringView = true;
+  const shown = log.time('file', 'note on screen', { chars: content.length });
+  const textAt = performance.now();
   const session = curTab().session;
   if (session) { editor.restoreSession(session); editor.replaceValue(content); }
   else editor.setValue(content);
@@ -1978,6 +1983,8 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   const codeFile = fileKind(fileName(path)) === 'code';
   void editor.setFileLanguage(fileName(path));
   editor.setLineNumbers(loadSettings().lineNumbers || codeFile);
+  const text = since(textAt);
+  const chromeAt = performance.now();
   // A file Satr cannot write back is not offered a pen: a picture, bytes that
   // are not text, a file another app lent us read-only, shared text. The
   // chrome says so (a header with the file's name and a ⋮ in place of the
@@ -2001,16 +2008,21 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
+  const chrome = since(chromeAt);
+  const placeAt = performance.now();
   if (previewVisible()) renderPreview();
   // A picture opens in the reading view (a mode of its own to be remembered
   // in is not one it has); anything else comes back where it was left.
   restoreView(path, after, opening, imageTab);
+  const place = since(placeAt);
+  const restAt = performance.now();
   renderNavButtons();
   sidebar.refresh();
   // Mark the open note, and clear the mark when this file isn't in the tree
   // (opened from another app, or read-only rubbish).
   leftSidebar.markActive(path);
   if (!incoming) void loadSiblings();
+  shown({ text, chrome, place, rest: since(restAt) });
 }
 /** Open a file: its tab if it has one, else a new tab after this one (or
  *  this tab, when it's empty). Any file opens; one that can't be loaded
@@ -2564,11 +2576,19 @@ async function closeGoneTab(tab: Tab, after?: () => void): Promise<void> {
 async function switchTab(index: number, after?: () => void): Promise<void> {
   if (!tabs[index]) return;
   if (index === activeTab) { after?.(); return; }
-  if (!await leaveCurrent()) return;
-  activeTab = index;
+  // The clock starts at the tap, not after the old tab has been put away:
+  // the device log had a switch taking 830ms with only 337ms of it spoken
+  // for, and the part nobody had timed was the leaving. Every stage of a
+  // switch is now named on the one line (`left`, and showFile's own parts),
+  // so the next reading of the log says where the time went instead of
+  // leaving a few hundred milliseconds to guess at.
   const switching = log.time('tabs', 'switch', { to: fileName(tabs[index].path) || 'empty tab' });
+  const leaving = performance.now();
+  if (!await leaveCurrent()) { switching({ left: since(leaving), stayed: true }); return; }
+  const left = since(leaving);
+  activeTab = index;
   await openTab(curTab(), after);
-  switching();
+  switching({ left });
 }
 function newTab(): void {
   void (async () => {
