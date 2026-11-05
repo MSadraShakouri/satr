@@ -3770,6 +3770,7 @@ async function boot(): Promise<void> {
   // the launch owes it nothing, and the line lands when it lands.
   void tellWhyItDied();
   void tellWhatTheLastResumeSaid();
+  warmTheEngine();
   const ready = log.time('launch', 'ready to read');
   try {
     // Before the first file opens, so that a file asking where it was left
@@ -4052,6 +4053,32 @@ function onForeground(from: Wiring): void {
   showSplash();
   newTab();
 }
+/**
+ * Build the pdf engine before it is asked for.
+ *
+ * The wasm costs 117 to 144 ms to come up on his phone and it is paid
+ * inside the first open of a run, where it sits between him tapping a book
+ * and seeing it. Every open after that reports "engine ready took 0ms",
+ * because the engine is the app's and stays up -- so the only question is
+ * whether that first one is paid while he is reading the tap or while he is
+ * waiting for the page.
+ *
+ * Only when a document is actually open in a tab: a reader who keeps no
+ * books should not compile a pdf engine for nothing. And on idle, so it
+ * never stands in front of the thing he did ask for.
+ */
+function warmTheEngine(): void {
+  if (!tabs.some((tab) => isDocument(tab.path))) return;
+  const warm = (): void => {
+    void import('./pdfiumEngine').then(async ({ pdfium }) => {
+      const warming = log.time('pdf', 'engine warmed');
+      try { await pdfium(); warming(); } catch { /* the open pays for it instead */ }
+    }).catch(() => undefined);
+  };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => warm(), { timeout: 2500 });
+  else window.setTimeout(warm, 1500);
+}
+
 async function openFirstNote(): Promise<void> {
   // A new empty tab at launch: the setting asks for one, or the app was away
   // long enough. Show it before file access, so the last note never sits

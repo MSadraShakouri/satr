@@ -287,3 +287,12 @@ test('opening a document does not build an empty reading view first', async ({ p
   expect(find(lines, 'file', 'read'), 'a document is not read as text').toBeFalsy();
 });
 
+test('the engine is warmed before a book is asked for', async ({ page }) => {
+  // 117 to 144 ms of wasm on his phone, paid inside the first open of a
+  // run. Paid at launch instead, on idle, and only when a tab holds a
+  // document at all.
+  await boot(page, { 'A.md': NOTE, 'book.pdf': tinyPdf(3) }, 'A.md');
+  await expect.poll(async () => find(await read(page), 'pdf', 'engine warmed'), { timeout: 10000 }).toBeTruthy();
+  // The note is what is on screen: no document was opened to do it.
+  expect(find(await read(page), 'pdf', 'document parsed'), 'and no document was opened').toBeFalsy();
+});
