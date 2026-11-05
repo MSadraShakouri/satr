@@ -13,6 +13,7 @@
 // the user creates: no settings folder, no index file. Spaces and view
 // state live in the app's own storage.
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { forgetInside, wroteInside } from './folderTimes';
 import { asStored, dropStored, getStored, putStored, storedText } from './webStore';
 
 export interface Entry {
@@ -192,12 +193,14 @@ class WebBackend implements Backend {
     localStorage.setItem(fileKey(path), text);
     this.index.files[path] = Date.now();
     this.addFolders(path);
+    wroteInside(path, this.index.files[path]);
     this.save();
   }
   private note(path: string): void {
     localStorage.removeItem(fileKey(path));
     this.index.files[path] = Date.now();
     this.addFolders(path);
+    wroteInside(path, this.index.files[path]);
     this.save();
   }
   async write(path: string, text: string): Promise<void> {
@@ -240,6 +243,9 @@ class WebBackend implements Backend {
     } else {
       throw new Error('Not found');
     }
+    forgetInside(from);
+    wroteInside(from);
+    wroteInside(to);
     this.save();
   }
   async remove(path: string): Promise<void> {
@@ -250,6 +256,8 @@ class WebBackend implements Backend {
       delete this.index.files[file];
     }
     this.index.folders = this.index.folders.filter((f) => !within(f, path));
+    forgetInside(path);
+    wroteInside(path);
     this.save();
   }
   async stat(path: string): Promise<Entry | null> {
@@ -380,6 +388,10 @@ class DeviceBackend implements Backend {
   }
   async write(path: string, text: string): Promise<void> {
     await this.fs.writeFile({ path, directory: EXTERNAL, encoding: 'utf8', data: text, recursive: true });
+    // The folders above it are newer now, whatever the phone says about
+    // them: a folder's own modified time does not move when a file inside
+    // it is rewritten (src/folderTimes.ts).
+    wroteInside(path);
   }
   async mkdir(path: string): Promise<void> {
     await this.fs.mkdir({ path, directory: EXTERNAL, recursive: true });
@@ -388,12 +400,17 @@ class DeviceBackend implements Backend {
     if (from === to) return;
     if (await this.stat(to)) throw new Error('Something with that name already exists');
     await this.fs.rename({ from, to, directory: EXTERNAL, toDirectory: EXTERNAL });
+    forgetInside(from);
+    wroteInside(from);
+    wroteInside(to);
   }
   async remove(path: string): Promise<void> {
     const entry = await this.stat(path);
     if (!entry) return;
     if (entry.kind === 'folder') await this.fs.rmdir({ path, directory: EXTERNAL, recursive: true });
     else await this.fs.deleteFile({ path, directory: EXTERNAL });
+    forgetInside(path);
+    wroteInside(path);
   }
   async stat(path: string): Promise<Entry | null> {
     try {
