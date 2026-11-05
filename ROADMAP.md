@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). The code is **0.18.8**'s: 0.18.1 and 0.18.2 were released
+open-file plugins). The code is **0.18.9**'s: 0.18.1 and 0.18.2 were released
 and withdrawn, 0.18.3 carried the per-file memory into a database of its own,
 0.18.4 added the log the app keeps of itself, 0.18.5 is what that log said
 when it came back off the author's phone — the file being read, and read
@@ -15,9 +15,11 @@ lesson twice over: the log stopped throwing lines away, and the reader
 stopped holding pictures nobody was looking at — 0.18.7 is what the
 phone said about 0.18.6 within the hour: a gesture that was anchored to a
 picture the renderer kept taking away, a document that came back as a
-smear of itself, and an instrument for the one bug still standing — and
-0.18.8 is that instrument's answer, a freeze explained in one resume and
-fixed where it actually lives, in the Android half. `package.json` only ever
+smear of itself, and an instrument for the one bug still standing — 0.18.8
+is that instrument's answer, a freeze explained in one resume and a fix
+for it in the Android half — and 0.18.9 is what happened when that fix
+did not hold: an instrument that lives outside the page, because every
+one before it died with the app. `package.json` only ever
 moves forwards, so that nothing the releases depend on goes backwards: the
 APK's version code is the commit count, and a version code that fell would be
 refused by every phone that already had one. Notes are files in folders behind one storage
@@ -287,6 +289,14 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Four the writer reported in the panels.** *Reveal current file* is a button now, not a switch that rearranged the panel whenever the note changed — one press takes the panel to the note wherever it lives, and nothing moves it by itself, so reading can no longer change what a search covers or where a new note lands. With **Include subfolders** off, a search roots at the open note's own folder rather than the space top, which in a space whose top level holds folders had returned nothing but the open note. The in-note find draws the current match as Obsidian's reading view does — a 3px accent ring on it, a 2px translucent one on the other 39 — where before every match wore the same ring and you could not tell which one you were on. And the navigation bars only move on a reversal: a thumb's 4–6px wobble landing more than 200 ms after they hid used to walk straight into `restoreNavigation()` and flash them, which tests/navAutoHide.spec.ts:151 now pins.
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
+
+### 0.18.9: the question is asked from outside the page (November 2026)
+
+The kick did not fix it. “Nah it's still relatively broken, didn't get fixed, I can smash the screen and the sidebars open but I can't even use them.” What his log of that build shows is worse than a failed fix: it shows that the two resumes it recorded were both healthy ones, and that the four frozen runs recorded nothing at all. Both instruments so far live inside the page — the thing that may be dead — and both write to a database up to four seconds later, while a frozen resume ends with the app thrown out of recents and everything unsaved dying with it. So this version asks from Java instead, and writes the answer down the moment it arrives.
+
+- [x] **The resume is recorded natively, where a kill cannot reach it.** After the visibility kick, `MainActivity` asks the WebView itself — `evaluateJavascript`, not a Capacitor event and not a page listener, neither of which a frozen page need ever run — what `document.visibilityState` is, and asks for an animation frame. A second and a half later it asks whether that frame ever ran. Every answer goes into SharedPreferences as it arrives, and the next launch reads the previous run's last resume into the log. Three answers, three different bugs: answered and visible is a resume that was fine; answered and hidden is a page that is alive and simply cannot paint, which is the bug we have been chasing; and no answer at all is JavaScript not running, which is a different bug with a different fix. Until now there was no way to tell them apart, because the one case that matters is the one where the app's own log is thrown away.
+- [x] **The log says which wiring spoke, and saves the line at once.** Two wirings report every resume and they disagree — the disagreement is what found the mechanism — but the lines did not say which was which, so a missing one could not be read. In his newest log one frozen run wrote `went to the background` once where every other run writes it twice, and there is no way to know which half went quiet. Both lines now carry `from=native` or `from=page`. And coming back flushes the log immediately instead of within four seconds, so a resume he ends by swiping the app away still leaves its trace.
+- **Checked.** The log's eight specs green at one worker, one of them new this round. Both halves of it were proved by reverting them one at a time: without `from` the fact is undefined, and without the flush the line is not on disk two and a half seconds later. That second half needed the harness's idle callbacks taken away first — it is idle enough to flush within a millisecond on its own, where a hidden page, the case that matters, gets no idle time at all. **The native half is again untestable here: no Android SDK, so `ResumeWatch`, `MainActivity` and `DiagnosticsPlugin` were compiled against stubs written from Capacitor 7.6.9's own `BridgeActivity`/`Bridge` source and the `View` and `WebView` references. The phone is the test.** Nothing else was re-run; nothing else is touched.
 
 ### 0.18.8: the app tells the page it is back (November 2026)
 
