@@ -17,6 +17,7 @@
 // costs a database read of three kilobytes. Nothing is rendered, the engine
 // is never started, and the file is never opened.
 
+import { forgetShot } from './tabCards';
 import { dropAside, getAside, putAside } from './webStore';
 
 const CARD = 'pdf-card/';
@@ -165,23 +166,27 @@ export async function keepCard(
   const shot = await asJpeg(copy);
   if (!shot) return;
   await putAside(CARD + path, { page, pages, shot, at: Date.now(), dark: how?.dark === true, rough: how?.rough === true } satisfies Card);
+  // The switcher holds the last picture it showed for each document so it
+  // can draw a card without waiting; this one is newer than that.
+  forgetShot(path);
 }
 
-/** What to put on a tab's card, or null if this document has never been
- *  opened on this phone. The URL is the caller's to revoke. */
-export async function recallCard(path: string): Promise<{ page: number; pages: number; url: string; dark: boolean } | null> {
+/**
+ * What to put on a tab's card, or null if this document has never been
+ * opened on this phone.
+ *
+ * The picture itself, not a URL for it: the caller holds the blob (cards
+ * are kept between openings of the switcher now, src/tabCards.ts) and makes
+ * a URL each time it paints one. An object URL holds its blob in memory
+ * until it is revoked, so whoever makes one owns letting it go -- a
+ * switcher with four books in it would otherwise leave four behind every
+ * time it was opened, a leak of exactly the kind this file exists to end.
+ */
+export async function recallCard(path: string): Promise<{ page: number; pages: number; shot: Blob; at: number; dark: boolean } | null> {
   if (!path) return null;
   const card = await getAside<Card>(CARD + path).catch(() => null);
   if (!card?.shot) return null;
-  try {
-    const url = URL.createObjectURL(card.shot);
-    // Let go of it once the browser has had time to decode it. An object
-    // URL holds its blob in memory until it is revoked, and a switcher with
-    // four books in it would otherwise leave four behind every time it was
-    // opened -- a leak of exactly the kind this file exists to fix.
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    return { page: card.page, pages: card.pages, url, dark: card.dark === true };
-  } catch { return null; }
+  return { page: card.page, pages: card.pages, shot: card.shot, at: card.at ?? 0, dark: card.dark === true };
 }
 
 /** A document deleted, renamed, or replaced: its picture goes with it, so a

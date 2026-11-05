@@ -24,6 +24,15 @@ export interface TabSwitcherDeps {
   tabs(): TabCard[];
   /** Rendered HTML of the start of a tab's note. */
   preview(index: number): Promise<string>;
+  /**
+   * The same card if it is already known, with nothing waited for.
+   *
+   * A card that has to be fetched is a blank rectangle until it lands --
+   * "it takes a short moment to load" -- so the sheet is drawn with the
+   * cards that are in hand already in it, and `preview` is still asked
+   * afterwards in case the file has changed since.
+   */
+  previewNow?(index: number): string | null;
   select(index: number): void;
   /** Resolves once the tab is gone (or the close was refused). */
   close(index: number): Promise<void>;
@@ -79,10 +88,10 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     count.textContent = `${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
     group.innerHTML = tabs.map((tab, i) => `
       <div class="mobile-tab-wrapper">
-        <div class="mobile-tab${tab.active ? ' is-active' : ''}" data-index="${i}">
+        <div class="mobile-tab${tab.active ? ' is-active' : ''}${tab.empty || deps.previewNow?.(i) ? '' : ' is-empty'}" data-index="${i}">
           <div class="mobile-tab-preview">
             ${tabs.length > 1 || !tabs[0].empty ? `<div class="close-button" data-close="${i}" role="button" aria-label="Close tab">${ICONS.x}</div>` : ''}
-            <div class="mobile-tab-preview-embed"><div class="mobile-tab-preview-page markdown-preview-view"></div></div>
+            <div class="mobile-tab-preview-embed"><div class="mobile-tab-preview-page markdown-preview-view">${deps.previewNow?.(i) ?? ''}</div></div>
             <div class="mobile-tab-preview-empty">${ICONS.file}</div>
           </div>
           <div class="mobile-tab-title" dir="auto">${escapeHtml(tab.title)}</div>
@@ -93,7 +102,11 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
       void deps.preview(i).then((html) => {
         const page = group.querySelector<HTMLElement>(`.mobile-tab[data-index="${i}"] .mobile-tab-preview-page`);
         if (!page) return;
-        page.innerHTML = html;
+        // Only when it is not what is already on the card: redrawing a
+        // card with the same HTML throws away a picture the browser has
+        // decoded and makes it decode it again, which is a flicker on
+        // exactly the cards that were quick.
+        if (page.innerHTML !== html) page.innerHTML = html;
         page.closest('.mobile-tab')!.classList.toggle('is-empty', !html);
       });
     });

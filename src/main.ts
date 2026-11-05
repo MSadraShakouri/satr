@@ -39,6 +39,7 @@ import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
+import { cardKept, cardNow, forgetTabCard, liveStamp, rememberCard, rememberShot, shotNow, warmTabCards, type Shot } from './tabCards';
 import { installLiveBlocks, stripLiveBlocks } from './liveBlocks';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
@@ -2078,6 +2079,7 @@ async function moveFile(from: string, to: string, onDisk: string): Promise<void>
       // The card is filed under the path, so it moves with the file by
       // being dropped: the next read of the document files a new one.
       void import('./pdfCard').then(({ forgetCard }) => forgetCard(from));
+      forgetTabCard(from);
     } catch (error) {
       // A name the disk already has is the rename refusing, and that refusal is
       // what the reader is told. A file that is not there to move (deleted
@@ -2145,6 +2147,10 @@ function pathMoved(from: string, to: string): void {
 /** A file or folder was deleted: forget it; if the open note went, open another. */
 function pathDeleted(path: string): void {
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
+  // A card outliving its file would be a tab showing the inside of
+  // something that is not there any more; a folder takes its notes' with it.
+  forgetTabCard(path);
+  for (const tab of tabs) if (tab.path && within(tab.path, path)) forgetTabCard(tab.path);
   setRecent(recentNotes().filter((p) => !within(p, path)));
   for (let i = closedTabs.length - 1; i >= 0; i -= 1) if (within(closedTabs[i].path, path)) closedTabs.splice(i, 1);
   // Tabs of deleted notes close; the open one hands over to its neighbour.
@@ -2880,17 +2886,94 @@ function showTabActions(): void {
   ]);
 }
 
+/** How much of a note its card shows. */
+const CARD_CHARS = 1500;
+/** A picture small enough to be worth holding as a card (data: URL
+ *  characters, so about three quarters of that in bytes). */
+const SMALL_PICTURE = 256 * 1024;
+
+const cardName = (path: string): string => `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>`;
+
+/**
+ * A document's card, from a picture in hand.
+ *
+ * The page's own dark rule travels with it: the stored picture is the
+ * paper as the engine drew it, white, and the dark theme's filter is put
+ * over it here exactly as it is put over the page -- so a card follows the
+ * theme without being drawn again, and a page that was authored dark is
+ * left alone. The URL is let go of once the browser has had time to decode
+ * the picture; holding one per tab is a leak of exactly the kind the card
+ * pipeline exists to end.
+ */
+function shotCard(path: string, shot: Shot): string {
+  let url: string;
+  try { url = URL.createObjectURL(shot.shot); } catch { return cardName(path); }
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return `${cardName(path)}<img class="tab-card-page${shot.dark ? ' is-dark-page' : ''}" src="${url}" alt="">`
+    + `<p class="tab-card-note">Page ${shot.page}${shot.pages ? ` of ${shot.pages}` : ''}</p>`;
+}
+
+/**
+ * What a kept card was built from.
+ *
+ * The file's modified time for a file on the disk -- one stat, no read --
+ * and a mark taken off the text in the editor for the tab being typed in,
+ * whose disk copy is behind what the card should show. Null where there is
+ * no modified time to be had: a card with nothing to check it against is
+ * built fresh rather than trusted.
+ */
+async function cardStamp(path: string, live: boolean): Promise<string | null> {
+  if (live) return liveStamp(editor.getValue().slice(0, CARD_CHARS));
+  const at = await backend.stat(path).then((entry) => entry?.mtime ?? 0).catch(() => 0);
+  return at ? String(at) : null;
+}
+
+/**
+ * The card for a tab as it was last built, with nothing waited for.
+ *
+ * The switcher draws this in the same frame as the sheet itself, and then
+ * asks for the current card in the usual way: what was held is shown at
+ * once and replaced if the file has moved on since. That is the whole of
+ * "it doesn't need to load if it's saved to the db" -- a card that has
+ * been seen before never appears as a blank rectangle again.
+ */
+function tabCardNow(i: number): string | null {
+  const path = tabs[i]?.path;
+  if (!path || isExternalPath(path)) return null;
+  // Never the tab being read. Its note is being typed into and its
+  // document is being scrolled, so it is the one card that can have moved
+  // on since it was last built -- and it is also the cheapest to build,
+  // because its text is already in the editor and its reader is already
+  // on the screen. Every other tab is a file nothing is touching.
+  if (i === activeTab) return null;
+  if (isDocument(path)) {
+    const shot = shotNow(path);
+    return shot ? shotCard(path, shot) : null;
+  }
+  return cardNow(path);
+}
+
 function showTabs(): void {
   void (async () => {
     if (!await leaveCurrent()) return;
     openTabSwitcher({
       tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path, external: Boolean(t.path) && isExternalPath(t.path) })),
+      previewNow: (i) => tabCardNow(i),
       preview: async (i) => {
         const path = tabs[i].path;
         if (!path) return '';
         if (isExternalPath(path)) {
           const file = externalFilesByPath.get(path);
           return `<div class="inline-title" dir="auto">${escapeText(file?.name ?? 'Incoming file')}</div><p>${escapeText(file?.mimeType ?? 'External file')}</p>`;
+        }
+        // What this card showed last time, if the file has not changed
+        // since. Asked before anything is read or rendered; the stamp is
+        // the file's modified time, or a mark off the text itself for the
+        // tab being typed in.
+        const stamp = await cardStamp(path, i === activeTab);
+        if (stamp) {
+          const kept = await cardKept(path, stamp);
+          if (kept !== null) return kept;
         }
         // A document is never read for a card.
         //
@@ -2914,28 +2997,33 @@ function showTabs(): void {
           if (path === filePath && pdfView) await pdfView.keepNow().catch(() => undefined);
           const { recallCard } = await import('./pdfCard');
           const card = await recallCard(path);
-          const name = `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>`;
-          if (!card) return `${name}<p class="tab-card-note">PDF</p>`;
-          // The URL is let go of as soon as the browser has the picture;
-          // holding one per tab is a leak of exactly the kind being fixed.
-          // The page's own dark rule travels with the card: the stored
-          // picture is the paper as the engine drew it, white, and the
-          // dark theme's filter is put over it here exactly as it is put
-          // over the page -- so a card follows the theme without being
-          // drawn again, and a page that was authored dark is left alone.
-          return `${name}<img class="tab-card-page${card.dark ? ' is-dark-page' : ''}" src="${card.url}" alt="">`
-            + `<p class="tab-card-note">Page ${card.page}${card.pages ? ` of ${card.pages}` : ''}</p>`;
+          if (!card) return `${cardName(path)}<p class="tab-card-note">PDF</p>`;
+          // Held, so the next opening of the switcher paints this page
+          // without a database read and without waiting for one.
+          rememberShot(path, card);
+          return shotCard(path, card);
         }
         // Nor is a picture: its own file is the card.
         if (isPicture(path)) {
           const url = await backend.readDataUrl(path).catch(() => null);
-          const name = `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>`;
-          return url ? `${name}<img class="tab-card-page" src="${url}" alt="">` : name;
+          if (!url) return cardName(path);
+          const html = `${cardName(path)}<img class="tab-card-page" src="${url}" alt="">`;
+          // A picture is its own card, which means a card as big as the
+          // picture. A screenshot is a few kilobytes and worth holding; a
+          // twelve-megapixel photograph is not, and a shelf of those is
+          // the memory this whole pipeline was written to stop spending.
+          if (stamp && url.length <= SMALL_PICTURE) rememberCard(path, stamp, html);
+          return html;
         }
         const text = i === activeTab ? editor.getValue() : (await backend.read(path)) ?? '';
-        const card = isHtmlFile(path) ? `<pre class="card-source">${escapeText(text.slice(0, 1500))}</pre>`
-          : stripLiveBlocks(renderMarkdown(asMarkdown(path, text.slice(0, 1500))));
-        return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${card}`;
+        const card = isHtmlFile(path) ? `<pre class="card-source">${escapeText(text.slice(0, CARD_CHARS))}</pre>`
+          : stripLiveBlocks(renderMarkdown(asMarkdown(path, text.slice(0, CARD_CHARS))));
+        const html = `${cardName(path)}${card}`;
+        // The tab being typed in is stamped off its own text, which no
+        // later run can match -- so it is held in memory and kept out of
+        // the database.
+        if (stamp) rememberCard(path, stamp, html, i !== activeTab);
+        return html;
       },
       select: (i) => {
         // A tab picked out of the switcher is a file he chose, as much as
@@ -3809,6 +3897,7 @@ async function boot(): Promise<void> {
   void tellWhatTheLastResumeSaid();
   watchTheThread();
   warmTheEngine();
+  warmTheCards();
   const ready = log.time('launch', 'ready to read');
   try {
     // Before the first file opens, so that a file asking where it was left
@@ -4120,6 +4209,17 @@ function onForeground(from: Wiring): void {
  * books should not compile a pdf engine for nothing. And on idle, so it
  * never stands in front of the thing he did ask for.
  */
+/**
+ * Bring the kept tab cards in from the database while nothing else is
+ * happening, so the first press of the tabs button in a run is answered
+ * from memory like every press after it (src/tabCards.ts).
+ */
+function warmTheCards(): void {
+  const warm = (): void => { void warmTabCards().catch(() => undefined); };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => warm(), { timeout: 4000 });
+  else window.setTimeout(warm, 2000);
+}
+
 function warmTheEngine(): void {
   if (!tabs.some((tab) => isDocument(tab.path))) return;
   const warm = (): void => {
