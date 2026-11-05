@@ -84,3 +84,58 @@ test('a name already taken in that folder steps aside', async ({ page }) => {
   // The empty note already there is untouched.
   expect(await page.evaluate(() => localStorage.getItem('satr:fs:file:Notes/Physics/Untitled.md'))).toBe('already here\n');
 });
+
+// The new tab says it out loud now. "New note creation currently creates at
+// scope base which is undesirable... I have an idea right now: show the
+// current dir at the top of the new tab page, will be really good." It was
+// already following the note you came from rather than the scope's base, but
+// silently -- the only way to be sure was to long-press the folder and use
+// its menu, which he does not enjoy. The line is also the way to change it.
+
+const whereLine = (page: Page) => page.locator('#empty-tab .empty-state-where');
+
+test('the new tab says which folder a note would go in', async ({ page }) => {
+  await boot(page, { 'Notes/Physics/lecture.md': '# Lecture\n', 'Notes/other.md': 'x\n' }, 'Notes/Physics/lecture.md');
+  await page.locator('#nav-new').click();
+  await expect(whereLine(page)).toContainText('New notes go in');
+  await expect(whereLine(page)).toContainText('Physics');
+});
+
+test('the folder it names can be changed, and the note follows it', async ({ page }) => {
+  await boot(page, {
+    'Notes/Physics/lecture.md': '# Lecture\n',
+    'Notes/Physics/2026/term.md': 'x\n',
+  }, 'Notes/Physics/lecture.md');
+  await page.locator('#nav-new').click();
+  await expect(whereLine(page)).toContainText('Physics');
+
+  await whereLine(page).click();
+  await expect(page.locator('.menu.mod-bottom-sheet')).toBeVisible();
+  await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: '2026' }).click();
+  await expect(page.locator('.menu.mod-bottom-sheet')).toHaveCount(0);
+  await expect(whereLine(page), 'the line says where it will go now').toContainText('2026');
+
+  await page.locator('#empty-tab [data-act="new"]').click();
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/^Untitled/);
+  expect(await exists(page, 'Notes/Physics/2026/Untitled.md')).toBe(true);
+  expect(await exists(page, 'Notes/Physics/Untitled.md'), 'not where it would have gone').toBe(false);
+});
+
+test('the pick belongs to the tab it was made on', async ({ page }) => {
+  // Nothing is written down: the next new tab follows the note you are in
+  // then, which is the behaviour the line exists to make visible.
+  await boot(page, {
+    'Notes/Physics/lecture.md': '# Lecture\n',
+    'Notes/Physics/2026/term.md': 'x\n',
+  }, 'Notes/Physics/lecture.md');
+  await page.locator('#nav-new').click();
+  await whereLine(page).click();
+  await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: '2026' }).click();
+  await expect(whereLine(page)).toContainText('2026');
+
+  await page.locator('#empty-tab [data-act="new"]').click();
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/^Untitled/);
+  // A second new tab, from the note that was just made in 2026.
+  await page.locator('#nav-new').click();
+  await expect(whereLine(page)).toContainText('2026');
+});

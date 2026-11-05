@@ -3814,6 +3814,50 @@ textarea,
   align-items: center;
   margin-top: 40px;
 }
+/* The new tab's "New notes go in ..." line: quieter than the actions under
+   it, because it is a statement first and a button second -- it says where
+   the note would go, and only then offers to change it. */
+.empty-state-where-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+.empty-state-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, 90vw);
+  padding: 5px 10px 5px 8px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 20px;
+  -webkit-tap-highlight-color: transparent;
+}
+.empty-state-where:active {
+  background: var(--background-modifier-hover);
+}
+.empty-state-where svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.8;
+}
+.empty-state-where-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.empty-state-where strong {
+  color: var(--text-normal);
+  font-weight: 600;
+}
 .empty-state-action {
   min-width: 200px;
   margin: 12px 0 0;

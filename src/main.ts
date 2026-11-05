@@ -2247,6 +2247,25 @@ function focusedNoteDir(): string {
   const dir = path && !isExternalPath(path) ? dirname(path) : '';
   return dir || notesHome();
 }
+/**
+ * Where a note made from this tab will be written.
+ *
+ * "New note creation currently creates at scope base, which is
+ * undesirable... right now I have an alternative way, which is holding the
+ * folder and pressing new note, but that's not enjoyable for me. (I have an
+ * idea right now: show the current dir at the top of the new tab page, will
+ * be really good.)"
+ *
+ * It already followed the note you came from rather than the scope's base
+ * -- but silently, so the only way to be sure was to long-press a folder.
+ * The new tab says it out loud now, and the line it says it on is a button:
+ * pick another folder and the note goes there instead. The pick belongs to
+ * the tab it was made on (the tab stops being an empty tab the moment the
+ * note is made, so it cannot outlive the note it was for) and nothing is
+ * written down -- a new tab tomorrow follows the note you are in tomorrow.
+ */
+const pickedDirs = new WeakMap<Tab, string>();
+const whereNewNotesGo = (): string => pickedDirs.get(curTab()) ?? focusedNoteDir();
 /** A file from the device's own storage becomes a file of the vault: written
  *  into the folder being looked at, named so nothing is ever replaced, and
  *  opened. Text is kept as text — the app's own test for it, so a .md really
@@ -2256,7 +2275,9 @@ function focusedNoteDir(): string {
 async function importFiles(): Promise<void> {
   const picked = await pickFiles();
   if (!picked.length) return;
-  const dir = focusedNoteDir();
+  // The same folder the note would go in, and for the same reason: the
+  // button that says so is directly above this one on the new tab page.
+  const dir = whereNewNotesGo();
   let first = '';
   for (const file of picked) {
     const { base, ext } = nameParts(file.name);
@@ -2284,7 +2305,7 @@ async function importFiles(): Promise<void> {
   void leftSidebar.refresh();
   await openFile(first);
 }
-async function newFile(dir = focusedNoteDir()): Promise<void> {
+async function newFile(dir = whereNewNotesGo()): Promise<void> {
   if (!await leaveCurrent()) return;
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   const path = joinPath(dir, await freeName(dir, 'Untitled', '.md'));
@@ -2746,7 +2767,66 @@ function showEmptyTab(): void {
   // this the row of the note that was just closed stayed highlighted.
   void leftSidebar.refresh();
 }
+/**
+ * Choose the folder a note made from this tab goes in.
+ *
+ * The folders of the space being used, or -- in All files -- the folder
+ * being browsed, the one above it and the ones under it, which is the same
+ * list and the same order the tree's own "Move to..." offers. Three hundred
+ * of them at the outside: the menu is a list to pick from, not a tree to
+ * explore, and the tree itself is one tap away.
+ */
+/**
+ * A folder's name as this app writes it elsewhere: inside a space, the
+ * path under the space ("Physics/2026", and the space's own name for its
+ * root); in All files, the path from the top. The tree's "Move to..."
+ * sheet says it exactly this way, and the general-purpose shortener is
+ * wrong here -- it cuts a folder nobody shares a prefix with down to its
+ * first letter, which reads as "N/Physics" in a sentence.
+ */
+function dirLabel(dir: string): string {
+  const scope = currentScope();
+  if (scope.kind === 'space') {
+    const root = scope.space.path;
+    if (dir === root) return scope.space.name;
+    if (within(dir, root)) return dir.slice(root.length + 1);
+  }
+  return dir ? `/${dir}` : '/';
+}
+
+async function pickNewNoteDir(): Promise<void> {
+  const scope = currentScope();
+  const rootDir = scope.kind === 'space' ? scope.space.path : walkDir();
+  const folders: string[] = scope.kind === 'all' && rootDir ? [dirname(rootDir)] : [];
+  folders.push(rootDir);
+  const queue = [rootDir];
+  while (queue.length && folders.length < 300) {
+    const dir = queue.shift()!;
+    for (const entry of await backend.list(dir).catch(() => [])) {
+      if (entry.kind !== 'folder' || entry.name.startsWith('.')) continue;
+      folders.push(entry.path);
+      queue.push(entry.path);
+    }
+  }
+  const here = whereNewNotesGo();
+  const seen = new Set<string>();
+  openMenu(folders.filter((dir) => !seen.has(dir) && seen.add(dir)).map((dir) => ({
+    title: dirLabel(dir),
+    icon: FOLDER_ICON,
+    checked: dir === here,
+    action: () => {
+      pickedDirs.set(curTab(), dir);
+      void renderEmptyTab();
+    },
+  })), { title: 'New notes go in' });
+}
+
 async function renderEmptyTab(): Promise<void> {
+  // Which folder a note made here would land in, shortened the way every
+  // other path in the app is: the folder itself keeps its name and the ones
+  // above it are cut to the shortest prefix their siblings leave free.
+  const where = whereNewNotesGo();
+  const whereLabel = dirLabel(where);
   const recent: string[] = [];
   for (const path of recentNotes()) {
     if (recent.length >= 8) break;
@@ -2764,6 +2844,11 @@ async function renderEmptyTab(): Promise<void> {
       <div class="empty-state-search">
         <button type="button" class="empty-state-search-icon" data-act="search" aria-label="Search notes">${SEARCH_ICON}</button>
         <input type="search" class="empty-state-search-field" dir="auto" placeholder="Search notes" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${escapeText(emptyQuery)}">
+      </div>
+      <div class="empty-state-where-row">
+        <button type="button" class="empty-state-where" data-act="where" aria-label="Choose the folder a new note goes in">
+          ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>${CHEVRON_ICON}
+        </button>
       </div>
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
@@ -2802,6 +2887,7 @@ emptyTab.addEventListener('click', (event) => {
   if (recent) { void openFile(recent.dataset.path!); return; }
   const act = target.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (act === 'new') void newFile();
+  else if (act === 'where') void pickNewNoteDir();
   else if (act === 'import') void importFiles();
   else if (act === 'files') toggleFiles(true);
   else if (act === 'search') emptyTab.querySelector<HTMLInputElement>('.empty-state-search-field')?.focus();
@@ -2817,6 +2903,8 @@ emptyTab.addEventListener('click', (event) => {
 let emptyQuery = '';
 let emptySearchRun = 0;
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"/><circle cx="11" cy="11" r="8"/></svg>';
+const FOLDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const CHEVRON_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
 const EMPTY_HITS_MAX = 60;
 /** Name matches (files, folders) the new tab's search shows before the lines. */
 const EMPTY_NAMES_MAX = 12;
