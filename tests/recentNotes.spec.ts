@@ -125,3 +125,24 @@ test('reopening a file that is already open moves it up the list', async ({ page
   expect((await recent(page))[0]).toBe('Notes/one.md');
   expect((await recent(page)).filter((p) => p === 'Notes/one.md'), 'and only once').toHaveLength(1);
 });
+
+test('picking a tab out of the switcher is a file you chose', async ({ page }) => {
+  // His: "if you open it via another method (already open tab...) it
+  // doesn't update the list". Switching tabs by the arrows, or landing on
+  // one because another closed, is the machinery moving and stays silent;
+  // reaching into the switcher and pressing a card is a file he picked by
+  // name, exactly like a row in the tree.
+  await boot(page, ['Notes/one.md', 'Notes/two.md', 'Notes/three.md'], 0);
+  await clear(page);
+  await page.locator('#nav-tabs').dispatchEvent('click');
+  await expect(page.locator('.mobile-tab-switcher')).toBeVisible();
+  await page.locator('.mobile-tab-title').getByText('three', { exact: false }).first().click();
+  await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
+  expect((await recent(page))[0], 'the tab he reached for').toBe('Notes/three.md');
+
+  // The arrows are still the machinery, and still say nothing.
+  await clear(page);
+  await page.locator('#nav-back').click();
+  await page.waitForTimeout(250);
+  expect(await recent(page), 'stepping through tabs records nothing').toEqual([]);
+});

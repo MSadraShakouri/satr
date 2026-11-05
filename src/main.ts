@@ -2929,7 +2929,16 @@ function showTabs(): void {
           : stripLiveBlocks(renderMarkdown(asMarkdown(path, text.slice(0, 1500))));
         return `<div class="inline-title" dir="auto">${escapeText(displayNameForPath(path))}</div>${card}`;
       },
-      select: (i) => void switchTab(i),
+      select: (i) => {
+        // A tab picked out of the switcher is a file he chose, as much as
+        // a row in the tree is: "if you open it via another method
+        // (already open tab...) it doesn't update the list". The arrows,
+        // closing a tab and starting the app still say nothing -- those
+        // are the machinery landing somewhere, not a choice.
+        const picked = tabs[i]?.path;
+        if (picked) rememberRecent(picked);
+        void switchTab(i);
+      },
       close: closeTab,
       newTab,
       canReopen: () => closedTabs.length > 0,
