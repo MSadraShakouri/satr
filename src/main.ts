@@ -28,6 +28,7 @@ import { keepingPlace, releaseFoldSlack } from './foldSlack';
 import { setMathDigits } from './math';
 import { createLeftSidebar } from './leftSidebar';
 import { initDrawers } from './drawers';
+import { closeFolderWalk, isFolderWalkOpen, walkToFolder } from './dirPicker';
 import { closeMenu, isMenuOpen, openMenu, type MenuEntry } from './menu';
 import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
@@ -2791,48 +2792,34 @@ function dirLabel(dir: string): string {
     if (dir === root) return scope.space.name;
     if (within(dir, root)) return dir.slice(root.length + 1);
   }
-  return dir ? `/${dir}` : '/';
+  // "New notes go in /" reads like a typo in a sentence, and the walker's
+  // path line says the same thing; the vault's root is the one folder that
+  // wants a name rather than a path.
+  return dir ? `/${dir}` : 'the vault';
 }
 
 /**
- * Whether there is anywhere else to put a note. A vault with no folders
- * in it -- which is how the web one usually starts -- can only answer one
- * way, and a button that opens a sheet with a single row and a tick on it
- * is a button that lies about having a choice. One listing of the scope's
- * own root answers it; the sheet below walks the rest only when asked.
+ * The folder a new note goes in, chosen by walking to it.
+ *
+ * His design: "making the pop-up be able to walk like sidebar, in space only
+ * the space and in all files everywhere and a confirm button". So the ceiling
+ * is the space's own root inside a space -- a note cannot be sent out of the
+ * space being read -- and the vault root in All files, where everywhere is
+ * reachable. The walk starts where notes are going now, which is usually one
+ * tap from where he wants to be.
  */
-async function canPickNewNoteDir(): Promise<boolean> {
-  const scope = currentScope();
-  if (scope.kind === 'all') return true; // the vault's own root is always a second place
-  const inside = await backend.list(scope.space.path).catch(() => []);
-  return inside.some((entry) => entry.kind === 'folder' && !entry.name.startsWith('.'));
-}
-
 async function pickNewNoteDir(): Promise<void> {
   const scope = currentScope();
-  const rootDir = scope.kind === 'space' ? scope.space.path : walkDir();
-  const folders: string[] = scope.kind === 'all' && rootDir ? [dirname(rootDir)] : [];
-  folders.push(rootDir);
-  const queue = [rootDir];
-  while (queue.length && folders.length < 300) {
-    const dir = queue.shift()!;
-    for (const entry of await backend.list(dir).catch(() => [])) {
-      if (entry.kind !== 'folder' || entry.name.startsWith('.')) continue;
-      folders.push(entry.path);
-      queue.push(entry.path);
-    }
-  }
-  const here = whereNewNotesGo();
-  const seen = new Set<string>();
-  openMenu(folders.filter((dir) => !seen.has(dir) && seen.add(dir)).map((dir) => ({
-    title: dirLabel(dir),
-    icon: FOLDER_ICON,
-    checked: dir === here,
-    action: () => {
-      pickedDirs.set(curTab(), dir);
-      void renderEmptyTab();
-    },
-  })), { title: 'New notes go in' });
+  const picked = await walkToFolder({
+    start: whereNewNotesGo(),
+    ceiling: scope.kind === 'space' ? scope.space.path : '',
+    title: 'New notes go in',
+    confirm: 'Put new notes here',
+    label: dirLabel,
+  });
+  if (picked === null) return;
+  pickedDirs.set(curTab(), picked);
+  await renderEmptyTab();
 }
 
 async function renderEmptyTab(): Promise<void> {
@@ -2842,7 +2829,6 @@ async function renderEmptyTab(): Promise<void> {
   // folders the sentence is still the useful half.
   const where = whereNewNotesGo();
   const whereLabel = dirLabel(where);
-  const whereOpen = await canPickNewNoteDir();
   const recent: string[] = [];
   for (const path of recentNotes()) {
     if (recent.length >= 8) break;
@@ -2862,13 +2848,9 @@ async function renderEmptyTab(): Promise<void> {
         <input type="search" class="empty-state-search-field" dir="auto" placeholder="Search notes" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${escapeText(emptyQuery)}">
       </div>
       <div class="empty-state-where-row">
-        ${whereOpen
-          ? `<button type="button" class="empty-state-where" data-act="where" aria-label="Choose the folder a new note goes in">
-              ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>${CHEVRON_ICON}
-            </button>`
-          : `<span class="empty-state-where is-plain">
-              ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>
-            </span>`}
+        <button type="button" class="empty-state-where" data-act="where" aria-label="Choose the folder a new note goes in">
+          ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>${CHEVRON_ICON}
+        </button>
       </div>
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
@@ -3952,6 +3934,7 @@ let logViewer: { isLogOpen(): boolean; closeLog(): void } | null = null;
 /** Returns true when the press should leave the app. */
 function handleBack(): boolean {
   if (isMenuOpen()) closeMenu();
+  else if (isFolderWalkOpen()) closeFolderWalk();
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
   else if (logViewer?.isLogOpen()) logViewer.closeLog();

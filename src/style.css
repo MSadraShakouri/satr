@@ -3858,6 +3858,80 @@ textarea,
   color: var(--text-normal);
   font-weight: 600;
 }
+/* The folder walker (src/dirPicker.ts): the bottom sheet's own chrome, with
+   a path line above the folders and a button that commits below them. */
+.dir-walk-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 10px;
+}
+.dir-walk-here {
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+/* No way up from the ceiling, so the name takes the button's place. */
+.dir-walk-here:first-child {
+  padding-left: 8px;
+}
+.dir-walk-up svg,
+.dir-walk-add svg {
+  width: 20px;
+  height: 20px;
+}
+.dir-walk .menu-item-icon.mod-into {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+.dir-walk .menu-item-icon.mod-into svg {
+  width: 16px;
+  height: 16px;
+}
+.dir-walk-empty {
+  padding: 18px 16px;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  text-align: center;
+}
+.dir-walk-name {
+  padding: 0 0 8px;
+}
+.dir-walk-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--background-modifier-border-hover);
+  border-radius: 12px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 1rem;
+  font-family: inherit;
+}
+.dir-walk-foot {
+  padding: 10px 0 2px;
+}
+.dir-walk-confirm {
+  width: 100%;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 1rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dir-walk-confirm:active {
+  filter: brightness(0.94);
+}
+
 .empty-state-where.is-plain {
   /* Nowhere else to put it: the same sentence, with nothing about it
      saying it can be pressed. */

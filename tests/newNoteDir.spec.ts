@@ -101,52 +101,99 @@ test('the new tab says which folder a note would go in', async ({ page }) => {
   await expect(whereLine(page)).toContainText('Physics');
 });
 
-test('the folder it names can be changed, and the note follows it', async ({ page }) => {
-  await boot(page, {
-    'Notes/Physics/lecture.md': '# Lecture\n',
-    'Notes/Physics/2026/term.md': 'x\n',
-  }, 'Notes/Physics/lecture.md');
-  await page.locator('#nav-new').click();
-  await expect(whereLine(page)).toContainText('Physics');
+/** Walk the sheet: tap a folder row to go into it, the button to commit. */
+async function walkTo(page: Page, ...names: string[]): Promise<void> {
+  await page.locator('#empty-tab [data-act="where"]').click();
+  await expect(page.locator('.dir-walk')).toBeVisible();
+  for (const name of names) {
+    await page.locator('.dir-walk .menu-item', { hasText: name }).click();
+    await expect(page.locator('.dir-walk-here')).toContainText(name);
+  }
+}
 
-  await whereLine(page).click();
-  await expect(page.locator('.menu.mod-bottom-sheet')).toBeVisible();
-  await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: '2026' }).click();
-  await expect(page.locator('.menu.mod-bottom-sheet')).toHaveCount(0);
-  await expect(whereLine(page), 'the line says where it will go now').toContainText('2026');
+test('the folder it names can be changed, and the note follows it', async ({ page }) => {
+  await boot(page, { 'Notes/Physics/lecture.md': '# Waves\n' }, 'Notes/Physics/lecture.md');
+  await page.locator('#nav-new').click();
+  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('Physics');
+
+  await walkTo(page, '2026');
+  await page.locator('.dir-walk-confirm').click();
+  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('2026');
 
   await page.locator('#empty-tab [data-act="new"]').click();
   await expect(page.locator('#app .cm-file-name')).toHaveText(/^Untitled/);
   expect(await exists(page, 'Notes/Physics/2026/Untitled.md')).toBe(true);
-  expect(await exists(page, 'Notes/Physics/Untitled.md'), 'not where it would have gone').toBe(false);
+  expect(await exists(page, 'Notes/Physics/Untitled.md')).toBe(false);
 });
 
-test('the pick belongs to the tab it was made on', async ({ page }) => {
-  // Nothing is written down: the next new tab follows the note you are in
-  // then, which is the behaviour the line exists to make visible.
-  await boot(page, {
-    'Notes/Physics/lecture.md': '# Lecture\n',
-    'Notes/Physics/2026/term.md': 'x\n',
-  }, 'Notes/Physics/lecture.md');
+test('walking away without the button changes nothing', async ({ page }) => {
+  // The whole point of the button: a row goes deeper, it does not choose.
+  await boot(page, { 'Notes/Physics/lecture.md': '# Waves\n' }, 'Notes/Physics/lecture.md');
   await page.locator('#nav-new').click();
-  await whereLine(page).click();
-  await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: '2026' }).click();
-  await expect(whereLine(page)).toContainText('2026');
+  await walkTo(page, '2026');
+  await page.locator('.menu-backdrop').click();
+  await expect(page.locator('.dir-walk')).toHaveCount(0);
+  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('Physics');
+  await expect(page.locator('#empty-tab .empty-state-where')).not.toContainText('2026');
+});
+
+test('a space is the ceiling, and All files is not', async ({ page }) => {
+  // In a space the walk cannot rise above the space root, so there is no
+  // way up from it; in All files the vault root is reachable.
+  await boot(page, { 'Notes/Physics/lecture.md': '# Waves\n' }, 'Notes/Physics/lecture.md');
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab [data-act="where"]').click();
+  await expect(page.locator('.dir-walk-here')).toHaveText('Physics');
+  await page.locator('.dir-walk-up').click();
+  await expect(page.locator('.dir-walk-here')).toHaveText('Notes');
+  await expect(page.locator('.dir-walk-up')).toHaveCount(0);
+});
+
+test('a folder can be made in the sheet, and the note goes into it', async ({ page }) => {
+  await boot(page, { 'Notes/Physics/lecture.md': '# Waves\n' }, 'Notes/Physics/lecture.md');
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab [data-act="where"]').click();
+  await page.locator('.dir-walk-add').click();
+  await page.locator('.dir-walk-input').fill('Waves');
+  await page.locator('.dir-walk-input').press('Enter');
+  await expect(page.locator('.dir-walk-here')).toContainText('Waves');
+  await page.locator('.dir-walk-confirm').click();
 
   await page.locator('#empty-tab [data-act="new"]').click();
   await expect(page.locator('#app .cm-file-name')).toHaveText(/^Untitled/);
-  // A second new tab, from the note that was just made in 2026.
-  await page.locator('#nav-new').click();
-  await expect(whereLine(page)).toContainText('2026');
+  expect(await exists(page, 'Notes/Physics/Waves/Untitled.md')).toBe(true);
 });
 
-test('a vault with no folders states it and offers nothing', async ({ page }) => {
-  // How the web vault usually starts. A sheet with one row and a tick on
-  // it is a button that lies about having a choice, so the line stays a
-  // sentence: it still says the thing worth knowing.
-  await boot(page, { 'first note.md': '# First\n', 'reading list.md': '# Reading\n' }, 'first note.md', []);
+test('the pick belongs to the tab it was made on', async ({ page }) => {
+  await boot(page, { 'Notes/Physics/lecture.md': '# Waves\n' }, 'Notes/Physics/lecture.md');
   await page.locator('#nav-new').click();
-  await expect(page.locator('#empty-tab .empty-state-where')).toBeVisible();
-  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('New notes go in');
-  await expect(page.locator('#empty-tab [data-act="where"]')).toHaveCount(0);
+  await walkTo(page, '2026');
+  await page.locator('.dir-walk-confirm').click();
+  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('2026');
+
+  // Close that tab without making anything, and the pick goes with it:
+  // the next new tab follows the note being read again.
+  await page.locator('#empty-tab [data-act="close"]').click();
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/lecture/);
+  await page.locator('#nav-new').click();
+  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('Physics');
+  await expect(page.locator('#empty-tab .empty-state-where')).not.toContainText('2026');
+});
+
+test('a vault with no folders can be given one from the sheet', async ({ page }) => {
+  // How the web vault starts. The sheet opens on the space root with
+  // nothing in it, and the + is the way out of that.
+  await boot(page, { 'first note.md': '# First\n' }, 'first note.md', []);
+  await page.locator('#nav-new').click();
+  await page.locator('#empty-tab [data-act="where"]').click();
+  await expect(page.locator('.dir-walk-empty')).toBeVisible();
+  await page.locator('.dir-walk-add').click();
+  await page.locator('.dir-walk-input').fill('Inbox');
+  await page.locator('.dir-walk-input').press('Enter');
+  await expect(page.locator('.dir-walk-here')).toContainText('Inbox');
+  await page.locator('.dir-walk-confirm').click();
+
+  await page.locator('#empty-tab [data-act="new"]').click();
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/^Untitled/);
+  expect(await exists(page, 'Notes/Inbox/Untitled.md')).toBe(true);
 });
