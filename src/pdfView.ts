@@ -936,9 +936,18 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   // actually on the glass -- which is the one a reader would call "opened".
   const building = log.time('pdf', 'column built', { pages: document_.pageCount });
   let firstPicture: ReturnType<typeof log.time> | null = log.time('pdf', 'first page on glass');
+  // What the engine itself did before anything was on screen, so the open
+  // can be read as "waiting for the engine" or "waiting for everything
+  // else". On his phone the first page costs 228 to 340 ms and only part of
+  // that is drawing; nothing said which part.
+  let firstEngineMs = 0;
+  let firstPixels = 0;
   const drewSomething = (): void => {
     if (!firstPicture) return;
-    firstPicture();
+    firstPicture(firstPixels ? {
+      engineMs: Math.round(firstEngineMs),
+      megapixels: Math.round(firstPixels / 1e5) / 10,
+    } : undefined);
     firstPicture = null;
     // The reading that explains a kill. A page of a book is a canvas, the
     // sharp tile over it is another, and neither is on the JavaScript heap:
@@ -1895,6 +1904,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    */
   let perMillion = 0;
   const costs = (pixels: number, ms: number): void => {
+    if (firstPicture) { firstEngineMs += ms; firstPixels += pixels; }
     if (pixels < 250_000) return;
     const rate = ms / (pixels / 1e6);
     // the last few pages, weighted towards the last: the reader is looking
