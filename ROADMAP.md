@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). The code is **0.18.9**'s: 0.18.1 and 0.18.2 were released
+open-file plugins). The code is **0.18.10**'s: 0.18.1 and 0.18.2 were released
 and withdrawn, 0.18.3 carried the per-file memory into a database of its own,
 0.18.4 added the log the app keeps of itself, 0.18.5 is what that log said
 when it came back off the author's phone — the file being read, and read
@@ -17,9 +17,10 @@ phone said about 0.18.6 within the hour: a gesture that was anchored to a
 picture the renderer kept taking away, a document that came back as a
 smear of itself, and an instrument for the one bug still standing — 0.18.8
 is that instrument's answer, a freeze explained in one resume and a fix
-for it in the Android half — and 0.18.9 is what happened when that fix
-did not hold: an instrument that lives outside the page, because every
-one before it died with the app. `package.json` only ever
+for it in the Android half 0.18.9 is what happened when that fix
+did not hold — the freeze found and fixed, and confirmed on the phone
+the same morning — and 0.18.10 is the rest of the resume: what it
+holds while it is away, and what it pays before a page is on screen. `package.json` only ever
 moves forwards, so that nothing the releases depend on goes backwards: the
 APK's version code is the commit count, and a version code that fell would be
 refused by every phone that already had one. Notes are files in folders behind one storage
@@ -289,6 +290,16 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Four the writer reported in the panels.** *Reveal current file* is a button now, not a switch that rearranged the panel whenever the note changed — one press takes the panel to the note wherever it lives, and nothing moves it by itself, so reading can no longer change what a search covers or where a new note lands. With **Include subfolders** off, a search roots at the open note's own folder rather than the space top, which in a space whose top level holds folders had returned nothing but the open note. The in-note find draws the current match as Obsidian's reading view does — a 3px accent ring on it, a 2px translucent one on the other 39 — where before every match wore the same ring and you could not tell which one you were on. And the navigation bars only move on a reversal: a thumb's 4–6px wobble landing more than 200 ms after they hid used to walk straight into `restoreNavigation()` and flash them, which tests/navAutoHide.spec.ts:151 now pins.
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
+
+### 0.18.10: what an open costs, and what it holds while it is away (November 2026)
+
+“Works now.” 0.18.9's fix held, and his log of it is the proof: three resumes, not one rebuild between them, frames in 19 to 38 ms, 62 canvases still in hand at the end. So this version is the rest of what the same log shows — the phone still killing the app in the background at 383 MB, and an open that costs more than it needs to before a page is on the glass. Four small things, each measured.
+
+- [x] **A document opens without an empty reading view in front of it, and a check says it checked.** Before the bytes arrived the reading view was rendered as markdown of an empty string — `reading view built chars=0`, with an `edit to preview` behind it: two measurements of nothing and a flash of an empty note in front of every book. And the line that said a document had been `read bytes=0 status=text` when all it did was ask whether the file still exists, which against a ten-megabyte book reads like a failed read and has misled every reading of this log, mine included.
+- [x] **The engine is warmed before a book is asked for.** The wasm costs 117 to 144 ms to come up on his phone and it was paid inside the first open of a run, between the tap and the page; every open after that says `engine ready took 0ms`, because the engine is the app's and stays up. It is paid at launch now, on idle, and only when a tab actually holds a document.
+- [x] **`first page on glass` says what it was made of.** The number he feels at every open — 228 to 340 ms, and 1739 ms during the freeze — now carries the engine's own drawing time and the megapixels it drew. No new line and no new work: the slices are already timed for the adaptive slicing, and they are added up until the first picture lands. The next log says whether an open is slow because the engine is drawing or because of everything around it.
+- [x] **The pages and the spare book go while the app is away.** At the moment the system kills him the app holds 62 canvases and 37 MB of pictures, one screen's worth of which is of use to anybody, plus the bytes of a book he is not reading. Going away, the sharp pictures outside the screen go back — the same thing that happens when he scrolls past them, each leaving behind the rough copy shrunk from the picture already drawn — and the second document's bytes go with them. What is on the glass is left alone, because coming back must not flash. Measured here: 28.4 MB down to 21.5, a quarter of it. Coming back draws the band again, which for everything still in hand is a no-op and for the rest asks the engine only for the pages nearest the screen — never the whole document, which was the bug 0.18.9 fixed.
+- **Checked.** Fifteen specs at one worker across the log and the pdf's memory, three of them new, and each of the four changes was proved by putting the old behaviour back and watching its test fail: the empty reading view reappears, the engine is never warmed, and the app holds 28.4 MB away where it now holds 21.5. The freeze's own tests from 0.18.9 are in the same run and still green. The editor, maths, printing and export were not re-run: nothing here reaches them.
 
 ### 0.18.9: the question is asked from outside the page (November 2026)
 
