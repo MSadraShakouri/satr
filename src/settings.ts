@@ -1,3 +1,4 @@
+import { ROTATIONS } from './orientation';
 // Settings: a full-screen page in Obsidian's mobile style (grouped rows on
 // the secondary background, a back arrow and the title at the top), opened
 // from the gear in the left drawer. Saved under satr:settings; the theme is
@@ -39,6 +40,8 @@ export interface Settings {
    * buttons and keeps the name, 'all' takes both, 'stays' is how it was.
    */
   documentChrome: 'stays' | 'controls' | 'all';
+  /** Which way up a document is read; see src/orientation.ts. */
+  documentRotation: 'system' | 'free' | 'portrait' | 'landscape';
   /** PDF page numbers, bottom centre. */
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
@@ -71,7 +74,7 @@ const SETTINGS_VERSION = 5;
  *  Only the DEFAULT moves: a reader whose settings were already saved keeps
  *  whatever they have, so nobody's note grows a gutter or loses one behind
  *  their back on update. */
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, documentChrome: 'controls', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, documentChrome: 'controls', documentRotation: 'system', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
 /** The seven first days, in the order a week can start. Labels come from the
  *  Dates language, never the device's. */
 export const WEEK_START_CHOICES = [6, 0, 1, 2, 3, 4, 5];
@@ -96,6 +99,7 @@ export function loadSettings(): Settings {
     if (!WEEK_START_CHOICES.includes(Number(s.weekStart))) s.weekStart = DEFAULTS.weekStart;
     else s.weekStart = Number(s.weekStart);
     if (!['stays', 'controls', 'all'].includes(s.documentChrome)) s.documentChrome = 'controls';
+    if (!['system', 'free', 'portrait', 'landscape'].includes(s.documentRotation)) s.documentRotation = 'system';
     if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
     if (typeof s.pdfCss !== 'string') s.pdfCss = '';
     if (!['last', 'empty', 'away'].includes(s.launchTabs)) s.launchTabs = 'last';
@@ -269,6 +273,12 @@ export function openSettings(deps: SettingsDeps): void {
             <option value="all"${settings.documentChrome === 'all' ? ' selected' : ''}>Hide the whole header</option>
           </select>
         </div>
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">Turning the phone</div><div class="setting-item-description">Only while a document is open. "Turn freely" works even when the phone's own Auto-rotate is off.</div></div>
+          <select class="dropdown" data-select="documentRotation">
+            ${ROTATIONS.map(([value, label]) => `<option value="${value}"${settings.documentRotation === value ? ' selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
       </div>
       <div class="setting-group-title">PDF export</div>
       <div class="setting-group">
@@ -388,7 +398,7 @@ export function openSettings(deps: SettingsDeps): void {
       savePrintOptions(notePath, printOptions);
       return;
     }
-    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"], [data-select="weekStart"], [data-select="documentChrome"]');
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"], [data-select="weekStart"], [data-select="documentChrome"], [data-select="documentRotation"]');
     if (!select) return;
     if (select.dataset.select === 'quickAction') settings.quickAction = select.value as QuickAction;
     else if (select.dataset.select === 'launchTabs') settings.launchTabs = select.value as Settings['launchTabs'];
@@ -397,6 +407,7 @@ export function openSettings(deps: SettingsDeps): void {
     else if (select.dataset.select === 'timestampCalendar') settings.timestampCalendar = select.value;
     else if (select.dataset.select === 'weekStart') settings.weekStart = Number(select.value);
     else if (select.dataset.select === 'documentChrome') settings.documentChrome = select.value as Settings['documentChrome'];
+    else if (select.dataset.select === 'documentRotation') settings.documentRotation = select.value as Settings['documentRotation'];
     else settings.mathDigits = select.value as Settings['mathDigits'];
     commit();
   });

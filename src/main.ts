@@ -53,6 +53,7 @@ import demoNote from '../demo.md?raw';
 import { loadImages } from './images';
 import { dropSnapshot, keepSnapshots, showSplash } from './snapshot';
 import { ensureFileAccess, hideKeyboard, isNative, setupFontScalePreview, setupSystemBars, systemBars } from './native';
+import { applyRotation } from './orientation';
 import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
@@ -1920,6 +1921,8 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // editor before anything could be seen.
   const imageTab = isPicture(path);
   const documentTab = isDocument(path);
+  // A document may turn with the phone; a note being typed into stays put.
+  applyRotation(loadSettings().documentRotation, documentTab);
   const fileText = content; // what the file itself holds; for a picture, not its note
   if (imageTab || documentTab) content = '';
   // Text Satr had to guess at (a photo's bytes, an old encoding) is shown but
@@ -2749,6 +2752,7 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
+  applyRotation(loadSettings().documentRotation, false);
   displayedTab = curTab();
   ++viewGeneration;
   window.clearTimeout(viewTimer);
@@ -3852,6 +3856,7 @@ function applySettings(settings: Settings): void {
   // What the header over a document does while it is scrolled (CSS keys off
   // this, together with .is-hidden-nav, which the scroll already sets).
   document.body.dataset.docChrome = settings.documentChrome;
+  applyRotation(settings.documentRotation, isDocument(curTab()?.path ?? ''));
   editor.remeasure();
   setHighlightAll(settings.highlightAll);
   setMathDigits(settings.mathDigits);

@@ -1,6 +1,7 @@
 package com.msadrashakouri.satr;
 
 import android.content.Context;
+import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.os.Build;
 import android.view.ViewGroup;
@@ -140,6 +141,33 @@ public class SystemBarsPlugin extends Plugin {
     }
 
     /** Bar icons for the theme: dark = light icons on the dark page. */
+    /**
+     * Which way up the app is allowed to be, asked for by the reader rather
+     * than by the phone (src/orientation.ts).
+     *
+     * SENSOR and SENSOR_LANDSCAPE follow the accelerometer "even if the user
+     * locked sensor-based rotation" -- that sentence from the activity docs
+     * is the whole feature: a wide scan can be turned sideways without
+     * going to Display settings to unlock rotation first. UNSPECIFIED hands
+     * the decision back to the phone, which is what a note gets.
+     *
+     * SENSOR, not FULL_SENSOR: three orientations, so a document never
+     * arrives upside down because the phone was lying on a desk.
+     */
+    @PluginMethod
+    public void setOrientation(PluginCall call) {
+        String mode = call.getString("mode", "system");
+        final int wanted;
+        if ("free".equals(mode)) wanted = ActivityInfo.SCREEN_ORIENTATION_SENSOR;
+        else if ("portrait".equals(mode)) wanted = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        else if ("landscape".equals(mode)) wanted = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+        else wanted = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        getActivity().runOnUiThread(() -> {
+            getActivity().setRequestedOrientation(wanted);
+            call.resolve();
+        });
+    }
+
     @PluginMethod
     public void setStyle(PluginCall call) {
         boolean dark = Boolean.TRUE.equals(call.getBoolean("dark", false));
