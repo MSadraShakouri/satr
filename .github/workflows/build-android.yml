@@ -44,16 +44,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Build the web app
-        run: npm run build
-
-      - name: Sync Android project
-        run: npx cap sync android
-
-      - name: Set Android version
+      - name: Work out what this build is called
         # The version comes from the git tag: v0.3.0 builds 0.3.0. A manual
         # run is the latest tag plus the run number (0.3.0-12). package.json's
-        # version isn't used.
+        # version isn't used. Worked out before the web build, because the
+        # page itself now carries this name and prints it as the first line
+        # of its log -- a log off the phone used to be a date and nothing
+        # else, and which build wrote it had to be guessed.
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION_NAME="${GITHUB_REF#refs/tags/v}"
@@ -66,6 +63,14 @@ jobs:
 
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Build the web app
+        env:
+          SATR_VERSION: ${{ env.VERSION_NAME }}
+        run: npm run build
+
+      - name: Sync Android project
+        run: npx cap sync android
 
       - name: Check signing secret
         env:
