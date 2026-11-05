@@ -219,14 +219,35 @@ const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', b
  * put together. It is per byte, so his 31MB book is about three and a half
  * seconds of it before anything else can start.
  *
- * One document and no more. The switch a reader actually makes is between a
- * note and the one book it is about; a second book kept alongside the first
- * is not a cache but a leak, on a phone that already holds the pages it has
- * drawn. It is handed out only when the file on disk is the same file --
- * same path, same modified time -- so a document replaced underneath the app
- * is read again.
+ * Two documents, most recently used first. One was the guess -- "the switch
+ * a reader makes is between a note and the one book it is about" -- and his
+ * log says otherwise: he reads two books side by side, and the second one
+ * evicted the first at every swap, so a 10.7 MB jozve was read off the disk
+ * again and again at 970, 995 and 1216 ms a time. Two covers that pair and
+ * costs 13 MB of his memory.
+ *
+ * Not two at any size, though, on a phone the system is still killing at
+ * 336 MB: the pair is capped at KEPT_BYTES, and a second document that will
+ * not fit beside the first simply takes its place, which is exactly the old
+ * behaviour. The newest is always kept, whatever it weighs.
+ *
+ * They are handed out only when the file on disk is the same file -- same
+ * path, same modified time -- so a document replaced underneath the app is
+ * read again.
  */
-let keptDocument: { path: string; mtime: number; bytes: Uint8Array } | null = null;
+type KeptDocument = { path: string; mtime: number; bytes: Uint8Array };
+const KEPT_DOCUMENTS = 2;
+const KEPT_BYTES = 48 * 1024 * 1024;
+let keptDocuments: KeptDocument[] = [];
+/** Newest first, the oldest out, and nothing past the weight limit. */
+function keepDocument(kept: KeptDocument): void {
+  const next = [kept, ...keptDocuments.filter((doc) => doc.path !== kept.path)].slice(0, KEPT_DOCUMENTS);
+  let total = 0;
+  keptDocuments = next.filter((doc, at) => {
+    total += doc.bytes.byteLength;
+    return at === 0 || total <= KEPT_BYTES;
+  });
+}
 let pdfView: PdfHandle | null = null;
 let pdfChrome: PdfChrome | null = null;
 /** The contents of the PDF in the tab, in the shape the outline panel reads
@@ -1787,9 +1808,10 @@ async function leaveCurrent(): Promise<boolean> {
  *  the whole read, which on a phone is the largest part of opening a pdf. */
 async function openDocumentBytes(path: string): Promise<void> {
   const entry = await backend.stat(path);
-  const kept = keptDocument;
-  if (entry && kept && kept.path === path && kept.mtime === entry.mtime) {
+  const kept = keptDocuments.find((doc) => doc.path === path);
+  if (entry && kept && kept.mtime === entry.mtime) {
     log.note('pdf', 'bytes kept', { path, bytes: kept.bytes.byteLength });
+    keepDocument(kept); // used, so it is the newest of the pair again
     useDocumentBytes(path, kept.bytes);
     return;
   }
@@ -1797,7 +1819,7 @@ async function openDocumentBytes(path: string): Promise<void> {
   const bytes = await backend.readBytes(path);
   reading({ bytes: bytes?.byteLength ?? 0 });
   if (!bytes?.byteLength) return;
-  keptDocument = { path, mtime: entry?.mtime ?? 0, bytes };
+  keepDocument({ path, mtime: entry?.mtime ?? 0, bytes });
   useDocumentBytes(path, bytes);
 }
 

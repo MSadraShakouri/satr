@@ -155,3 +155,28 @@ test('coming back says whether the page can draw at all', async ({ page }) => {
   const drew = find(await read(page), 'app', 'drew a frame after coming back');
   expect(drew!.facts?.afterMs as number).toBeLessThan(1000);
 });
+
+test('two documents are kept, so swapping between two books reads neither again', async ({ page }) => {
+  // From his log: he reads two books side by side, and one slot meant the
+  // second evicted the first at every swap -- a 10.7 MB jozve read off the
+  // disk again at 970, 995 and 1216 ms a time. The slot holds two now.
+  await boot(page, { 'A.pdf': tinyPdf(4), 'B.pdf': tinyPdf(5), 'N.md': NOTE }, 'A.pdf');
+  await expect(page.locator('.pdf-page')).not.toHaveCount(0, { timeout: 15000 });
+  const go = async (name: string): Promise<void> => {
+    await page.locator('#nav-tabs').evaluate((el: HTMLButtonElement) => el.click());
+    await page.locator('.mobile-tab-title').getByText(name, { exact: true }).click();
+    await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
+    await page.waitForTimeout(400);
+  };
+  await go('B.pdf');
+  await page.evaluate(() => window.__satr.load('/src/log.ts').forget());
+  await go('A.pdf');
+
+  // A was read before B was: with one slot B pushed it out and this is a
+  // read, with two it is still here.
+  const lines = await read(page);
+  const kept = find(lines, 'pdf', 'bytes kept');
+  expect(kept, 'the first book is still in hand after the second was opened').toBeTruthy();
+  expect(String(kept!.facts?.path)).toContain('A.pdf');
+  expect(find(lines, 'pdf', 'bytes read'), 'and it was not read again').toBeFalsy();
+});
