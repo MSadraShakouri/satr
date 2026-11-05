@@ -41,4 +41,69 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
     }
+
+    /**
+     * Tell the web page it is on screen again.
+     *
+     * The freeze: coming back from recents, or from a screenshot overlay, the
+     * app is handed back and painted once -- and then nothing. Touches work,
+     * scrolling works, because the compositor still has the old picture, but
+     * nothing new is ever drawn. It cleared by itself after about a minute,
+     * or when the page was reopened.
+     *
+     * The log says why. The instrument added in 0.18.7 prints the page's own
+     * visibilityState at the moment Android says the app is back, and at
+     * every single resume it reads:
+     *
+     *     60.80s came back awayFor=1 visibility=hidden
+     *     60.83s came back awayFor=1 visibility=visible
+     *
+     * The page is handed back while it still believes it is hidden, and the
+     * belief is corrected about thirty milliseconds later. A hidden page runs
+     * no requestAnimationFrame, so it cannot draw: the frame requested in
+     * that window waited 33 ms for the flip, the next one took 6 ms. The
+     * freeze is that flip never arriving.
+     *
+     * Chromium decides the page is visible from the WebView's *window*
+     * visibility -- not from setVisibility, and not from the activity --
+     * which it learns through a dispatch down the view hierarchy. Capacitor
+     * never touches that: KeepRunning defaults to true, so BridgeActivity
+     * calls neither WebView.onPause nor WebView.onResume, and nothing in the
+     * stack corrects a window-visibility signal that went missing or arrived
+     * stale. Hence this: when the activity resumes, say it outright.
+     *
+     * It is idempotent -- the WebView ignores a visibility it already has --
+     * and it is sent twice, once now and once a moment later, because the
+     * signal we are racing is a stale one that can land after onResume.
+     *
+     * This cannot be compiled or tested in the workspace; the phone is the
+     * test. After this, the first "came back" of a resume should read
+     * visibility=visible.
+     */
+    @Override
+    public void onResume() {
+        super.onResume();
+        sayTheWindowIsVisible();
+        new android.os.Handler(android.os.Looper.getMainLooper())
+            .postDelayed(this::sayTheWindowIsVisible, 300);
+    }
+
+    /** Never worth a crash on resume: a wrong WebView is better than none. */
+    private void sayTheWindowIsVisible() {
+        try {
+            if (isFinishing() || isDestroyed() || getBridge() == null) return;
+            android.webkit.WebView webView = getBridge().getWebView();
+            if (webView == null) return;
+            webView.dispatchWindowVisibilityChanged(android.view.View.VISIBLE);
+            // The other half of Chromium's rule (visible = not paused and the
+            // window is visible). Capacitor never pauses the WebView, so these
+            // are normally no-ops -- but a WebView paused by anything else
+            // would report hidden in exactly the same way.
+            webView.onResume();
+            webView.resumeTimers();
+        } catch (Throwable ignored) {
+            // An OEM WebView that dislikes any of this must not take the app
+            // down every time it is reopened.
+        }
+    }
 }
