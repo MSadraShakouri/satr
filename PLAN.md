@@ -132,6 +132,19 @@ for a reason nobody can see, and the data worth keeping for decisions. The app
 wrote nothing at all, not one `console.log`, so this was a new sense rather
 than a tidy-up.
 
+**What else is worth timing (asked for: "if you have any ideas for the logger, write it down").** Two are built in 0.19.1 and marked; the rest are in rough order of what they would have told us this month, and none of them is large.
+
+- [x] **The thread itself.** Any turn of the event loop over 120 ms, with whether a finger was down at the time — a stutter and an app that will not answer are the same fact in two moods, and nothing in the log could say either. A per-run tally at the end: how many were felt, and the worst.
+- [x] **How fast bytes arrive, not just how long they took.** 877 ms for the 8.9 MB book and 205 ms for the 2.2 MB one are the same 10 MB a second: a fact about the bridge, not about either book.
+- [ ] **The other half of `first page on glass`.** It now says what the engine spent (47–103 ms of 225–323). What is missing is the rest: the canvas going into the page, the layout it forces, and the frame that finally shows it. Three marks on the existing timer, and the ~150 ms nobody can name is named.
+- [ ] **A tab switch, split.** `switch took 119ms` is one number over three jobs: putting the old view away, building the new one, and mounting a document. Which of the three is 119 is the whole question.
+- [ ] **Frames under a finger.** The longest gap between frames during a gesture, logged once when the finger lifts. A scroll that drops three frames in the middle is exactly the complaint "smoothness", and no number in this log would show it.
+- [ ] **Launch, before our code.** `the page before the app page=24 scriptsDone=490` says 429 ms happen before anything of ours runs; `PerformanceResourceTiming` would name the three biggest scripts in it, which is the difference between "the bundle is big" and "one import is slow".
+- [ ] **Writes.** How long a save takes and how big it was. Nothing in the log describes the one thing the app does most.
+- [ ] **The shelf's hit rate.** Recalled or not, and how many bytes — `shelf waited for 944ms` against a 160 ms cap is still unexplained, and a hit/miss beside it would have explained it.
+- [ ] **Memory at the moment of a stall**, not only at the moments we chose. A long task beside `canvases=63 pictureMb=37.3` is a different bug from one beside `canvases=2`.
+- [ ] **The logger's own weight.** What a flush to IndexedDB costs, so the instrument can be trusted not to be the slowness.
+
 Built, released in 0.18.4, and proved on the phone: the author's own log came
 back as a file through the share sheet, with the exit reasons in it. One half
 is left, ticked below — `logcat`.

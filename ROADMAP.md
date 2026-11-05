@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). The code is **0.19.0**'s: 0.18.1 and 0.18.2 were released
+open-file plugins). The code is **0.19.1**'s: 0.18.1 and 0.18.2 were released
 and withdrawn, 0.18.3 carried the per-file memory into a database of its own,
 0.18.4 added the log the app keeps of itself, 0.18.5 is what that log said
 when it came back off the author's phone — the file being read, and read
@@ -290,6 +290,17 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Four the writer reported in the panels.** *Reveal current file* is a button now, not a switch that rearranged the panel whenever the note changed — one press takes the panel to the note wherever it lives, and nothing moves it by itself, so reading can no longer change what a search covers or where a new note lands. With **Include subfolders** off, a search roots at the open note's own folder rather than the space top, which in a space whose top level holds folders had returned nothing but the open note. The in-note find draws the current match as Obsidian's reading view does — a 3px accent ring on it, a 2px translucent one on the other 39 — where before every match wore the same ring and you could not tell which one you were on. And the navigation bars only move on a reversal: a thumb's 4–6px wobble landing more than 200 ms after they hid used to walk straight into `restoreNavigation()` and flash them, which tests/navAutoHide.spec.ts:151 now pins.
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
+
+### 0.19.1: the card is what you can see (November 2026)
+
+0.19.0's cards were right about the wrong rectangle. Three corrections from reading them on the phone, and the first of the logger's new senses.
+
+- [x] **The card is what you can see, not what the header covers.** “I practically can't see what is behind the header but the tab thing shows it.” The crop was the whole pane; on a 390 by 844 phone the top 104 points of that are the topbar and the pdf toolbar standing over the page — so a quarter of the card was content hidden from him, and what he was actually reading was pushed off the bottom. It is measured now: the header always, and the navbar pill only while it is shown, which it is not while he is reading. What he can see is 740 points tall rather than 844.
+- [x] **And it is shaped to the card.** A screenful is 390 by 740 and a card's picture box is 175 by 200, so a third of the height has to go and the box was taking it off the bottom, blindly. The crop is made to the card's own shape before it is stored, anchored a third of the way down: what he zoomed to is usually at the top of the view — a heading, the top of a figure, the first line of a column — and a centred crop cuts it off. Of a 740-point screenful, 446 is kept: 13% off the top, 27% off the bottom. A whole sheet is still kept whole, as he asked.
+- [x] **Pressing tabs files a card then and there.** “It has a delay or something, I think you'll need to change tab for it to happen.” It was filed when the reader went idle or the app was put away, and the throttle that stops a reader sitting still from rewriting the shelf counted a zoom on the same page as nothing new to say — so the card stayed the one from before the zoom. The switcher asks for a fresh one on the way open, the zoom is part of what a card is, and an identical card is still never drawn twice.
+- [x] **Picking a tab out of the switcher is a file you chose.** The recent list already recorded a file reached for by name, including one already open — but not this way in, which is the way he actually reaches for a book. The arrows, a tab closing under you and starting the app still say nothing, because none of those is a choice.
+- [x] **The log can see the thread.** Any turn of the event loop over 120 ms is recorded, with whether a finger was down at the time: a stutter and an app that will not answer are the same fact in two moods, and nothing here could say either before. At the end of a run it says how many were felt and the worst one. Plus the read rate on every document: 877 ms for 8.9 MB and 205 ms for 2.2 MB are the same 10 MB a second, which is a fact about the bridge and not about either book.
+- **Checked.** Twenty specs at one worker over the cards, the recent list and the pdf, five of them new; each change proved by putting the old behaviour back and watching its test fail — the card comes back showing the band behind the header, the card comes back as the sheet you were looking at before the zoom, and the tab you pick records nothing. Eight more ideas for the logger are written into PLAN rather than built.
 
 ### 0.19.0: the card shows what you were looking at (November 2026)
 
