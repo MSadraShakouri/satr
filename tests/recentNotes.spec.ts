@@ -97,3 +97,31 @@ test('starting the app again does not rewrite the list', async ({ page }) => {
   await page.waitForTimeout(500);
   expect(await recent(page), 'the open tab did not jump to the top of it').toEqual(['Notes/three.md', 'Notes/two.md']);
 });
+
+test('reopening a file that is already open moves it up the list', async ({ page }) => {
+  // His: "if I reopen an already open file the recent part of it doesn't get
+  // updated in the empty tabs part". openFile returns early when the file is
+  // the open one, or is open in another tab, and the list was written past
+  // both of those returns -- so the file he reaches for most often sank
+  // down the list while the ones he opened once stayed at the top.
+  await boot(page, ['Notes/one.md', 'Notes/two.md'], 0);
+  await clear(page);
+  await page.evaluate(() => { localStorage.setItem('satr:recent', JSON.stringify(['Notes/three.md', 'Notes/one.md'])); });
+
+  // one.md is open in a tab, and is not the tab on screen. Asked for by
+  // name from the file tree.
+  await page.locator('#files').click();
+  await expect(page.locator('body')).toHaveClass(/files-open/);
+  await page.locator('#file-panel .tree-item-self[data-path="Notes/two.md"]').click();
+  await expect.poll(async () => (await recent(page))[0], { timeout: 5000 }).toBe('Notes/two.md');
+
+  await page.locator('#files').click();
+  await page.locator('#file-panel .tree-item-self[data-path="Notes/one.md"]').click();
+  expect(await recent(page), 'the one he went back to is at the top, once').toEqual(['Notes/one.md', 'Notes/two.md', 'Notes/three.md']);
+
+  // And the file already on screen, asked for again, is still an ask.
+  await page.locator('#files').click();
+  await page.locator('#file-panel .tree-item-self[data-path="Notes/one.md"]').click();
+  expect((await recent(page))[0]).toBe('Notes/one.md');
+  expect((await recent(page)).filter((p) => p === 'Notes/one.md'), 'and only once').toHaveLength(1);
+});

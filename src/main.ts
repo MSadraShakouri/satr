@@ -1971,6 +1971,15 @@ function showFile(path: string, content: string, after?: () => void, options?: {
  *  this tab, when it's empty). Any file opens; one that can't be loaded
  *  (too large, or gone) leaves a message in the sidebar instead. */
 async function openFile(path: string, after?: () => void): Promise<void> {
+  // Asked for, so remembered -- before any of the ways this returns early.
+  // Everything that reaches openFile is a file somebody named: a row in
+  // the tree, a search hit, a link, this list itself, a file just made or
+  // just imported. Whether it happens to be open already is the tab
+  // machinery's business and not his: reopening the note he has had open
+  // all morning left it sitting wherever it was in the list, and the
+  // reader's complaint is exactly that -- "if I reopen an already open
+  // file the recent part of it doesn't get updated".
+  rememberRecent(path);
   if (path === filePath) { after?.(); return; }
   const existing = tabs.findIndex((t) => t.path === path);
   if (existing >= 0) {
@@ -2011,7 +2020,6 @@ async function openFile(path: string, after?: () => void): Promise<void> {
   }
   if (!await leaveCurrent()) return;
   if (curTab().path) { tabs.splice(activeTab + 1, 0, { path }); activeTab += 1; }
-  rememberRecent(path);
   showFile(path, opened.text, after, { lossy: !opened.clean });
 }
 /** The bottom bar's arrows: the previous / next tab. */
