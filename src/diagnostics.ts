@@ -24,8 +24,25 @@ export interface Exit {
   said?: string;
 }
 
+export interface LastResume {
+  happened: boolean;
+  /** Wall clock, milliseconds. */
+  at?: number;
+  /** How long the page took to answer a question put to it directly, or -1. */
+  answerMs?: number;
+  /** What it said its visibilityState was, when it answered. */
+  said?: string;
+  laterMs?: number;
+  laterSaid?: string;
+  /** Animation frames run in the second and a half after, or -1. */
+  frames?: number;
+  /** How many times that run was resumed at all. */
+  resumes?: number;
+}
+
 interface SatrDiagnosticsPlugin {
   lastExits(options: { limit: number }): Promise<{ supported: boolean; lowMemoryReported?: boolean; exits: Exit[] }>;
+  lastResume(): Promise<LastResume>;
 }
 
 const SatrDiagnostics = registerPlugin<SatrDiagnosticsPlugin>('SatrDiagnostics');
@@ -103,5 +120,52 @@ export async function tellWhyItDied(limit = 5): Promise<void> {
     }
   } catch (error) {
     log.loud('native', 'could not ask why the last run ended', { why: String(error) });
+  }
+}
+
+/**
+ * What the page said the last time the app was handed back, in the run
+ * before this one.
+ *
+ * The app's own log cannot report a frozen resume: the reader ends it by
+ * throwing the app out of recents, and the lines die unsaved. So the
+ * question is put from Java, through the WebView rather than through any
+ * listener the page has to be well enough to run, and the answer is written
+ * down as it arrives. This reads it out one launch later.
+ *
+ * Three answers matter, and they are three different bugs:
+ *   - answered, said visible      -- that resume was fine
+ *   - answered, said hidden       -- the page was handed back still hidden,
+ *                                    and never corrected: it cannot draw
+ *   - never answered              -- JavaScript itself was not running
+ */
+export async function tellWhatTheLastResumeSaid(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    const last = await SatrDiagnostics.lastResume();
+    if (!last?.happened) return;
+    const facts: Facts = {};
+    if (last.at) facts.secondsAgo = ago(last.at);
+    if (last.resumes) facts.resumes = last.resumes;
+    const answered = (last.answerMs ?? -1) >= 0;
+    if (answered) {
+      facts.answeredMs = last.answerMs!;
+      facts.said = last.said ?? '';
+      if ((last.laterMs ?? -1) >= 0) {
+        facts.andThen = last.laterSaid ?? '';
+        facts.frames = last.frames ?? -1;
+      } else {
+        facts.andThen = 'no answer';
+      }
+    }
+    // A page that never answered is the loud case: the one where nothing in
+    // the app's own log could ever have said anything at all.
+    (answered ? log.note : log.warn)(
+      'native',
+      answered ? 'the last time it came back, the page answered' : 'the last time it came back, the page never answered',
+      facts,
+    );
+  } catch (error) {
+    log.loud('native', 'could not ask what the last resume said', { why: String(error) });
   }
 }

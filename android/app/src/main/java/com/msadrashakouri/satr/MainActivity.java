@@ -30,6 +30,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SplashPlugin.class);
         registerPlugin(SharePlugin.class);
         registerPlugin(DiagnosticsPlugin.class);
+        // Before the launch's own onResume lands on top of it: what the page
+        // said at the last resume of the run before this one.
+        ResumeWatch.startRun(this);
         super.onCreate(savedInstanceState);
         splashScreen.setKeepOnScreenCondition(() -> !splashDismissed);
         new android.os.Handler(android.os.Looper.getMainLooper())
@@ -83,13 +86,13 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
-        sayTheWindowIsVisible();
+        sayTheWindowIsVisible(false);
         new android.os.Handler(android.os.Looper.getMainLooper())
-            .postDelayed(this::sayTheWindowIsVisible, 300);
+            .postDelayed(() -> sayTheWindowIsVisible(true), 300);
     }
 
     /** Never worth a crash on resume: a wrong WebView is better than none. */
-    private void sayTheWindowIsVisible() {
+    private void sayTheWindowIsVisible(boolean again) {
         try {
             if (isFinishing() || isDestroyed() || getBridge() == null) return;
             android.webkit.WebView webView = getBridge().getWebView();
@@ -101,6 +104,11 @@ public class MainActivity extends BridgeActivity {
             // would report hidden in exactly the same way.
             webView.onResume();
             webView.resumeTimers();
+            // And then ask the page, from out here, whether any of it landed.
+            // The answer is written down natively as it arrives, so a resume
+            // the reader ends by throwing the app out of recents still leaves
+            // its evidence behind. Only on the first of the two kicks.
+            if (!again) ResumeWatch.askThePage(this, webView);
         } catch (Throwable ignored) {
             // An OEM WebView that dislikes any of this must not take the app
             // down every time it is reopened.

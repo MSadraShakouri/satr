@@ -70,6 +70,18 @@ public class DiagnosticsPlugin extends Plugin {
         }
     }
 
+    /**
+     * What the page said the last time Android handed the app back, during
+     * the run before this one. Asked at launch, because the run it describes
+     * is one the reader may well have thrown out of recents -- which is
+     * exactly the case the app's own log cannot report on, having died with
+     * it. See ResumeWatch.
+     */
+    @PluginMethod
+    public void lastResume(PluginCall call) {
+        call.resolve(ResumeWatch.lastResume(getContext()));
+    }
+
     /** The constant's own name, so the log says "low memory" and not "3". */
     private String nameOf(int reason) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return String.valueOf(reason);

@@ -3,7 +3,7 @@ import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, 
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews, forgetViews } from './viewStore';
 import { startKeeping, flush as flushLog } from './logStore';
 import * as log from './log';
-import { tellWhyItDied } from './diagnostics';
+import { tellWhyItDied, tellWhatTheLastResumeSaid } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -3740,6 +3740,7 @@ async function boot(): Promise<void> {
   // And the rung above it: why, where the phone can say. Not waited on --
   // the launch owes it nothing, and the line lands when it lands.
   void tellWhyItDied();
+  void tellWhatTheLastResumeSaid();
   const ready = log.time('launch', 'ready to read');
   try {
     // Before the first file opens, so that a file asking where it was left
