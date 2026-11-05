@@ -45,6 +45,9 @@ export interface SidebarDeps {
   onFolder(path: string): void;
   /** The current note's majority direction; the whole tree flips for it. */
   noteDir(): 'ltr' | 'rtl';
+  /** Is the panel on screen? A refresh asked for while it is shut is
+   *  remembered and done when it opens, not drawn behind the drawer. */
+  showing?(): boolean;
   /** How many pages the open tab holds, where it holds a document rather
    *  than a note; 0 for a note. */
   documentPages?(): number;
@@ -145,6 +148,8 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   // rest follow the default (only the current note is open).
   const touched = new Set<string>();
   let headings: Heading[] = [];
+  /** A refresh asked for while the panel was shut, still owed. */
+  let stale = false;
   /** How many notes the all-notes scope is looking at, once a pass over them
    *  has finished; null until then. The header says it, so the line under the
    *  name is filled in both scopes. */
@@ -661,8 +666,25 @@ export function createRightSidebar(root: HTMLElement, deps: SidebarDeps) {
   render();
 
   return {
-    /** Refresh for the current note (on open, after edits). */
-    refresh(): void { render(); },
+    /**
+     * Refresh for the current note (on open, after edits).
+     *
+     * Not while the panel is shut. Building this panel means walking the
+     * note's headings into a tree of rows and counting its words twice, and
+     * it was being done on every tab switch, every save and every settings
+     * change whether or not anybody could see it: on a 120kB note that is
+     * 45-90ms of a switch spent drawing something behind a closed drawer
+     * (the `rest` stage of `note on screen`). A shut panel is marked stale
+     * instead, and the drawer forces a render as it opens, so what is behind
+     * it when it arrives is always this note.
+     */
+    refresh(force = false): void {
+      if (!force && !(deps.showing?.() ?? true)) { stale = true; return; }
+      stale = false;
+      render();
+    },
+    /** Build now if a refresh was skipped while the panel was shut. */
+    refreshIfStale(): void { if (stale) { stale = false; render(); } },
     /** The same words the find bar is looking for, so the two searches of
      *  one document are one search. */
     setQuery(query: string): void {

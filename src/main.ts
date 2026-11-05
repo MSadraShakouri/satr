@@ -3665,6 +3665,9 @@ function sidebarGoToLine(line: number): void {
   }
 }
 const sidebar = createRightSidebar(rightPanel, {
+  // Drawn only when it can be seen: the drawer's own class is the whole
+  // test, and the drawer forces a refresh as it opens (below).
+  showing: () => document.body.classList.contains('outline-open'),
   headings: () => (pdfView ? pdfHeadings : editor.headings()),
   // The outline follows the line two thirds down the page, not the line at the
   // very top: the heading you are reading is the one around the middle of the
@@ -4828,11 +4831,16 @@ const drawers = initDrawers({
     // screen: as the page translates, it slides the note back under the
     // finger. Preview has no caret, so it never did this.
     editor.setCaretOff(true);
-    if (side === 'right') sidebar.refresh();
+    // Forced: the body class that says the drawer is open may not be set
+    // yet at this point in the opening, and this is the render that must
+    // not be skipped.
+    if (side === 'right') sidebar.refresh(true);
     else window.requestAnimationFrame(() => leftSidebar.scrollToActive());
   },
   onSettled: (side, open) => {
     if (!open) editor.setCaretOff(false);
+    // Anything that asked for a refresh while the drawer was moving.
+    if (side === 'right' && open) sidebar.refreshIfStale();
   },
 });
 applySettings(loadSettings());
