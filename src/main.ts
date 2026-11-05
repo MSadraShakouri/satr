@@ -3849,6 +3849,9 @@ function applySettings(settings: Settings): void {
   editor.setLineNumbers(settings.lineNumbers);
   editor.setAutoSpace(settings.spaceAfterPunctuation);
   document.body.classList.toggle('no-line-numbers', !settings.lineNumbers);
+  // What the header over a document does while it is scrolled (CSS keys off
+  // this, together with .is-hidden-nav, which the scroll already sets).
+  document.body.dataset.docChrome = settings.documentChrome;
   editor.remeasure();
   setHighlightAll(settings.highlightAll);
   setMathDigits(settings.mathDigits);

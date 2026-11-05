@@ -4645,6 +4645,50 @@ body.is-pdf-chrome .topbar {
 body.is-pdf-chrome .preview-pane article.is-document {
   padding-top: calc(var(--view-top-spacing) + var(--pdf-toolbar-height));
 }
+/* The header gets out of the way while the document is being read.
+   "Right now the top bar and bottom pill take a noticeable space of screen."
+   The pill already leaves with the navigation bar; the header stayed,
+   because a document's header is its only label -- so it is a choice now
+   (Settings → Reading a document), and the default takes the row of buttons
+   and keeps the name.
+
+   Nothing in the column moves for it. The header floats over the pane, so
+   the pages under it are already there: taking it away uncovers them, where
+   changing the pane's padding would shove the page under the reader's thumb
+   mid-scroll. */
+.pdf-toolbar {
+  transition: height 0.18s ease, margin-top 0.18s ease, opacity 0.18s ease;
+}
+body.is-pdf-chrome.is-hidden-nav:not([data-doc-chrome="stays"]) .pdf-toolbar {
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="all"] .topbar {
+  transform: translateY(calc(-44px - max(12px, var(--safe-top))));
+  opacity: 0;
+}
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="all"] .topbar > * {
+  pointer-events: none;
+}
+/* A drawer open outranks it, exactly as for a note: the button that closes
+   the drawer has to be there to be pressed. */
+body.is-pdf-chrome.files-open.is-hidden-nav[data-doc-chrome="all"] .topbar {
+  transform: translate3d(var(--drawer-width), 0, 0);
+}
+body.is-pdf-chrome.outline-open.is-hidden-nav[data-doc-chrome="all"] .topbar {
+  transform: translate3d(calc(-1 * var(--drawer-width)), 0, 0);
+}
+body.is-pdf-chrome.files-open.is-hidden-nav[data-doc-chrome="all"] .topbar,
+body.is-pdf-chrome.outline-open.is-hidden-nav[data-doc-chrome="all"] .topbar {
+  opacity: 1;
+}
+body.is-pdf-chrome.files-open.is-hidden-nav[data-doc-chrome="all"] .topbar > *,
+body.is-pdf-chrome.outline-open.is-hidden-nav[data-doc-chrome="all"] .topbar > * {
+  pointer-events: auto;
+}
 .pdf-toolbar-left,
 .pdf-toolbar-right {
   display: flex;

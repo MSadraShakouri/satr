@@ -30,6 +30,15 @@ export interface Settings {
    *  week that starts on Monday in the picker and Saturday on the wall is a
    *  bug the reader cannot fix. Saturday is the default (src/datePicker.ts). */
   weekStart: number;
+  /**
+   * What the header does while a document is being scrolled.
+   *
+   * "The top bar and bottom pill take a noticeable space of screen." The
+   * pill already leaves with the navigation bar; the header did not, because
+   * a document's header is its only label. 'controls' takes the row of
+   * buttons and keeps the name, 'all' takes both, 'stays' is how it was.
+   */
+  documentChrome: 'stays' | 'controls' | 'all';
   /** PDF page numbers, bottom centre. */
   pdfPageNumbers: 'persian' | 'latin' | 'none';
   /** Custom CSS for the PDF, applied after Satr's own. */
@@ -62,7 +71,7 @@ const SETTINGS_VERSION = 5;
  *  Only the DEFAULT moves: a reader whose settings were already saved keeps
  *  whatever they have, so nobody's note grows a gutter or loses one behind
  *  their back on update. */
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, documentChrome: 'controls', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
 /** The seven first days, in the order a week can start. Labels come from the
  *  Dates language, never the device's. */
 export const WEEK_START_CHOICES = [6, 0, 1, 2, 3, 4, 5];
@@ -86,6 +95,7 @@ export function loadSettings(): Settings {
     if (!TIMESTAMP_CALENDARS.some(([value]) => value === s.timestampCalendar)) s.timestampCalendar = 'auto';
     if (!WEEK_START_CHOICES.includes(Number(s.weekStart))) s.weekStart = DEFAULTS.weekStart;
     else s.weekStart = Number(s.weekStart);
+    if (!['stays', 'controls', 'all'].includes(s.documentChrome)) s.documentChrome = 'controls';
     if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
     if (typeof s.pdfCss !== 'string') s.pdfCss = '';
     if (!['last', 'empty', 'away'].includes(s.launchTabs)) s.launchTabs = 'last';
@@ -249,6 +259,17 @@ export function openSettings(deps: SettingsDeps): void {
           </select>
         </div>
       </div>
+      <div class="setting-group-title">Reading a document</div>
+      <div class="setting-group">
+        <div class="setting-item">
+          <div class="setting-item-info"><div class="setting-item-name">While scrolling</div><div class="setting-item-description">The page counter already leaves with the navigation bar. This is what the header above the pages does.</div></div>
+          <select class="dropdown" data-select="documentChrome">
+            <option value="stays"${settings.documentChrome === 'stays' ? ' selected' : ''}>Keep the header</option>
+            <option value="controls"${settings.documentChrome === 'controls' ? ' selected' : ''}>Hide the controls</option>
+            <option value="all"${settings.documentChrome === 'all' ? ' selected' : ''}>Hide the whole header</option>
+          </select>
+        </div>
+      </div>
       <div class="setting-group-title">PDF export</div>
       <div class="setting-group">
         <div class="setting-item mod-column">
@@ -367,7 +388,7 @@ export function openSettings(deps: SettingsDeps): void {
       savePrintOptions(notePath, printOptions);
       return;
     }
-    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"], [data-select="weekStart"]');
+    const select = (event.target as HTMLElement).closest<HTMLSelectElement>('[data-select="quickAction"], [data-select="mathDigits"], [data-select="launchTabs"], [data-select="newTabAfterMinutes"], [data-select="timestampLocale"], [data-select="timestampCalendar"], [data-select="weekStart"], [data-select="documentChrome"]');
     if (!select) return;
     if (select.dataset.select === 'quickAction') settings.quickAction = select.value as QuickAction;
     else if (select.dataset.select === 'launchTabs') settings.launchTabs = select.value as Settings['launchTabs'];
@@ -375,6 +396,7 @@ export function openSettings(deps: SettingsDeps): void {
     else if (select.dataset.select === 'timestampLocale') settings.timestampLocale = select.value;
     else if (select.dataset.select === 'timestampCalendar') settings.timestampCalendar = select.value;
     else if (select.dataset.select === 'weekStart') settings.weekStart = Number(select.value);
+    else if (select.dataset.select === 'documentChrome') settings.documentChrome = select.value as Settings['documentChrome'];
     else settings.mathDigits = select.value as Settings['mathDigits'];
     commit();
   });
