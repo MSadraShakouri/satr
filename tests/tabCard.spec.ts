@@ -154,3 +154,30 @@ test('the card is dark when the pages are dark', async ({ page }) => {
   expect(filter).toBe(onPage);
 });
 
+test('going away keeps the page you are on, seconds after the last save', async ({ page }) => {
+  // The reader files its card as the app is put away, and putDown has a
+  // four-second throttle so that sitting still does not rewrite the shelf
+  // over and over. The throttle was swallowing the one save that matters:
+  // read on a page, leave within four seconds, and the card kept was the
+  // one filed before you got there -- the wrong page, and often the
+  // hundred-pixel sketch of it.
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  await drawnOnScreen(page);
+  await putDown(page);
+  await openSwitcher(page);
+  await expect(page.locator('.mobile-tab-preview-page .tab-card-note')).toContainText('Page 1 of 12');
+  await page.locator('.mobile-tab-switcher').press('Escape').catch(() => {});
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
+
+  // On to another page, and away again straight after -- inside the
+  // throttle's window.
+  await page.locator('#preview-pane').evaluate((pane) => { pane.scrollTop += pane.clientHeight * 4; });
+  await drawnOnScreen(page);
+  await putDown(page);
+
+  await openSwitcher(page);
+  const note = await page.locator('.mobile-tab-preview-page .tab-card-note').textContent();
+  expect(note, 'the card is the page he left on, not the page he started on').not.toContain('Page 1 of');
+});

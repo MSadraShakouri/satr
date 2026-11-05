@@ -37,6 +37,10 @@ interface Card {
    * card the reader files puts it right either way.
    */
   dark?: boolean;
+  /** Taken from the hundred-pixel sketch rather than the page's own
+   *  picture, because the page was still being drawn when the app was put
+   *  away. Replaceable by anything better. */
+  rough?: boolean;
 }
 
 
@@ -85,14 +89,25 @@ const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
 /** Put down what this document looks like where the reader left it. */
 export async function keepCard(
   path: string, page: number, pages: number, canvas: HTMLCanvasElement,
-  how?: { dark?: boolean },
+  how?: { dark?: boolean; rough?: boolean },
 ): Promise<void> {
   if (!path) return;
+  // A sketch does not paint over a picture. The reader files its card as
+  // the app is being put away, and a page scrolled to a moment before that
+  // is still being drawn -- so what is to hand is sometimes the hundred
+  // pixels the flick layer keeps, stretched across a card, which is the
+  // "thumbnail quality is really bad" this file was written to end. It may
+  // still make the first card for a document, where the choice is between
+  // a rough picture and no picture at all.
+  if (how?.rough) {
+    const have = await getAside<Card>(CARD + path).catch(() => null);
+    if (have?.shot && have.rough !== true) return;
+  }
   const copy = copyOf(canvas);
   if (!copy) return;
   const shot = await asJpeg(copy);
   if (!shot) return;
-  await putAside(CARD + path, { page, pages, shot, at: Date.now(), dark: how?.dark === true } satisfies Card);
+  await putAside(CARD + path, { page, pages, shot, at: Date.now(), dark: how?.dark === true, rough: how?.rough === true } satisfies Card);
 }
 
 /** What to put on a tab's card, or null if this document has never been

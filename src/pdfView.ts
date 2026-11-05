@@ -2854,9 +2854,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // hundred pixels wide and looks it -- and from the sketch only when the
     // page has not been drawn properly yet.
     const slab = slabs[pageShown() - 1];
-    const here = slab?.base ?? sketches.get(pageShown() - 1);
+    const drawn = slab?.base ?? null;
+    const here = drawn ?? sketches.get(pageShown() - 1);
     if (options.cardFor && here) {
-      void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here));
+      const dark = slab?.box.classList.contains('is-dark-page') === true;
+      // Said plainly when it is the hundred-pixel sketch and not the page:
+      // this runs the moment the app is put away, and a page scrolled to a
+      // second earlier may still be being drawn. A smear across a card is
+      // the thing he called "really bad", so one is allowed to make a card
+      // where there is none and never to replace a real one.
+      const rough = !drawn;
+      void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here, { dark, rough }));
     }
   };
   /**
@@ -2882,7 +2890,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (gone) log.note('pdf', 'pages let go while away', { pages: gone });
   };
   const onHidden = (): void => {
-    if (document.visibilityState === 'hidden') { putDown(); shedWhileAway(); }
+    // Always, going away: putDown's own throttle exists so that a reader
+    // sitting still does not rewrite the shelf every few seconds, and it
+    // was also swallowing the one save that matters. Scroll to a page,
+    // leave within four seconds, and the card kept was the one filed
+    // mid-scroll -- a hundred-pixel sketch of the page before.
+    if (document.visibilityState === 'hidden') { putDown(true); shedWhileAway(); }
     // And back: the band is drawn again from here, which for everything
     // still in hand is a no-op and for the rest is the engine being asked
     // for the pages nearest the screen -- never the whole document.
