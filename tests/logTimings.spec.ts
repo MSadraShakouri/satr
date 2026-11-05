@@ -219,6 +219,38 @@ test('coming back says which wiring said so, and is written down at once', async
   await expect.poll(onDisk, { timeout: 2500, intervals: [100, 200, 300] }).toContain('came back');
 });
 
+test('a resume that never paints builds the document again', async ({ page }) => {
+  // "Any time the app is out of focus it breaks, maybe it should reload the
+  // pdf and everything will get fixed? The issue only exists with pdf files
+  // and not anything else of the app." A frozen resume is one where no
+  // animation frame ever runs, so the frames are taken away here and the
+  // app is left to notice on a timer -- the one clock a hidden page still
+  // has.
+  await page.addInitScript(() => {
+    const real = window.requestAnimationFrame.bind(window);
+    Object.assign(window, { __eatFrames: false });
+    window.requestAnimationFrame = (callback: FrameRequestCallback): number =>
+      ((window as unknown as { __eatFrames: boolean }).__eatFrames ? 0 : real(callback));
+  });
+  await boot(page, { 'handout.pdf': tinyPdf(5) }, 'handout.pdf');
+  await expect(page.locator('.pdf-page')).not.toHaveCount(0, { timeout: 15000 });
+  const parsedBefore = (await read(page)).filter((line) => line.text === 'document parsed').length;
+  expect(parsedBefore).toBe(1);
+
+  await page.evaluate(() => {
+    Object.assign(window, { __eatFrames: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+
+  await expect.poll(async () => find(await read(page), 'app', 'came back and nothing painted: building the document again'),
+    { timeout: 5000 }).toBeTruthy();
+  // And it really is built again -- from the bytes in hand, with no read.
+  await expect.poll(async () => (await read(page)).filter((line) => line.text === 'document parsed').length,
+    { timeout: 5000 }).toBe(2);
+  const lines = await read(page);
+  expect(lines.filter((line) => line.text === 'bytes read').length, 'and no file is read to do it').toBe(1);
+});
+
 test('coming back does not build the document all over again', async ({ page }) => {
   // Every resume read the open file back as text, found a string that did
   // not match the one the tab was opened with -- a pdf is not text -- and

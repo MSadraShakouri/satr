@@ -3945,6 +3945,11 @@ function tellHowTheLastRunEnded(): void {
  * picture of itself and ignoring everything, exactly as reported.
  */
 let systemSaysActive = true;
+/** How long after coming back a document has to have painted something. A
+ *  healthy resume on his phone draws its frame in 6 to 33 ms; this is twenty
+ *  times that, so it can only be reached by a resume that is not drawing at
+ *  all. */
+const NOTHING_PAINTED_MS = 600;
 /** Which of the two wirings is speaking. They disagree -- that disagreement
  *  is how the freeze was found -- and a line that does not say which one
  *  wrote it cannot be read when one of them goes missing, which is exactly
@@ -3985,10 +3990,39 @@ function onForeground(from: Wiring): void {
   // still in the background has no next paint -- so this line arriving
   // late, or not at all, is the whole diagnosis. It costs one callback.
   const asked = performance.now();
+  let painted = false;
   requestAnimationFrame(() => {
+    painted = true;
     log.note('app', 'drew a frame after coming back', { afterMs: Math.round(performance.now() - asked) });
     void flushLog();
   });
+  // And if it never does, build the document again.
+  //
+  // His words: "any time the app is out of focus it breaks, maybe it should
+  // reload the pdf and everything will get fixed? The issue only exists with
+  // pdf files and not anything else of the app." It happens on a lock and
+  // unlock as surely as on a trip to recents, so it is not about recents.
+  //
+  // A timer rather than a frame, because a frame is the thing that is
+  // missing: a page that believes it is hidden runs no animation frame but
+  // does still run timers, throttled to about once a second, so this is the
+  // one clock left that can notice. The gate is Android's opinion and not
+  // the page's -- the page's opinion is the thing in doubt -- so if he has
+  // gone away again in the meantime nothing happens.
+  //
+  // The rebuild is only the document: the bytes are already in hand, so
+  // there is no file read, and on his phone the parse and the column cost
+  // about 60 ms together. A note is left alone, as he says a note is fine.
+  window.setTimeout(() => {
+    if (painted || !systemSaysActive) return;
+    if (!isDocument(filePath) || openedDocument.path !== filePath || !openedDocument.bytes) return;
+    log.warn('app', 'came back and nothing painted: building the document again', {
+      afterMs: Math.round(performance.now() - asked),
+      visibility: document.visibilityState,
+    });
+    void flushLog();
+    renderPreview();
+  }, NOTHING_PAINTED_MS);
   void refreshOnResume();
   // Asked before the heartbeat starts again: one beat from now would say the
   // app had been running all along and no absence would ever be long enough.
