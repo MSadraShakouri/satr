@@ -2879,10 +2879,18 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
    * show zoom, I wanted it to show the last zoom rather than the entire
    * page."
    *
-   * The rectangle is the pane's own, clipped to the page, in the page's
-   * units -- the same units detailWanted works in, and without its margin
-   * or its snapping, because this is what is on the glass rather than what
-   * is worth drawing. It is cut from the zoom tile when the tile covers it,
+   * The rectangle is what he can *see*, which is not the pane: the top
+   * 104 points of a 390 by 844 phone are the topbar and the pdf toolbar
+   * standing over the page, and the navbar pill covers the bottom when it
+   * is not hidden. Measured rather than assumed -- the same chromeTop the
+   * reader uses to decide which page is being read. Taking the whole pane
+   * instead, as this did at first, put a quarter of the card's height
+   * behind the header: "I practically can't see what is behind the header
+   * but the tab thing shows it."
+   *
+   * It is in the page's units, the same ones detailWanted works in, and
+   * without its margin or its snapping, because this is what is on the
+   * glass rather than what is worth drawing. It is cut from the zoom tile when the tile covers it,
    * which is the sharp picture the reader is actually looking at, and from
    * the whole-page picture otherwise. A page that is all but entirely on
    * screen is kept whole: the common case is not a zoom, and a sheet with
@@ -2901,10 +2909,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     if (!(scale > 0)) return null;
     const box = slab.box.getBoundingClientRect();
     const pane = scroller.getBoundingClientRect();
+    // The bars standing over the page: the header always (it does not hide
+    // for a named file), the navbar pill only while it is shown -- it goes
+    // as soon as he reads, and the page is visible to the bottom edge.
+    const barTop = pane.top + chromeTop();
+    const pill = document.body.classList.contains('is-hidden-nav')
+      ? null : overlay.querySelector<HTMLElement>('.mobile-navbar')?.getBoundingClientRect() ?? null;
+    const barBottom = pill && pill.top > barTop + 80 ? Math.min(pane.bottom, pill.top) : pane.bottom;
     const left = clamp((pane.left - box.left) / scale, 0, slab.width);
     const right = clamp((pane.right - box.left) / scale, 0, slab.width);
-    const top = clamp((pane.top - box.top) / scale, 0, slab.height);
-    const bottom = clamp((pane.bottom - box.top) / scale, 0, slab.height);
+    const top = clamp((barTop - box.top) / scale, 0, slab.height);
+    const bottom = clamp((barBottom - box.top) / scale, 0, slab.height);
     const seen: Rect = { x: left, y: top, width: right - left, height: bottom - top };
     if (!(seen.width > 1) || !(seen.height > 1)) return { canvas, crop: null };
     // Zoomed, but with the whole sheet still on the glass: keep the sheet.

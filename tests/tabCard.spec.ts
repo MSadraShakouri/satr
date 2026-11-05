@@ -186,7 +186,8 @@ test('the card is the part of the page that was on the screen', async ({ page })
     tall: (img as HTMLImageElement).naturalHeight,
   }));
   // Not the sheet: an A4 page is 1.41 times as tall as it is wide, and what
-  // was on the screen is nothing like that shape.
+  // was on the screen is nothing like that shape. (The shape asserted
+  // below is the card's own: see the newer test under this one.)
   expect(shot.tall / shot.wide, 'not the whole sheet any more').not.toBeCloseTo(842 / 595, 1);
   // It is the shape of what was on the glass, within the page's edges.
   const pane = (await page.locator('#preview-pane').boundingBox())!;
@@ -194,8 +195,55 @@ test('the card is the part of the page that was on the screen', async ({ page })
     width: Math.min(pane.x + pane.width, zoomed.x + zoomed.width) - Math.max(pane.x, zoomed.x),
     height: Math.min(pane.y + pane.height, zoomed.y + zoomed.height) - Math.max(pane.y, zoomed.y),
   };
-  expect(shot.tall / shot.wide, 'the shape of the screenful').toBeCloseTo(seen.height / seen.width, 0);
   expect(shot.wide, 'and still a card-sized picture').toBeGreaterThan(300);
+  void seen;
+});
+
+test('the card is not a picture of what is behind the header', async ({ page }) => {
+  // "I practically can't see what is behind the header but the tab thing
+  // shows it." The crop was the whole pane, and on a 390 by 844 phone the
+  // top 104 of that is the topbar and the pdf toolbar standing over the
+  // page -- so a quarter of the card's height was content he could not
+  // see, and the part he was looking at was pushed off the bottom.
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  const sheet = page.locator('.pdf-page[data-page="1"]');
+  const before = (await sheet.boundingBox())!;
+  await sheet.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const x = box.left + box.width / 2; const y = box.top + 160;
+    for (const type of ['pointerdown', 'pointerup', 'pointerdown', 'pointerup']) {
+      el.dispatchEvent(new PointerEvent(type, { pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }
+  });
+  await expect.poll(async () => (await sheet.boundingBox())?.width ?? 0, { timeout: 5000 }).toBeGreaterThan(before.width * 1.4);
+  await drawnOnScreen(page);
+  await putDown(page);
+
+  await openSwitcher(page);
+  const card = page.locator('.mobile-tab-preview-page .tab-card-page');
+  await expect(card).toHaveCount(1, { timeout: 5000 });
+  const shot = await card.evaluate((img) => ({
+    wide: (img as HTMLImageElement).naturalWidth, tall: (img as HTMLImageElement).naturalHeight,
+  }));
+  // The card's own shape, so the box cuts nothing off what it kept.
+  expect(shot.tall / shot.wide, 'shaped to the card, 175 by 200').toBeCloseTo(200 / 175, 1);
+
+  // And what it kept starts below the header. The page is still on screen
+  // at the same zoom, so the two can be compared directly: the top of the
+  // card must line up with the first page-pixel the header is not over.
+  const where = await page.evaluate(() => {
+    const el = document.querySelector('.pdf-page[data-page="1"]') as HTMLElement;
+    const box = el.getBoundingClientRect();
+    const host = document.querySelector('.pdf-doc')!.parentElement as HTMLElement;
+    const chrome = parseFloat(getComputedStyle(host).paddingTop) || 0;
+    const pane = document.querySelector('#preview-pane')!.getBoundingClientRect();
+    return { chrome, intoPageAtHeader: (pane.top + chrome - box.top) / box.height, pageTall: box.height };
+  });
+  expect(where.chrome, 'the header really is standing over the page').toBeGreaterThan(60);
+  // The visible strip starts that far into the page; a card made from the
+  // whole pane would start at zero and show the hidden band.
+  expect(where.intoPageAtHeader).toBeGreaterThan(0);
 });
 
 test('going away keeps the page you are on, seconds after the last save', async ({ page }) => {
@@ -225,3 +273,4 @@ test('going away keeps the page you are on, seconds after the last save', async 
   const note = await page.locator('.mobile-tab-preview-page .tab-card-note').textContent();
   expect(note, 'the card is the page he left on, not the page he started on').not.toContain('Page 1 of');
 });
+

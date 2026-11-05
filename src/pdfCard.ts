@@ -60,6 +60,29 @@ export interface Crop { x: number; y: number; width: number; height: number }
  */
 const CARD_PX = 520;
 
+/**
+ * The card's own shape, width over height.
+ *
+ * Measured, on the phone this is for: a tab is half the width of a 390
+ * point screen less the gaps, about 175 points across, and the picture box
+ * is 200 tall (src/style.css, .mobile-tab-preview). Everything taller than
+ * this gets its bottom cut off by the box, which is how a screenful --
+ * 390 by 740 once the header and the navbar are taken off -- turned into a
+ * card showing only its top third.
+ */
+const CARD_SHAPE = 175 / 200;
+
+/**
+ * Where the kept part of a screenful sits inside it, top to bottom.
+ *
+ * A third of the way down rather than the middle: what he zoomed to is
+ * usually at the top of the view -- a heading, the top of a figure, the
+ * first line of a column -- and a centred crop cuts it off. At a third,
+ * a 740-point screenful keeps 446 of it: 13% goes off the top and 27%
+ * off the bottom.
+ */
+const CARD_ANCHOR = 1 / 3;
+
 /** Copied, synchronously, before anything is awaited: the canvas handed in
  *  belongs to a page that may be drawn over or thrown away the moment this
  *  yields. (The same trap the sketch shelf documents.)
@@ -69,9 +92,7 @@ const CARD_PX = 520;
  *  direction. */
 function copyOf(canvas: HTMLCanvasElement, crop?: Crop | null): HTMLCanvasElement | null {
   try {
-    const from = crop && crop.width >= 8 && crop.height >= 8
-      ? crop
-      : { x: 0, y: 0, width: canvas.width, height: canvas.height };
+    const from = shaped(crop && crop.width >= 8 && crop.height >= 8 ? crop : null, canvas);
     const scale = Math.min(1, CARD_PX / Math.max(1, from.width));
     const copy = document.createElement('canvas');
     copy.width = Math.max(1, Math.round(from.width * scale));
@@ -84,6 +105,27 @@ function copyOf(canvas: HTMLCanvasElement, crop?: Crop | null): HTMLCanvasElemen
     context.drawImage(canvas, from.x, from.y, from.width, from.height, 0, 0, copy.width, copy.height);
     return copy;
   } catch { return null; }
+}
+
+/**
+ * The part of what he was looking at that the card can actually show.
+ *
+ * A screenful is 390 by 740 and a card is 175 by 200: a third of its
+ * height has to go, and the only question is which third. Without this the
+ * card kept the whole screenful, the box cut the bottom off it, and what
+ * was left was the top -- including, before the rectangle itself was
+ * measured properly, the part hidden behind the header.
+ *
+ * Nothing is done to a whole page: a sheet is kept as a sheet, scaled to
+ * the card's width with its foot cut off by the box, which is what it has
+ * always done and what he asked to keep.
+ */
+function shaped(crop: Crop | null, canvas: HTMLCanvasElement): Crop {
+  if (!crop) return { x: 0, y: 0, width: canvas.width, height: canvas.height };
+  const tall = crop.width / CARD_SHAPE;
+  if (crop.height <= tall + 1) return crop;
+  const y = crop.y + (crop.height - tall) * CARD_ANCHOR;
+  return { x: crop.x, y: Math.max(0, Math.round(y)), width: crop.width, height: Math.round(tall) };
 }
 
 const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
