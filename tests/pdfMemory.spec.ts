@@ -111,3 +111,35 @@ test('a double tap still zooms when the thread was busy between the taps', async
 
   await expect.poll(width, { timeout: 4000 }).toBeGreaterThan(before * 1.5);
 });
+
+test('the pages go while the app is away, and the one on screen stays', async ({ page }) => {
+  // His phone kills the app in the background: "signalled status=9
+  // rssMb=383", "[MEMORY PRESSURE] screen-on memory reclaim". What it was
+  // holding at that moment was 62 canvases and 37 MB of pictures, one
+  // screen's worth of which anybody could use.
+  test.slow();
+  await boot(page, { 'book.pdf': PDF }, 'book.pdf');
+  await readThis(page);
+  // Read down a little, so there is something behind us to let go of.
+  for (let step = 0; step < 6; step += 1) {
+    await page.locator('#preview-pane').evaluate((pane) => { pane.scrollTop += pane.clientHeight / 2; });
+    await page.waitForTimeout(420);
+  }
+  const held = await pictureMb(page);
+  expect(held, `holding while it is being read (${held.toFixed(1)} MB)`).toBeGreaterThan(8);
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  // Measured, not hoped for: the sharp pages outside the screen are what
+  // goes, and on this twelve-page document at 390x700 that is about a
+  // quarter of what was held. The screen's own pages are the rest.
+  await expect.poll(() => pictureMb(page), { timeout: 5000 }).toBeLessThan(held - 4);
+  const away = await pictureMb(page);
+
+  // Not to nothing: the page he is looking at is still drawn, so coming
+  // back cannot flash.
+  expect(away, `holding while away (${away.toFixed(1)} MB)`).toBeGreaterThan(1);
+  expect(await page.locator('.pdf-page canvas').count(), 'the screen still has its pictures').toBeGreaterThan(0);
+});

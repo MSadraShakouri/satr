@@ -3979,6 +3979,21 @@ function onBackground(from: Wiring): void {
   // was being held when it went away is the reading a kill is judged by.
   sayMemory('going away');
   log.note('app', 'went to the background', { from });
+  // The spare book goes while we are away. Two documents' bytes is the
+  // right trade while he is reading both -- it saved a 10.7 MB read at
+  // every swap -- and the wrong one in the background, which is where the
+  // system kills him: "signalled status=9 rssMb=383". The one he is
+  // actually in stays, so coming back still costs nothing.
+  if (keptDocuments.length > 1) {
+    const spare = keptDocuments.filter((doc) => doc.path !== filePath);
+    if (spare.length) {
+      keptDocuments = keptDocuments.filter((doc) => doc.path === filePath);
+      log.note('pdf', 'spare bytes let go while away', {
+        bytes: spare.reduce((sum, doc) => sum + doc.bytes.byteLength, 0),
+      });
+    }
+  }
+  flush();
   markAway();
   markSeen();
   restSeen();

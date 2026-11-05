@@ -2859,7 +2859,35 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       void import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here));
     }
   };
-  const onHidden = (): void => { if (document.visibilityState === 'hidden') putDown(); };
+  /**
+   * The pages go while the app is away, and come back when it is.
+   *
+   * His phone kills the app in the background -- "signalled status=9
+   * rssMb=383", "[MEMORY PRESSURE] screen-on memory reclaim" -- and what it
+   * is holding at that moment is 62 canvases and 37 MB of pictures, of
+   * which one screen's worth is of any use to anybody. The sharp pictures
+   * outside the screen go back, which is the same thing that happens when
+   * the reader scrolls past them; each one leaves its rough copy behind,
+   * shrunk from the picture already drawn, so nothing has to be asked of
+   * the engine to put a soft page back. What is actually on the glass is
+   * left alone: coming back must not flash.
+   */
+  const shedWhileAway = (): void => {
+    let gone = 0;
+    for (const slab of slabs) {
+      if (standing(slab).seen) continue;
+      if (slab.base || slab.detail) gone += 1;
+      forget(slab);
+    }
+    if (gone) log.note('pdf', 'pages let go while away', { pages: gone });
+  };
+  const onHidden = (): void => {
+    if (document.visibilityState === 'hidden') { putDown(); shedWhileAway(); }
+    // And back: the band is drawn again from here, which for everything
+    // still in hand is a no-op and for the rest is the engine being asked
+    // for the pages nearest the screen -- never the whole document.
+    else if (document.visibilityState === 'visible' && !shut) drawBand();
+  };
   document.addEventListener('visibilitychange', onHidden);
   // The animation machinery itself, started once on nothing: the first
   // doc.animate() of a page has a cost of its own, and paying it here
