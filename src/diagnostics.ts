@@ -169,3 +169,72 @@ export async function tellWhatTheLastResumeSaid(): Promise<void> {
     log.loud('native', 'could not ask what the last resume said', { why: String(error) });
   }
 }
+
+
+/**
+ * Who is holding the main thread, and for how long.
+ *
+ * Everything in this log so far is something the app chose to time: an
+ * open, a read, a resume. What it has never been able to say is "the
+ * thread was busy for four hundred milliseconds here and nothing had
+ * asked it to be" -- which is the shape of every complaint about
+ * smoothness, because a frame that does not land is a frame somebody
+ * else's work was standing on.
+ *
+ * The browser already measures this. A long task is any turn of the event
+ * loop over 50 ms; at that threshold a scroll produces dozens and the log
+ * becomes noise, so only the ones a person can feel are kept, and only so
+ * many of them per run.
+ *
+ * The useful half is `whileTouching`: a busy thread between frames is a
+ * stutter, and a busy thread under a finger is the app not answering.
+ */
+const FELT_MS = 120;
+const MOST_LONG_TASKS = 60;
+
+export function watchTheThread(): void {
+  if (typeof PerformanceObserver !== 'function') return;
+  const kinds = (PerformanceObserver as unknown as { supportedEntryTypes?: string[] }).supportedEntryTypes;
+  if (kinds && !kinds.includes('longtask')) return;
+  let touching = false;
+  const down = (): void => { touching = true; };
+  const up = (): void => { touching = false; };
+  addEventListener('pointerdown', down, { passive: true, capture: true });
+  addEventListener('pointerup', up, { passive: true, capture: true });
+  addEventListener('pointercancel', up, { passive: true, capture: true });
+  let said = 0;
+  let worst = 0;
+  let missed = 0;
+  try {
+    const watcher = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const ms = Math.round(entry.duration);
+        if (ms < FELT_MS) continue;
+        worst = Math.max(worst, ms);
+        if (said >= MOST_LONG_TASKS) { missed += 1; continue; }
+        said += 1;
+        // The attribution names the frame the work was in, which for this
+        // app is always the page itself; what it is worth keeping is the
+        // container, which tells a script apart from work in an iframe.
+        // Kept short: the line beside it in the log is the real answer to
+        // what was running.
+        const blame = (entry as PerformanceEntry & { attribution?: { name?: string; containerType?: string }[] })
+          .attribution?.[0];
+        log.note('app', 'the thread was busy', {
+          ms,
+          whileTouching: touching,
+          what: blame?.containerType ?? blame?.name ?? 'script',
+          ...(said === MOST_LONG_TASKS ? { andNoMore: true } : {}),
+        });
+      }
+    });
+    watcher.observe({ entryTypes: ['longtask'] });
+  } catch { /* an older WebView without the entry type: nothing to watch */ }
+  // What the run looked like as a whole, said once on the way out: a run
+  // with eighty long tasks and a worst of 900 ms is a different complaint
+  // from a run with two.
+  addEventListener('pagehide', () => {
+    if (!said && !missed) return;
+    log.note('app', 'long tasks this run', { felt: said + missed, worstMs: worst, kept: said });
+  }, { capture: true });
+}

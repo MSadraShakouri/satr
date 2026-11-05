@@ -3,7 +3,7 @@ import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, 
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews, forgetViews } from './viewStore';
 import { startKeeping, flush as flushLog } from './logStore';
 import * as log from './log';
-import { tellWhyItDied, tellWhatTheLastResumeSaid } from './diagnostics';
+import { tellWhyItDied, tellWhatTheLastResumeSaid, watchTheThread } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState } from '@codemirror/state';
@@ -1839,8 +1839,16 @@ async function openDocumentBytes(path: string): Promise<void> {
     return;
   }
   const reading = log.time('pdf', 'bytes read', { path });
+  const started = performance.now();
   const bytes = await backend.readBytes(path);
-  reading({ bytes: bytes?.byteLength ?? 0 });
+  // How fast, not just how long: 877 ms for his 8.9 MB book and 205 ms for
+  // his 2.2 MB one are the same 10 MB a second, and that is a fact about
+  // the bridge rather than about either book.
+  const took = Math.max(1, performance.now() - started);
+  reading({
+    bytes: bytes?.byteLength ?? 0,
+    mbPerSecond: Math.round((bytes?.byteLength ?? 0) / 1000 / took) / 1,
+  });
   if (!bytes?.byteLength) return;
   keepDocument({ path, mtime: entry?.mtime ?? 0, bytes });
   useDocumentBytes(path, bytes);
@@ -3799,6 +3807,7 @@ async function boot(): Promise<void> {
   // the launch owes it nothing, and the line lands when it lands.
   void tellWhyItDied();
   void tellWhatTheLastResumeSaid();
+  watchTheThread();
   warmTheEngine();
   const ready = log.time('launch', 'ready to read');
   try {
