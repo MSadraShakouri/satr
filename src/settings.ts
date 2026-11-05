@@ -274,7 +274,7 @@ export function openSettings(deps: SettingsDeps): void {
           </select>
         </div>
         <div class="setting-item">
-          <div class="setting-item-info"><div class="setting-item-name">Turning the phone</div><div class="setting-item-description">Only while a document is open. "Turn freely" works even when the phone's own Auto-rotate is off.</div></div>
+          <div class="setting-item-info"><div class="setting-item-name">Turning the phone</div><div class="setting-item-description">Only while a document is open. In a browser, sideways and upright go fullscreen to do it; turning freely past the phone's own rotation lock needs the installed app.</div></div>
           <select class="dropdown" data-select="documentRotation">
             ${ROTATIONS.map(([value, label]) => `<option value="${value}"${settings.documentRotation === value ? ' selected' : ''}>${label}</option>`).join('')}
           </select>

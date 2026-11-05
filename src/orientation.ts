@@ -50,14 +50,100 @@ export function wantedRotation(setting: Rotation, documentOpen: boolean): Rotati
 
 let applied: Rotation | null = null;
 
-/** Ask the screen for this, once per change. Nothing happens on the web. */
+/** Ask the screen for this, once per change. */
 export function applyRotation(setting: Rotation, documentOpen: boolean): Rotation {
   const want = wantedRotation(setting, documentOpen);
-  // Written down whether or not there is a phone to hear it: it is how the
-  // rule is read back in a test, and in the inspector.
+  // Written down whether or not anything can act on it: it is how the rule
+  // is read back in a test, and in the inspector.
   document.body.dataset.rotation = want;
   if (want === applied) return want;
   applied = want;
   if (Capacitor.isNativePlatform()) void SystemBars.setOrientation({ mode: want }).catch(() => undefined);
+  else void applyOnWeb(want);
   return want;
+}
+
+// ---- The same setting, in a browser ----
+//
+// Reported: "the free doesn't work in web, neither does sideways work when
+// my phone is vertical". Both were true, and only one of them is fixable
+// here.
+//
+// A page can ask for an orientation, but Chrome on Android honours the ask
+// only while the document is fullscreen or installed as an app -- in a
+// plain tab the promise simply rejects, which is what he met. So the ask is
+// made, and if it is refused the app goes fullscreen (the thing a video
+// player does to turn sideways) and asks again. Fullscreen needs a tap
+// behind it, so an ask made at launch is held until the next one.
+//
+// "Turn freely" is the one that cannot be done in a browser: `any` lets the
+// page off its own lock, it does not get the page past the phone's. That
+// needs the installed app and SCREEN_ORIENTATION_SENSOR.
+
+interface Lockable { lock?(orientation: string): Promise<void>; unlock?(): void }
+
+const screenOrientation = (): Lockable | undefined =>
+  (window.screen as unknown as { orientation?: Lockable }).orientation;
+
+let wentFullscreen = false;
+let retryArmed = false;
+// A browser that refused a lock in a plain tab will refuse the next one
+// too; there is no sense asking again on every tap just to be told no.
+let fullscreenFirst = false;
+
+async function applyOnWeb(want: Rotation): Promise<void> {
+  const orientation = screenOrientation();
+  if (!orientation?.lock) return;
+  if (want === 'system' || want === 'free') {
+    try { orientation.unlock?.(); } catch { /* a browser that will not be told */ }
+    await leaveFullscreen();
+    return;
+  }
+  if (!fullscreenFirst) {
+    if (await ask(orientation, want)) return;
+    fullscreenFirst = true;
+  }
+  if (!(await enterFullscreen())) return armRetry(want);
+  if (!(await ask(orientation, want))) armRetry(want);
+}
+
+async function ask(orientation: Lockable, want: Rotation): Promise<boolean> {
+  try {
+    await orientation.lock?.(want === 'landscape' ? 'landscape' : 'portrait');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function enterFullscreen(): Promise<boolean> {
+  if (document.fullscreenElement) return true;
+  // requestFullscreen resolves before the lock may be asked for, and it is
+  // refused outright without a recent tap behind it.
+  const activation = (navigator as unknown as { userActivation?: { isActive: boolean } }).userActivation;
+  if (activation && !activation.isActive) return false;
+  try {
+    await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    wentFullscreen = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function leaveFullscreen(): Promise<void> {
+  if (!wentFullscreen) return; // it was his fullscreen, not ours
+  wentFullscreen = false;
+  if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+}
+
+/** The next tap is the one that can go fullscreen; try again on it. */
+function armRetry(want: Rotation): void {
+  if (retryArmed) return;
+  retryArmed = true;
+  window.addEventListener('pointerup', () => {
+    retryArmed = false;
+    // Only if it is still wanted: the reader may have left the document.
+    if (document.body.dataset.rotation === want) void applyOnWeb(want);
+  }, { once: true });
 }

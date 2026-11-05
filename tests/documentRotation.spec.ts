@@ -16,6 +16,31 @@ test.use({ viewport: { width: 390, height: 700 }, deviceScaleFactor: 2 });
 
 const PDF = tinyPdf(4);
 
+/**
+ * A browser that answers the way Chrome on Android does: a lock outside
+ * fullscreen is refused, a lock inside it is granted. Every ask is written
+ * down so the test can see what was asked for, and in which order.
+ */
+async function fakeScreen(page: Page, { lockWorksOutsideFullscreen = false } = {}): Promise<void> {
+  await page.addInitScript((outside) => {
+    const asks: string[] = [];
+    (window as unknown as { __asks: string[] }).__asks = asks;
+    let full = false;
+    Object.defineProperty(document, 'fullscreenElement', { get: () => (full ? document.documentElement : null), configurable: true });
+    // document.documentElement does not exist yet this early; the prototype does.
+    Element.prototype.requestFullscreen = async function (): Promise<void> { asks.push('fullscreen'); full = true; };
+    document.exitFullscreen = async (): Promise<void> => { asks.push('exit fullscreen'); full = false; };
+    const orientation = screen.orientation as unknown as { lock(o: string): Promise<void>; unlock(): void };
+    orientation.lock = async (o: string): Promise<void> => {
+      asks.push(`lock ${o}`);
+      if (!full && !outside) throw new DOMException('not fullscreen', 'NotSupportedError');
+    };
+    orientation.unlock = (): void => { asks.push('unlock'); };
+  }, lockWorksOutsideFullscreen);
+}
+
+const asks = (page: Page): Promise<string[]> => page.evaluate(() => (window as unknown as { __asks: string[] }).__asks);
+
 async function boot(page: Page, rotation: string): Promise<void> {
   await page.addInitScript(([pdf, choice]) => {
     localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/scan.pdf': 1, 'Notes/essay.md': 1 }, folders: ['Notes'] }));
@@ -84,4 +109,58 @@ test('the rule itself, read back from the module', async ({ page }) => {
   expect(seen.openLandscape).toBe('landscape');
   expect(seen.shutLandscape).toBe('system');
   expect(seen.labels, 'the four choices the dropdown offers').toEqual(['system', 'free', 'portrait', 'landscape']);
+});
+
+
+// ---- The same setting, in a browser ----
+//
+// "The free doesn't work in web, neither does sideways work when my phone
+// is vertical." A page may only lock its orientation while it is fullscreen
+// or installed, so the ask was being refused and swallowed. Now the refusal
+// is answered: go fullscreen, ask again.
+
+test('sideways is asked for, and the next tap is what makes it stick', async ({ page }) => {
+  await fakeScreen(page);
+  await boot(page, 'landscape');
+  await page.waitForTimeout(300);
+  // Nothing can go fullscreen without a tap behind it, and a document
+  // restored at launch has not been tapped.
+  expect(await asks(page), 'asked once, and refused').toEqual(['lock landscape']);
+
+  await page.mouse.click(195, 400);
+  await page.waitForTimeout(400);
+  expect(await asks(page), 'the tap pays for the fullscreen, and the ask is made again').toEqual([
+    'lock landscape', 'fullscreen', 'lock landscape',
+  ]);
+});
+
+test('a browser that allows the lock is not sent fullscreen', async ({ page }) => {
+  await fakeScreen(page, { lockWorksOutsideFullscreen: true });
+  await boot(page, 'portrait');
+  await page.waitForTimeout(300);
+  expect(await asks(page), 'an installed app locks where it stands').toEqual(['lock portrait']);
+});
+
+test('leaving the document gives the phone back its say, and its chrome', async ({ page }) => {
+  await fakeScreen(page);
+  await boot(page, 'landscape');
+  await page.mouse.click(195, 400); // pays for the fullscreen
+  await page.waitForTimeout(400);
+  await openFile(page, 'Notes/essay.md');
+  await expect(page.locator('.cm-content')).toBeVisible();
+  const seen = await asks(page);
+  expect(seen.slice(-2), 'unlocked, and the fullscreen we entered is left').toEqual(['unlock', 'exit fullscreen']);
+  expect(await asked(page)).toBe('system');
+});
+
+test('turning freely is not pretended at in a browser', async ({ page }) => {
+  await fakeScreen(page);
+  await boot(page, 'free');
+  await page.waitForTimeout(300);
+  // No page can get past the phone's own rotation lock; `any` only lets a
+  // page off a lock it set itself. So it unlocks and says nothing more --
+  // it does not drag the reader into fullscreen for a promise it cannot
+  // keep. The override is the installed app's, and it is tested there.
+  expect(await asks(page)).toEqual(['unlock']);
+  expect(await asked(page), 'the setting is still live; only the browser cannot serve it').toBe('free');
 });
