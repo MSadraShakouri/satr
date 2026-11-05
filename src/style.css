@@ -3858,6 +3858,13 @@ textarea,
   color: var(--text-normal);
   font-weight: 600;
 }
+.empty-state-where.is-plain {
+  /* Nowhere else to put it: the same sentence, with nothing about it
+     saying it can be pressed. */
+  background: none;
+  cursor: default;
+}
+
 .empty-state-action {
   min-width: 200px;
   margin: 12px 0 0;

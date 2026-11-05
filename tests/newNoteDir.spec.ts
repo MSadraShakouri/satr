@@ -5,17 +5,17 @@ import { vaultText } from './support/vaultText';
 // the folder of the note in front of them. Notes are kept in folders by
 // subject, so a note written while reading "Physics/lecture 2" belongs beside
 // it, not at the top of the vault.
-async function boot(page: Page, files: Record<string, string>, active: string) {
+async function boot(page: Page, files: Record<string, string>, active: string, dirs?: string[]) {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(({ files, active }) => {
-    const folders = ['Notes', 'Notes/Physics', 'Notes/Physics/2026'];
+  await page.addInitScript(({ files, active, dirs }) => {
+    const folders = dirs ?? ['Notes', 'Notes/Physics', 'Notes/Physics/2026'];
     const index = { files: {} as Record<string, number>, folders };
     for (const path of Object.keys(files)) index.files[path] = 1;
     localStorage.setItem('satr:fs:index', JSON.stringify(index));
     for (const [path, text] of Object.entries(files)) localStorage.setItem(`satr:fs:file:${path}`, text);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: active }], active: 0 }));
     localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
-  }, { files, active });
+  }, { files, active, dirs });
   await page.goto('/');
   await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
 }
@@ -138,4 +138,15 @@ test('the pick belongs to the tab it was made on', async ({ page }) => {
   // A second new tab, from the note that was just made in 2026.
   await page.locator('#nav-new').click();
   await expect(whereLine(page)).toContainText('2026');
+});
+
+test('a vault with no folders states it and offers nothing', async ({ page }) => {
+  // How the web vault usually starts. A sheet with one row and a tick on
+  // it is a button that lies about having a choice, so the line stays a
+  // sentence: it still says the thing worth knowing.
+  await boot(page, { 'first note.md': '# First\n', 'reading list.md': '# Reading\n' }, 'first note.md', []);
+  await page.locator('#nav-new').click();
+  await expect(page.locator('#empty-tab .empty-state-where')).toBeVisible();
+  await expect(page.locator('#empty-tab .empty-state-where')).toContainText('New notes go in');
+  await expect(page.locator('#empty-tab [data-act="where"]')).toHaveCount(0);
 });

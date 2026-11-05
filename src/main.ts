@@ -2794,6 +2794,20 @@ function dirLabel(dir: string): string {
   return dir ? `/${dir}` : '/';
 }
 
+/**
+ * Whether there is anywhere else to put a note. A vault with no folders
+ * in it -- which is how the web one usually starts -- can only answer one
+ * way, and a button that opens a sheet with a single row and a tick on it
+ * is a button that lies about having a choice. One listing of the scope's
+ * own root answers it; the sheet below walks the rest only when asked.
+ */
+async function canPickNewNoteDir(): Promise<boolean> {
+  const scope = currentScope();
+  if (scope.kind === 'all') return true; // the vault's own root is always a second place
+  const inside = await backend.list(scope.space.path).catch(() => []);
+  return inside.some((entry) => entry.kind === 'folder' && !entry.name.startsWith('.'));
+}
+
 async function pickNewNoteDir(): Promise<void> {
   const scope = currentScope();
   const rootDir = scope.kind === 'space' ? scope.space.path : walkDir();
@@ -2822,11 +2836,13 @@ async function pickNewNoteDir(): Promise<void> {
 }
 
 async function renderEmptyTab(): Promise<void> {
-  // Which folder a note made here would land in, shortened the way every
-  // other path in the app is: the folder itself keeps its name and the ones
-  // above it are cut to the shortest prefix their siblings leave free.
+  // Which folder a note made here would land in, named the way the tree's
+  // "Move to..." names folders: under the space, or from the top in All
+  // files. Stated whether or not it can be changed -- on a vault with no
+  // folders the sentence is still the useful half.
   const where = whereNewNotesGo();
   const whereLabel = dirLabel(where);
+  const whereOpen = await canPickNewNoteDir();
   const recent: string[] = [];
   for (const path of recentNotes()) {
     if (recent.length >= 8) break;
@@ -2846,9 +2862,13 @@ async function renderEmptyTab(): Promise<void> {
         <input type="search" class="empty-state-search-field" dir="auto" placeholder="Search notes" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${escapeText(emptyQuery)}">
       </div>
       <div class="empty-state-where-row">
-        <button type="button" class="empty-state-where" data-act="where" aria-label="Choose the folder a new note goes in">
-          ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>${CHEVRON_ICON}
-        </button>
+        ${whereOpen
+          ? `<button type="button" class="empty-state-where" data-act="where" aria-label="Choose the folder a new note goes in">
+              ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>${CHEVRON_ICON}
+            </button>`
+          : `<span class="empty-state-where is-plain">
+              ${FOLDER_ICON}<span class="empty-state-where-label">New notes go in <strong dir="auto">${escapeText(whereLabel)}</strong></span>
+            </span>`}
       </div>
       <div class="empty-state-action-list">
         <button type="button" class="empty-state-action" data-act="new">Create new note</button>
