@@ -547,6 +547,29 @@ function continueOnEnter(view: EditorView): boolean {
   return true;
 }
 
+/** Backspace right after a heading's marker takes a level off instead of
+ *  eating the space: `### ` -> `## ` -> `# ` -> a plain line, one press
+ *  each. The button that sets a heading leaves the caret exactly there, so
+ *  going one level too far used to mean deleting the space and getting
+ *  `##text`, then fixing it by hand.
+ *
+ *  Only right after the marker. Anywhere else on the line Backspace stays
+ *  an ordinary delete, because a heading is still a line of prose and a
+ *  key that stops deleting letters halfway through a word is worse than
+ *  the thing it fixes. */
+function reduceHeadingLevel(view: EditorView): boolean {
+  const { state } = view;
+  const range = state.selection.main;
+  if (!range.empty) return false;
+  const line = state.doc.lineAt(range.head);
+  const marker = /^(#{1,6}) /.exec(line.text);
+  if (!marker) return false;
+  if (range.head !== line.from + marker[1].length + 1) return false;
+  const cut = marker[1].length > 1 ? 1 : 2; // the last level takes its space with it
+  view.dispatch({ changes: { from: line.from, to: line.from + cut }, userEvent: 'delete.backward' });
+  return true;
+}
+
 // The Enter chain, in the keymap's own order (see the keymap below). The
 // toolbar's "new line below" runs exactly this at the line's end, so the
 // button and the key can never drift apart.
@@ -1167,6 +1190,7 @@ export class SatrEditor {
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
         { key: 'Tab', run: indentMore, shift: outdentLess },
         { key: 'Backspace', run: deleteDelimiterPair },
+        { key: 'Backspace', run: reduceHeadingLevel },
         ...closeBracketsKeymap,
         ...defaultKeymap, ...historyKeymap,
       ]),
