@@ -195,14 +195,18 @@ export function heldPreviewPlace(pane: HTMLElement): number | null {
   return holding && holding.pane === pane ? holding.position : null;
 }
 
-export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0, room: number | null = null): void {
+export function applyPreviewScroll(pane: HTMLElement, preview: HTMLElement, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0, room: number | null = null, measured = false): void {
   // What this last asked the pane for, as the pane was able to answer it
   // (short of the end of a note it scrolls to the end instead). The reader
   // moving a single pixel of their own is the one thing that ends the
   // corrections: see keepPlaced below.
   let placed: number | null = null;
   // The note is drawn once, on the first place, and measured after that.
-  let unmeasured = true;
+  // A note handed back from the pile of kept views arrives measured: the
+  // figures are written on its own sections and nothing has happened to
+  // them since. Measuring again would mean laying out every formula it has
+  // already drawn -- 1.6s on 130kB of his notes -- for the same numbers.
+  let unmeasured = !measured;
   // Whether the pane could go where it was asked. A note whose sections are
   // still estimates can be shorter than the place the reader asked for: the
   // scroll is clamped to the end of the note as it stands, which is not

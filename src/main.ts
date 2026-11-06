@@ -18,7 +18,7 @@ import { renderMarkdown, renderMarkdownParts, sizeListMarkers } from './markdown
 import { highlightCodeBlocks } from './codeHighlight';
 import { isHtmlFile, showHtmlFile } from './htmlFiles';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
-import { fillMath, type Filling } from './mathFill';
+import { fillMath, type Filling, type Formula } from './mathFill';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, roomUnderNote, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
@@ -601,8 +601,15 @@ function seedSectionHeights(): void {
   }
 }
 
-function watchSections(): void {
+function watchSections(fresh = true): void {
   nearbySections.disconnect();
+  if (!fresh) {
+    // A note handed back from the pile arrives priced, with every figure it
+    // had written on its own sections. Only the watching has to be set up
+    // again: the nodes are new to the observer, the numbers are not.
+    for (const section of preview.querySelectorAll<HTMLElement>(':scope > .md-section')) nearbySections.observe(section);
+    return;
+  }
   // Every note is measured in its own lines. The figure looked like a
   // property of the font and the width of the screen, and it is not: a
   // note of long list items costs 120px a source line, a note of short
@@ -647,6 +654,93 @@ function closeDocument(): void {
   documentHits = [];
   document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
 }
+// ---- The note you came from ----
+//
+// Switching away from a note threw its reading view away, and switching
+// back built the whole thing again: the markdown, the html, the layout, and
+// every formula near the screen. On 130kB of his notes that is 700ms to
+// come back to something that had not changed a character since he left.
+//
+// So the view goes with the tab. What is kept is the built DOM itself --
+// formulas already drawn, code already coloured, images already loaded --
+// and it is handed back only when the note is the same note: same path, and
+// the same text, by length and hash. An edit changes the stamp, so an
+// edited note is built again, which is the only correct answer.
+//
+// Two of them, newest first, the way documents are kept (KEPT_DOCUMENTS
+// above) -- the note and the one beside it. A drawn note is heavy, most of
+// it KaTeX's own markup, so the pair is capped by the size of the html it
+// was built from and the newest is always kept, whatever it weighs.
+/** What a note was priced at: the per-line height worked out from its own
+ *  sections (src/main.ts watchSections). It belongs to the note, not to the
+ *  app, so it goes on the pile with it -- priced again from nothing, a note
+ *  coming back changes height under the reader. */
+type Pricing = { lines: number; height: number; guess: number; applied: number; line: string };
+type KeptNote = { path: string; stamp: string; chars: number; nodes: DocumentFragment; formulas: Formula[]; pricing: Pricing };
+const KEPT_NOTES = 2;
+const KEPT_NOTE_CHARS = 4 * 1024 * 1024;
+let keptNotes: KeptNote[] = [];
+/** Newest first, the oldest out, and nothing past the weight limit. */
+function keepNote(kept: KeptNote): void {
+  const next = [kept, ...keptNotes.filter((note) => note.path !== kept.path)].slice(0, KEPT_NOTES);
+  let total = 0;
+  keptNotes = next.filter((note, at) => {
+    total += note.chars;
+    return at === 0 || total <= KEPT_NOTE_CHARS;
+  });
+}
+/** A note that is about to change, or is gone: what was kept of it is wrong. */
+function forgetNote(path: string): void {
+  keptNotes = keptNotes.filter((note) => note.path !== path);
+  if (renderedNote?.path === path) renderedNote = null;
+}
+/** The same text gives the same stamp; a character more or less does not.
+ *  Length alone would miss a swapped word, and the whole string kept for
+ *  comparison would be the note a second time. djb2 over 130kB is a
+ *  millisecond. */
+function stampOf(source: string): string {
+  let hash = 5381;
+  for (let i = 0; i < source.length; i += 1) hash = ((hash * 33) ^ source.charCodeAt(i)) | 0;
+  return `${source.length}:${hash}`;
+}
+/** The note the reading view is showing right now, and what it was built
+ *  from -- so that leaving it can keep it. */
+let renderedNote: { path: string; stamp: string; chars: number; formulas: Formula[] } | null = null;
+/** A note handed back from the pile is already measured: its sections carry
+ *  the heights they were last laid out at, and the placement that follows
+ *  can trust them instead of laying out every formula on the note again.
+ *  True only until something moves a line (noteReshaped). */
+let keptMeasured = false;
+/** A line of the note has moved: whatever its sections say they are worth is
+ *  out of date, and the next placement measures them again. */
+function noteReshaped(): void { keptMeasured = false; }
+function noteGrew(): void { noteReshaped(); scheduleMathLayout(preview); }
+/** Called before the reading view is replaced: the note being left goes into
+ *  the pile, with its nodes moved out of the page rather than copied. */
+function keepTheNoteBeingLeft(): void {
+  const leaving = renderedNote;
+  renderedNote = null;
+  if (!leaving || leaving.path === filePath || !preview.firstChild) return;
+  // The heights the browser is using right now, written down before the
+  // note leaves the page. content-visibility: auto remembers the size a
+  // section was last drawn at, and that memory belongs to the element's
+  // place in the page: taken out of it, every section off screen falls back
+  // to the figure on its own style, and the note came back a third shorter
+  // than it went away (171166px to 115646px on 130kB of his). Reading the
+  // boxes costs one layout -- the sections are skipped subtrees, so this is
+  // not laying out what is inside them -- and the figures written here are
+  // what makes the note the same length when it comes back.
+  const sections = [...preview.querySelectorAll<HTMLElement>(':scope > .md-section')];
+  const heights = sections.map((section) => section.getBoundingClientRect().height);
+  for (const [at, section] of sections.entries()) {
+    if (heights[at] > 0) section.style.setProperty('contain-intrinsic-block-size', `auto ${Math.round(heights[at])}px`);
+  }
+  const nodes = document.createDocumentFragment();
+  nodes.append(...preview.childNodes);
+  const pricing: Pricing = { lines: measuredLines, height: measuredHeight, guess: lineHeightGuess, applied: guessApplied, line: preview.style.getPropertyValue('--md-line') };
+  keepNote({ ...leaving, nodes, pricing });
+}
+
 // The formulas of the note on screen, drawn after its words (src/mathFill.ts).
 let mathFilling: Filling | null = null;
 /** Everything drawn, now: for an export, a print, or a search of the view. */
@@ -656,6 +750,7 @@ function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
   lastRender = Date.now();
+  keepTheNoteBeingLeft();
   releaseFoldSlack(previewPane, preview); // a fresh render starts with the plain tail
   // A document being read holds a worker and a pile of canvases: the one
   // open at a time is let go before anything else is drawn.
@@ -724,16 +819,51 @@ function renderPreview(): void {
     return;
   }
   const source = editor.getValue();
+  const stamp = stampOf(source);
+  // The same note, unchanged, as it was left: the view goes back into the
+  // page whole. Nothing is parsed, nothing is drawn again, and the formulas
+  // that were on screen are still on it.
+  const kept = keptNotes.find((note) => note.path === filePath && note.stamp === stamp);
+  if (kept) {
+    const back = log.time('file', 'reading view kept', { chars: source.length });
+    keptNotes = keptNotes.filter((note) => note !== kept);
+    preview.replaceChildren(kept.nodes);
+    renderedNote = { path: filePath, stamp, chars: kept.chars, formulas: kept.formulas };
+    keptMeasured = true;
+    mathFilling?.stop();
+    // Whatever was still waiting when he left is still waiting now, and the
+    // band is re-centred on wherever the note comes back at.
+    mathFilling = fillMath(preview, kept.formulas, previewPane, noteGrew);
+    applyPreviewFolds();
+    // Back at the price it was last on screen at, so that the sections off
+    // screen keep the heights they had: re-pricing them from whatever is
+    // laid out now moves the note under the reader.
+    measuredLines = kept.pricing.lines;
+    measuredHeight = kept.pricing.height;
+    lineHeightGuess = kept.pricing.guess;
+    guessApplied = kept.pricing.applied;
+    if (kept.pricing.line) preview.style.setProperty('--md-line', kept.pricing.line);
+    watchSections(false);
+    scheduleMathLayout(preview);
+    markBrokenLinks(); // the vault may have gained or lost a file while he was away
+    const path = filePath;
+    previewReady = Promise.all([loadImages(preview, path), highlightCodeBlocks(preview)])
+      .then(() => { if (path === filePath) layoutMath(preview); });
+    back({ formulas: kept.formulas.length, waiting: mathFilling.left() });
+    return;
+  }
   const built = log.time('file', 'reading view built', { chars: source.length });
   // The note's words go up now and its formulas are drawn after, nearest the
   // screen first (src/mathFill.ts). On 128kB of his notes that is the
   // difference between a reading view in a moment and one in three seconds.
   const note = renderMarkdownParts(asMarkdown(filePath, source));
   preview.innerHTML = `${title}${note.html}`;
+  keptMeasured = false; // a note just built has never been measured
   const words = performance.now();
   mathFilling?.stop();
-  mathFilling = fillMath(preview, note.formulas, previewPane, () => scheduleMathLayout(preview));
+  mathFilling = fillMath(preview, note.formulas, previewPane, noteGrew);
   built({ formulas: note.formulas.length, waiting: mathFilling.left(), words: Math.round(performance.now() - words) });
+  renderedNote = { path: filePath, stamp, chars: note.html.length, formulas: note.formulas };
   // A task is ticked where it is read, not only where it is written. The
   // parser hands over a box that cannot be touched; here, and only here, it
   // is live — a card in the tab switcher and an exported page keep theirs
@@ -1117,6 +1247,7 @@ async function saveNow(): Promise<boolean> {
 }
 function update(): void {
   previewDirty = true;
+  keptMeasured = false;
   window.clearTimeout(renderTimer);
   if (previewVisible()) renderTimer = window.setTimeout(renderPreview, 250);
   updateMathWarning();
@@ -1340,11 +1471,16 @@ function setMode(requested: Mode, restoredLine?: number): void {
     // The editor's own measurements, handed to the sections that have none:
     // the placement below reads these, so it lands where it belongs instead
     // of being dragged there afterwards.
-    seedSectionHeights();
+    // Not for a note handed back from the pile: it comes back with the
+    // heights it really had, and the seed is the editor's estimate of them
+    // -- lines of source, with no formula or table in them. Stamped over
+    // the real figures it took 130kB of his notes from 171166px to
+    // 115646px, a third of the note gone from under the scrollbar.
+    if (!keptMeasured) seedSectionHeights();
     layoutMath(preview); // settle math line breaks before measuring positions
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
-    if (position !== null && !documentOpen()) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y, room);
+    if (position !== null && !documentOpen()) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y, room, keptMeasured);
   } else if (position !== null) {
     applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);
@@ -1360,7 +1496,7 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   autoSpace: loadSettings().spaceAfterPunctuation,
   onSelection: () => { rememberViewSoon(); updateMathSaying(); },
-  onFold: () => { applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
+  onFold: () => { noteReshaped(); applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
   linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
   openLink: (target, heading) => openLink(target, heading),
   obscuredBottom: () => obscuredBottom(),
@@ -1799,7 +1935,7 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit',
     syncingScroll = true;
     if (mode === 'preview') {
       layoutMath(preview);
-      applyPreviewScroll(previewPane, preview, line, current, false, scrollBand());
+      applyPreviewScroll(previewPane, preview, line, current, false, scrollBand(), null, keptMeasured);
     } else {
       applyEditorScroll(editor.view, line, current, false, scrollBand());
       holdEditorPosition(line);
@@ -2205,6 +2341,7 @@ async function moveFile(from: string, to: string, onDisk: string): Promise<void>
 /** A file or folder moved (renamed): the open note, history and view memory follow. */
 function pathMoved(from: string, to: string): void {
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
+  for (const note of [...keptNotes]) if (within(note.path, from)) forgetNote(note.path);
   const move = (p: string): string => (within(p, from) ? to + p.slice(from.length) : p);
   for (const tab of [...tabs, ...closedTabs]) tab.path = tab.path && move(tab.path);
   setRecent(recentNotes().map(move));
@@ -2245,6 +2382,7 @@ function pathDeleted(path: string): void {
   // something that is not there any more; a folder takes its notes' with it.
   forgetTabCard(path);
   for (const tab of tabs) if (tab.path && within(tab.path, path)) forgetTabCard(tab.path);
+  for (const note of [...keptNotes]) if (within(note.path, path)) forgetNote(note.path);
   setRecent(recentNotes().filter((p) => !within(p, path)));
   for (let i = closedTabs.length - 1; i >= 0; i -= 1) if (within(closedTabs[i].path, path)) closedTabs.splice(i, 1);
   // Tabs of deleted notes close; the open one hands over to its neighbour.
@@ -3891,6 +4029,7 @@ function applySettings(settings: Settings): void {
   // the browser's own default on the web), so the note grows with everything
   // else — and the em a KaTeX sign is laid out in is always the em of the
   // letter beside it (src/style.css, src/mathLayout.ts).
+  noteReshaped(); // type size and line height move every section
   root.setProperty('--note-font-size', `${settings.fontSize / 16}rem`);
   root.setProperty('--note-line-height', String(settings.lineHeight));
   editor.setLineNumbers(settings.lineNumbers);
