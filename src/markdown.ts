@@ -311,7 +311,41 @@ function leavesTagsOpen(html: string): boolean {
 // A fenced code block (to its closing fence, or the end of the note), a
 // code span (backtick runs of the same length, within one paragraph), or
 // math: $$display$$ or $inline$.
+/**
+ * A note's markup with its formulas still to come.
+ *
+ * "Opening is slow for big files... do the current expected screen and then
+ * go upwards and downwards." Measured on 128kB of his own notes: 1263ms to
+ * build the markup, of which nearly all is KaTeX drawing 5538 formulas, and
+ * the string it produces is 9.1MB -- which then has to be parsed and laid
+ * out twice over (DOMParser here, then the page). Almost none of that is
+ * the note's text: without the formulas the same note is a couple of
+ * hundred kB and lands in a moment.
+ *
+ * So the markup is built with the formulas left as the placeholders they
+ * already were, and `formulas` carries what each one needs to be drawn
+ * later -- on screen first, then outwards (src/mathFill.ts). Nothing else
+ * about the note changes: the sections, the source lines each one carries,
+ * the footnotes and the note's own stylesheet are all finished here, so
+ * scrolling, folding and the outline work on the whole note from the first
+ * frame, formulas or no formulas.
+ */
+export interface PartlyDrawn {
+  html: string;
+  formulas: { tex: string; display: boolean }[];
+}
+
+/** The whole note, formulas and all: for an export, a card, or a print. */
 export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): string {
+  return build(source, styleRoot, false).html;
+}
+
+/** The same note, with its formulas left for src/mathFill.ts to draw. */
+export function renderMarkdownParts(source: string, styleRoot = `.${NOTE_ROOT}`): PartlyDrawn {
+  return build(source, styleRoot, true);
+}
+
+function build(source: string, styleRoot: string, defer: boolean): PartlyDrawn {
   const normalized = source.replace(/\r\n?/g, '\n');
   // Front matter becomes blank lines, so line numbers don't shift.
   const withoutFrontMatter = normalized.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, (block) => block.replace(/[^\n]/g, ''));
@@ -319,7 +353,9 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
   // (page breaks, list markers, table separators) only ever look at the
   // lines' text, so the reading view and the editor agree on every formula.
   const spans = scanMath(withoutFrontMatter);
-  const math = spans.map((span) => renderMath(withoutFrontMatter.slice(span.from + span.delim, span.to - span.delim), span.display));
+  const texOf = (span: (typeof spans)[number]): string => withoutFrontMatter.slice(span.from + span.delim, span.to - span.delim);
+  const math = defer ? [] : spans.map((span) => renderMath(texOf(span), span.display));
+  const formulas = defer ? spans.map((span) => ({ tex: texOf(span), display: span.display })) : [];
   const withMathPlaceholders = splitMath(withoutFrontMatter, spans);
   // A list marker the writer typed keeps its own number — `۲.` becomes `2.`
   // for the parser's sake (the digits are only transliterated), never `1.`:
@@ -425,7 +461,7 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
   // over a megabyte of HTML — quadratic, and the biggest single cost of
   // opening such a note. A function replacement also keeps the formula
   // literal: a string replacement would read $& and $1 inside KaTeX's output.
-  safe = safe.replace(/<(span|div|pre) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
+  if (!defer) safe = safe.replace(/<(span|div|pre) data-satr-math="(\d+)"><\/\1>/g, (whole, _tag, index: string) => math[Number(index)] ?? whole);
   // The live blocks' frames, put in the same way and for the same reason.
   safe = safe.replace(/<div data-satr-live="(\d+)"><\/div>/g, (whole, index: string) => {
     const block = liveBlocks[Number(index)];
@@ -747,7 +783,7 @@ export function renderMarkdown(source: string, styleRoot = `.${NOTE_ROOT}`): str
       const mirrored = MIRROR[cell.getAttribute('data-table-align') ?? ''];
       if (mirrored) cell.setAttribute('data-table-align', mirrored);
     });
-  return document.body.innerHTML;
+  return { html: document.body.innerHTML, formulas };
 }
 
 // Page breaks, for the PDF (hidden on screen). Any of these, on its own line

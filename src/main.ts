@@ -14,10 +14,11 @@ import './style.css';
 import './externalFiles.css';
 import { SatrEditor } from './editor';
 import { FIND_QUERY } from './findBar';
-import { renderMarkdown, sizeListMarkers } from './markdown';
+import { renderMarkdown, renderMarkdownParts, sizeListMarkers } from './markdown';
 import { highlightCodeBlocks } from './codeHighlight';
 import { isHtmlFile, showHtmlFile } from './htmlFiles';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
+import { fillMath, type Filling } from './mathFill';
 import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, roomUnderNote, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
@@ -634,6 +635,11 @@ function closeDocument(): void {
   documentHits = [];
   document.body.classList.remove('is-pdf-chrome', 'is-pdf-sidebar');
 }
+// The formulas of the note on screen, drawn after its words (src/mathFill.ts).
+let mathFilling: Filling | null = null;
+/** Everything drawn, now: for an export, a print, or a search of the view. */
+function drawEveryFormula(): void { mathFilling?.all(); }
+
 function renderPreview(): void {
   window.clearTimeout(renderTimer);
   previewDirty = false;
@@ -707,8 +713,15 @@ function renderPreview(): void {
   }
   const source = editor.getValue();
   const built = log.time('file', 'reading view built', { chars: source.length });
-  preview.innerHTML = `${title}${renderMarkdown(asMarkdown(filePath, source))}`;
-  built();
+  // The note's words go up now and its formulas are drawn after, nearest the
+  // screen first (src/mathFill.ts). On 128kB of his notes that is the
+  // difference between a reading view in a moment and one in three seconds.
+  const note = renderMarkdownParts(asMarkdown(filePath, source));
+  preview.innerHTML = `${title}${note.html}`;
+  const words = performance.now();
+  mathFilling?.stop();
+  mathFilling = fillMath(preview, note.formulas, previewPane, () => scheduleMathLayout(preview));
+  built({ formulas: note.formulas.length, waiting: mathFilling.left(), words: Math.round(performance.now() - words) });
   // A task is ticked where it is read, not only where it is written. The
   // parser hands over a box that cannot be touched; here, and only here, it
   // is live — a card in the tab switcher and an exported page keep theirs
