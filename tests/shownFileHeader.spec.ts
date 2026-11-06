@@ -150,9 +150,14 @@ test('a document starts below the header, not behind it', async ({ page }) => {
 });
 
 test('the chrome is a bar when it carries the name, and nothing when it does not', async ({ page }) => {
+  // The bar's surface is painted by a layer of its own (.topbar::before), not
+  // by the bar: it slides up by the controls' height when a document is read,
+  // as a transform, so the name above it does not move and nothing lays out
+  // every frame. Reading .topbar's own background therefore says transparent
+  // whatever the chrome is doing -- the glass is on the layer.
   const surface = () => page.evaluate(() => {
     const el = document.querySelector('.topbar');
-    return el ? getComputedStyle(el).backgroundColor : '';
+    return el ? getComputedStyle(el, '::before').backgroundColor : '';
   });
   await boot(page, { 'note.md': LONG, 'handout.pdf': PDF }, 'note.md');
   // a note draws its own title, so the chrome stays out of the way
