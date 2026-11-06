@@ -92,9 +92,22 @@ the phone — or comes back to life if it has not been.
   space **before the closer** is forgiven, so `* b *` stays a multiplication
   sign. Code spans already kept a space inside, in both views. Fifteen tests in
   tests/forgivingMarkers.spec.ts, nine of which fail without the change.
-  **Waiting on the phone:** type a sentence into a highlight and watch the
-  colour hold on each space, then check that Enter at the end of such a line
-  leaves its marks above (the item below).*
+  **Second pass, on your word:** the marks themselves, and the direction was
+  mine to get wrong — the first attempt took the look *off* the `==` in a
+  well-formed pair instead of *putting* it on the marks of a forgiven one, and
+  that was a thing that already worked. As it stands: the parser dresses a
+  whole pair, marks included, so a `==` sits on the same yellow as the words it
+  holds, a `**` is bold, a `~~` is struck, and a forgiven pair — which has no
+  node to be dressed by — is now dressed by hand the same way, dimming
+  included (one span, `cm-lp-forgiving-<kind> cm-live-marker`, so the 0.42
+  falls over the mark's own colour as it does over the parser's). Nothing about
+  the parser's own marks changed. Eight more tests in the same spec, all of
+  which fail without it: each kind's marks wear the same look as the words in
+  both states, stay dimmed, and are drawn identically with a space inside the
+  pair or without. **Waiting on the phone:** type a sentence into a highlight
+  and watch the colour hold on each space and run over the `==` as it does
+  without one, then check that Enter at the end of such a line leaves its marks
+  above (the item below).*
 - [x] Enter at the end of a line that ends in `*` carries the asterisk to the next line —
   *done, and the reproducing was the whole of it. Typing into the line never
   shows this: the marks are only hidden while the caret is somewhere else, so
