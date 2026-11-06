@@ -93,8 +93,26 @@ the phone — or comes back to life if it has not been.
   sign. Code spans already kept a space inside, in both views. Fifteen tests in
   tests/forgivingMarkers.spec.ts, nine of which fail without the change.
   **Waiting on the phone:** type a sentence into a highlight and watch the
-  colour hold on each space.*
-- [ ] Enter at the end of a line that ends in `*` carries the asterisk to the next line — *confirmed as wanted: the new line should ignore the asterisk and leave it behind, not drag the marker down. The caret behaviour around invisible markers stays as it is -- it is the right trade as long as new lines are handled properly, the way the new-line button already does it.* *(found here)* **Could not reproduce it here:** in the editor harness, Enter at the column after `a **one ** *`, `a *one* *`, `a *`, `a ~~x~~ *` and `a ==x== ` adds a newline and nothing else. The one place an asterisk is carried down is a real bullet — `* item` gives `* ` — which is the list rule doing its job, and `* ` alone on a line loses its marker entirely. Either it only happens in the app (a path main.ts takes and the bare editor does not) or it needs the keystroke, or it was the flicker seen from another angle. **Needs your steps: which mode, and is the line's `*` a bullet or a lone marker?**
+  colour hold on each space, then check that Enter at the end of such a line
+  leaves its marks above (the item below).*
+- [x] Enter at the end of a line that ends in `*` carries the asterisk to the next line —
+  *done, and the reproducing was the whole of it. Typing into the line never
+  shows this: the marks are only hidden while the caret is somewhere else, so
+  the bug lives in the tap. Tap the end of `word *bold*` as it is drawn —
+  `word bold` — and the caret lands at 10 of 11, in front of the closing `*`,
+  because a hidden mark has no width to tap; Enter then broke there and the
+  closer came down: `word *bold` above, `*` starting the next line, the italic
+  gone. Same shape for `**bold**`, `~~struck~~`, a code span, `==hl==` and a
+  link (caret 9 of 16, `](a.md)` dragged). The new-line button never had it
+  because it parks the caret at the line's real end before it runs Enter.
+  Enter now parks the same way when only hidden characters are left after the
+  caret, then runs the rest of the chain untouched — so a list still continues,
+  `$$  $$` still opens a display block, and a caret with real words after it
+  still splits where it stands. An empty pair counts as ordinary text, as you
+  said: both halves stay above, the new line is clean. Twelve tests in
+  tests/enterAtLineEnd.spec.ts, nine of which fail without it (the three that
+  pass either way are the guards). **Waiting on the phone:** tap past the last
+  word of a line that ends in `*bold*` and press Enter.*
 - [x] have something for headers and maybe have something to repeat the same header as the last one, would be nice but I don't know how to do it on mobile well (probably an extra button that loops last used header to 6 then back to 1 and continue) — *done, without the extra button. A plain line now takes the level of the nearest heading above it, so one press continues the shape of the note; pressing again walks the levels as before, which is how a level gets changed. Fenced code is skipped when reading the level above — `# install everything` is a comment, not a heading. Waiting on the phone.*
 - [ ] new line capitalize happens on actual new lines but not on bullet lists and check things (should we keep it like this? I'd prefer no capitalization on a new line but I'm not too sure about it, maybe a settings part for it)
 

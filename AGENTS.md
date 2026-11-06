@@ -128,7 +128,9 @@ genuinely changed something central — the editor's keymap, how a note is
 rendered, how files are read — and cannot name which specs that touches. If you
 cannot name a reason out loud, that is the answer: do not run it.
 
-Pre-existing failures, not yours: `uiScale.spec.ts:109` (TypeError),
+Pre-existing failures, not yours: `autoSpace.spec.ts:167` (a mark that has its
+space already — 1 run in 3 on a quiet machine, with and without the Enter
+change of 0.20.0's round), `uiScale.spec.ts:109` (TypeError),
 `pdfDisplayOptions.spec.ts` at `--workers=3`, `mathBreaks.spec.ts:210`
 (environment), `pdfFile.spec.ts` 1-in-64 at `--workers=2`,
 `session.spec.ts:180` under mixed parallel load.
