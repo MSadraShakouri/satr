@@ -7,6 +7,7 @@ import { defaultKeymap, insertNewlineAndIndent, isolateHistory, history, history
 import { insertNewlineContinueMarkup, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
+import type { SyntaxNode } from '@lezer/common';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind, revealThirdDown, setFindQuery } from './findBar';
 import { collectHeadings, type Heading } from './outline';
 import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, Transaction, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
@@ -570,11 +571,60 @@ function reduceHeadingLevel(view: EditorView): boolean {
   return true;
 }
 
+/** A character the note does not draw where it stands: the mark of an inline
+ *  pair, a link's destination, or a space beside one. */
+const HIDDEN_CHAR = /[ \t*_=~`$"]/;
+/** Node names that are not text either, though they are letters: what a link
+ *  carries between its brackets and the last of its marks. */
+const HIDDEN_NODE = /Mark$|^URL$|^LinkTitle$/;
+
+/** Is everything between `head` and the end of the line a character the note
+ *  does not draw? Then the caret is at the end of the line *as it is drawn* —
+ *  which is where a tap past the last word lands, because a hidden mark has no
+ *  width to tap: `word *bold*` reads as `word bold`, and a finger at the end of
+ *  it puts the caret in front of the closing `*`. */
+function onlyHiddenAfter(state: EditorState, head: number, end: number): boolean {
+  if (!state.sliceDoc(head, end).trim()) return false; // nothing there at all
+  const tree = syntaxTree(state);
+  for (let at = head; at < end; at += 1) {
+    if (HIDDEN_CHAR.test(state.sliceDoc(at, at + 1))) continue;
+    let mark = false;
+    for (let node: SyntaxNode | null = tree.resolveInner(at, 1); node; node = node.parent) {
+      if (HIDDEN_NODE.test(node.name)) { mark = true; break; }
+    }
+    if (!mark) return false; // a letter or a digit: the writer's own text
+  }
+  return true;
+}
+
+/** Enter at the end of the line as it is drawn. Only the marks are left after
+ *  the caret, so the break belongs after them, where the writer thinks the
+ *  line ends — not between them, which dragged the closing mark down onto the
+ *  next line and broke the italic above it. The toolbar's "new line below" has
+ *  always done this by parking at the line's real end; this is the same fact
+ *  for a caret that got there by tapping.
+ *
+ *  It never claims Enter: it settles the caret and returns false, so the rest
+ *  of the chain runs exactly as it did — a list still continues, a display
+ *  formula still opens, and a caret with real text after it never comes here
+ *  at all. */
+function enterAtDrawnEnd(view: EditorView): boolean {
+  const range = view.state.selection.main;
+  if (range.empty) {
+    const end = view.state.doc.lineAt(range.head).to;
+    if (range.head < end && onlyHiddenAfter(view.state, range.head, end)) {
+      view.dispatch({ selection: { anchor: end } });
+    }
+  }
+  return false;
+}
+
 // The Enter chain, in the keymap's own order (see the keymap below). The
 // toolbar's "new line below" runs exactly this at the line's end, so the
 // button and the key can never drift apart.
 function enterAtCaret(view: EditorView): boolean {
   return enterDisplayMath(view) || enterCodeFence(view) || enterInCode(view)
+    || enterAtDrawnEnd(view)
     || continueOnEnter(view) || enterEndsPrefixLine(view)
     || insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
@@ -1185,6 +1235,7 @@ export class SatrEditor {
         { key: 'Enter', run: enterDisplayMath },
         { key: 'Enter', run: enterCodeFence },
         { key: 'Enter', run: enterInCode }, // code: the line's own indentation
+        { key: 'Enter', run: enterAtDrawnEnd }, // the end of the line as it is drawn
         { key: 'Enter', run: continueOnEnter },
         { key: 'Enter', run: enterEndsPrefixLine }, // a line that is only its own opening
         { key: 'Enter', run: insertNewlineContinueMarkup }, // quotes etc.
