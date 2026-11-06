@@ -47,7 +47,13 @@ const holesIn = (root: HTMLElement): HTMLElement[] =>
  */
 export function fillMath(root: HTMLElement, formulas: Formula[], scroller?: HTMLElement | null, onDrawn?: () => void): Filling {
   const holes = holesIn(root);
-  let next = 0; // the first hole not yet drawn, in document order
+  // The two ends of the drawn stretch: everything between them is done, and
+  // the note is filled by pushing them apart from wherever the reader is.
+  let down = 0; // the next undrawn hole below the stretch
+  let up = -1; // the next undrawn hole above it
+  let anchored = false;
+  let goingDown = true; // the way the reader last moved
+  let lastTop = scroller?.scrollTop ?? 0;
   let scheduled = 0;
   let idle = 0;
   let stopped = false;
@@ -79,7 +85,7 @@ export function fillMath(root: HTMLElement, formulas: Formula[], scroller?: HTML
    * the place in a note that size.
    */
   const frontLine = (top: number): number => {
-    let low = next;
+    let low = 0; // the drawn stretch is in the middle of the note, not at its head
     let high = holes.length - 1;
     let found = holes.length;
     while (low <= high) {
@@ -93,13 +99,23 @@ export function fillMath(root: HTMLElement, formulas: Formula[], scroller?: HTML
     return found;
   };
 
+  /** Step the two ends past anything already drawn. True while work is left. */
+  const open = (): boolean => {
+    while (down < holes.length && !holes[down].isConnected) down += 1;
+    while (up >= 0 && !holes[up].isConnected) up -= 1;
+    return down < holes.length || up >= 0;
+  };
+
   /** One slice of work. Returns true while anything is left. */
   const slice = (): boolean => {
     const until = performance.now() + SLICE_MS;
     const view = band();
     // On screen (and the screen and a half either side of it) first.
+    let first = holes.length;
+    let after = 0;
     if (view) {
       let index = frontLine(view.top);
+      first = index;
       while (index < holes.length && performance.now() < until) {
         const hole = holes[index];
         if (!hole.isConnected) { index += 1; continue; }
@@ -107,15 +123,24 @@ export function fillMath(root: HTMLElement, formulas: Formula[], scroller?: HTML
         draw(hole);
         index += 1;
       }
+      after = index;
+      // The rest of the note is filled outwards from the screen, not from
+      // the top of the file: the next thing the reader will see is the line
+      // under the one they are on. A jump -- opening deep into a note, or
+      // scrolling faster than this can draw -- leaves the stretch behind,
+      // so the ends are re-hung on the screen they are now looking at.
+      if (!anchored || first > down || first < up) { up = first - 1; down = after; anchored = true; }
+      else if (after > down) down = after;
     }
-    // Then the rest of the note, in order, in the time left over.
-    while (next < holes.length && performance.now() < until) {
-      const hole = holes[next];
-      if (hole.isConnected) draw(hole);
-      next += 1;
+    // Then outwards, both ways. The way the reader is going gets three
+    // holes to the other way's one: going down a note draws downwards
+    // ahead of them, and the pages behind are still filled in.
+    for (let turn = 0; performance.now() < until && open(); turn += 1) {
+      const favourDown = goingDown ? turn % 4 !== 3 : turn % 4 === 3;
+      if (down < holes.length && (favourDown || up < 0)) { draw(holes[down]); down += 1; }
+      else { draw(holes[up]); up -= 1; }
     }
-    while (next < holes.length && !holes[next].isConnected) next += 1;
-    return next < holes.length;
+    return open();
   };
 
   const schedule = (): void => {
@@ -134,25 +159,31 @@ export function fillMath(root: HTMLElement, formulas: Formula[], scroller?: HTML
     });
   };
 
-  const onScroll = (): void => { if (!stopped && next < holes.length) schedule(); };
+  const onScroll = (): void => {
+    const top = scroller?.scrollTop ?? 0;
+    if (top !== lastTop) goingDown = top > lastTop;
+    lastTop = top;
+    if (!stopped && open()) schedule();
+  };
   scroller?.addEventListener('scroll', onScroll, { passive: true });
 
   // The first screenful is drawn before this returns: the reader is looking
   // at the top of the note right now, and a formula that appears a frame
   // later is a line of text that moves under their eyes.
   if (holes.length) { slice(); onDrawn?.(); }
-  if (next < holes.length) schedule();
+  if (open()) schedule();
 
   return {
     all(): void {
       let drew = false;
       for (const hole of holes) if (hole.isConnected) { draw(hole); drew = true; }
-      next = holes.length;
+      down = holes.length;
+      up = -1;
       if (drew) onDrawn?.();
     },
     left(): number {
       let count = 0;
-      for (let index = next; index < holes.length; index += 1) if (holes[index].isConnected) count += 1;
+      for (const hole of holes) if (hole.isConnected) count += 1;
       return count;
     },
     stop(): void {

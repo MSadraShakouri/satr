@@ -106,3 +106,36 @@ test('the whole note is drawn in the end', async ({ page }) => {
   await expect.poll(() => waiting(page), { timeout: 30000, message: 'every placeholder is eventually drawn' }).toBe(0);
   expect(await page.locator('#preview .math-display').count(), 'all 120 display formulas, drawn').toBe(120);
 });
+
+test('from where the reader is, downwards first, not from the top of the file', async ({ page }) => {
+  // Big enough that it is still drawing when it is looked at.
+  await boot(page, longNote(900));
+  await page.evaluate(() => (document.querySelector('#preview-toggle') as HTMLElement).click());
+  await expect(page.locator('#preview .md-section').first()).toBeVisible();
+  // Deep into the note, the way opening an outline link or coming back to a
+  // tab leaves you.
+  await page.evaluate(() => {
+    const pane = document.querySelector<HTMLElement>('#preview-pane')!;
+    pane.scrollTop = pane.scrollHeight * 0.7;
+  });
+  await page.waitForTimeout(900);
+
+  const where = await page.evaluate(() => {
+    const pane = document.querySelector<HTMLElement>('#preview-pane')!;
+    const box = pane.getBoundingClientRect();
+    const screen = box.height;
+    let below = 0; // still placeholders, in the screens under the reader
+    let above = 0; // still placeholders, above them
+    for (const hole of document.querySelectorAll<HTMLElement>('#preview [data-satr-math]')) {
+      const top = hole.getBoundingClientRect().top - box.top;
+      if (top > screen * 1.5 && top < screen * 4) below += 1;
+      else if (top < 0) above += 1;
+    }
+    return { below, above };
+  });
+  // The next few screens down are finished: that is where the reader is going.
+  expect(where.below, `${where.below} undrawn in the screens below`).toBe(0);
+  // And the note is not being filled from its first line: the pages far
+  // above the reader are still waiting their turn.
+  expect(where.above, 'the top of the note is drawn last, not first').toBeGreaterThan(0);
+});
