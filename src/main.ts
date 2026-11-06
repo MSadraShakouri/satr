@@ -19,7 +19,7 @@ import { highlightCodeBlocks } from './codeHighlight';
 import { isHtmlFile, showHtmlFile } from './htmlFiles';
 import { clearMathLayout, layoutMath, scheduleMathLayout } from './mathLayout';
 import { fillMath, type Filling, type Formula } from './mathFill';
-import { applyEditorScroll, applyPreviewScroll, editorScroll, heldPreviewPlace, previewScroll, roomUnderNote, typingTop } from './scrollSync';
+import { applyEditorScroll, applyPreviewScroll, editorPlace, editorScroll, heldPreviewPlace, previewScroll, roomUnderNote, typingTop } from './scrollSync';
 import { keyboardCoverPx, sheetRoomPx } from './keyboard';
 import { footnoteLayout } from './footnoteDialog';
 import { closePopover, isPopoverOpen, openPopover } from './popover';
@@ -443,6 +443,9 @@ let syncingScroll = false;
 // See holdEditorPosition().
 let holdUntil = 0;
 let holdLine = 0;
+let holdGap = 0;
+let holdWatching = false;
+let holdGeneration = 0;
 /** Three body lines below the pane top — the typing band, not the glass. */
 const scrollBand = (): number => typingTop(editor.view);
 // Notes are files in folders (src/vault.ts: localStorage in the browser,
@@ -1853,10 +1856,13 @@ window.addEventListener('mousedown', restoreNavigation);
 // a scroll nobody asked for (the caret being pulled into view while the
 // keyboard or the system bars settle) is undone. Any touch, wheel or key
 // on the note ends the hold at once.
-function holdEditorPosition(line: number): void {
+function holdEditorPosition(line: number, gap = 0): void {
   holdLine = line;
+  holdGap = gap;
+  holdGeneration = viewGeneration;
   holdUntil = performance.now() + 1200;
 }
+
 const releaseHold = (): void => {
   holdUntil = 0;
   ++viewGeneration; // user intent cancels every outstanding restore/correction
@@ -1875,7 +1881,7 @@ editor.view.scrollDOM.addEventListener('scroll', () => {
     const generation = viewGeneration;
     const y = scrollBand();
     syncingScroll = true;
-    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration, false, y);
+    applyEditorScroll(editor.view, holdLine, () => generation === viewGeneration, false, y, holdGap);
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => { if (generation === viewGeneration) syncingScroll = false; }));
     return;
   }
@@ -1910,7 +1916,12 @@ function rememberView(): void {
   if (line === null) return;
   const folds = editor.foldedLines();
   if (!filePath) return;
-  const saved: SavedView = { mode, line: Math.round(line * 1000) / 1000, cursor: editor.getSelection(), ...(folds.length ? { folds } : {}) };
+  // Saving is the only place the band belongs: reading a place for the
+  // live sync must stay exactly what applyEditorScroll was given, or the
+  // reading view lands on a different line than the source is showing.
+  const banded = mode === 'edit' && held === null ? editorPlace(editor.view, y) : null;
+  const gap = banded ? Math.round(banded.gap) : 0;
+  const saved: SavedView = { mode, line: Math.round((banded ? banded.line : line) * 1000) / 1000, cursor: editor.getSelection(), ...(gap ? { gap } : {}), ...(folds.length ? { folds } : {}) };
   writeViewMemory(viewIdentity(filePath), saved);
 }
 function rememberViewSoon(): void {
@@ -1937,8 +1948,8 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit',
       layoutMath(preview);
       applyPreviewScroll(previewPane, preview, line, current, false, scrollBand(), null, keptMeasured);
     } else {
-      applyEditorScroll(editor.view, line, current, false, scrollBand());
-      holdEditorPosition(line);
+      applyEditorScroll(editor.view, line, current, false, scrollBand(), view?.gap ?? 0);
+      holdEditorPosition(line, view?.gap ?? 0);
     }
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
       if (current()) syncingScroll = false;

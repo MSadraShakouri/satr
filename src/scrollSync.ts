@@ -44,6 +44,10 @@ export function roomUnderNote(view: EditorView): number | null {
   return room > 1 ? room : null;
 }
 
+/** How far below the anchor a line may begin and still be taken as the
+ *  reader's place -- a quarter of the screen. */
+const BAND_SCREENS = 0.25;
+
 export function editorScroll(view: EditorView, anchor = 0): number {
   const top = view.scrollDOM.getBoundingClientRect().top + anchor;
   const height = top - view.documentTop;
@@ -56,7 +60,32 @@ export function editorScroll(view: EditorView, anchor = 0): number {
   return first + (last - first + 1) * into;
 }
 
-export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0): void {
+export function editorPlace(view: EditorView, anchor = 0): { line: number; gap: number } {
+  const exact = editorScroll(view, anchor);
+  const height = view.scrollDOM.getBoundingClientRect().top + anchor - view.documentTop;
+  if (height <= 0) return { line: exact, gap: 0 };
+  const block = view.elementAtHeight(height);
+  if (block.type !== BlockType.Text) return { line: exact, gap: 0 };
+  if (height - block.top <= 2) return { line: view.state.doc.lineAt(block.from).number - 1, gap: 0 };
+  const band = view.scrollDOM.clientHeight * BAND_SCREENS;
+  if (block.bottom - height <= band && block.to + 1 <= view.state.doc.length) {
+    return { line: view.state.doc.lineAt(block.to + 1).number - 1, gap: block.bottom - height };
+  }
+  return { line: exact, gap: 0 };
+}
+
+function editorGapUnused(view: EditorView, anchor = 0): number {
+  const height = view.scrollDOM.getBoundingClientRect().top + anchor - view.documentTop;
+  if (height <= 0) return 0;
+  const block = view.elementAtHeight(height);
+  if (block.type !== BlockType.Text) return 0;
+  if (height - block.top <= 2) return 0;
+  const band = view.scrollDOM.clientHeight * BAND_SCREENS;
+  if (block.bottom - height <= band && block.to + 1 <= view.state.doc.length) return block.bottom - height;
+  return 0;
+}
+
+export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0, gap = 0): void {
   const { doc } = view.state;
   if (!(position > 0)) { scrollInstantly(view.scrollDOM, 0); return; }
   const index = Math.min(doc.lines - 1, Math.floor(position));
@@ -67,7 +96,7 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
     const block = textBlock(view.lineBlockAt(line.from));
     const target = view.documentTop + block.top + fraction * block.height;
     const top = view.scrollDOM.getBoundingClientRect().top + anchor;
-    scrollInstantly(view.scrollDOM, view.scrollDOM.scrollTop + target - top);
+    scrollInstantly(view.scrollDOM, view.scrollDOM.scrollTop + target - top - gap);
   };
   // Off-screen line heights are estimates until CodeMirror measures them:
   // jump, let it measure, then correct. With settle, keep correcting as math

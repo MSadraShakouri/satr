@@ -7,6 +7,9 @@
 import { dropRecord, readRecord, writeRecord } from './viewStore';
 
 export interface SavedView {
+  /** Pixels between the anchor and the top of the line, measured when the
+   *  line was read. Without it the line lands a little high every time. */
+  gap?: number;
   mode: 'edit' | 'preview';
   line: number;
   cursor?: [number, number];
@@ -29,7 +32,11 @@ export function readViewMemory(file: ViewIdentity): SavedView | null {
     const cursor = Array.isArray(value.cursor) && value.cursor.length === 2 && value.cursor.every((n) => Number.isInteger(n) && n >= 0)
       ? value.cursor as [number, number] : undefined;
     const folds = Array.isArray(value.folds) ? value.folds.filter((n) => Number.isInteger(n) && n >= 0) : undefined;
-    return { mode: value.mode, line: Math.max(0, value.line as number), cursor, folds };
+    // The gap travels with the line or the line is not a place: without it
+    // every restore puts the line flush against the anchor, the next read
+    // sees the line above, and the note walks backwards a line at a time.
+    const gap = typeof value.gap === 'number' && value.gap >= 0 ? Math.min(value.gap, 400) : 0;
+    return { mode: value.mode, line: Math.max(0, value.line as number), cursor, folds, ...(gap ? { gap } : {}) };
   } catch { return null; }
 }
 
