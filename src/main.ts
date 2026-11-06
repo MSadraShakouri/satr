@@ -533,10 +533,18 @@ function measureSection(section: HTMLElement): void {
   lineHeightGuess = measuredHeight / measuredLines;
   applyLineGuess();
 }
+// While a whole note is being measured, the figure is not handed out until
+// the measuring is done. Applying it writes a custom property, which makes
+// every box in the note stale, so the next section's getBoundingClientRect
+// has to lay the whole note out again: on 2012 sections that was 155ms of
+// thrash. The reads are one pass now, and the write is one write.
+let measuringNote = false;
+let guessWaiting = false;
 /** Hand the learned figure to the sections that are still guessing. The
  *  reader is held in place while this happens (src/scrollSync.ts), so the
  *  page changing length under them is corrected, not felt. */
 function applyLineGuess(): void {
+  if (measuringNote) { guessWaiting = true; return; }
   // Enough of the note to be an average rather than whichever section the
   // reader happened to open on, and inside the range a line can be: one
   // tall picture in a one-line section is not what a line costs.
@@ -617,7 +625,11 @@ function watchSections(): void {
   // inside it that the reading view is built not to lay out — and the
   // placement that follows this render is computed against the length this
   // gives, instead of a frame later, after the observer has said so.
+  measuringNote = true;
+  guessWaiting = false;
   for (const section of sections) measureSection(section);
+  measuringNote = false;
+  if (guessWaiting) { guessWaiting = false; applyLineGuess(); }
 }
 /** Everything a document holds, let go: its chrome, its worker and its
  *  canvases. The reading view does this before it draws whatever comes
