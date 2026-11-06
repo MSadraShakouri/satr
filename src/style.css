@@ -1590,6 +1590,24 @@ body {
   text-decoration: none !important;
   background: none !important;
 }
+/* A marker pair with a space as the last thing inside it — `==one two ==`,
+   `**one two **` — is drawn as if the space were not there, while it is being
+   written (src/forgivingMarks.ts). One rule per look, matching the editor's own
+   HighlightStyle (src/editor.ts) declaration for declaration, so a forgiven
+   pair and a well-formed one are the same picture. */
+.cm-lp-forgiving-strong {
+  font-weight: 700;
+}
+.cm-lp-forgiving-emphasis {
+  font-style: italic;
+}
+.cm-lp-forgiving-strike {
+  text-decoration: line-through;
+}
+.cm-lp-forgiving-highlight {
+  background-color: var(--text-highlight-bg);
+  color: var(--text-normal);
+}
 /* Footnotes (Obsidian: span.cm-footref, .HyperMD-footnote) */
 .cm-lp-footref {
   position: relative;

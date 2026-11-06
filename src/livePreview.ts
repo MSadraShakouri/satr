@@ -12,6 +12,7 @@ import { parseMarker } from './listMarkers';
 import { markerStrip } from './markerWidth';
 import { isolatesOf } from './caretMotion';
 import { inMath, mathSpans, overlapsMath } from './mathSource';
+import { forgivingMarks, type ForgivingKind } from './forgivingMarks';
 import { spansHold } from './mathScan';
 import { Decoration, Direction, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common';
@@ -217,6 +218,19 @@ const quoteMarkFirst = Decoration.mark({ class: 'cm-lp-transparent' });
 const quoteMarkNested = Decoration.mark({ class: 'cm-lp-quote-border' });
 // Footnotes, styled as in Obsidian's editor: references raised and small with
 // their brackets faint but visible; definition lines in the footnote size.
+// The look of a pair that only a run of spaces before its closer keeps from
+// being what it is (src/forgivingMarks.ts), while it is still being written.
+// The declarations are the editor's own HighlightStyle ones (src/editor.ts)
+// written a second time as classes, because a decoration cannot carry a tag.
+const forgivingDecos = new Map<ForgivingKind, Decoration>();
+function forgivingMark(kind: ForgivingKind): Decoration {
+  let deco = forgivingDecos.get(kind);
+  if (!deco) {
+    deco = Decoration.mark({ class: `cm-lp-forgiving-${kind}` });
+    forgivingDecos.set(kind, deco);
+  }
+  return deco;
+}
 const footref = Decoration.mark({ class: 'cm-lp-footref' });
 const footrefMark = Decoration.mark({ class: 'cm-lp-footref-mark' });
 const footnoteLine = Decoration.line({ class: 'cm-lp-footnote-line' });
@@ -491,6 +505,20 @@ function build(view: EditorView): DecorationSet {
         }
       },
     });
+  }
+  // A pair whose last character inside it is a space is drawn anyway while it
+  // is being written (src/forgivingMarks.ts): the parser is right to refuse it
+  // and the writer is not finished. The look is the one the parser would have
+  // given it, and the markers hide as they always do once the caret leaves —
+  // so a space typed inside `==one two ==` no longer blinks the highlight off
+  // and back on, and the two `==` no longer come back as text.
+  for (const { from, to } of view.visibleRanges) {
+    for (const mark of forgivingMarks(state, from, to)) {
+      out.push(forgivingMark(mark.kind).range(mark.contentFrom, mark.contentTo));
+      if (touches(mark.openFrom, mark.closeTo)) continue;
+      out.push(hidden.range(mark.openFrom, mark.openTo));
+      out.push(hidden.range(mark.closeFrom, mark.closeTo));
+    }
   }
   // Timestamps: the time they name, unless the cursor is on the code. A
   // formula or a code span holding one is never a timestamp.
