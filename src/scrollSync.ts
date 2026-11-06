@@ -113,9 +113,19 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
   // past where they were. scrollIntoView is CodeMirror measuring its way
   // there instead, over as many cycles as it takes, and the places below
   // then only have the fraction of a line to add.
-  view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: anchor }) });
+  // Arriving used to be three separate scrolls in a row -- CodeMirror's
+  // own scrollIntoView, then the place, then the place again once the
+  // lines around it had been measured -- and every one of them is painted.
+  // That is the flicker on a tab switch. When the line is already drawn
+  // there is nothing to scroll into view: its position is known, so place
+  // it once and correct only if measuring actually moved it.
+  const drawn = line.from >= view.viewport.from && line.to <= view.viewport.to;
+  if (!drawn) view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: anchor }) });
   place();
-  view.requestMeasure({ read: () => null, write: () => place() });
+  view.requestMeasure({
+    read: () => view.scrollDOM.scrollTop,
+    write: (was: number) => { const now = view.scrollDOM.scrollTop; if (Math.abs(now - was) > 0.5 || !drawn) place(); },
+  });
   window.requestAnimationFrame(() => window.requestAnimationFrame(place));
   if (!settle) return;
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
