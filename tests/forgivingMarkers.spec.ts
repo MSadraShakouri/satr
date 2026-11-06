@@ -180,3 +180,88 @@ test('the reading view still refuses a space before the closing mark', async ({ 
   expect(marks.length, 'one <mark>, for the pair with no space before the closer').toBe(1);
   expect(out, 'the spaced pair stays as typed').toContain('==one two ==');
 });
+
+// The other half of the same complaint: "there's a difference between when
+// there is a space or not when typing ... when there's not the == icons
+// themselves get a little highlighted too, same with any other marker thing."
+//
+// The parser dresses the whole node, marks included, so with the caret on the
+// line the `==` sits on the same yellow as the words it holds, a `**` is bold,
+// a `~~` is struck. That is the look that already worked, and it stays. A
+// forgiven pair has no node to dress it, so its marks used to carry nothing at
+// all — and the two states of the same pair were two pictures. The marks of a
+// forgiven pair are now dressed the same way, dimming included.
+
+type Runs = Array<{ text: string; weight: string; style: string; deco: string; bg: string; opacity: string }>;
+
+/** The line as painted, text run by text run, with the caret inside the pair
+ *  so the marks are showing. */
+async function runs(page: import('@playwright/test').Page, line: string): Promise<{ drawn: string; runs: Runs }> {
+  return page.evaluate(async (line) => {
+    const ed = window.testEditor;
+    ed.setValue(line);
+    ed.view.focus();
+    ed.view.dispatch({ selection: { anchor: line.indexOf('one') + 1 } });
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    const el = ed.view.contentDOM.querySelector('.cm-line') as HTMLElement;
+    const out: Runs = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const host = (node.parentElement ?? el) as HTMLElement;
+      const style = getComputedStyle(host);
+      out.push({
+        text: node.textContent ?? '',
+        weight: style.fontWeight,
+        style: style.fontStyle,
+        deco: style.textDecorationLine,
+        bg: style.backgroundColor,
+        opacity: style.opacity,
+      });
+    }
+    return { drawn: el.textContent ?? '', runs: out };
+  }, line);
+}
+
+/** The one property a pair's look is made of. */
+function lookOf(run: Runs[number], kind: string): string {
+  if (kind === 'highlight') return run.bg;
+  if (kind === 'bold') return run.weight;
+  if (kind === 'italic') return run.style;
+  return run.deco;
+}
+
+for (const [name, pair, mark, kind] of [
+  ['highlight', 'a ==one== b', '==', 'highlight'],
+  ['bold', 'a **one** b', '**', 'bold'],
+  ['italic', 'a *one* b', '*', 'italic'],
+  ['strike', 'a ~~one~~ b', '~~', 'strike'],
+] as const) {
+  test(`the ${name} marks wear the same look as the words`, async ({ page }) => {
+    // Both states of the pair, because the one with a space in front of its
+    // closer is the one being brought up to the other.
+    for (const line of [pair, pair.replace(`one${mark}`, `one ${mark}`)]) {
+      const { runs: painted } = await runs(page, line);
+      const marker = painted.filter((one) => one.text === mark);
+      const words = painted.find((one) => one.text.startsWith('one'));
+      expect(marker.length, `${name}: both marks are on the line in ${JSON.stringify(line)}`).toBe(2);
+      expect(words, `${name}: the words are one run`).toBeTruthy();
+      for (const one of marker) {
+        expect(lookOf(one, kind), `${name}: a mark is dressed like the words it holds in ${JSON.stringify(line)}`).toBe(lookOf(words!, kind));
+        expect(one.opacity, `${name}: and dimmed, as the parser's own mark is`).toBe('0.42');
+      }
+    }
+  });
+
+  test(`the ${name} marks look the same with a space inside the pair or without`, async ({ page }) => {
+    // The reported difference, measured on the same word in the same place,
+    // with one space in front of the closer.
+    const closed = await runs(page, pair);
+    const spaced = await runs(page, pair.replace(`one${mark}`, `one ${mark}`));
+    const marksOf = (painted: Runs) => painted.filter((one) => one.text === mark)
+      .map(({ weight, style, deco, bg, opacity }) => ({ weight, style, deco, bg, opacity }));
+    expect(marksOf(spaced.runs).length, `${name}: the spaced pair still has two marks`).toBe(2);
+    expect(marksOf(spaced.runs), `${name}: the marks are drawn identically either way`).toEqual(marksOf(closed.runs));
+    const wordsOf = (painted: Runs) => painted.find((one) => one.text.startsWith('one'));
+    expect(wordsOf(spaced.runs)!.bg, `${name}: the words keep their look too`).toBe(wordsOf(closed.runs)!.bg);
+  });
+}

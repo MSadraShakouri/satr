@@ -223,6 +223,20 @@ const quoteMarkNested = Decoration.mark({ class: 'cm-lp-quote-border' });
 // The declarations are the editor's own HighlightStyle ones (src/editor.ts)
 // written a second time as classes, because a decoration cannot carry a tag.
 const forgivingDecos = new Map<ForgivingKind, Decoration>();
+/** The same look, for the marks of a forgiven pair. One span carrying both
+ *  classes, so the dimming falls over the mark's own colour exactly as it does
+ *  over the parser's mark: a `==` tinted yellow at 0.42, not a yellow chip with
+ *  faint letters on it. (.cm-live-marker is that 0.42, written once in
+ *  style.css for markers the parser does not know.) */
+const forgivingMarkerDecos = new Map<ForgivingKind, Decoration>();
+function forgivingMarker(kind: ForgivingKind): Decoration {
+  let deco = forgivingMarkerDecos.get(kind);
+  if (!deco) {
+    deco = Decoration.mark({ class: `cm-lp-forgiving-${kind} cm-live-marker` });
+    forgivingMarkerDecos.set(kind, deco);
+  }
+  return deco;
+}
 function forgivingMark(kind: ForgivingKind): Decoration {
   let deco = forgivingDecos.get(kind);
   if (!deco) {
@@ -515,7 +529,17 @@ function build(view: EditorView): DecorationSet {
   for (const { from, to } of view.visibleRanges) {
     for (const mark of forgivingMarks(state, from, to)) {
       out.push(forgivingMark(mark.kind).range(mark.contentFrom, mark.contentTo));
-      if (touches(mark.openFrom, mark.closeTo)) continue;
+      if (touches(mark.openFrom, mark.closeTo)) {
+        // Shown because the caret is on the line. The parser dresses a pair's
+        // marks with the pair's own look — a `==` sits on the same yellow as
+        // the words it holds — and a forgiven pair has no node to do that, so
+        // it is done here: the marks of a pair with a space before its closer
+        // look exactly like the marks of one without, which was the whole
+        // complaint.
+        out.push(forgivingMarker(mark.kind).range(mark.openFrom, mark.openTo));
+        out.push(forgivingMarker(mark.kind).range(mark.closeFrom, mark.closeTo));
+        continue;
+      }
       out.push(hidden.range(mark.openFrom, mark.openTo));
       out.push(hidden.range(mark.closeFrom, mark.closeTo));
     }
