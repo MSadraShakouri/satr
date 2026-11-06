@@ -11,16 +11,73 @@
 // nothing between, and a pair a heading or a list broke are plain text, so
 // their dollars are not coloured and nothing inside them is styled as math.
 import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type MathSpan } from './mathScan';
-import { StateField, type EditorState, type Range } from '@codemirror/state';
+import { StateField, type EditorState, type Range, type Transaction } from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
 import { isolatesOf } from './caretMotion';
+
+// Scanning the whole note for every keystroke is what made typing heavy in a
+// big one: doc.toString() copies the text, maskCode() copies it again, and
+// both are split into lines — 26ms a key on 130kB of notes, and a garbage
+// collection every few words.
+//
+// Almost every keystroke cannot move a formula's edges. Typing a letter into
+// a sentence shifts the spans after it along and changes nothing else, and
+// CodeMirror can map a position through a change for us. So the scan only
+// runs again when the change could have moved an edge:
+//
+//   - a delimiter or an escape went in or came out ($ \ ` ~), or
+//   - a line break went in or came out, or
+//   - the change touched the head of a line, where markdown keeps the block
+//     markers that end a `$$` pair (#, -, 1., >, ```, and the rest of
+//     isMathBlockBoundary).
+//
+// Anything else keeps the shape of every span, so they are moved rather than
+// found again.
+
+/** What can open, close, or hide a formula. */
+const SHAPES_MATH = /[$\\`~]/;
+
+/** How far into a line markdown's block markers can start: three spaces of
+ *  indent, then a marker such as `1.` and its space. */
+const LINE_HEAD = 5;
+
+/** True when a change cannot have moved where any formula begins or ends. */
+function keepsShape(tr: Transaction): boolean {
+  let keeps = true;
+  tr.changes.iterChanges((fromA, toA, fromB, _toB, inserted) => {
+    if (!keeps) return;
+    const put = inserted.toString();
+    const took = tr.startState.doc.sliceString(fromA, toA);
+    if (put.includes('\n') || took.includes('\n')) { keeps = false; return; }
+    if (SHAPES_MATH.test(put) || SHAPES_MATH.test(took)) { keeps = false; return; }
+    if (fromB - tr.newDoc.lineAt(fromB).from <= LINE_HEAD) keeps = false;
+  });
+  return keeps;
+}
+
+/** The same spans, moved to where the change left them. */
+function moved(spans: MathSpan[], tr: Transaction): MathSpan[] {
+  const out: MathSpan[] = [];
+  for (const span of spans) {
+    // The opening delimiter keeps text typed at its position in front of it;
+    // the closing one keeps text typed at its end behind it.
+    const from = tr.changes.mapPos(span.from, 1);
+    const to = tr.changes.mapPos(span.to, -1);
+    if (to - from < span.delim * 2) continue;
+    out.push(from === span.from && to === span.to ? span : { ...span, from, to });
+  }
+  return out;
+}
 
 /** Every math span of the document, cached until the text changes. The
  * preview's renderMarkdown() computes the same spans from the same source. */
 export const mathSpans = StateField.define<MathSpan[]>({
   create: (state) => scanMath(state.doc.toString()),
-  update: (value, tr) => (tr.docChanged ? scanMath(tr.newDoc.toString()) : value),
+  update: (value, tr) => {
+    if (!tr.docChanged) return value;
+    return keepsShape(tr) ? moved(value, tr) : scanMath(tr.newDoc.toString());
+  },
 });
 
 export function inMath(state: EditorState, pos: number): boolean {

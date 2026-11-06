@@ -1220,8 +1220,26 @@ function updateMathSaying(): void {
   // four seconds and leaving the writer to remember it.
   mathSaying = reason === null ? null : { text: reason, notice: showNotice(reason, 0) };
 }
-function updateMathWarning(): void {
+// How long after the last keystroke the note is counted for LaTeX-style
+// formulas. The count reads the whole note — on a big one that is a copy of
+// the text and a scan of it, which is far too much to do for every letter,
+// and the pill it feeds is a standing offer rather than an answer to the key
+// just pressed. 300ms: past the end of a burst of typing, under the time it
+// takes to look down at the bar.
+const MATH_COUNT_WAIT = 300;
+let mathCountTimer: number | undefined;
+
+/** The caret's own warning is immediate — it reads the spans the editor has
+ *  already worked out. The document-wide count waits for a pause, unless the
+ *  caller says the moment matters (a file opening, a conversion finishing). */
+function updateMathWarning(now = false): void {
   updateMathSaying();
+  window.clearTimeout(mathCountTimer);
+  if (now) { countLatexMath(); return; }
+  mathCountTimer = window.setTimeout(countLatexMath, MATH_COUNT_WAIT);
+}
+
+function countLatexMath(): void {
   // A receipt on screen outranks anything the note's text says: the editor
   // changes as the formulas convert, and that is not a reason to take the
   // "2 formulas converted" away from the reader before they have read it.
@@ -1254,13 +1272,13 @@ function confirmMathWarning(converted: number): void {
   // count it replaced is no longer what the bar should be saying.
   // 2500ms: the same stay as the "Normalized N formulas" notice (src/commands.ts).
   mathWarningCount = -1;
-  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(); }, 2500);
+  mathConfirmTimer = window.setTimeout(() => { mathConfirmTimer = undefined; updateMathWarning(true); }, 2500);
 }
 function runNormalize(): void {
   if (mode !== 'edit') setMode('edit');
   const converted = normalizeMathIn(editor.view);
   if (converted > 0) confirmMathWarning(converted);
-  else updateMathWarning();
+  else updateMathWarning(true);
 }
 for (const warning of mathWarnings) warning.addEventListener('click', runNormalize);
 
@@ -2020,7 +2038,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   }
   editor.setTitle(fileBase);
   editor.setTitleEditable(canRenameInline(path));
-  updateMathWarning();
+  updateMathWarning(true);
   window.clearTimeout(saveTimer); // loading isn't an edit
   saveTimer = undefined;
   previewDirty = true;
