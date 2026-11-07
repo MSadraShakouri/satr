@@ -4759,9 +4759,17 @@ body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] .topbar {
   pointer-events: none;
   border-color: transparent;
 }
+/* The name travels with the glass, not into it. It used to fade in place
+   with a 6px drift of its own while the background behind it rose the whole
+   of the strip and the controls rose their own height: three distances and
+   one gesture, which is what "the text of the file name doesn't move in sync
+   with the rest while closing" is. Same distance as the glass, same 0.3s and
+   same ease-in-out (the transition is on `.topbar-title` itself, and the
+   header's own), so the name and the surface under it are one sheet on the
+   way out and one sheet on the way back. */
 body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] #topbar-title {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(calc(-1 * var(--view-top-spacing) - var(--pdf-toolbar-height)));
   pointer-events: none;
 }
 body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] #files,

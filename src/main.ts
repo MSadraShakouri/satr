@@ -899,6 +899,14 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   // underneath it afterwards would leave its scrolling measured from the
   // wrong place.
   document.body.classList.add('is-pdf-chrome');
+  // A document arriving is not a hand: the viewer settles the pane over its
+  // first frames, and V1 -- which has no threshold -- would read that settle
+  // as a read. The hand is forgotten here, when the document is mounted, and
+  // only a gesture on THIS document can take its chrome away. (A note
+  // scrolled a moment ago left `handEver` true, and without this the chrome
+  // went the instant the pdf opened, which is the flash the bars used to
+  // have from the other side.)
+  forgetHand();
   const handle = await showPdf(preview, bytes.slice().buffer, {
     scroller: previewPane,
     key,
@@ -1763,8 +1771,13 @@ let fingerMark = 0;
  *  move is a read. A fling keeps its own momentum going for a second or two
  *  with no finger on the glass, which is why the window is generous. */
 let handAt = 0;
+let handEver = false;
+/** A new document starts untouched: nothing has been scrolled by a hand yet,
+ *  so nothing it does to the pane on its own can be mistaken for a read. */
+const forgetHand = (): void => { handAt = 0; handEver = false; };
 function noteGesture(way: number): void {
   handAt = performance.now();
+  handEver = true;
   if (!way) return;
   gestureEver = true;
   gestureWay = way;
@@ -1784,6 +1797,7 @@ function watchGestures(el: HTMLElement): void {
     fingerDown = true;
     fingerMark = y;
     handAt = performance.now();
+    handEver = true;
   }, { passive: true, capture: true });
   el.addEventListener('touchend', () => { fingerDown = false; }, { passive: true, capture: true });
   el.addEventListener('touchcancel', () => { fingerDown = false; }, { passive: true, capture: true });
@@ -1876,8 +1890,11 @@ function onNavScroll(el: HTMLElement): void {
     // A document that has not been touched is still arriving: the viewer
     // settles the pane over its first frames, and V1 would read that as a
     // read and take the chrome before the reader has seen it. Only a move a
-    // hand made counts.
-    if (performance.now() - handAt > 1200) return;
+    // hand made counts -- and "a hand has been on this page at all" is the
+    // question, not "recently": a new document's own settle can land after
+    // any window measured from the load, which is how this was caught (a
+    // test that had passed twice in a row and then did not).
+    if (!handEver || performance.now() - handAt > 1200) return;
     if (navSettling()) { holdNavigation(el, true); return; }
     hideNavigation();
     return;

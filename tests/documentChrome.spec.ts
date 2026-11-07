@@ -159,6 +159,49 @@ test('any downward movement hides it, however small', async ({ page }) => {
   expect(await controlsInk(page)).toBe('0');
 });
 
+test('the name leaves with the glass, frame by frame', async ({ page }) => {
+  // Reported after the push: "the text of the file name doesn't move in sync
+  // with the rest while closing". It was fading in place with a 6px drift of
+  // its own while the background behind it rose the whole strip (104px) and
+  // the controls rose their own height (48px) -- three distances for one
+  // gesture. The name and the glass are one sheet now, and this is measured
+  // on every frame of the slide rather than before and after it.
+  await boot(page);
+  const frames = await page.evaluate(async () => {
+    const bar = document.querySelector('.topbar')!;
+    const title = document.querySelector('#topbar-title')!;
+    const ty = (el: Element, pseudo?: string): number => {
+      const t = getComputedStyle(el, pseudo).transform;
+      return Math.round(new DOMMatrixReadOnly(t === 'none' ? '' : t).m42 * 100) / 100;
+    };
+    const before = getComputedStyle(bar, '::before');
+    document.body.classList.add('is-hidden-nav');
+    const out: { glass: number; name: number }[] = [];
+    for (let i = 0; i < 14; i += 1) {
+      await new Promise((r) => requestAnimationFrame(r));
+      out.push({ glass: ty(bar, '::before'), name: ty(title) });
+    }
+    return {
+      out,
+      glass: { duration: before.transitionDuration, timing: before.transitionTimingFunction },
+      name: (() => {
+        const t = getComputedStyle(title);
+        return { duration: t.transitionDuration.split(',')[1].trim(), timing: t.transitionTimingFunction.split(',')[1].trim() };
+      })(),
+    };
+  });
+  const moving = frames.out.filter((f) => f.glass !== 0 && Math.abs(f.glass) < 104);
+  expect(moving.length, 'the slide really was sampled in flight').toBeGreaterThan(2);
+  for (const frame of frames.out) {
+    expect(Math.abs(frame.glass - frame.name), `glass ${frame.glass}, name ${frame.name}`).toBeLessThanOrEqual(0.5);
+  }
+  // ...and it ends the whole way up, with the glass, not six pixels into it.
+  expect(frames.out[frames.out.length - 1].glass).toBeLessThan(-60);
+  // The name's transform runs on the glass's own clock, so they cannot drift.
+  expect(frames.name.duration, 'the name rises at the glass speed').toBe(frames.glass.duration);
+  expect(frames.name.timing).toBe(frames.glass.timing);
+});
+
 test('a tap on the file menu still opens it with the header gone', async ({ page }) => {
   await boot(page);
   await readDown(page);
