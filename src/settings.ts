@@ -38,8 +38,15 @@ export interface Settings {
    * pill already leaves with the navigation bar; the header did not, because
    * a document's header is its only label. 'controls' takes the row of
    * buttons and keeps the name, 'all' takes both, 'stays' is how it was.
+   *
+   * 'split' is the one chosen after seeing it drawn (Round 8, variant A):
+   * the name and the controls leave together and the two buttons that open
+   * the drawers and the file menu stay where they are, floating over the
+   * page. A tap brings the whole header back — a tap never hides anything —
+   * and a document that does not scroll never loses it, because nothing
+   * asks it to go.
    */
-  documentChrome: 'stays' | 'controls' | 'all';
+  documentChrome: 'stays' | 'controls' | 'split' | 'all';
   /** Which way up a document is read; see src/orientation.ts. */
   documentRotation: 'system' | 'free' | 'portrait' | 'landscape';
   /** PDF page numbers, bottom centre. */
@@ -69,12 +76,12 @@ export const QUICK_ACTIONS: Record<Exclude<QuickAction, ''>, string> = {
   settings: 'Settings',
 };
 const KEY = 'satr:settings';
-const SETTINGS_VERSION = 5;
+const SETTINGS_VERSION = 6;
 /** Line numbers are off for a fresh install (Obsidian's showLineNumber: false).
  *  Only the DEFAULT moves: a reader whose settings were already saved keeps
  *  whatever they have, so nobody's note grows a gutter or loses one behind
  *  their back on update. */
-const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, documentChrome: 'controls', documentRotation: 'system', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
+const DEFAULTS: Settings = { version: SETTINGS_VERSION, fontSize: 16, lineHeight: 1.85, lineNumbers: false, highlightAll: true, hiddenTools: [], quickAction: '', mathDigits: 'auto', timestampLocale: 'auto', timestampCalendar: 'auto', weekStart: 6, documentChrome: 'split', documentRotation: 'system', pdfPageNumbers: 'persian', pdfCss: '', spaceAfterPunctuation: true, launchTabs: 'last', newTabAfterMinutes: 30, recursiveSearch: true, searchDocuments: true };
 /** The seven first days, in the order a week can start. Labels come from the
  *  Dates language, never the device's. */
 export const WEEK_START_CHOICES = [6, 0, 1, 2, 3, 4, 5];
@@ -90,6 +97,12 @@ export function loadSettings(): Settings {
     if ((Number(saved.version) || 1) < 2) { s.fontSize = DEFAULTS.fontSize; s.lineHeight = DEFAULTS.lineHeight; }
     // Migrate only the old default; keep deliberately chosen spacing.
     if ((Number(saved.version) || 1) < 3 && s.lineHeight === 1.5) s.lineHeight = DEFAULTS.lineHeight;
+    // Version 6 changes what the middle answer means: it used to keep the
+    // document's name while taking the controls away, and it now keeps the
+    // two buttons and takes both. 'controls' was this app's own default, so a
+    // saved one is the old default rather than a choice -- move it once, and
+    // "Hide the controls" stays in the list for anyone who wants it back.
+    if ((Number(saved.version) || 1) < 6 && s.documentChrome === 'controls') s.documentChrome = 'split';
     s.version = SETTINGS_VERSION;
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
     s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));
@@ -98,7 +111,7 @@ export function loadSettings(): Settings {
     if (!TIMESTAMP_CALENDARS.some(([value]) => value === s.timestampCalendar)) s.timestampCalendar = 'auto';
     if (!WEEK_START_CHOICES.includes(Number(s.weekStart))) s.weekStart = DEFAULTS.weekStart;
     else s.weekStart = Number(s.weekStart);
-    if (!['stays', 'controls', 'all'].includes(s.documentChrome)) s.documentChrome = 'controls';
+    if (!['stays', 'controls', 'split', 'all'].includes(s.documentChrome)) s.documentChrome = DEFAULTS.documentChrome;
     if (!['system', 'free', 'portrait', 'landscape'].includes(s.documentRotation)) s.documentRotation = 'system';
     if (!['persian', 'latin', 'none'].includes(s.pdfPageNumbers)) s.pdfPageNumbers = 'persian';
     if (typeof s.pdfCss !== 'string') s.pdfCss = '';
@@ -270,6 +283,7 @@ export function openSettings(deps: SettingsDeps): void {
           <select class="dropdown" data-select="documentChrome">
             <option value="stays"${settings.documentChrome === 'stays' ? ' selected' : ''}>Keep the header</option>
             <option value="controls"${settings.documentChrome === 'controls' ? ' selected' : ''}>Hide the controls</option>
+            <option value="split"${settings.documentChrome === 'split' ? ' selected' : ''}>Hide it, keep the buttons</option>
             <option value="all"${settings.documentChrome === 'all' ? ' selected' : ''}>Hide the whole header</option>
           </select>
         </div>

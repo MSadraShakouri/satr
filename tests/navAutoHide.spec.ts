@@ -60,8 +60,17 @@ async function boot(page: Page) {
   await page.evaluate(() => {
     window.navMoves = [];
     window.navHiddenNow = () => document.body.classList.contains('is-hidden-nav');
-    new MutationObserver(() => window.navMoves.push({ at: performance.now(), hidden: window.navHiddenNow() }))
-      .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    // A move of the bars is a change of is-hidden-nav, not any write to the
+    // body's class list: the body also carries is-nav-moving while a slide is
+    // in flight (so a document's controls row cannot eat the tap that brings
+    // it back), and that is not one of these.
+    let was = window.navHiddenNow();
+    new MutationObserver(() => {
+      const now = window.navHiddenNow();
+      if (now === was) return;
+      was = now;
+      window.navMoves.push({ at: performance.now(), hidden: now });
+    }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   });
   // Past the note's opening hold (1200ms, src/main.ts) and any restore.
   await page.waitForTimeout(1500);

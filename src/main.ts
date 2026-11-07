@@ -1605,6 +1605,13 @@ const navSettling = (): boolean => navSliding;
 function navMoving(): void {
   navSliding = true;
   navSlideAt = performance.now();
+  // On the body, so a stylesheet can tell that the bars are in flight: a
+  // document's controls row slides from where the name is to below it, and
+  // on the way back it passes over the buttons row. Anything that takes a
+  // tap while it is moving eats the tap that brought it back -- a tap on the
+  // file menu restored the header and then opened nothing, because the
+  // controls had arrived on top of the button first.
+  document.body.classList.add('is-nav-moving');
   window.clearTimeout(navSlideTimer);
   navSlideTimer = window.setTimeout(navStopped, navSlideMs() + 60);
 }
@@ -1613,6 +1620,7 @@ function navStopped(): void {
   window.clearTimeout(navSlideTimer);
   if (!navSliding) return;
   navSliding = false;
+  document.body.classList.remove('is-nav-moving');
   if (navPending) flushNavigation();
 }
 for (const bar of navBars()) {

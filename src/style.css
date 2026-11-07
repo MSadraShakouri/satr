@@ -350,6 +350,12 @@ body.is-named-file .topbar-title {
   font-weight: var(--font-semibold);
   color: var(--text-normal);
   text-align: center;
+  /* The name leaves with the rest of the header when a document is read
+     (data-doc-chrome="split"), at the speeds everything else in the app
+     moves at: opacity 0.2s, movement 0.3s, both ease-in-out. */
+  transition:
+    opacity 0.2s ease-in-out,
+    transform 0.3s ease-in-out;
 }
 /* ...and the chrome that carries the name is a bar, not two icons left on
    the glass. A file that is shown rather than read never hides its header,
@@ -4732,6 +4738,40 @@ body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="all"] .topbar {
   opacity: 0;
 }
 body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="all"] .topbar > * {
+  pointer-events: none;
+}
+/* "Hide it, keep the buttons" (Round 8, variant A): the name and the whole
+   controls row leave together, and the two buttons -- files at one end, the
+   file menu at the other -- stay on the glass, floating over the page. They
+   keep their own raised background, so with the bar gone they read as what
+   they are: two buttons over the document, not a header without its text.
+
+   The bar itself cannot slide (its buttons are staying), so what leaves is
+   everything the bar draws: the raised background behind it, the name, and
+   the controls row. The buttons are put back into the tap stream by name,
+   because the bar around them has to stop taking taps -- the strip of page
+   the reader just uncovered is under it. */
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] .topbar::before {
+  transform: translateY(calc(-1 * var(--view-top-spacing) - var(--pdf-toolbar-height)));
+  opacity: 0;
+}
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] .topbar {
+  pointer-events: none;
+  border-color: transparent;
+}
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] #topbar-title {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] #files,
+body.is-pdf-chrome.is-hidden-nav[data-doc-chrome="split"] .topbar-actions > * {
+  pointer-events: auto;
+}
+/* While the bars are moving, a document's controls row never takes a tap: it
+   slides from the name's place to its own, so on the way back it is over the
+   buttons and would swallow the very tap that asked it to come back. */
+body.is-nav-moving .pdf-toolbar {
   pointer-events: none;
 }
 /* A drawer open outranks it, exactly as for a note: the button that closes
