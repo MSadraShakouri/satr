@@ -2667,6 +2667,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // out to be an ordinary double tap must find the column exactly as
       // the tap handler left it.
       scroller.style.touchAction = 'none';
+      // And the drag is the page's, not the drawer's — reported as "funny
+      // thing about zooming with single finger: it can open the sidebar".
+      // The drawer never took a zoomed page's drag (the pane is wider than
+      // the screen then, and claims it as something to pan, src/drawers.ts)
+      // but at the page's own width or below there is nothing to pan, so a
+      // thumb drifting sideways while it zoomed was a swipe and opened the
+      // files drawer. The claim is made for the length of the gesture and no
+      // longer: an ordinary sideways swipe on a page that fits is still the
+      // drawer's, which is how the app is navigated.
+      scroller.dataset.ignoreSwipe = '';
     }
     // Not while one finger already has the gesture. A second contact
     // during a one-finger zoom is a knuckle, the side of a thumb, or a
@@ -2728,6 +2738,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       const held = hold;
       hold = null;
       scroller.style.touchAction = '';
+      delete scroller.dataset.ignoreSwipe;
       // A finger that only tapped is a double tap, and that is the tap
       // handler's business -- which has already run, on the way up through
       // the pages, and has the column mid-animation about the point it was
@@ -3306,6 +3317,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // next document would be felt.
       void engine.closeDocument(document_).toPromise().catch(() => undefined);
       scroller.removeAttribute('data-pan-x');
+      delete scroller.dataset.ignoreSwipe;
       doc.remove();
       counter.remove();
     },
