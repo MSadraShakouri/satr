@@ -22,6 +22,7 @@
 // panel's view picker, then zoom out, zoom in, the display options, and the
 // page box with the count beside it.
 import { openMenu, type MenuEntry } from './menu';
+import { ROTATIONS, type Rotation } from './orientation';
 import type { PdfFit, PdfHandle, PdfHit } from './pdfView';
 import { countLabel, markQuery } from './searchQuery';
 
@@ -68,6 +69,23 @@ export interface PdfChrome {
  *  dark". */
 export type PdfTheme = 'auto' | 'light' | 'dark';
 export interface PdfThemeControl { mode(): PdfTheme; set(next: PdfTheme): void }
+
+/** Which way up this document is read — the same four Settings has
+ *  (src/orientation.ts), asked where the reader is looking. Rotation is a
+ *  property of the document on screen, not of the app, and a reader who
+ *  wants a scanned page sideways is looking at the page. */
+export interface PdfRotationControl { rotation(): Rotation; set(next: Rotation): void }
+
+/** The sheet behind a document's Rotation: Dark pages' shape exactly, four
+ *  choices instead of three, and the same one place the answer lives. */
+export function openRotation(control: PdfRotationControl): void {
+  const now = control.rotation();
+  openMenu(ROTATIONS.map(([value, title]) => ({
+    title,
+    checked: now === value,
+    action: () => control.set(value),
+  })), { title: 'Rotation' });
+}
 
 /** The sheet behind Dark pages, opened from the toolbar's display options
  *  and from the file's ⋮ alike: one list, one place the answer lives. */

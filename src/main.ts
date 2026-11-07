@@ -45,7 +45,7 @@ import { cardKept, cardNow, forgetTabCard, liveStamp, rememberCard, rememberShot
 import { installLiveBlocks, stripLiveBlocks } from './liveBlocks';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
-import { closeSettings, isSettingsOpen, loadSettings, openSettings, type QuickAction, type Settings } from './settings';
+import { closeSettings, isSettingsOpen, loadSettings, openSettings, saveSettings, type QuickAction, type Settings } from './settings';
 import { onThemeChange } from './theme';
 import type { PdfChrome, PdfTheme } from './pdfChrome';
 import { setHighlightAll } from './findBar';
@@ -299,6 +299,10 @@ applyPdfTheme();
 /** Opens the Dark pages sheet — the same one the toolbar opens. Set while
  *  a document is mounted, which is the only time the entry is offered. */
 let openPdfTheme: (() => void) | null = null;
+/** And the same for Rotation, which is the document's own as well: four
+ *  choices, asked from the file menu rather than one screen away in
+ *  Settings. Offered only while a pdf is open. */
+let openPdfRotation: (() => void) | null = null;
 // Automatic means automatic: the app changing theme, or the system
 // changing it under Auto, turns the pages over with it.
 onThemeChange(applyPdfTheme);
@@ -922,9 +926,18 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   // thumbnails and contents (src/pdfChrome.ts).
   const { mountPdfChrome } = await import('./pdfChrome');
   if (filePath !== path) { handle.destroy(); pdfView = null; return; }
-  const { openDarkPages } = await import('./pdfChrome');
+  const { openDarkPages, openRotation } = await import('./pdfChrome');
   const themed = { mode: () => pdfTheme, set: setPdfTheme };
   openPdfTheme = () => openDarkPages(themed);
+  openPdfRotation = () => openRotation({
+    rotation: () => loadSettings().documentRotation,
+    set: (next) => {
+      const changed = loadSettings();
+      changed.documentRotation = next;
+      saveSettings(changed);
+      applyRotation(next, isDocument(curTab()?.path ?? ''));
+    },
+  });
   pdfChrome = mountPdfChrome(handle, themed, {
     told: (query) => sidebar.setQuery(query),
     // The strip's contents button is a doorway to the app's outline panel,
@@ -3428,6 +3441,7 @@ const MENU_ICONS = {
   settings: svg('<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>'),
   normalize: svg('<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>'), // arrows-left-right
   dark: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'), // moon
+  rotate: svg('<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'), // rotate-cw
   move: svg('<path d="M4 20V7a2 2 0 0 1 2-2h3.5l2 2.5H18a2 2 0 0 1 2 2V20"/><path d="M12 11v6"/><path d="m9 14 3-3 3 3"/>'), // folder-up
 };
 const FLAIR = '<span class="mobile-navbar-action-flair"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';
@@ -3525,6 +3539,12 @@ function showFileMenu(): void {
   // is already looking for when they want this.
   if (documentOpen()) entries.push(
     { title: 'Dark pages', icon: MENU_ICONS.dark, action: () => openPdfTheme?.() },
+  );
+  // Rotation is the pdf's own: a page decides which way up it is read, an
+  // html file and a note do not rotate at all, so the entry is not offered
+  // on them. Settings keeps its dropdown — two doors, as Dark pages has.
+  if (fileKind(filePath) === 'document') entries.push(
+    { title: 'Rotation', icon: MENU_ICONS.rotate, action: () => openPdfRotation?.() },
   );
   entries.push({ title: 'Settings', icon: MENU_ICONS.settings, action: showSettings });
   openMenu(entries, { title: fileBase || fileName(path) });
