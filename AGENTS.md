@@ -21,6 +21,21 @@ He has unpushed work of his own and a push can bury it.
 `satr-on-<base>-<subject>.patch` in `/home/user/`. Delete the previous one so
 there is only ever one file to reach for.
 
+**Pull before every patch, and assume he applied the last one.** `git fetch`,
+then cut from the tip of `origin/dev` — never from the base the last patch was
+named after. He applies each patch to `dev` and his `git am` rewrites the SHAs,
+so a patch built on a remembered base fails on the first file it touches. Round
+8 went out on `00da636` while `dev` was already five commits further and `am`
+stopped dead on `PLAN.md:63`; the plan file is the first thing to collide,
+because every round edits it. Check the assumption with
+`git diff --stat <my last tree> origin/dev` before rebasing onto it — empty
+means he applied it, and empty is what "assume applied" has to be verified by.
+
+**A patch goes out for code and its tests, every round.** Not for a doc-only
+change while the real work is still pending — that rides along with the next
+code patch. And "I don't want a patch" means *this message*, never *stop*: the
+next message that lands code gets one without being asked.
+
 **No patch leaves with a failing test in it.** A patch once went out with three
 known failures and a paragraph of explanation in chat; he applied it and it
 made his app worse in two visible ways. A caveat is not a substitute for green.
@@ -208,14 +223,21 @@ path, restore the copy, commit the rest.
 **Cut and verify the patch:**
 
 ```bash
-git format-patch origin/dev --stdout > /home/user/satr-on-<base>-<subject>.patch
+git fetch origin                                  # always, before anything
+git diff --stat <last patch's tree> origin/dev    # empty: he applied it
+git cherry-pick <this round's commits>            # onto origin/dev, not an old base
+git format-patch origin/dev --stdout > /home/user/satr-on-<tip>-<subject>.patch
 git clone --no-local -q . /tmp/v1 && cd /tmp/v1
 git config user.name "Arena Agent" && git config user.email "agent@arena.ai"
-git checkout -q -B verify <base>
-git am /home/user/satr-on-<base>-<subject>.patch
+git checkout -q -B verify origin/dev              # the tip, by name
+git am /home/user/satr-on-<tip>-<subject>.patch
 diff -r -q /tmp/v1/src /home/user/satr/src        # must be silent
 rm -rf /tmp/v1
 ```
+
+`<tip>` is the `origin/dev` commit the patch applies to, shortened — a name
+that says which tree it wants, so a base that has moved on is visible in the
+filename before it is visible in a rejected `am`.
 
 ---
 
