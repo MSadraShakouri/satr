@@ -265,3 +265,22 @@ for (const [name, pair, mark, kind] of [
     expect(wordsOf(spaced.runs)!.bg, `${name}: the words keep their look too`).toBe(wordsOf(closed.runs)!.bg);
   });
 }
+
+test('the spaces inside a highlight are part of it', async ({ page }) => {
+  // "The spaces too should be highlighted, no exception for them": the colour
+  // runs from one `==` to the other, so there is no untinted gap in front of
+  // the closer.
+  const spaced = await runs(page, 'a ==one two == b');
+  const lit = spaced.runs.filter((one) => one.bg !== 'rgba(0, 0, 0, 0)');
+  expect(lit.length, 'three tinted runs: the two == and everything between them').toBe(3);
+  expect(lit[1].text, 'the tinted run reaches the space before the closer').toBe('one two ');
+  const closed = await runs(page, 'a ==one two== b');
+  expect(closed.runs.filter((one) => one.bg !== 'rgba(0, 0, 0, 0)')[1].text, 'and without a space, the words alone').toBe('one two');
+});
+
+test('the spaces are covered in a strike too', async ({ page }) => {
+  // The same inside, so the line through a struck pair is one line and not one
+  // with a gap at the end of it.
+  const spaced = await runs(page, 'a ~~one two ~~ b');
+  expect(spaced.runs.filter((one) => one.deco.includes('line-through'))[1].text).toBe('one two ');
+});

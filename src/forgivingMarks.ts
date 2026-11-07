@@ -35,7 +35,9 @@ export type ForgivingKind = 'strong' | 'emphasis' | 'strike' | 'highlight';
 
 export type ForgivingMark = {
   kind: ForgivingKind;
-  /** The words, without the run of spaces before the closer. */
+  /** The whole inside of the pair, the run of spaces before the closer
+   *  included: the look runs from one mark to the other, so a highlight has no
+   *  untinted gap at its end and a strike has no break in it. */
   contentFrom: number;
   contentTo: number;
   /** The opening marker, as typed. */
@@ -120,11 +122,12 @@ export function forgivingMarks(state: EditorState, from: number, to: number): Fo
           i += 1;
           continue;
         }
-        const trimmed = line.text.slice(at[i] + mark.length, at[i + 1]).replace(/[ \t]+$/, '').length;
         out.push({
           kind,
+          // To the closer itself, not to the last letter: the spaces inside a
+          // pair are the pair's, and the highlight covers what the pair holds.
           contentFrom: open + mark.length,
-          contentTo: open + mark.length + trimmed,
+          contentTo: close,
           openFrom: open,
           openTo: open + mark.length,
           closeFrom: close,
