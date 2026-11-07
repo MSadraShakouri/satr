@@ -4118,6 +4118,14 @@ textarea,
   color: var(--text-normal);
   font-size: 1rem;
   unicode-bidi: plaintext;
+  /* A long name is cut with an ellipsis, like every other file name in the
+     app, and like the folder line under it. Without this the span kept its
+     whole content, which made the row -- and with it the new tab page --
+     scroll sideways instead of staying the width of the phone. */
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The new tab's own search (src/main.ts): one wide field with the search icon
    at its start, over the whole current scope — the sidebar's search, laid out

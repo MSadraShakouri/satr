@@ -212,3 +212,60 @@ test('a folder row says its name once, then where it sits', async ({ page }) => 
   await expect(row.locator('.empty-state-recent-name')).toHaveText('Physics');
   await expect(row.locator('.search-result-file-path')).toHaveText('Notes');
 });
+
+// A long name is a name like any other (Round 7: "in the new tab page where it
+// shows recently opened files ... it makes the screen scrollable"). The folder
+// line under it was already clipped; the name itself was not, so the row asked
+// for the width of the whole file name and the page scrolled sideways under it.
+test('a long name in the recents is cut, not scrolled', async ({ page }) => {
+  const LONG = 'Notes/probability_theory_third_lecture_conditional_expectation_and_law_of_total_probability.md';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript((long) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { [long as string]: 1, 'Notes/alpha.md': 1 }, folders: ['Notes'] }));
+    localStorage.setItem(`satr:fs:file:${long}`, '# Long\n\nbody\n');
+    localStorage.setItem('satr:fs:file:Notes/alpha.md', '# Alpha\n\nbody\n');
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/alpha.md' }], active: 0 }));
+    localStorage.setItem('satr:recent', JSON.stringify([long, 'Notes/alpha.md']));
+    localStorage.setItem('satr:demoShown', '1');
+  }, LONG);
+  await page.goto('/');
+  await expect(page.locator('#app .cm-file-name')).toHaveText(/.+/);
+  await page.locator('#nav-new').click();
+  // Wait for the page itself, not just the rows: under load the empty tab can
+  // exist off screen before it is the one being shown.
+  await expect(page.locator('body')).toHaveClass(/is-empty-tab/);
+  await expect(page.locator('#empty-tab')).toBeVisible();
+  await expect(page.locator('#empty-tab .empty-state-recent-name')).toHaveCount(2);
+
+  const box = await page.evaluate(() => {
+    const container = document.querySelector('.empty-state-container') as HTMLElement;
+    const item = document.querySelector('.empty-state-recent-item') as HTMLElement;
+    // The long one: opening alpha at boot pushed it down the list, so it is
+    // whichever name needs the most room.
+    const name = [...document.querySelectorAll('.empty-state-recent-name')]
+      .sort((a, b) => (b as HTMLElement).scrollWidth - (a as HTMLElement).scrollWidth)[0] as HTMLElement;
+    const doc = document.documentElement;
+    const cs = getComputedStyle(name);
+    return {
+      container: [container.clientWidth, container.scrollWidth],
+      item: [item.clientWidth, item.scrollWidth],
+      doc: [doc.clientWidth, doc.scrollWidth],
+      // The name is longer than its box and is cut with an ellipsis, not
+      // wrapped onto a second line.
+      clipped: name.scrollWidth > name.clientWidth && cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap',
+      // Both names are laid out the same height: a wrapped long name would
+      // stand two lines tall next to a short one.
+      heights: [...document.querySelectorAll('.empty-state-recent-name')]
+        .map((el) => Math.round((el as HTMLElement).getBoundingClientRect().height)),
+    };
+  });
+  // Nothing is wider than the phone: the page does not scroll sideways.
+  expect(box.container[1], 'the page is not wider than the phone').toBeLessThanOrEqual(box.container[0]);
+  expect(box.item[1], 'nor is the row').toBeLessThanOrEqual(box.item[0]);
+  expect(box.doc[1]).toBeLessThanOrEqual(box.doc[0]);
+  // And the name is still a name: one line, ending in an ellipsis.
+  expect(box.clipped, 'the long name is cut with an ellipsis').toBe(true);
+  expect(box.heights.length, 'both rows are on screen').toBe(2);
+  expect(box.heights[0], 'the long name is the same height as a short one').toBe(box.heights[1]);
+});
+
