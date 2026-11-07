@@ -40,10 +40,30 @@ back. A passing test proves nothing until you have seen it fail. Idiom:
 `cp src/X /tmp/S`, patch it out with python (`assert s.count(a) == 1`),
 rebuild, run, restore, rebuild.
 
-**Ask before designing behaviour he will feel.** A key, a button, a gesture: he
-wants the choice, in a short numbered list. He once asked, fairly, "why did you
-do that without asking the design?" Bugs with exactly one correct answer — a
+**Ask before designing behaviour he will feel.** A key, a button, a gesture —
+and anything visual: a colour, a tint, the extent of a highlight, what a mark
+looks like. He wants the choice, in a short numbered list with the exact
+strings or values each one produces. He once asked, fairly, "why did you do
+that without asking the design?" Bugs with exactly one correct answer — a
 drift, a crash, a wrong pixel — go straight to code.
+
+**The one thing that does not need asking: Obsidian, copied.** He keeps
+Obsidian 1.15.0's own APK as the design reference when their answer is the one
+he wants. It is `uploads/Obsidian-1.15.0.apk.xz.txt`; decompress it **in /tmp,
+never in the repo**:
+
+```bash
+xz -dc /home/user/uploads/Obsidian-1.15.0.apk.xz.txt > /tmp/obs.apk
+unzip -q /tmp/obs.apk -d /tmp/obs
+# the app's own stylesheet and bundle:
+#   /tmp/obs/assets/public/app.css   (593 kB, the whole look)
+#   /tmp/obs/assets/public/app.js    (3.4 MB, minified behaviour)
+```
+
+Read the rule out of their CSS and quote it in the commit, the way the heading
+arrow was done (`.markdown-preview-view .heading-collapse-indicator{…}`). If
+their answer is the one he wants, copy it exactly and say so; if it is not, or
+if their CSS says nothing about it, ask.
 
 **Never ship a change that makes a user-facing number worse**, even for
 correctness. Re-measure the win with the guard in place.
@@ -51,18 +71,29 @@ correctness. Re-measure the win with the guard in place.
 **`package.json` is frozen** at its current version. He cuts tags and decides
 releases. Never bump it, never create a `v*` tag.
 
-**Both trailers on every commit:**
+**Sadra is on every commit, and nobody else is invented.** One trailer, always:
 
 ```
-Co-authored-by: Sadra Shakouri <sadrashakouri@gmail.com>
-Co-authored-by: Arena Agent <agent@satr.local>
+Co-authored-by: Sadra Shakouri <sadra.shakouri@gmail.com>
 ```
+
+Add `Co-authored-by: Arena Agent <agent@arena.ai>` above it **only when the
+work is being done from the Arena interface**. No other aliases, no made-up
+addresses, no local handles: a co-author is a person or it is not there. His
+address is the one the history has used since the first commit —
+`sadra.shakouri@gmail.com`, with the dot.
 
 **Never rewrite published history.** Rebase your own work onto his head; never
 discard a commit of his that you have not seen applied.
 
 **`PLAN.md` is the shared memory.** Tick items there in his words, with what
-landed, what did not, and the numbers. It is how the next session starts
+landed, what did not, and the numbers.
+
+**Never put a "waiting on the phone" or "needs testing" note in `PLAN.md` for
+something you coded.** He tests in the browser himself and reports back if it
+is wrong; a promise to test is not shared memory, it is noise in the list. A
+note like that goes in only when **he** says he cannot reproduce the thing in
+the browser — his report is what asks for it, not your own doubt. It is how the next session starts
 informed instead of guessing. Keep your own invented mechanics in `PLAN.md`,
 unmarked — he reverted a conventions section added to `ROADMAP.md` once; do not
 re-create it.
@@ -70,6 +101,11 @@ re-create it.
 **Never commit `books/book.pdf`** (31MB, his own book, used as a fixture) and
 never compress it. Test against his real notes in `/home/user/uni-notes/`;
 never commit those either.
+
+**The repo has a soft limit of 128 MB, and it stays well under.** Nothing big
+goes in it: not the reference APK, not a decompressed copy of one, not a PDF of
+his. Decompress references in /tmp, and keep anything worth keeping as a few
+kilobytes of quotes.
 
 **Keep it light, and treat smoothness as a feature.** This runs on one phone.
 A megabyte of dependency to solve a 20-line problem is not a solution.
@@ -142,8 +178,8 @@ change of 0.20.0's round), `uiScale.spec.ts:109` (TypeError),
 `.git/config` is stripped between messages. Every round, before anything:
 
 ```bash
-git config user.name "satr agent"
-git config user.email "agent@satr.local"
+git config user.name "Arena Agent"
+git config user.email "agent@arena.ai"
 git remote add origin "$(cat /home/user/satr-origin.txt)"
 git fetch origin; echo "EXIT=$?"
 ```
@@ -174,7 +210,7 @@ path, restore the copy, commit the rest.
 ```bash
 git format-patch origin/dev --stdout > /home/user/satr-on-<base>-<subject>.patch
 git clone --no-local -q . /tmp/v1 && cd /tmp/v1
-git config user.name "satr agent" && git config user.email "agent@satr.local"
+git config user.name "Arena Agent" && git config user.email "agent@arena.ai"
 git checkout -q -B verify <base>
 git am /home/user/satr-on-<base>-<subject>.patch
 diff -r -q /tmp/v1/src /home/user/satr/src        # must be silent

@@ -104,10 +104,13 @@ the phone — or comes back to life if it has not been.
   the parser's own marks changed. Eight more tests in the same spec, all of
   which fail without it: each kind's marks wear the same look as the words in
   both states, stay dimmed, and are drawn identically with a space inside the
-  pair or without. **Waiting on the phone:** type a sentence into a highlight
-  and watch the colour hold on each space and run over the `==` as it does
-  without one, then check that Enter at the end of such a line leaves its marks
-  above (the item below).*
+  pair or without. His call on the look, asked rather than decided: the `==`
+  stays **dimmed at 0.42 over its colour** — Obsidian's own rule puts the mark
+  at full strength (`span.cm-formatting-highlight, span.cm-highlight { color:
+  var(--text-normal) }` over `.cm-formatting { color: var(--text-faint) }`), and
+  he does not want that copied here; a space *after* the opening mark stays
+  literal, so only the run before a closer is forgiven; and the 0.42 dimming
+  stays as it is on every other mark instead of becoming a faint colour.*
 - [x] Enter at the end of a line that ends in `*` carries the asterisk to the next line —
   *done, and the reproducing was the whole of it. Typing into the line never
   shows this: the marks are only hidden while the caret is somewhere else, so
@@ -124,8 +127,7 @@ the phone — or comes back to life if it has not been.
   still splits where it stands. An empty pair counts as ordinary text, as you
   said: both halves stay above, the new line is clean. Twelve tests in
   tests/enterAtLineEnd.spec.ts, nine of which fail without it (the three that
-  pass either way are the guards). **Waiting on the phone:** tap past the last
-  word of a line that ends in `*bold*` and press Enter.*
+  pass either way are the guards).*
 - [x] have something for headers and maybe have something to repeat the same header as the last one, would be nice but I don't know how to do it on mobile well (probably an extra button that loops last used header to 6 then back to 1 and continue) — *done, without the extra button. A plain line now takes the level of the nearest heading above it, so one press continues the shape of the note; pressing again walks the levels as before, which is how a level gets changed. Fenced code is skipped when reading the level above — `# install everything` is a comment, not a heading. Waiting on the phone.*
 - [ ] new line capitalize happens on actual new lines but not on bullet lists and check things (should we keep it like this? I'd prefer no capitalization on a new line but I'm not too sure about it, maybe a settings part for it)
 
