@@ -27,7 +27,10 @@ async function boot(page: Page, chrome?: 'stays' | 'controls' | 'split' | 'all',
     localStorage.setItem('satr:fs:file:Notes/handout.pdf', pdf as string);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/handout.pdf' }], active: 0 }));
     localStorage.setItem('satr:demoShown', '1');
-    if (choice) localStorage.setItem('satr:settings', JSON.stringify({ documentChrome: choice }));
+    // version 7: an answer chosen AFTER the picked one existed. An older
+    // version is carried over to the picked answer, which is the point of
+    // the migration, so a test that wants another answer has to mean it.
+    if (choice) localStorage.setItem('satr:settings', JSON.stringify({ version: 7, documentChrome: choice }));
   }, [document, chrome ?? ''] as [string, string]);
   await page.goto('/');
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 20000 });
@@ -102,24 +105,58 @@ test('by default the name and the controls go, and the two buttons stay', async 
   expect(-lifted, 'the glass rose by the name and the controls together').toBe(room);
 });
 
-test('a tap brings the whole header back, and never hides it', async ({ page }) => {
+test('a tap toggles: it takes the rest away, and a second tap brings it back', async ({ page }) => {
+  // V1, the answer he picked by name: "any downward scroll hides. A tap
+  // toggles. The top brings it back." A tap is the pair of them, so this test
+  // is a pair of taps from a page that is showing.
   await boot(page);
-  await readDown(page);
-  expect(await away(page)).toBe(true);
+  expect(await away(page)).toBe(false);
 
-  // A tap on the page itself: the finger that stopped, not the scroll.
+  // The first tap on the page itself takes the name and the controls away and
+  // leaves the two: that is the half I had built the other way around, having
+  // read it off the A answer in the sheet before the one he meant.
+  await page.mouse.click(195, 500);
+  await page.waitForTimeout(600);
+  expect(await away(page), 'a tap takes the rest down to the two').toBe(true);
+  expect(await controlsInk(page)).toBe('0');
+  expect(await titleInk(page)).toBe('0');
+  const two = await twoButtons(page);
+  expect(two.files && two.more, 'the two stay through a tap').toBe(true);
+  expect(two.tappable).toBe(true);
+
+  // The second tap brings the whole header back.
   await page.mouse.click(195, 500);
   await page.waitForTimeout(600);
   expect(await away(page), 'the bars are back').toBe(false);
   expect(await controlsInk(page)).toBe('1');
   expect(await titleInk(page)).toBe('1');
+});
 
-  // And a second tap on the page leaves it all alone: a tap only restores.
-  await page.mouse.click(195, 500);
-  await page.waitForTimeout(600);
-  expect(await away(page), 'a tap never takes the header away').toBe(false);
-  expect(await controlsInk(page)).toBe('1');
-  expect(await titleInk(page)).toBe('1');
+test('a tap on a button restores, and does not toggle', async ({ page }) => {
+  // The tap that toggles is a tap on the PAGE. A thumb going for the files
+  // button is asking for the drawer, not for the chrome to change -- and the
+  // press itself puts the header back so the drawer opens under a name.
+  await boot(page);
+  await readDown(page);
+  expect(await away(page)).toBe(true);
+  await page.locator('#files').click();
+  await page.waitForTimeout(500);
+  expect(await away(page), 'the press on the button brought the header back').toBe(false);
+  await expect(page.locator('.nav-file-title', { hasText: 'handout.pdf' })).toHaveCount(1);
+});
+
+test('any downward movement hides it, however small', async ({ page }) => {
+  // V1 has no threshold: the sheet says so in as many words ("how eagerly it
+  // hides"), and V2 is the 48px one he did not pick. Measured from the top, a
+  // nudge of 40px is enough.
+  await boot(page);
+  await page.mouse.move(195, 400);
+  await page.mouse.wheel(0, 40);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => (document.querySelector('#preview-pane') as HTMLElement).scrollTop)).toBeGreaterThan(20);
+  expect(await away(page), 'a nudge took it').toBe(true);
+  expect(await titleInk(page)).toBe('0');
+  expect(await controlsInk(page)).toBe('0');
 });
 
 test('a tap on the file menu still opens it with the header gone', async ({ page }) => {
@@ -169,19 +206,54 @@ test('the top of the document has the header, without a tap', async ({ page }) =
   expect(await titleInk(page)).toBe('1');
 });
 
-test('a one-page document never loses its header', async ({ page }) => {
+test('a one-page document: a scroll cannot hide it, a tap still toggles', async ({ page }) => {
+  // "B never needs a special case there, a tap both hides and restores" --
+  // the behaviour sheet's own note, and V1 is B's behaviour. So the trap is
+  // not that the header is nailed down; it is that the page cannot move it,
+  // while the finger still can, both ways.
   await boot(page, undefined, tinyPdf(1));
   await page.mouse.move(195, 400);
   for (let i = 0; i < 3; i += 1) { await page.mouse.wheel(0, 500); await page.waitForTimeout(300); }
   await page.waitForTimeout(500);
-  // Nothing can scroll, so nothing can ask the header to go -- which is the
-  // trap this answer was picked for.
   expect(await away(page), 'there is nothing to scroll, so nothing went').toBe(false);
   expect(await controlsInk(page)).toBe('1');
   expect(await titleInk(page)).toBe('1');
+
   await page.mouse.click(195, 500);
-  await page.waitForTimeout(400);
-  expect(await titleInk(page), 'and a tap does not hide it either').toBe('1');
+  await page.waitForTimeout(600);
+  expect(await away(page), 'a tap hides it even here').toBe(true);
+  expect(await titleInk(page)).toBe('0');
+  const two = await twoButtons(page);
+  expect(two.files && two.more, 'the two are what is left, on a page that cannot scroll').toBe(true);
+
+  await page.mouse.click(195, 500);
+  await page.waitForTimeout(600);
+  expect(await away(page), 'and a second tap brings it back').toBe(false);
+  expect(await titleInk(page)).toBe('1');
+});
+
+test('an answer saved before this round is carried to the picked one', async ({ page }) => {
+  // He had "Hide the whole header" saved from the round before, and that is
+  // what he kept seeing after a patch that never reached it: the two went
+  // with the header, and a scroll up brought it all back. The old answer is
+  // not his any more than it was a choice -- the picked one did not exist
+  // when he made it -- so it comes over to the picked one, once.
+  await page.addInitScript((pdf) => {
+    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/handout.pdf': 1 }, folders: ['Notes'] }));
+    localStorage.setItem('satr:fs:file:Notes/handout.pdf', pdf as string);
+    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/handout.pdf' }], active: 0 }));
+    localStorage.setItem('satr:demoShown', '1');
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 6, documentChrome: 'all' }));
+  }, PDF);
+  await page.goto('/');
+  await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => document.body.dataset.docChrome), 'the old answer is carried over').toBe('split');
+  await readDown(page);
+  expect(await away(page)).toBe(true);
+  const two = await twoButtons(page);
+  expect(two.files && two.more, 'and the two stay, which is the whole of what he asked for').toBe(true);
+  expect(two.tappable).toBe(true);
 });
 
 test('a note keeps the header it had', async ({ page }) => {
@@ -194,7 +266,7 @@ test('a note keeps the header it had', async ({ page }) => {
     localStorage.setItem('satr:fs:file:Notes/plain.md', '# Plain\n\n' + 'a line of the note\n\n'.repeat(200));
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/plain.md' }], active: 0 }));
     localStorage.setItem('satr:demoShown', '1');
-    localStorage.setItem('satr:settings', JSON.stringify({ documentChrome: 'split' }));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 7, documentChrome: 'split' }));
   }, PDF);
   await page.goto('/');
   await expect(page.locator('.cm-content')).toBeVisible({ timeout: 20000 });

@@ -102,7 +102,15 @@ export function loadSettings(): Settings {
     // two buttons and takes both. 'controls' was this app's own default, so a
     // saved one is the old default rather than a choice -- move it once, and
     // "Hide the controls" stays in the list for anyone who wants it back.
-    if ((Number(saved.version) || 1) < 6 && s.documentChrome === 'controls') s.documentChrome = 'split';
+    // The answer he picked (B1's look, V1's behaviour) did not exist before
+    // round 8, so nobody can have chosen it: every saved answer here was an
+    // experiment from before the choice -- "Hide the whole header", most
+    // likely, because that is what he had asked for. Left as it was, the
+    // patch would arrive and he would see the old answer again, which is
+    // exactly what a round of this cost already. So all three carry over to
+    // the one he picked, once; the other three are still in the list below
+    // for anyone who wants them back.
+    if ((Number(saved.version) || 1) < 7 && s.documentChrome !== 'split') s.documentChrome = 'split';
     s.version = SETTINGS_VERSION;
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
     s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));

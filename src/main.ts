@@ -1592,6 +1592,16 @@ const NAV_HELD_AWAY = 32;
 const NAV_HELD_BACK = 16;
 const navHeld = (hide: boolean): number => (hide ? NAV_HELD_AWAY : NAV_HELD_BACK);
 let navHidden = false;
+/** Is the answer he picked the one in force? B1's look with V1's behaviour:
+ *  the two buttons stay where they are as circles on the page, and the rest
+ *  of the chrome answers to the page and to a tap. He picked it by name
+ *  ("B-V1") after three rounds of me building the wrong one of the answers I
+ *  had drawn, so the name is written here where the rule lives.
+ *
+ *  A document only: `is-pdf-chrome` is set when a shown file is mounted and
+ *  cleared otherwise, so a note never meets any of this. */
+const tapTogglesChrome = (): boolean =>
+  document.body.dataset.docChrome === 'split' && document.body.classList.contains('is-pdf-chrome');
 let navPending: { el: HTMLElement; hide: boolean; at: number } | null = null;
 let navSliding = false;
 /** What the phone was last asked for, so a bar that is already away is
@@ -1746,7 +1756,15 @@ let gestureWay = 0;
 let gestureEver = false;
 let fingerDown = false;
 let fingerMark = 0;
+/** When a hand last moved the page: a wheel, a finger, a key. V1 has no
+ *  threshold, so without this the layout can take a document's chrome away
+ *  before the reader has touched anything -- the viewer moves the pane a few
+ *  pixels while it settles, the move is downward, and V1 says any downward
+ *  move is a read. A fling keeps its own momentum going for a second or two
+ *  with no finger on the glass, which is why the window is generous. */
+let handAt = 0;
 function noteGesture(way: number): void {
+  handAt = performance.now();
   if (!way) return;
   gestureEver = true;
   gestureWay = way;
@@ -1765,6 +1783,7 @@ function watchGestures(el: HTMLElement): void {
     if (y === undefined) return;
     fingerDown = true;
     fingerMark = y;
+    handAt = performance.now();
   }, { passive: true, capture: true });
   el.addEventListener('touchend', () => { fingerDown = false; }, { passive: true, capture: true });
   el.addEventListener('touchcancel', () => { fingerDown = false; }, { passive: true, capture: true });
@@ -1839,22 +1858,31 @@ function onNavScroll(el: HTMLElement): void {
     return;
   }
   const delta = top - anchor;
-  if (Math.abs(delta) < NAV_THRESHOLD) return;
   const hide = delta > 0;
-  // A document in the answer he picked ("Hide it, keep the buttons", the one
-  // drawn as A) is left by a tap and by nothing else. The header goes when
-  // the page moves down, comes back on a tap on the page, and has the top of
-  // the document -- scrolling up must NOT bring it back. That is the answer
-  // that was drawn beside it (D, "a flick up brings it back") and not chosen;
-  // building it by keeping the note's scroll rule would be a different
-  // behaviour from the one he picked, which is the whole thing he asked for.
-  // Notes keep their rule: this only speaks about a document, and only about
-  // the answer that floats the two buttons.
-  if (!hide && document.body.dataset.docChrome === 'split'
-    && document.body.classList.contains('is-pdf-chrome')) {
-    scrollAnchors.set(el, top); // the anchor keeps up; the bars stay away
+  // V1 for a document, and V1 is short: any downward movement takes the name
+  // and the controls, an upward one does nothing at all, and the top of the
+  // document is the other way back. No threshold (that is V2, 48px, and he
+  // picked V1 knowing the sheet says "how eagerly it hides"), no hold, no
+  // reversal gate -- those exist to keep a note's bars from flashing on a
+  // thumb's wobble, and a document that can only be turned around by a tap
+  // or by arriving at the top has no reversal for a scroll to cause.
+  //
+  // Scrolling up doing nothing is the half I got wrong by keeping the note's
+  // rule (which restores on any upward move): that is D, "a flick up brings
+  // it back", the answer drawn beside the one he picked.
+  if (tapTogglesChrome()) {
+    scrollAnchors.set(el, top); // the anchor keeps up either way
+    if (!hide || navHidden) return;
+    // A document that has not been touched is still arriving: the viewer
+    // settles the pane over its first frames, and V1 would read that as a
+    // read and take the chrome before the reader has seen it. Only a move a
+    // hand made counts.
+    if (performance.now() - handAt > 1200) return;
+    if (navSettling()) { holdNavigation(el, true); return; }
+    hideNavigation();
     return;
   }
+  if (Math.abs(delta) < NAV_THRESHOLD) return;
   // The bars are already in the state this direction wants: nothing to
   // change, and the anchor keeps up so a long scroll is not one change
   // waiting to happen at its end.
@@ -1886,7 +1914,40 @@ function onNavScroll(el: HTMLElement): void {
 // for the start of a scroll (same event Obsidian listens to). A tap is a
 // deliberate gesture, so it restores the bars at once — the slide rule is for
 // the scroll that is still in progress, not for a finger that has stopped.
-window.addEventListener('mousedown', restoreNavigation);
+//
+// A press on the page of a document is the exception: there the tap TOGGLES
+// (V1), and this listener would spoil it by putting the chrome back on
+// mousedown so that the toggle on pointerup saw it already showing and took
+// it away again -- one tap, nothing changes. So a press on the page is left
+// to the tap below, and a press on the chrome still restores at once, because
+// a thumb going for the files button is not a tap on the page.
+const onChrome = (target: EventTarget | null): boolean => {
+  const el = target instanceof Element ? target : null;
+  return !!el?.closest('.topbar, .pdf-toolbar, .mobile-navbar, .floating-button,'
+    + ' button, a, input, textarea, select, [contenteditable="true"]');
+};
+window.addEventListener('mousedown', (event) => {
+  if (tapTogglesChrome() && !onChrome(event.target)) return;
+  restoreNavigation();
+});
+// V1's tap, on the document's own pane: a press that did not travel and did
+// not last. Measured the way the sheet measured it (under 10px, under 450ms),
+// on pointerup so that a drag that started on the page is never a tap.
+let pageTapFrom: { x: number; y: number; at: number } | null = null;
+previewPane.addEventListener('pointerdown', (event) => {
+  pageTapFrom = !tapTogglesChrome() || onChrome(event.target)
+    ? null : { x: event.clientX, y: event.clientY, at: performance.now() };
+}, { capture: true, passive: true });
+previewPane.addEventListener('pointerup', (event) => {
+  const from = pageTapFrom;
+  pageTapFrom = null;
+  if (!from || !tapTogglesChrome()) return;
+  if (Math.hypot(event.clientX - from.x, event.clientY - from.y) >= 10) return;
+  if (performance.now() - from.at >= 450) return;
+  navPending = null; // a tap outranks a move a slide was holding back
+  if (navHidden) restoreNavigation();
+  else hideNavigation();
+}, { capture: true, passive: true });
 // For a moment after a note or the editing view is shown, its place is held:
 // a scroll nobody asked for (the caret being pulled into view while the
 // keyboard or the system bars settle) is undone. Any touch, wheel or key

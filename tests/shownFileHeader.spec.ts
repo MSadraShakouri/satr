@@ -26,7 +26,7 @@ async function boot(page: Page, files: Record<string, string>, open: string,
     for (const name of names) localStorage.setItem(`satr:fs:file:Notes/${name}`, vault[name]);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: `Notes/${first as string}` }], active: 0 }));
     if (Object.keys(prefs as Record<string, unknown>).length) {
-      localStorage.setItem('satr:settings', JSON.stringify({ version: 6, ...(prefs as Record<string, unknown>) }));
+      localStorage.setItem('satr:settings', JSON.stringify({ version: 7, ...(prefs as Record<string, unknown>) }));
     }
   }, [files, open, settings] as [Record<string, string>, string, Record<string, unknown>]);
   await page.goto('/');
