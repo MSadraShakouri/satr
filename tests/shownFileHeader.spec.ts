@@ -2,16 +2,21 @@ import { test, expect, type Page } from '@playwright/test';
 import { tinyPdf } from './support/tinyPdf';
 
 // A file that is shown rather than read — a PDF, a picture, an HTML page —
-// carries its name in the chrome, and so keeps that chrome on screen. This
-// is the line Obsidian draws: its auto-full-screen is wired into the two
-// markdown views and nothing else, so only a note ever scrolls its header
-// away. A note still does, in reading view as well as in source.
+// carries its name in the chrome. Since round 8 that chrome is a setting with
+// four answers (Settings -> While scrolling), and the default takes the name
+// and the controls away and floats the two buttons; tests/documentChrome.spec.ts
+// pins that one. This file pins the two things that did not change with it:
+// the answer "keep the header" really does keep it, and the phone's own clock
+// follows the answer rather than the scroll — it stays for a document whatever
+// that document's header is doing, because the name lives in the bar, and it
+// leaves for a note, whose header does slide away.
 
 const PDF = tinyPdf(8);
 const LONG = `# note\n\n${'a line of the note\n\n'.repeat(120)}`;
 
-async function boot(page: Page, files: Record<string, string>, open: string): Promise<void> {
-  await page.addInitScript(([seed, first]) => {
+async function boot(page: Page, files: Record<string, string>, open: string,
+  settings: Record<string, unknown> = {}): Promise<void> {
+  await page.addInitScript(([seed, first, prefs]) => {
     const vault = seed as Record<string, string>;
     const names = Object.keys(vault);
     localStorage.setItem('satr:fs:index', JSON.stringify({
@@ -20,7 +25,10 @@ async function boot(page: Page, files: Record<string, string>, open: string): Pr
     }));
     for (const name of names) localStorage.setItem(`satr:fs:file:Notes/${name}`, vault[name]);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: `Notes/${first as string}` }], active: 0 }));
-  }, [files, open] as [Record<string, string>, string]);
+    if (Object.keys(prefs as Record<string, unknown>).length) {
+      localStorage.setItem('satr:settings', JSON.stringify({ version: 6, ...(prefs as Record<string, unknown>) }));
+    }
+  }, [files, open, settings] as [Record<string, string>, string, Record<string, unknown>]);
   await page.goto('/');
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
 }
@@ -45,8 +53,14 @@ async function scrollPane(page: Page, steps: number): Promise<void> {
   }
 }
 
-test('a document keeps its header however far it is scrolled', async ({ page }) => {
-  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf');
+// This is the "Keep the header" answer (Settings -> While scrolling), not the
+// default any more: the default takes the name and the controls away and keeps
+// the two buttons (tests/documentChrome.spec.ts pins that). What is pinned
+// here is what "keep" means -- the bar does not move a pixel however far the
+// document is scrolled, and what a document always does is keep the phone's
+// own clock, because a document's name is in that bar.
+test('"keep the header" keeps it, however far the document is scrolled', async ({ page }) => {
+  await boot(page, { 'handout.pdf': PDF }, 'handout.pdf', { documentChrome: 'stays' });
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
   const header = async (): Promise<number> =>
     (await page.locator('.topbar').boundingBox())!.y;
