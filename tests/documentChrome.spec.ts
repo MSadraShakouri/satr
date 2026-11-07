@@ -131,6 +131,44 @@ test('a tap on the file menu still opens it with the header gone', async ({ page
   await expect(page.locator('.menu-item', { hasText: 'Rotation' })).toHaveCount(1);
 });
 
+test('scrolling up does not bring it back — only a tap does', async ({ page }) => {
+  await boot(page);
+  await readDown(page);
+  expect(await away(page)).toBe(true);
+
+  // Up the page: the header stays away. It is a tap's job, not a scroll's --
+  // the answer drawn beside this one was "a flick up brings it back", and it
+  // was not the one chosen.
+  await page.mouse.wheel(0, -250);
+  await page.waitForTimeout(700);
+  expect(await away(page), 'scrolling up leaves the header where it is').toBe(true);
+  expect(await titleInk(page)).toBe('0');
+  expect(await controlsInk(page)).toBe('0');
+  // ...and the two are still the two: on the glass, and taking their taps.
+  const two = await twoButtons(page);
+  expect(two.files && two.more, 'the two stayed through the scroll up').toBe(true);
+  expect(two.tappable).toBe(true);
+
+  // A tap on the page is what brings it back.
+  await page.mouse.click(195, 500);
+  await page.waitForTimeout(600);
+  expect(await away(page)).toBe(false);
+  expect(await titleInk(page)).toBe('1');
+});
+
+test('the top of the document has the header, without a tap', async ({ page }) => {
+  await boot(page);
+  await readDown(page);
+  expect(await away(page)).toBe(true);
+  // Back to the very top: the scroll that arrives there ends with the header
+  // on the glass, because the top is the reader's own instruction.
+  await page.mouse.wheel(0, -4000);
+  await page.waitForTimeout(900);
+  expect(await page.evaluate(() => (document.querySelector('#preview-pane') as HTMLElement).scrollTop)).toBeLessThan(4);
+  expect(await away(page), 'the top always has the header').toBe(false);
+  expect(await titleInk(page)).toBe('1');
+});
+
 test('a one-page document never loses its header', async ({ page }) => {
   await boot(page, undefined, tinyPdf(1));
   await page.mouse.move(195, 400);

@@ -1841,6 +1841,20 @@ function onNavScroll(el: HTMLElement): void {
   const delta = top - anchor;
   if (Math.abs(delta) < NAV_THRESHOLD) return;
   const hide = delta > 0;
+  // A document in the answer he picked ("Hide it, keep the buttons", the one
+  // drawn as A) is left by a tap and by nothing else. The header goes when
+  // the page moves down, comes back on a tap on the page, and has the top of
+  // the document -- scrolling up must NOT bring it back. That is the answer
+  // that was drawn beside it (D, "a flick up brings it back") and not chosen;
+  // building it by keeping the note's scroll rule would be a different
+  // behaviour from the one he picked, which is the whole thing he asked for.
+  // Notes keep their rule: this only speaks about a document, and only about
+  // the answer that floats the two buttons.
+  if (!hide && document.body.dataset.docChrome === 'split'
+    && document.body.classList.contains('is-pdf-chrome')) {
+    scrollAnchors.set(el, top); // the anchor keeps up; the bars stay away
+    return;
+  }
   // The bars are already in the state this direction wants: nothing to
   // change, and the anchor keeps up so a long scroll is not one change
   // waiting to happen at its end.
