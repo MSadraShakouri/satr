@@ -36,6 +36,8 @@ function reset(flow: HTMLElement, units: HTMLElement[]): void {
   // Measure at the written size: a formula set smaller last time would
   // otherwise be measured small and shrink again on every pass.
   flow.style.fontSize = '';
+  flow.style.removeProperty('display');
+  flow.style.removeProperty('white-space');
   flow.classList.remove('is-fitted');
   flow.querySelectorAll(':scope > br.math-br').forEach((br) => br.remove());
   flow.classList.remove('is-wrapped');
@@ -59,10 +61,8 @@ interface Flow {
   cont: number[];
 }
 
-/** Where a display formula's lines begin, from widths already measured: the
- *  first unit of every line after the first. Empty when it fits on one line.
- *  No DOM access — the caller has taken the measurements once, for every
- *  formula on the page. */
+/** Choose display-line starts from measured widths and cut metadata. The DOM
+ *  metadata is read once up front; the dynamic program itself uses arrays. */
 function displayStarts(units: HTMLElement[], available: number, plain: number[], cont: number[]): number[] {
   const n = units.length;
   const prefix = [0];
@@ -76,42 +76,137 @@ function displayStarts(units: HTMLElement[], available: number, plain: number[],
   // the writer's own line ends (0), then commas (1), then relations (2),
   // then the spaces typed between words (3).
   const prio = units.map((unit, index) => (index > 0 ? Number(unit.dataset.break ?? 3) : 3));
+  const kind = units.map(unit => unit.dataset.cutKind ?? 'other');
+  const relation = units.map(unit => unit.dataset.cutRelation ?? 'other');
+  const isAdjacent = units.map(unit => unit.dataset.cutAdjacent === '1');
+  const tex = units.map(unit => unit.querySelector('annotation')?.textContent ?? '');
   // best[l][j]: among splits of units 0..j-1 into l fitting lines, the one
   // with the fewest-preferred break points (sum of priorities), then the
   // narrowest possible widest line.
-  const INF = Number.POSITIVE_INFINITY;
-  const cost: number[][] = [new Array(n + 1).fill(INF)];
-  const best: number[][] = [new Array(n + 1).fill(INF)];
-  const from: number[][] = [new Array(n + 1).fill(-1)];
-  cost[0][0] = 0;
-  best[0][0] = 0;
-  let lines = 0;
-  for (let l = 1; l <= n && lines === 0; l += 1) {
-    cost[l] = new Array(n + 1).fill(INF);
-    best[l] = new Array(n + 1).fill(INF);
-    from[l] = new Array(n + 1).fill(-1);
-    for (let j = 1; j <= n; j += 1) {
-      for (let i = 0; i < j; i += 1) {
-        if (cost[l - 1][i] === INF || !fits(i, j - 1)) continue;
-        const penalty = cost[l - 1][i] + prio[i];
-        const worst = Math.max(best[l - 1][i], lineWidth(i, j - 1));
-        if (penalty < cost[l][j] - 0.5 || (penalty <= cost[l][j] + 0.5 && worst < best[l][j] - 0.5)) {
-          cost[l][j] = penalty;
-          best[l][j] = worst;
-          from[l][j] = i;
+  const choose = (balanced: boolean, allowAdjacent = false, avoidInner = false): number[] => {
+    const INF = Number.POSITIVE_INFINITY;
+    const cost: number[][] = [new Array(n + 1).fill(INF)];
+    const best: number[][] = [new Array(n + 1).fill(INF)];
+    const from: number[][] = [new Array(n + 1).fill(-1)];
+    cost[0][0] = 0;
+    best[0][0] = 0;
+    let lines = 0;
+    for (let l = 1; l <= n && lines === 0; l += 1) {
+      cost[l] = new Array(n + 1).fill(INF);
+      best[l] = new Array(n + 1).fill(INF);
+      from[l] = new Array(n + 1).fill(-1);
+      for (let j = 1; j <= n; j += 1) {
+        for (let i = 0; i < j; i += 1) {
+          if (cost[l - 1][i] === INF || !fits(i, j - 1)) continue;
+          if (!allowAdjacent && i > 0 && isAdjacent[i]) continue;
+          if (avoidInner && i > 0 && (prio[i] >= 5 || kind[i] === 'product')) continue;
+          // Never introduce a cut within a group or through a product merely
+          // to balance lines. Existing breaks of these kinds may be retained.
+          if (balanced && i > 0 && !initial.includes(i) &&
+              (prio[i] >= 5 || kind[i] === 'product' || relation[i] === 'membership')) continue;
+          const penalty = cost[l - 1][i] + prio[i];
+          const worst = Math.max(best[l - 1][i], lineWidth(i, j - 1));
+          if (balanced ? (worst < best[l][j] - 0.5 || (worst <= best[l][j] + 0.5 && penalty < cost[l][j] - 0.5)) : (penalty < cost[l][j] - 0.5 || (penalty <= cost[l][j] + 0.5 && worst < best[l][j] - 0.5))) {
+            cost[l][j] = penalty;
+            best[l][j] = worst;
+            from[l][j] = i;
+          }
         }
       }
+      if (cost[l][n] < INF) lines = l;
     }
-    if (cost[l][n] < INF) lines = l;
+    if (!lines) return [];
+    const starts: number[] = [];
+    for (let l = lines, j = n; l > 0; l -= 1) {
+      const i = from[l][j];
+      starts.push(i);
+      j = i;
+    }
+    return starts;
+  };
+  let initial = choose(false);
+  if (initial.some((i) => i > 0 && prio[i] >= 5)) {
+    const adjacent = choose(false, true);
+    const inner = (s: number[]) => s.filter((i) => i > 0 && prio[i] >= 5).length;
+    if (adjacent.length === initial.length && inner(adjacent) < inner(initial) &&
+        initial.every((i) => i === 0 || prio[i] !== 0 || adjacent.includes(i))) initial = adjacent;
   }
-  if (!lines) return [];
-  const starts: number[] = [];
-  for (let l = lines, j = n; l > 0; l -= 1) {
-    const i = from[l][j];
-    starts.push(i);
-    j = i;
+  const ordered = (starts: number[]) => [...starts].sort((a, b) => a - b);
+  const widths = (starts: number[]) => {
+    const order = ordered(starts);
+    return order.map((x, i) => lineWidth(x, (order[i + 1] ?? n) - 1));
+  };
+  // Research candidate: if the fewest-line plan cuts an ordinary group,
+  // see whether one additional line avoids all such cuts without overflow.
+  // This consciously trades height for structure; compare the entire corpus.
+  // A tall indivisible matrix, fraction or binomial already consumes vertical
+  // space; adding another whole line there needs separate visual judgment.
+  const tallStructure = tex.some(u => /\\(?:begin|frac|binom)\b/.test(u));
+  if (!tallStructure && initial.some(i => i > 0 && prio[i] >= 5)) {
+    const ungrouped = choose(false, true, true);
+    const ungroupedWidths = widths(ungrouped);
+    if (ungrouped.length > 0 && ungrouped.length <= initial.length + 1 &&
+        ungroupedWidths.every(w => w <= available) &&
+        // Do not introduce an isolated left-hand side as the price of a line.
+        ungroupedWidths[0] >= available * 0.3 &&
+        !(ordered(ungrouped)[1] === 1 && relation[1] === 'assignment' && !initial.includes(1)) &&
+        initial.every(i => i === 0 || prio[i] !== 0 || ungrouped.includes(i))) initial = ungrouped;
   }
-  return starts;
+  // A written quad separates complete statements. If a relation break
+  // separates a very short label from its value, try the adjacent written
+  // gap before or after the whole statement instead.
+  for (const at of [...initial]) {
+    if (at < 2 || relation[at] !== 'assignment' ||
+        /\\(?:begin|frac|binom)\b/.test(tex[at]) ||
+        kind[at - 1] !== 'separator') continue;
+    const alternatives = [at - 1, at + 1].filter(i => i > 0 && i < n &&
+      kind[i] === 'separator' && !initial.includes(i));
+    const valid = alternatives.map(i => initial.map(j => j === at ? i : j))
+      .filter(plan => widths(plan).every(w => w <= available));
+    if (valid.length) initial = valid.sort((a, b) => Math.max(...widths(a)) - Math.max(...widths(b)))[0];
+  }
+  // A short text-only segment between two authored gaps is a connector or
+  // label for the following expression. When it would be stranded at the end
+  // of a line, try moving the break to the preceding gap instead. Never split
+  // or reverse the prose, and never add a line to make this move.
+  for (const at of [...initial]) {
+    if (at < 2 || kind[at] !== 'separator' ||
+        kind[at - 1] !== 'separator' || initial.includes(at - 1)) continue;
+    const connector = tex[at - 1];
+    if (!/^\\displaystyle\s*\\text\{[^{}]+\}\s*\\(?:quad|qquad)\s*\{\}\s*$/.test(connector)) continue;
+    const moved = initial.map(i => i === at ? at - 1 : i);
+    if (widths(moved).every(w => w <= available)) initial = moved;
+  }
+  const first = widths(initial);
+  // Only reconsider an unusually empty opening; don't disturb an authored
+  // break or force a split inside a mathematical group merely to balance.
+  if (initial.length < 2 || first[0] >= available * 0.34) return initial;
+  const firstBreak = ordered(initial)[1];
+  if (prio[firstBreak] === 1) {
+    const opening = tex.slice(0, firstBreak).join(' ');
+    const quantifiers = [...opening.matchAll(/(?:\\(?:forall|exists|nexists)\b|[∀∃∄])/g)];
+    const lastQuantifier = quantifiers.at(-1);
+    const tail = lastQuantifier ? opening.slice(lastQuantifier.index! + lastQuantifier[0].length) : '';
+    const typedDomain = /^(?:(?!:)[\s\S])*?(?:\\(?:in|notin|ni)\b|[∈∉∋∌])/.test(tail);
+    // A single bound variable followed by a comparison is also complete:
+    // “for all x, 0 < ...”. This is different from “for all a,b, c in R”,
+    // where the comma after b is in the middle of the variable list.
+    const singleVariable = /^\s*(?:[A-Za-z]|\\[A-Za-z]+)(?:_\{[^{}]+\}|_[A-Za-z0-9])?\s*,\s*$/.test(tail);
+    const next = tex[firstBreak];
+    const startsComparison = /^(?:\\displaystyle\s*)?(?:[0-9]+|[A-Za-z](?:_\{[^{}]+\}|_[A-Za-z0-9])?)\s*(?:[<>=]|\\(?:le|leq|ge|geq)\b)/.test(next.trim());
+    if (/(?:\\(?:forall|exists|nexists)\b|[∀∃∄])/.test(next) || typedDomain || (singleVariable && startsComparison)) return initial;
+  }
+  const alternative = choose(true);
+  if (alternative.length !== initial.length) return initial;
+  const next = widths(alternative);
+  const count = (plan: number[], test: (p: number) => boolean) => plan.filter((i) => i > 0 && test(prio[i])).length;
+  if (initial.some((i) => i > 0 && prio[i] === 0 && !alternative.includes(i)) ||
+      count(alternative, p => p >= 5) > count(initial, p => p >= 5) ||
+      next[0] < first[0] * 1.5 || Math.max(...next) > Math.max(...first) + 1) return initial;
+  const at = ordered(initial)[1];
+  const canTradePriority = prio[at] === 1 || relation[at] === 'assignment';
+  if (!canTradePriority && Math.max(...next) > Math.max(...first) * 0.88) return initial;
+  return alternative;
 }
 
 /** How small a display formula may be set before it is left to pan instead.
@@ -463,6 +558,27 @@ export function layoutMath(root: HTMLElement): void {
     }
   }
   markLineStarts(inline);
+  // Experiment: a short inline expression that actually split may be moved
+  // intact. Moving it can split another expression in the paragraph, so
+  // re-mark and try newly split neighbours too, in batched passes. Promotion
+  // is monotone, so at most inline.length passes can do useful work.
+  const promoted = new Set<Flow>();
+  for (let pass = 0; pass < inline.length; pass += 1) {
+    const promote = inline.filter((f) => !promoted.has(f) &&
+      f.units.some((u) => u.classList.contains('is-line-start')) &&
+      f.plain.reduce((a, b) => a + b, 0) <= f.available - 1);
+    if (!promote.length) break;
+    for (const f of promote) {
+      promoted.add(f);
+      f.flow.style.display = 'inline-block';
+      f.flow.style.whiteSpace = 'nowrap';
+    }
+    for (const f of inline) {
+      f.flow.classList.remove('is-wrapped');
+      for (const u of f.units) u.classList.remove('is-line-start');
+    }
+    markLineStarts(inline);
+  }
   settleFitted(fitted);
 
   // The print iframe is measured here too; leave it alone (the PDF is already

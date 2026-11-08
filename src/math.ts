@@ -185,9 +185,9 @@ const STYLE_PREFIX = /^\s*(\\(?:displaystyle|textstyle)\b\s*)+/;
 //
 // Braces and environments never break: \frac{a}{b} has no halves, and the
 // alignment of \begin{align} is the writer's own layout.
-interface Cut { prio: number; rel: string; op: string; comma: string; prefix: string; close: string; open: string }
+interface Cut { prio: number; rel: string; op: string; comma: string; prefix: string; close: string; open: string; adjacent: boolean; thinSpace: boolean }
 const newCut = (prio: number, fields: Partial<Cut> = {}): Cut =>
-  ({ prio, rel: '', op: '', comma: '', prefix: '', close: '', open: '', ...fields });
+  ({ prio, rel: '', op: '', comma: '', prefix: '', close: '', open: '', adjacent: false, thinSpace: false, ...fields });
 function mergeCuts(a: Cut, b: Cut): Cut {
   return newCut(Math.min(a.prio, b.prio), {
     rel: [a.rel, b.rel].filter(Boolean).join(' '),
@@ -198,6 +198,8 @@ function mergeCuts(a: Cut, b: Cut): Cut {
     // are the same for both.
     close: a.close || b.close,
     open: a.open || b.open,
+    adjacent: a.adjacent || b.adjacent,
+    thinSpace: a.thinSpace || b.thinSpace,
   });
 }
 function cutAfter(cut: Cut | null): string {
@@ -237,11 +239,121 @@ function skipDelimiter(tex: string, i: number): number {
   return k;
 }
 
+// Explicitly directional delimiters are structure, not merely glyphs. Plain
+// |, \\vert and \\| are deliberately absent: in P(A|B), for example, a bar
+// is a relation, not an opening or closing delimiter. Parentheses and square
+// brackets share a family so half-open intervals such as [a,b) are grouped.
+const GROUP_OPEN = new Map<string, string>([
+  ['(', 'interval'], ['[', 'interval'], ['\\{', 'brace'],
+  ['\\lparen', 'interval'], ['\\lbrack', 'interval'], ['\\lbrace', 'brace'],
+  ['\\langle', 'angle'], ['\\lceil', 'ceiling'], ['\\lfloor', 'floor'],
+  ['\\lvert', 'bar'], ['\\lVert', 'double-bar'],
+  ['\\lgroup', 'group'], ['\\lmoustache', 'moustache'], ['\\lBrace', 'double-brace'],
+  ['\\ulcorner', 'upper-corner'], ['\\llcorner', 'lower-corner'],
+]);
+const GROUP_CLOSE = new Map<string, string>([
+  [')', 'interval'], [']', 'interval'], ['\\}', 'brace'],
+  ['\\rparen', 'interval'], ['\\rbrack', 'interval'], ['\\rbrace', 'brace'],
+  ['\\rangle', 'angle'], ['\\rceil', 'ceiling'], ['\\rfloor', 'floor'],
+  ['\\rvert', 'bar'], ['\\rVert', 'double-bar'],
+  ['\\rgroup', 'group'], ['\\rmoustache', 'moustache'], ['\\rBrace', 'double-brace'],
+  ['\\urcorner', 'upper-corner'], ['\\lrcorner', 'lower-corner'],
+]);
+
+interface DelimiterPairs { opens: Set<number>; closes: Map<number, number> }
+
+/** Find only explicitly paired, nested delimiters. Ignore unmatched symbols
+ * rather than treating the rest of the formula as one giant group. The stack
+ * also fences \\left...\\right, whose delimiters may intentionally differ.
+ * Braced command arguments and environments are opaque to this scan. */
+function delimiterPairs(tex: string): DelimiterPairs {
+  const opens = new Set<number>();
+  const closes = new Map<number, number>();
+  const stack: Array<{ family: string; at: number }> = [];
+  let depth = 0, environment = 0;
+  for (let i = 0; i < tex.length;) {
+    const at = i;
+    const c = tex[i];
+    if (c === '{') { depth += 1; i += 1; continue; }
+    if (c === '}') { if (depth) depth -= 1; i += 1; continue; }
+    let token = c;
+    if (c === '\\') {
+      const name = commandName(tex, i);
+      if (name) {
+        i += name.length + 1;
+        token = `\\${name}`;
+        if (depth === 0 && environment === 0 && EXT_ARROWS.has(name)) {
+          i = skipGroup(tex, skipSpaces(tex, i), '[', ']');
+          i = skipGroup(tex, skipSpaces(tex, i), '{', '}');
+          continue;
+        }
+        if (depth === 0 && (name === 'begin' || name === 'end')) {
+          environment = Math.max(0, environment + (name === 'begin' ? 1 : -1));
+          i = skipGroup(tex, skipSpaces(tex, i), '{', '}');
+          continue;
+        }
+        if (depth === 0 && environment === 0 && name === 'left') {
+          stack.push({ family: tex[skipSpaces(tex, i)] === '.' ? 'sized-invisible' : 'sized', at });
+          i = skipDelimiter(tex, i);
+          continue;
+        }
+        if (depth === 0 && environment === 0 && name === 'right') {
+          // An unmatched ordinary opener cannot leak out of a sized group.
+          while (stack.length && !stack[stack.length - 1].family.startsWith('sized')) stack.pop();
+          const left = stack.pop();
+          const visibleRight = tex[skipSpaces(tex, i)] !== '.';
+          i = skipDelimiter(tex, i);
+          if (left?.family === 'sized' && visibleRight) { opens.add(left.at); closes.set(at, left.at); }
+          continue;
+        }
+      } else { token = tex.slice(i, i + 2); i += 2; }
+    } else i += 1;
+    if (depth || environment) continue;
+    if (token === '|') {
+      // Only infer ordinary absolute-value bars where their roles are clear:
+      // after an operator/relation/opening delimiter, and closed before a
+      // non-operand. In P(A|B), the first bar follows an operand and is not
+      // an opener. Ambiguous cases keep the old, ungrouped behavior.
+      let before = at - 1;
+      while (before >= 0 && /\s/.test(tex[before])) before -= 1;
+      let after = i;
+      while (after < tex.length && /\s/.test(tex[after])) after += 1;
+      const previous = tex[before] ?? '';
+      const next = tex[after] ?? '';
+      let start = before;
+      while (start >= 0 && LATIN.test(tex[start])) start -= 1;
+      const previousCommand = tex[start] === '\\' ? tex.slice(start + 1, before + 1) : '';
+      const openingContext = before < 0 || /[=<>+\-*/(:,\[\{]/.test(previous) ||
+        RELATIONS.has(previousCommand) || OPERATORS.has(previousCommand) || previousCommand === 'quad' || previousCommand === 'qquad' ||
+        (previous === '|' && closes.has(before));
+      const closingContext = !!previous && (LETTERISH.test(previous) || DIGIT.test(previous) || /[)\]}!'’]/.test(previous)) &&
+        !(LETTERISH.test(next) || DIGIT.test(next) || next === '{' || next === '\\');
+      if (stack[stack.length - 1]?.family === 'literal-bar' && closingContext) {
+        const left = stack.pop()!;
+        opens.add(left.at); closes.set(at, left.at);
+      } else if (openingContext && next && next !== '|') stack.push({ family: 'literal-bar', at });
+      continue;
+    }
+    const opening = GROUP_OPEN.get(token);
+    if (opening) { stack.push({ family: opening, at }); continue; }
+    const closing = GROUP_CLOSE.get(token);
+    // An ambiguous, unpaired bar must not prevent an explicit surrounding
+    // delimiter from matching (e.g. a tuple containing |v|\cos t).
+    while (closing && stack[stack.length - 1]?.family === 'literal-bar') stack.pop();
+    if (closing && stack[stack.length - 1]?.family === closing) {
+      const left = stack.pop()!;
+      opens.add(left.at);
+      closes.set(at, left.at);
+    }
+  }
+  return { opens, closes };
+}
+
 interface Split { terms: string[]; cuts: Cut[] }
 
 /** Split at top-level break points; null when the writer's own layout rules
  * (manual \\ line breaks, alignment) mean the formula must be left alone. */
-function splitCuts(rawTex: string): Split | null {
+function splitCuts(rawTex: string, display: boolean): Split | null {
   const tex = liftTextBreaks(rawTex);
   const terms: string[] = [];
   const cuts: Cut[] = [];
@@ -283,13 +395,34 @@ function splitCuts(rawTex: string): Split | null {
     return LETTERISH.test(before) || DIGIT.test(before) || /[)\]}|!'’]/.test(before);
   };
   let depth = 0; // braces, \left…\right and environments: never a break inside
-  let plain = 0; // plain ( ) [ ] (and \{ \}): a break inside is the last resort
+  const pairs = delimiterPairs(tex);
+  const plain: number[] = []; // matching explicit delimiter positions, outermost first
+  // Adjacent complete groups are a natural product boundary. Keep the cut
+  // optional: layout may select it only in place of an internal group cut.
+  const afterGroup = (end: number, sized = false): void => {
+    const next = skipSpaces(tex, end);
+    if (display && !depth && !delims && !plain.length && pairs.opens.has(next)) {
+      // KaTeX inserts a thin space around a sized (inner) atom next to an
+      // ordinary open/close atom. Splitting them into separate KaTeX renders
+      // loses that glue, so preserve it on the same-line form only.
+      const nextIsSized = tex.startsWith('\\left', next) && !LATIN.test(tex[next + 5] ?? '');
+      cut(end, end, newCut(4, { adjacent: true, thinSpace: sized || nextIsSized }));
+    }
+  };
+  const ordinaryDelimiter = (at: number, end: number): boolean => {
+    if (pairs.opens.has(at)) { plain.push(at); return true; }
+    const opening = pairs.closes.get(at);
+    if (opening !== undefined && plain[plain.length - 1] === opening) {
+      plain.pop(); afterGroup(end); return true;
+    }
+    return false;
+  };
   let i = 0;
   while (i < tex.length) {
     const c = tex[i];
     // 0 = top level, 1 = inside a plain group, 2 = inside \left … \right
     // (each shifted a whole class of break points behind), -1 = no break.
-    const level = depth > 0 ? -1 : delims > 0 ? 2 : plain > 0 ? 1 : 0;
+    const level = depth > 0 ? -1 : delims > 0 ? 2 : plain.length > 0 ? 1 : 0;
     const prio = (value: number): number => value + level * LAST;
     // A cut inside \left … \right closes every delimiter still open and the
     // next line reopens them, so that both halves are TeX in their own right.
@@ -299,9 +432,7 @@ function splitCuts(rawTex: string): Split | null {
     if (c === '\\') {
       if (!LATIN.test(tex[i + 1] ?? '')) {
         if (tex[i + 1] === '\\' && depth === 0) return null; // manual line breaks: leave alone
-        // A visible brace is a delimiter of its own, not an escape to skip.
-        if (level === 0 && tex[i + 1] === '{') { plain += 1; i += 2; continue; }
-        if (level === 1 && tex[i + 1] === '}') { plain -= 1; i += 2; continue; }
+        if (depth === 0 && ordinaryDelimiter(i, i + 2)) { i += 2; continue; }
         i += 2;
         continue;
       }
@@ -309,7 +440,13 @@ function splitCuts(rawTex: string): Split | null {
       while (LATIN.test(tex[k] ?? '')) k += 1;
       const name = tex.slice(i + 1, k);
       if (name === 'left') { delims += 1; i = skipDelimiter(tex, k); continue; }
-      if (name === 'right') { if (delims > 0) delims -= 1; i = skipDelimiter(tex, k); continue; }
+      if (name === 'right') {
+        if (delims > 0) delims -= 1;
+        const end = skipDelimiter(tex, k);
+        if (pairs.closes.has(i)) afterGroup(end, true);
+        i = end; continue;
+      }
+      if (depth === 0 && ordinaryDelimiter(i, k)) { i = k; continue; }
       if (name === 'begin') { depth += 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
       if (name === 'end') { depth -= 1; i = skipGroup(tex, skipSpaces(tex, k), '{', '}'); continue; }
       if (level >= 0 && name === 'not') {
@@ -350,10 +487,7 @@ function splitCuts(rawTex: string): Split | null {
     }
     if (c === '{') { depth += 1; i += 1; continue; }
     if (c === '}') { if (depth > 0) depth -= 1; i += 1; continue; }
-    if (c === '(') { if (depth === 0) plain += 1; i += 1; continue; }
-    if (c === ')') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
-    if (c === '[') { if (depth === 0) plain += 1; i += 1; continue; }
-    if (c === ']') { if (depth === 0 && plain > 0) plain -= 1; i += 1; continue; }
+    if (depth === 0 && ordinaryDelimiter(i, i + 1)) { i += 1; continue; }
     if (c === '&' && level >= 0) return null; // alignment: leave alone
     if (c === '\n' && level >= 0) {
       cut(i, i + 1, newCut(prio(0), parted())); // the writer's own line end, preferred
@@ -583,7 +717,7 @@ export function renderMath(raw: string, display: boolean): string {
   // the formula's own. One inside \begin{vmatrix} … \end{vmatrix} belongs to
   // that matrix, and used to freeze the whole line around it: "\det A =
   // \begin{vmatrix}…\end{vmatrix} = 12" could not break at either = sign.
-  const split = splitCuts(body);
+  const split = splitCuts(body, display);
   if (!split) {
     if (display) return `<div class="math-display">${render(tex, true)}</div>`;
     return `<span class="math-flow"><span class="math-unit">${render(tex)}</span></span>`;
@@ -608,14 +742,27 @@ export function renderMath(raw: string, display: boolean): string {
     // after it will reopen: \left. … \right. is a whole formula to KaTeX.
     const after = `${cutAfter(piece.after)}${piece.after?.close ?? ''}`;
     const reopen = piece.before?.open ?? '';
-    const plain = render(`${style}${reopen}${piece.before?.prefix ?? ''}${piece.tex}${after}`);
+    const rendered = render(`${style}${reopen}${piece.before?.prefix ?? ''}${piece.tex}${after}`);
+    // KaTeX's thin space is 0.1667em in its own math font size. Use the
+    // same font context instead of baking in the current KaTeX font scale.
+    // The continuation form has no glue at the start of a new line.
+    const glue = piece.before?.thinSpace ? '<span class="katex" aria-hidden="true"><span style="display:inline-block;width:0.1667em"></span></span>' : '';
+    const plain = glue + rendered;
     if (index === 0) return `<span class="math-unit" data-first><span class="math-plain">${plain}</span></span>`;
     const lead = cutCont(piece.before);
     // An operator break repeats nothing, so both forms are the same TeX.
     const cont = lead || piece.before?.prefix
       ? render(`${style}${reopen}${lead}${piece.tex}${after}`)
-      : plain;
-    return `<span class="math-unit" data-break="${piece.before!.prio}"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
+      : rendered;
+    const op = piece.before!.op;
+    const rel = piece.before!.rel;
+    // Only fixed categories go into attributes; raw TeX (including the
+    // argument to an extensible arrow) must never become an HTML attribute.
+    const kind = /^(?:\\(?:cdot|cdotp|times|div|ast|star|circ|bullet|otimes|odot|oslash|boxtimes))$/.test(op) ? 'product'
+      : /^(?:\\(?:quad|qquad))$/.test(op) ? 'separator' : 'other';
+    const relation = /^(?:=|:=|\\(?:equiv|coloneqq|coloneq|defeq))$/.test(rel) ? 'assignment'
+      : /^(?:\\(?:in|notin|ni)|[∈∉∋∌])$/.test(rel) ? 'membership' : 'other';
+    return `<span class="math-unit" data-break="${piece.before!.prio}" data-cut-kind="${kind}" data-cut-relation="${relation}" data-cut-adjacent="${piece.before!.adjacent ? 1 : 0}"><span class="math-plain">${plain}</span><span class="math-cont">${cont}</span></span>`;
   });
   const flow = `<span class="math-flow${display ? ' is-display' : ''}" data-units="${units.length}">${units.join('<wbr>')}</span>`;
   return display ? `<div class="math-display">${flow}</div>` : flow;
