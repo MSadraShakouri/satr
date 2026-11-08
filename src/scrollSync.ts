@@ -85,7 +85,8 @@ function editorGapUnused(view: EditorView, anchor = 0): number {
   return 0;
 }
 
-export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false, anchor = 0, gap = 0): void {
+export function applyEditorScroll(view: EditorView, position: number, isCurrent: () => boolean = () => true, settle = false, anchor: number | (() => number) = 0, gap = 0): void {
+  const currentAnchor = (): number => typeof anchor === 'number' ? anchor : anchor();
   const { doc } = view.state;
   if (!(position > 0)) { scrollInstantly(view.scrollDOM, 0); return; }
   const index = Math.min(doc.lines - 1, Math.floor(position));
@@ -95,7 +96,7 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
     if (!view.dom.isConnected || view.state.doc !== doc || !isCurrent()) return;
     const block = textBlock(view.lineBlockAt(line.from));
     const target = view.documentTop + block.top + fraction * block.height;
-    const top = view.scrollDOM.getBoundingClientRect().top + anchor;
+    const top = view.scrollDOM.getBoundingClientRect().top + currentAnchor();
     scrollInstantly(view.scrollDOM, view.scrollDOM.scrollTop + target - top - gap);
   };
   // Off-screen line heights are estimates until CodeMirror measures them:
@@ -120,7 +121,7 @@ export function applyEditorScroll(view: EditorView, position: number, isCurrent:
   // there is nothing to scroll into view: its position is known, so place
   // it once and correct only if measuring actually moved it.
   const drawn = line.from >= view.viewport.from && line.to <= view.viewport.to;
-  if (!drawn) view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: anchor }) });
+  if (!drawn) view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start', yMargin: currentAnchor() }) });
   place();
   view.requestMeasure({
     read: () => view.scrollDOM.scrollTop,

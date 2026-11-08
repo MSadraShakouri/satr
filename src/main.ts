@@ -1505,7 +1505,9 @@ function setMode(requested: Mode, restoredLine?: number): void {
     // Switching only: the mapping re-measures the rendered math/table heights
     // as they settle and compensates (src/scrollSync.ts).
     if (position !== null && !documentOpen()) applyPreviewScroll(previewPane, preview, position, () => generation === viewGeneration, true, y, room, keptMeasured);
-  } else if (position !== null) {
+  } else if (position !== null && restoredLine === undefined) {
+    // restoreView applies a saved editor place itself with its gap. A second
+    // set of corrections here would omit it and fight that restored place.
     applyEditorScroll(editor.view, position, () => generation === viewGeneration, true, y);
     holdEditorPosition(position);
   }
@@ -2061,7 +2063,10 @@ function restoreView(path: string, after?: () => void, unvisited: Mode = 'edit',
       layoutMath(preview);
       applyPreviewScroll(previewPane, preview, line, current, false, scrollBand(), null, keptMeasured);
     } else {
-      applyEditorScroll(editor.view, line, current, false, scrollBand(), view?.gap ?? 0);
+      // Keep the late measurement corrections, but all of them must use the
+      // saved gap and the *current* band: CodeMirror can change its default
+      // line height as it measures the newly opened note.
+      applyEditorScroll(editor.view, line, current, true, () => scrollBand(), view?.gap ?? 0);
       holdEditorPosition(line, view?.gap ?? 0);
     }
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
