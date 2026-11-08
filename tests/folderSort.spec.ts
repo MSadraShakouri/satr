@@ -70,18 +70,40 @@ async function sortMenu(page: Page): Promise<void> {
   await expect(page.locator('.menu.mod-bottom-sheet')).toBeVisible();
 }
 
-/** A folder row's own menu, then its sort sheet. */
+// For an individual folder use All files, enter it and use the bottom button.
+// Restore the space after picking so assertions still inspect the tree.
+const returningToSpace = new WeakSet<Page>();
 async function folderSortMenu(page: Page, path: string): Promise<void> {
   await openDrawer(page);
-  await page.locator(`#file-panel .tree-item-self[data-path="${path}"]`).click({ button: 'right' });
-  await expect(page.locator('.menu.mod-bottom-sheet')).toBeVisible();
-  await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'Sort this folder' }).click();
-  await expect(page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'File name (A to Z)' })).toBeVisible();
+  await page.locator('#file-panel .workspace-drawer-vault-switcher').click();
+  await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'All files' }).click();
+  await expect(page.locator('#file-panel')).toHaveClass(/mod-walker/);
+  const up = page.locator('#file-panel [data-act="collapse"]');
+  while (await up.isEnabled()) {
+    const previous = await page.evaluate(() => localStorage.getItem('satr:walk-dir') ?? '');
+    await up.click();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('satr:walk-dir') ?? '')).not.toBe(previous);
+  }
+  let dir = '';
+  for (const part of path.split('/')) {
+    dir = dir ? `${dir}/${part}` : part;
+    await page.locator(`#file-panel .tree-item-self[data-path="${dir}"]`).click();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('satr:walk-dir') ?? '')).toBe(dir);
+  }
+  await sortMenu(page);
+  returningToSpace.add(page);
 }
 
 const pick = async (page: Page, title: string): Promise<void> => {
   await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: title }).first().click();
   await expect(page.locator('.menu.mod-bottom-sheet')).toHaveCount(0);
+  if (returningToSpace.has(page)) {
+    returningToSpace.delete(page);
+    await page.locator('#file-panel .workspace-drawer-vault-switcher').click();
+    await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'Notes' }).first().click();
+    await expect(page.locator('#file-panel')).not.toHaveClass(/mod-walker/);
+    await expect(page.locator('#file-panel .tree-item-self[data-path="Notes/Beta"]')).toBeVisible();
+  }
 };
 
 test('folders above files is a choice, not a law', async ({ page }) => {
@@ -185,4 +207,18 @@ test('a space is a folder for this too', async ({ page }) => {
   expect(await inside(page, 'Notes'), 'the space\u2019s own folders are not the folder that was told')
     .toEqual(['Notes/Beta', 'Notes/Alpha', 'Notes/zebra.md', 'Notes/apple.md']);
   expect(await inside(page, 'Notes/Beta')).toEqual(['Notes/Beta/Deep', 'Notes/Beta/far.md', 'Notes/Beta/one.md']);
+});
+
+
+test('folder menu omits sort', async ({ page }) => {
+  await boot(page, () => localStorage.setItem('satr:sort-rules', JSON.stringify({ 'Notes': { sort: 'name-desc' } })));
+  await openDrawer(page);
+  await page.locator('#file-panel .tree-item-self[data-path="Notes/Beta"]').click({ button: 'right' });
+  await expect(page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'Sort this folder' })).toHaveCount(0);
+});
+
+test('same as the folder above is first in the sort sheet', async ({ page }) => {
+  await boot(page, () => localStorage.setItem('satr:sort-rules', JSON.stringify({ 'Notes': { sort: 'name-desc' } })));
+  await sortMenu(page);
+  await expect(page.locator('.menu.mod-bottom-sheet .menu-item').first()).toContainText('Same as the folder above');
 });

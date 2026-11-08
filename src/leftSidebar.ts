@@ -583,9 +583,6 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
       { title: 'Rename…', icon: ICONS.pencil, action: () => startRename(path) },
       { title: 'Move to…', icon: ICONS.move, action: () => { void moveTo(path, isFolder); } },
     );
-    // On its own line: how a folder is ordered is not a thing done to the
-    // folder, and the two around it are.
-    if (isFolder) entries.push('separator', { title: 'Sort this folder…', icon: ICONS.sort, action: () => sortMenu(path, basename(path)) });
     if (isFolder) entries.push('separator', { title: 'Use as a space', icon: ICONS.vault, action: () => switchTo({ kind: 'space', space: addSpace(path) }) });
     // Every note of a folder as tabs, in alphabetical order. \"Replace\" also
     // closes the tabs that are open now (they can be reopened).
@@ -645,38 +642,35 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
   /**
    * Sort by, for one folder.
    *
-   * The button at the top of the tree asks for the folder the tree is
-   * rooted at -- the vault, or the space, or the folder being walked --
-   * and a folder's own long-press menu asks for that folder. Either way
-   * the answer travels downwards: "when I set a rule, the rule exists for
+   * The bottom button asks for the folder the tree is rooted at: the vault,
+   * the space, or the folder being walked in All files. The answer travels
+   * downwards: "when I set a rule, the rule exists for
    * every subfolder unless they have an override". A folder that has been
    * given one can hand the question back up again.
    */
   function sortMenu(dir: string, label?: string): void {
     const inForce = ruleFor(dir);
     const own = rules[dir] ?? {};
-    const entries: MenuEntry[] = (Object.keys(SORT_LABEL) as Sort[]).map((key) => ({
+    const entries: MenuEntry[] = [];
+    if (dir && (own.sort !== undefined || own.foldersFirst !== undefined)) {
+      entries.push({
+        title: 'Same as the folder above', icon: ICONS.undo,
+        action: () => { setRule(dir, null); void render(); },
+      }, 'separator');
+    }
+    entries.push(...(Object.keys(SORT_LABEL) as Sort[]).map((key) => ({
       title: SORT_LABEL[key], checked: key === inForce.sort,
       action: () => {
-        // The root of the whole vault keeps writing the old key as well,
-        // so a version of the app without this still sorts the way he
-        // last asked, and so that a folder with no rule anywhere above it
-        // has something to fall back to.
+        // Keep the legacy root setting in step for older app versions.
         if (!dir) { sort = key; localStorage.setItem(SORT_KEY, key); }
         setRule(dir, { sort: key });
         void render();
       },
-    }));
+    })));
     entries.push('separator', {
       title: 'Folders first', checked: inForce.foldersFirst,
       action: () => { setRule(dir, { foldersFirst: !inForce.foldersFirst }); void render(); },
     });
-    if (dir && (own.sort !== undefined || own.foldersFirst !== undefined)) {
-      entries.push('separator', {
-        title: 'Same as the folder above', icon: ICONS.undo,
-        action: () => { setRule(dir, null); void render(); },
-      });
-    }
     openMenu(entries, { title: label ? `Sort “${label}”` : 'Sort by' });
   }
   function showError(message: string): void { showHint(message, true); }
