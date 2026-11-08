@@ -11,6 +11,8 @@ import { openMenu } from './menu';
 
 export interface TabCard {
   title: string;
+  /** Stable identity, not the (possibly duplicated) display name. */
+  key?: string;
   active: boolean;
   empty: boolean;
   /** A file another app handed over (ACTION_VIEW / ACTION_SEND), not a note
@@ -57,19 +59,56 @@ const ICONS = {
 };
 
 let open: HTMLElement | null = null;
+// One small, short-lived sheet can stay laid out while the user is in a note.
+// Never retain decoded pictures or an unbounded tree on a phone.
+const PARK_MS = 30_000; // do not hold the laid-out tree indefinitely
+const PARK_NODES = 10_000; // bound DOM/layout objects, not just source text
+const PARK_HTML = 512_000; // and bound the retained preview strings
+let parked: { el: HTMLElement; resume(deps: TabSwitcherDeps): void; timer: number } | null = null;
+let closing: { el: HTMLElement; animation: Animation } | null = null;
+let invalidateOpen: (() => void) | null = null;
+let parkOpen: (() => boolean) | null = null;
+function discardParked(): void {
+  if (!parked) return;
+  window.clearTimeout(parked.timer);
+  parked.el.remove();
+  parked = null;
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') discardParked(); });
 export const isTabSwitcherOpen = (): boolean => open !== null;
 
 export function closeTabSwitcher(): void {
   const el = open;
   if (!el) return;
   open = null;
-  el.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.1)' }], { duration: 90, easing: 'ease-in' })
-    .onfinish = () => el.remove();
+  const park = parkOpen;
+  parkOpen = null;
+  invalidateOpen?.();
+  invalidateOpen = null;
+  const animation = el.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.1)' }], { duration: 90, easing: 'ease-in' });
+  closing = { el, animation };
+  animation.onfinish = () => {
+    closing = null;
+    const keep = park?.() ?? false;
+    if (!keep) el.remove();
+  };
   el.style.opacity = '0';
 }
 
 export function openTabSwitcher(deps: TabSwitcherDeps): void {
   if (open) return;
+  if (closing) {
+    closing.animation.cancel();
+    closing.el.remove();
+    closing = null;
+  }
+  if (parked) {
+    const saved = parked;
+    window.clearTimeout(saved.timer);
+    parked = null;
+    saved.resume(deps);
+    return;
+  }
   const el = document.createElement('div');
   el.className = 'mobile-tab-switcher';
   el.dataset.ignoreSwipe = '';
@@ -83,40 +122,66 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
   const group = el.querySelector<HTMLElement>('.mobile-tab-group-container')!;
   const count = el.querySelector<HTMLElement>('.mobile-tab-switcher-count')!;
 
-  function render(): void {
+  let signature = '';
+  let generation = 0;
+  let currentHtml: string[] = [];
+  function render(reuse = false): void {
+    const turn = ++generation;
     const tabs = deps.tabs();
+    // The same paths in the same order may be reused even after changing
+    // active tab. A title alone is not an identity: different folders can
+    // contain notes with the same name.
+    const nextSignature = JSON.stringify(tabs.map(({ active: _active, ...tab }) => tab));
+    const canReuse = reuse && tabs.every((tab) => tab.key !== undefined) && signature === nextSignature;
+    // The active note is deliberately not in previewNow: it may have been
+    // edited. Show its last card while preview() checks and refreshes it.
+    const initial = tabs.map((tab, i) => deps.previewNow?.(i) ?? (canReuse && tab.active ? currentHtml[i] : '') ?? '');
+    signature = nextSignature;
     count.textContent = `${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
-    group.innerHTML = tabs.map((tab, i) => `
+    if (canReuse) {
+      for (let i = 0; i < tabs.length; i++) {
+        const page = group.querySelector<HTMLElement>(`.mobile-tab[data-index="${i}"] .mobile-tab-preview-page`)!;
+        if (currentHtml[i] !== initial[i]) page.innerHTML = initial[i];
+        const card = page.closest('.mobile-tab')!;
+        card.classList.toggle('is-active', tabs[i].active);
+        card.classList.toggle('is-empty', !tabs[i].empty && !initial[i]);
+      }
+    } else group.innerHTML = tabs.map((tab, i) => `
       <div class="mobile-tab-wrapper">
-        <div class="mobile-tab${tab.active ? ' is-active' : ''}${tab.empty || deps.previewNow?.(i) ? '' : ' is-empty'}" data-index="${i}">
+        <div class="mobile-tab${tab.active ? ' is-active' : ''}${tab.empty || initial[i] ? '' : ' is-empty'}" data-index="${i}">
           <div class="mobile-tab-preview">
             ${tabs.length > 1 || !tabs[0].empty ? `<div class="close-button" data-close="${i}" role="button" aria-label="Close tab">${ICONS.x}</div>` : ''}
-            <div class="mobile-tab-preview-embed"><div class="mobile-tab-preview-page markdown-preview-view">${deps.previewNow?.(i) ?? ''}</div></div>
+            <div class="mobile-tab-preview-embed"><div class="mobile-tab-preview-page markdown-preview-view">${initial[i]}</div></div>
             <div class="mobile-tab-preview-empty">${ICONS.file}</div>
           </div>
           <div class="mobile-tab-title" dir="auto">${escapeHtml(tab.title)}</div>
           ${tab.external ? '<div class="mobile-tab-source">from another app</div>' : ''}
         </div>
       </div>`).join('');
+    currentHtml = initial;
     tabs.forEach((_, i) => {
       void deps.preview(i).then((html) => {
+        if (turn !== generation || open !== el) return;
         const page = group.querySelector<HTMLElement>(`.mobile-tab[data-index="${i}"] .mobile-tab-preview-page`);
         if (!page) return;
         // Only when it is not what is already on the card: redrawing a
         // card with the same HTML throws away a picture the browser has
         // decoded and makes it decode it again, which is a flicker on
         // exactly the cards that were quick.
-        if (page.innerHTML !== html) page.innerHTML = html;
+        if (currentHtml[i] !== html && page.innerHTML !== html) page.innerHTML = html;
+        currentHtml[i] = html;
         page.closest('.mobile-tab')!.classList.toggle('is-empty', !html);
       });
     });
-    window.requestAnimationFrame(() => group.querySelector('.mobile-tab.is-active')?.scrollIntoView({ block: 'nearest' }));
+    window.requestAnimationFrame(() => {
+      if (turn === generation && open === el) group.querySelector('.mobile-tab.is-active')?.scrollIntoView({ block: 'nearest' });
+    });
   }
   el.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
     const close = target.closest<HTMLElement>('[data-close]');
     if (close) {
-      void deps.close(Number(close.dataset.close)).then(render);
+      void deps.close(Number(close.dataset.close)).then(() => { if (open === el) render(); });
       return;
     }
     const card = target.closest<HTMLElement>('.mobile-tab');
@@ -132,7 +197,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
         { title: 'New tab', icon: ICONS.plus, action: () => { closeTabSwitcher(); deps.newTab(); } },
         { title: 'Reopen closed tab', icon: ICONS.undo, disabled: !deps.canReopen(), action: () => { closeTabSwitcher(); deps.reopen(); } },
         'separator',
-        { title: 'Close all tabs', icon: ICONS.archiveX, warning: true, disabled: deps.tabs().every((t) => t.empty), action: () => { void deps.closeAll().then(render); } },
+        { title: 'Close all tabs', icon: ICONS.archiveX, warning: true, disabled: deps.tabs().every((t) => t.empty), action: () => { void deps.closeAll().then(() => { if (open === el) render(); }); } },
         { title: 'Close other tabs', icon: ICONS.archiveX, warning: true, disabled: n < 2, action: () => { deps.closeOthers(); render(); } },
       ]);
     }
@@ -145,6 +210,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
   // outright — which is what made closing a tab feel like it needed the whole
   // card's width, twice, at the right angle.
   let swiped = false;
+  let swipeClosing = false;
   let drag: { card: HTMLElement; x: number; y: number; t: number; dx: number; on: boolean } | null = null;
   /** The flick that counts: how far this drag would still travel at the speed
    *  it is going, over the moment after the lift. */
@@ -247,7 +313,13 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     if (reach) {
       card.style.transform = `translateX(${Math.sign(dx) * window.innerWidth}px)`;
       card.style.opacity = '0';
-      window.setTimeout(() => { void deps.close(Number(card.dataset.index)).then(render); }, 180);
+      swipeClosing = true;
+      const close = deps.close;
+      const from = Number(card.dataset.index);
+      window.setTimeout(() => {
+        swipeClosing = false;
+        void close(from).then(() => { if (open === el) render(); });
+      }, 180);
     } else {
       card.style.transform = '';
       card.style.opacity = '';
@@ -255,12 +327,56 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
   };
   el.addEventListener('touchend', endDrag);
   el.addEventListener('touchcancel', endDrag);
-  document.addEventListener('keydown', function onKey(event) {
-    if (!open) { document.removeEventListener('keydown', onKey, true); return; }
+  let safeToPark = true;
+  const onKey = (event: KeyboardEvent): void => {
+    if (open !== el) return;
     if (event.key === 'Escape' && !document.querySelector('.menu.is-open')) { event.preventDefault(); closeTabSwitcher(); }
-  }, true);
-  render();
-  document.body.appendChild(el);
-  open = el;
-  el.animate([{ opacity: 0, transform: 'scale(1.1)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 90, easing: 'cubic-bezier(0, 0.55, 0.45, 1)' });
+  };
+  function show(nextDeps: TabSwitcherDeps, reuse: boolean): void {
+    deps = nextDeps;
+    open = el;
+    safeToPark = true;
+    invalidateOpen = () => {
+      generation++;
+      cancelHold();
+      if (drag || lift || swiped || swipeClosing) safeToPark = false;
+      drag = null;
+      lift = null;
+      document.removeEventListener('keydown', onKey, true);
+    };
+    parkOpen = park;
+    document.addEventListener('keydown', onKey, true);
+    scroller.scrollTop = 0;
+    render(reuse);
+    if (!el.isConnected) document.body.appendChild(el);
+    el.classList.replace('mobile-tab-switcher-parked', 'mobile-tab-switcher');
+    el.style.visibility = '';
+    el.style.pointerEvents = '';
+    el.style.opacity = '';
+    el.removeAttribute('aria-hidden');
+    el.inert = false;
+    el.animate([{ opacity: 0, transform: 'scale(1.1)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 90, easing: 'cubic-bezier(0, 0.55, 0.45, 1)' });
+  }
+  function park(): boolean {
+    if (!safeToPark || document.visibilityState === 'hidden') return false;
+    // A PDF or photo can hold a large decoded bitmap, and its blob URL can
+    // expire. Release that card, not the other notes beside it; previewNow
+    // will give it a fresh URL when the sheet returns.
+    const pages = [...group.querySelectorAll<HTMLElement>('.mobile-tab-preview-page')];
+    for (let i = 0; i < pages.length; i++) {
+      if (!pages[i].querySelector('img[src],image,video,iframe,object,embed,canvas')) continue;
+      pages[i].replaceChildren();
+      currentHtml[i] = '';
+    }
+    if (el.querySelectorAll('*').length > PARK_NODES || currentHtml.reduce((n, html) => n + html.length, 0) > PARK_HTML) return false;
+    discardParked();
+    el.classList.replace('mobile-tab-switcher', 'mobile-tab-switcher-parked');
+    el.style.visibility = 'hidden';
+    el.style.pointerEvents = 'none';
+    el.setAttribute('aria-hidden', 'true');
+    el.inert = true;
+    parked = { el, resume: (next) => show(next, true), timer: window.setTimeout(discardParked, PARK_MS) };
+    return true;
+  }
+  show(deps, false);
 }
