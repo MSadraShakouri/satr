@@ -136,16 +136,41 @@ function displayStarts(units: HTMLElement[], available: number, plain: number[],
     const order = ordered(starts);
     return order.map((x, i) => lineWidth(x, (order[i + 1] ?? n) - 1));
   };
-  // Research candidate: if the fewest-line plan cuts an ordinary group,
+  // If the fewest-line plan cuts an ordinary group,
   // see whether one additional line avoids all such cuts without overflow.
   // This consciously trades height for structure; compare the entire corpus.
   // A tall indivisible matrix, fraction or binomial already consumes vertical
   // space; adding another whole line there needs separate visual judgment.
   const tallStructure = tex.some(u => /\\(?:begin|frac|binom)\b/.test(u));
-  if (!tallStructure && initial.some(i => i > 0 && prio[i] >= 5)) {
+  // A quantified condition and its conclusion are separate thoughts. Prefer
+  // the gap the author wrote after the colon when it avoids a cut inside a
+  // domain or product, without adding a line or opening another group. Use
+  // the existing gap: inventing a colon cut can change KaTeX spacing and
+  // the fallback for an indivisible overwide fraction.
+  const colonGaps = tex.map((_, i) => i > 0 && /:\s*\\(?:quad|qquad)\s*\{\}\s*$/.test(tex[i - 1]) &&
+    tex.slice(0, i).some(part => /\\(?:forall|exists|nexists)\b|[∀∃∄]/.test(part)));
+  const awkward = (plan: number[]) => plan.filter(i => i > 0 && (kind[i] === 'product' || relation[i] === 'membership')).length;
+  if (!tallStructure && awkward(initial) && colonGaps.some(Boolean)) {
+    const saved = [...prio];
+    for (let i = 0; i < n; i += 1) if (colonGaps[i]) prio[i] = 1;
+    const option = choose(false);
+    for (let i = 0; i < n; i += 1) prio[i] = saved[i];
+    if (option.length === initial.length && option.some(i => colonGaps[i]) && awkward(option) < awkward(initial) &&
+        widths(option).every(w => w <= available) &&
+        option.filter(i => prio[i] >= 5).length <= initial.filter(i => prio[i] >= 5).length &&
+        initial.every(i => i === 0 || prio[i] !== 0 || option.includes(i))) initial = option;
+  }
+  // A short product may stay together even at the cost of one line. Do not
+  // buy that line by isolating a prose label or splitting a quantified
+  // premise. The pre-existing group-preservation rule keeps its own budget.
+  const beginsLabelOrContinuation = /^(?:\\displaystyle\s*)?(?:\\text\b|=)/.test(tex[0].trim());
+  const quantified = tex.some(part => /\\(?:forall|exists|nexists)\b|[∀∃∄]/.test(part));
+  const hasInnerCut = initial.some(i => i > 0 && prio[i] >= 5);
+  const hasProductCut = initial.some(i => i > 0 && kind[i] === 'product');
+  if (!tallStructure && (hasInnerCut || (hasProductCut && !beginsLabelOrContinuation))) {
     const ungrouped = choose(false, true, true);
     const ungroupedWidths = widths(ungrouped);
-    if (ungrouped.length > 0 && ungrouped.length <= initial.length + 1 &&
+    if (ungrouped.length > 0 && ungrouped.length <= initial.length + (!hasInnerCut && (beginsLabelOrContinuation || quantified) ? 0 : 1) &&
         ungroupedWidths.every(w => w <= available) &&
         // Do not introduce an isolated left-hand side as the price of a line.
         ungroupedWidths[0] >= available * 0.3 &&
