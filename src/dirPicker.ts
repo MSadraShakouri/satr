@@ -12,7 +12,7 @@
 // reachable. It wears the bottom sheet's own chrome (src/menu.ts) so it
 // looks like every other sheet in the app.
 
-import { backend, basename, dirname, freeName, joinPath, within } from './vault';
+import { backend, basename, dirname, freeName, joinPath, within, type Entry } from './vault';
 
 export interface FolderWalk {
   /** The folder to open on. */
@@ -25,9 +25,14 @@ export interface FolderWalk {
   confirm: string;
   /** How a folder's path is written in this scope. */
   label: (dir: string) => string;
+  /** Moving a folder must not offer itself or its descendants. */
+  canEnter?: (dir: string) => boolean;
+  /** Some destinations, such as the file's current folder, are no-ops. */
+  canConfirm?: (dir: string) => boolean;
 }
 
 const ICON = {
+  file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4"/></svg>',
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
   into: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
   up: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5l-7 7 7 7"/></svg>',
@@ -44,8 +49,8 @@ const ICON = {
 function pathHtml(label: string): string {
   const parts = label.split('/');
   const here = escapeHtml(parts.pop() ?? label);
-  if (!parts.length) return here;
-  return `<span class="dir-walk-above">${escapeHtml(parts.join('/'))}/</span>${here}`;
+  const above = parts.length ? `<span class="dir-walk-above">${escapeHtml(parts.join('/'))}/</span>` : '';
+  return `${above}<span class="dir-walk-current" dir="auto">${here}</span>`;
 }
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c));
@@ -54,13 +59,14 @@ let open: { close(): void } | null = null;
 export const isFolderWalkOpen = (): boolean => open !== null;
 export const closeFolderWalk = (): void => open?.close();
 
-/** The folders directly inside one, by name, skipping the hidden ones. */
-async function childrenOf(dir: string): Promise<string[]> {
-  const entries = await backend.list(dir).catch(() => []);
-  return entries
-    .filter((entry) => entry.kind === 'folder' && !entry.name.startsWith('.'))
-    .map((entry) => entry.path)
-    .sort((a, b) => basename(a).localeCompare(basename(b)));
+/** Direct children, folders first, with hidden entries left out. */
+async function childrenOf(dir: string): Promise<Entry[]> {
+  const entries = await backend.list(dir).catch(() => [] as Entry[]);
+  return entries.filter((entry) => !entry.name.startsWith('.'))
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 /**
@@ -72,6 +78,7 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
   const ceiling = options.ceiling;
   let at = within(options.start, ceiling) || options.start === ceiling ? options.start : ceiling;
   let naming = false;
+  let renderToken = 0;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'menu-backdrop';
@@ -105,13 +112,21 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
   };
 
   async function render(): Promise<void> {
+    const token = ++renderToken;
     const children = await childrenOf(at);
-    if (closed) return;
-    const rows = children.map((dir) => `
-      <div class="menu-item" role="menuitem" data-into="${escapeHtml(dir)}">
+    if (closed || token !== renderToken) return;
+    const folders = children.filter((entry) => entry.kind === 'folder' && (options.canEnter?.(entry.path) ?? true));
+    const files = children.filter((entry) => entry.kind === 'file');
+    const rows = folders.map((entry) => `
+      <div class="menu-item" role="menuitem" data-into="${escapeHtml(entry.path)}">
         <div class="menu-item-icon">${ICON.folder}</div>
-        <div class="menu-item-title" dir="auto">${escapeHtml(basename(dir))}</div>
+        <div class="menu-item-title" dir="auto">${escapeHtml(entry.name)}</div>
         <div class="menu-item-icon mod-into">${ICON.into}</div>
+      </div>`).join('');
+    const fileRows = files.map((entry) => `
+      <div class="menu-item dir-walk-file" aria-disabled="true">
+        <div class="menu-item-icon">${ICON.file}</div>
+        <div class="menu-item-title" dir="auto">${escapeHtml(entry.name)}</div>
       </div>`).join('');
     sheet.innerHTML = `
       <div class="menu-grabber"></div>
@@ -123,13 +138,13 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
       </div>
       <div class="menu-scroll">
         ${naming ? `<div class="dir-walk-name"><input type="text" class="dir-walk-input" placeholder="Folder name" dir="auto" autocomplete="off" spellcheck="false"></div>` : ''}
-        ${rows ? `<div class="menu-group">${rows}</div>` : `<div class="dir-walk-empty">${ICON.empty}
-          <span class="dir-walk-empty-say">No folders in here</span>
-          <span class="dir-walk-empty-how">Notes will go in this one, or make another with +</span>
+        ${rows || fileRows ? `<div class="menu-group">${rows}${fileRows}</div>` : `<div class="dir-walk-empty">${ICON.empty}
+          <span class="dir-walk-empty-say">Nothing in here</span>
+          <span class="dir-walk-empty-how">Choose this folder, or make another with +</span>
         </div>`}
       </div>
       <div class="dir-walk-foot">
-        <button type="button" class="dir-walk-confirm" data-confirm>${escapeHtml(options.confirm)}</button>
+        <button type="button" class="dir-walk-confirm" data-confirm${options.canConfirm && !options.canConfirm(at) ? ' disabled' : ''}>${escapeHtml(options.confirm)}</button>
       </div>`;
     if (naming) {
       const input = sheet.querySelector<HTMLInputElement>('.dir-walk-input');
@@ -159,11 +174,11 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
   });
   sheet.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
-    if (target.closest('[data-confirm]')) { close(at); return; }
-    if (target.closest('[data-up]')) { at = dirname(at); void render(); return; }
+    if (target.closest('[data-confirm]')) { if (options.canConfirm?.(at) ?? true) close(at); return; }
+    if (target.closest('[data-up]')) { if (at !== ceiling) { at = dirname(at); void render(); } return; }
     if (target.closest('[data-add]')) { naming = true; void render(); return; }
     const into = target.closest<HTMLElement>('[data-into]')?.dataset.into;
-    if (into !== undefined) { at = into; void render(); }
+    if (into !== undefined && dirname(into) === at && (options.canEnter?.(into) ?? true)) { at = into; void render(); }
   });
   backdrop.addEventListener('click', () => { close(null); });
   document.addEventListener('keydown', onKey, true);

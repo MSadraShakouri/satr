@@ -3947,6 +3947,8 @@ textarea,
   padding: 2px 16px 12px;
 }
 .dir-walk-here {
+  display: flex;
+  direction: ltr;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -3956,11 +3958,26 @@ textarea,
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-  unicode-bidi: plaintext;
+}
+.dir-walk-current {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* The folders above the one being stood in: there for orientation, not to
    be read, so they stay out of the way. */
 .dir-walk-here .dir-walk-above {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: isolate;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-faint);
   font-weight: 500;
 }
@@ -3999,6 +4016,11 @@ textarea,
   width: 20px;
   height: 20px;
 }
+.dir-walk .dir-walk-file {
+  color: var(--text-faint);
+  cursor: default;
+}
+.dir-walk .dir-walk-file .menu-item-icon { color: var(--text-faint); }
 .dir-walk .menu-item-icon.mod-into {
   margin-left: auto;
   color: var(--text-faint);
@@ -4071,7 +4093,11 @@ textarea,
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.dir-walk-confirm:active {
+.dir-walk-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.dir-walk-confirm:active:not(:disabled) {
   filter: brightness(0.93);
 }
 

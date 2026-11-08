@@ -3098,19 +3098,10 @@ function showEmptyTab(): void {
   void leftSidebar.refresh();
 }
 /**
- * Choose the folder a note made from this tab goes in.
- *
- * The folders of the space being used, or -- in All files -- the folder
- * being browsed, the one above it and the ones under it, which is the same
- * list and the same order the tree's own "Move to..." offers. Three hundred
- * of them at the outside: the menu is a list to pick from, not a tree to
- * explore, and the tree itself is one tap away.
- */
-/**
  * A folder's name as this app writes it elsewhere: inside a space, the
  * path under the space ("Physics/2026", and the space's own name for its
- * root); in All files, the path from the top. The tree's "Move to..."
- * sheet says it exactly this way, and the general-purpose shortener is
+ * root); in All files, the path from the top. The "Move to..." picker uses
+ * the same convention, and the general-purpose shortener is
  * wrong here -- it cuts a folder nobody shares a prefix with down to its
  * first letter, which reads as "N/Physics" in a sentence.
  */

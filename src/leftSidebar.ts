@@ -11,6 +11,7 @@
 // - A floating row of buttons at the bottom: new note, new folder, sort,
 //   collapse all (or go up, in the walker).
 import { folderTime } from './folderTimes';
+import { walkToFolder } from './dirPicker';
 import { closeMenu, confirmMenu, openMenu, type MenuEntry } from './menu';
 import {
   addSpace, currentScope, loadSpaces, moveSpaces, removeSpace, scopeName, scopeRoot, setScope, setWalkDir, walkDir, type Scope,
@@ -528,33 +529,24 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     void render();
   }
   async function moveTo(path: string, isFolder: boolean): Promise<void> {
-    // Pick a folder in the space (or, in All files, around the current one).
-    const rootDir = scope.kind === 'space' ? scope.space.path : walkDir();
-    const folders: string[] = scope.kind === 'all' && rootDir ? [dirname(rootDir)] : [];
-    folders.push(rootDir);
-    const queue = [rootDir];
-    while (queue.length && folders.length < 300) {
-      for (const entry of await list$(queue.shift()!)) {
-        if (entry.kind !== 'folder' || (isFolder && within(entry.path, path))) continue;
-        folders.push(entry.path);
-        if (scope.kind === 'space') queue.push(entry.path);
-      }
-    }
+    const root = scope.kind === 'space' ? scope.space.path : '';
     const current = dirname(path);
     const label = (dir: string): string => {
-      if (scope.kind === 'space') return dir === rootDir ? scope.space.name : dir.slice(rootDir.length + 1);
-      return dir ? `/${dir}` : '/';
+      if (scope.kind === 'space') return dir === root ? scope.space.name : dir.slice(root.length + 1);
+      return dir ? `/${dir}` : 'the vault';
     };
-    openMenu(folders.filter((d) => d !== current).map((dir) => ({
-      title: label(dir),
-      icon: ICONS.folder,
-      action: async () => {
-        const to = joinPath(dir, basename(path));
-        try { await backend.rename(path, to); } catch (error) { alertError(error); return; }
-        afterMove(path, to, isFolder);
-      },
-    })), { title: `Move “${basename(path)}” to…` });
+    const valid = (dir: string): boolean => !isFolder || !within(dir, path);
+    const dir = await walkToFolder({
+      start: current, ceiling: root, label,
+      title: `Move “${basename(path)}” to…`, confirm: 'Move here',
+      canEnter: valid, canConfirm: (target) => target !== current && valid(target),
+    });
+    if (dir === null || dir === current || !valid(dir)) return;
+    const to = joinPath(dir, basename(path));
+    try { await backend.rename(path, to); } catch (error) { alertError(error); return; }
+    afterMove(path, to, isFolder);
   }
+
   function remove(path: string, isFolder: boolean): void {
     confirmMenu(`Delete “${basename(path)}”${isFolder ? ' and everything in it' : ''}? This can't be undone.`, 'Delete', async () => {
       try { await backend.remove(path); } catch (error) { log.fail('file', 'could not be deleted', { path: basename(path), why: String(error) }); alertError(error); return; }
