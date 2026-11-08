@@ -40,7 +40,7 @@ import { closeTimestampPicker, letNoteGo, normalizeMathIn, timestampPicker } fro
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher } from './tabs';
+import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher, prepareTabSwitcher, stopPreparingTabSwitcher, type TabSwitcherDeps } from './tabs';
 import { cardKept, cardNow, forgetTabCard, liveStamp, rememberCard, rememberShot, shotNow, warmTabCards, type Shot } from './tabCards';
 import { installLiveBlocks, stripLiveBlocks } from './liveBlocks';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
@@ -3429,13 +3429,8 @@ function tabCardNow(i: number): string | null {
   return cardNow(path);
 }
 
-function showTabs(): void {
-  const opening = log.time('tabs', 'tab switcher built');
-  void (async () => {
-    const beforeLeave = performance.now();
-    if (!await leaveCurrent()) { opening({ left: since(beforeLeave), stayed: true }); return; }
-    const left = since(beforeLeave);
-    openTabSwitcher({
+function tabSwitcherDeps(): TabSwitcherDeps {
+  return {
       tabs: () => tabs.map((t, i) => ({ key: t.path ?? '', title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path, external: Boolean(t.path) && isExternalPath(t.path) })),
       previewNow: (i) => tabCardNow(i),
       preview: async (i) => {
@@ -3521,7 +3516,15 @@ function showTabs(): void {
       closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
       closeAll: closeAllTabs,
       move: moveTab,
-    });
+  };
+}
+function showTabs(): void {
+  const opening = log.time('tabs', 'tab switcher built');
+  void (async () => {
+    const beforeLeave = performance.now();
+    if (!await leaveCurrent()) { opening({ left: since(beforeLeave), stayed: true }); return; }
+    const left = since(beforeLeave);
+    openTabSwitcher(tabSwitcherDeps());
     opening({ left, count: tabs.length });
   })();
 }
@@ -3539,6 +3542,7 @@ const navTabs = document.querySelector<HTMLButtonElement>('#nav-tabs')!;
 // lives here — the switcher's own menu has no current-tab close).
 let tabsPress: { timer: number; long: boolean } | null = null;
 navTabs.addEventListener('pointerdown', () => {
+  stopPreparingTabSwitcher();
   if (tabsPress) window.clearTimeout(tabsPress.timer);
   const press = { timer: 0, long: false };
   press.timer = window.setTimeout(() => { press.long = true; showTabActions(); navigator.vibrate?.(10); }, 450);
@@ -4442,6 +4446,19 @@ async function boot(): Promise<void> {
       instant: native,
       done: native ? () => { void SatrSplash.dismiss().catch(() => undefined); } : undefined,
     });
+    // Wait for launch, then for the existing idle database warm; the
+    // speculative sheet never reads files or opens a document.
+    const prepare = (): void => {
+      void warmTabCards().then(() => {
+        const deps = tabSwitcherDeps();
+        prepareTabSwitcher({ ...deps, previewNow: (i) => {
+          const path = tabs[i]?.path;
+          return path && !isDocument(path) && !isPicture(path) ? tabCardNow(i) : null;
+        } });
+      }).catch(() => undefined);
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(prepare);
+    else window.setTimeout(prepare, 2000);
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */

@@ -64,12 +64,22 @@ let open: HTMLElement | null = null;
 const PARK_MS = 30_000; // do not hold the laid-out tree indefinitely
 const PARK_NODES = 10_000; // bound DOM/layout objects, not just source text
 const PARK_HTML = 512_000; // and bound the retained preview strings
+const PREPARE_CARD_HTML = 128_000; // avoid parsing a huge card in one idle slice
 let parked: { el: HTMLElement; resume(deps: TabSwitcherDeps): void; timer: number } | null = null;
 let closing: { el: HTMLElement; animation: Animation } | null = null;
 let invalidateOpen: (() => void) | null = null;
 let parkOpen: (() => boolean) | null = null;
+let used = false;
+let warming: { el: HTMLElement; cancel: () => void } | null = null;
+/** Stop speculative work immediately when the user reaches for the switcher. */
+export function stopPreparingTabSwitcher(): void {
+  used = true;
+  warming?.cancel();
+  warming = null;
+}
 function discardParked(): void {
   if (!parked) return;
+  if (warming?.el === parked.el) stopPreparingTabSwitcher();
   window.clearTimeout(parked.timer);
   parked.el.remove();
   parked = null;
@@ -95,7 +105,17 @@ export function closeTabSwitcher(): void {
   el.style.opacity = '0';
 }
 
+/** Start with a hidden skeleton and lay out cached note cards during idle
+ *  time. Nothing is read or refreshed here; a real opening does that. */
+export function prepareTabSwitcher(deps: TabSwitcherDeps): void {
+  const tabs = deps.tabs();
+  if (used || open || closing || parked || document.visibilityState !== 'visible' || tabs.length < 2 || tabs.some((tab) => tab.key === undefined)) return;
+  createTabSwitcher(deps, true);
+}
+
 export function openTabSwitcher(deps: TabSwitcherDeps): void {
+  used = true;
+  stopPreparingTabSwitcher();
   if (open) return;
   if (closing) {
     closing.animation.cancel();
@@ -109,6 +129,10 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     saved.resume(deps);
     return;
   }
+  createTabSwitcher(deps, false);
+}
+
+function createTabSwitcher(deps: TabSwitcherDeps, preparing: boolean): void {
   const el = document.createElement('div');
   el.className = 'mobile-tab-switcher';
   el.dataset.ignoreSwipe = '';
@@ -125,7 +149,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
   let signature = '';
   let generation = 0;
   let currentHtml: string[] = [];
-  function render(reuse = false): void {
+  function render(reuse = false, preparing = false): void {
     const turn = ++generation;
     const tabs = deps.tabs();
     // The same paths in the same order may be reused even after changing
@@ -135,7 +159,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     const canReuse = reuse && tabs.every((tab) => tab.key !== undefined) && signature === nextSignature;
     // The active note is deliberately not in previewNow: it may have been
     // edited. Show its last card while preview() checks and refreshes it.
-    const initial = tabs.map((tab, i) => deps.previewNow?.(i) ?? (canReuse && tab.active ? currentHtml[i] : '') ?? '');
+    const initial = tabs.map((tab, i) => preparing ? '' : deps.previewNow?.(i) ?? (canReuse && tab.active ? currentHtml[i] : '') ?? '');
     signature = nextSignature;
     count.textContent = `${tabs.length} tab${tabs.length === 1 ? '' : 's'}`;
     if (canReuse) {
@@ -159,6 +183,7 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
         </div>
       </div>`).join('');
     currentHtml = initial;
+    if (preparing) return;
     tabs.forEach((_, i) => {
       void deps.preview(i).then((html) => {
         if (turn !== generation || open !== el) return;
@@ -378,5 +403,91 @@ export function openTabSwitcher(deps: TabSwitcherDeps): void {
     parked = { el, resume: (next) => show(next, true), timer: window.setTimeout(discardParked, PARK_MS) };
     return true;
   }
-  show(deps, false);
+  if (!preparing) { show(deps, false); return; }
+  render(false, true);
+  el.classList.replace('mobile-tab-switcher', 'mobile-tab-switcher-parked');
+  el.style.visibility = 'hidden';
+  el.style.pointerEvents = 'none';
+  el.setAttribute('aria-hidden', 'true');
+  el.inert = true;
+  document.body.appendChild(el);
+  if (!park()) { el.remove(); return; }
+  const expected = signature;
+  let i = 0;
+  let nodes = el.querySelectorAll('*').length;
+  let chars = 0;
+  let idle = 0;
+  let timer = 0;
+  let partial: { index: number; html: string; page: HTMLElement; stack: { source: Node; dest: Node }[] } | null = null;
+  const interrupt = (): void => stopPreparingTabSwitcher();
+  const detachInterrupts = (): void => {
+    document.removeEventListener('pointerdown', interrupt, true);
+    document.removeEventListener('keydown', interrupt, true);
+  };
+  document.addEventListener('pointerdown', interrupt, true);
+  document.addEventListener('keydown', interrupt, true);
+  const next = (): void => {
+    if (typeof requestIdleCallback === 'function') idle = requestIdleCallback(step);
+    else timer = window.setTimeout(() => step(), 100);
+  };
+  const step = (deadline?: IdleDeadline): void => {
+    if (!warming || warming.el !== el || parked?.el !== el) return;
+    if (deadline && deadline.timeRemaining() < 8) { next(); return; }
+    const tabs = deps.tabs();
+    if (JSON.stringify(tabs.map(({ active: _active, ...tab }) => tab)) !== expected) { discardParked(); return; }
+    if (!partial) {
+      if (i >= tabs.length) { detachInterrupts(); warming = null; return; }
+      const index = i++;
+      const html = deps.previewNow?.(index) ?? '';
+      if (!html || html.length > PREPARE_CARD_HTML) { next(); return; }
+      if (chars + html.length > PARK_HTML) { discardParked(); return; }
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      const extra = template.content.querySelectorAll('*').length;
+      if (template.content.querySelector('img[src],image,video,iframe,object,embed,canvas')) { next(); return; }
+      if (nodes + extra > PARK_NODES) { discardParked(); return; }
+      nodes += extra;
+      chars += html.length;
+      const page = group.querySelector<HTMLElement>(`.mobile-tab[data-index="${index}"] .mobile-tab-preview-page`)!;
+      partial = { index, html, page, stack: [{ source: template.content, dest: page }] };
+    }
+    // A formula-heavy block can itself contain thousands of nodes. Move
+    // small subtrees whole; for a larger one, clone its shell and fill its
+    // children in later slices. No slice inserts more than 350 elements.
+    let added = 0;
+    while (partial.stack.length && added < 350) {
+      const frame = partial.stack[partial.stack.length - 1];
+      const child = frame.source.firstChild;
+      if (!child) { partial.stack.pop(); continue; }
+      const cost = child instanceof Element ? 1 + child.querySelectorAll('*').length : 1;
+      if (cost > 350) {
+        if (added >= 350) break;
+        const shell = child.cloneNode(false);
+        frame.dest.appendChild(shell);
+        frame.source.removeChild(child);
+        partial.stack.push({ source: child, dest: shell });
+        added++;
+      } else {
+        if (added && added + cost > 350) break;
+        frame.dest.appendChild(child);
+        added += cost;
+      }
+    }
+    partial.page.getBoundingClientRect();
+    if (!partial.stack.length) {
+      currentHtml[partial.index] = partial.html;
+      partial.page.closest('.mobile-tab')!.classList.remove('is-empty');
+      partial = null;
+    }
+    next();
+  };
+  warming = { el, cancel: () => {
+    detachInterrupts();
+    if (idle) cancelIdleCallback(idle);
+    if (timer) window.clearTimeout(timer);
+    // A tap during preparation must never expose half of a cached card.
+    partial?.page.replaceChildren();
+    partial = null;
+  } };
+  next();
 }
