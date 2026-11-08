@@ -33,7 +33,7 @@ const logLines = (page: Page): Promise<Line[]> =>
     return JSON.parse(JSON.stringify(mod.lines())) as Line[];
   });
 
-test('the switch line times the leaving, and the note line times its four stages', async ({ page }) => {
+test('the switch line times the leaving, and the note line splits its stages', async ({ page }) => {
   await boot(page);
   // The phone's way in: the tab switcher, then the other tab's card.
   await page.locator('#nav-tabs').evaluate((el: HTMLButtonElement) => el.click());
@@ -53,10 +53,13 @@ test('the switch line times the leaving, and the note line times its four stages
   const shown = lines.filter((l) => l.area === 'file' && l.text === 'note on screen').pop();
   expect(shown, 'the note line is there').toBeTruthy();
   const facts = shown!.facts ?? {};
-  for (const stage of ['text', 'chrome', 'place', 'rest']) {
+  for (const stage of ['text', 'chrome', 'place', 'preRestore', 'restore', 'rest']) {
     expect(Object.keys(facts), `the stage "${stage}" is named`).toContain(stage);
     expect(typeof facts[stage], `"${stage}" is a number of milliseconds`).toBe('number');
   }
+  // These two are inside "place", not extra work to add to the switch.
+  expect(Math.abs(Number(facts.place) - Number(facts.preRestore) - Number(facts.restore)),
+    'the two nested synchronous parts account for place, within rounding').toBeLessThanOrEqual(2);
   // The stages are of the switch, not longer than it.
   const parts = ['text', 'chrome', 'place', 'rest'].reduce((sum, k) => sum + Number(facts[k]), 0);
   expect(parts, 'the stages add up to no more than the switch').toBeLessThanOrEqual(Number(switched!.ms ?? 0) + 50);

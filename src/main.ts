@@ -2317,9 +2317,14 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   const chrome = since(chromeAt);
   const placeAt = performance.now();
   if (previewVisible()) renderPreview();
+  const preRestore = since(placeAt);
+  const restoreAt = performance.now();
   // A picture opens in the reading view (a mode of its own to be remembered
   // in is not one it has); anything else comes back where it was left.
+  // restoreView also changes mode and can render the preview; "restore" is
+  // the whole synchronous call, not a claim that it is placement alone.
   restoreView(path, after, opening, imageTab);
+  const restore = since(restoreAt);
   const place = since(placeAt);
   const restAt = performance.now();
   renderNavButtons();
@@ -2328,7 +2333,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // (opened from another app, or read-only rubbish).
   leftSidebar.markActive(path);
   if (!incoming) void loadSiblings();
-  shown({ text, chrome, place, rest: since(restAt) });
+  shown({ text, chrome, place, preRestore, restore, rest: since(restAt) });
 }
 /** Open a file: its tab if it has one, else a new tab after this one (or
  *  this tab, when it's empty). Any file opens; one that can't be loaded
@@ -2899,13 +2904,17 @@ async function switchTab(index: number, after?: () => void): Promise<void> {
   switching({ left });
 }
 function newTab(): void {
+  const activating = log.time('tabs', 'new tab activated');
   void (async () => {
     try {
-      if (!await leaveCurrent()) { dropSnapshot(); return; }
+      const beforeLeave = performance.now();
+      if (!await leaveCurrent()) { activating({ left: since(beforeLeave), stayed: true }); dropSnapshot(); return; }
+      const left = since(beforeLeave);
       const empty = tabs.findIndex((t) => !t.path);
       if (empty >= 0) activeTab = empty;
       else { tabs.splice(activeTab + 1, 0, { path: '' }); activeTab += 1; }
       showEmptyTab();
+      activating({ left });
       dropSnapshot();
     } finally {
       launchTabInFlight = false;
@@ -3142,7 +3151,10 @@ async function pickNewNoteDir(): Promise<void> {
   await renderEmptyTab();
 }
 
+let emptyRenderRun = 0;
 async function renderEmptyTab(): Promise<void> {
+  const run = ++emptyRenderRun;
+  const building = log.time('tabs', 'new tab page built');
   // Which folder a note made here would land in, named the way the tree's
   // "Move to..." names folders: under the space, or from the top in All
   // files. Stated whether or not it can be changed -- on a vault with no
@@ -3150,15 +3162,33 @@ async function renderEmptyTab(): Promise<void> {
   const where = whereNewNotesGo();
   const whereLabel = dirLabel(where);
   const recent: string[] = [];
-  for (const path of recentNotes()) {
-    if (recent.length >= 8) break;
-    if (await backend.stat(path)) recent.push(path);
+  const candidates = recentNotes();
+  const checksStarted = performance.now();
+  let checked = 0;
+  // The phone's bridge pays for every stat. Eight checks in a row held the
+  // whole page behind eight round trips. Keep the order, and the first eight
+  // that actually exist, but ask four at a time. Bounded batches avoid a
+  // burst over a long history and still fill the list when files are gone.
+  for (let i = 0; i < candidates.length && recent.length < 8; i += 4) {
+    const batch = candidates.slice(i, i + 4);
+    const entries = await Promise.all(batch.map((path) => backend.stat(path)));
+    checked += batch.length;
+    for (let j = 0; j < batch.length && recent.length < 8; j += 1) {
+      if (entries[j]) recent.push(batch[j]);
+    }
+    if (run !== emptyRenderRun) { building({ cancelled: true }); return; }
   }
+  const checks = since(checksStarted);
+  const labelsStarted = performance.now();
   // The folder under each recent note's name, shortened the way the drawers'
   // own paths are (src/pathShort.ts): the folder the note lives in keeps its
   // name, the ones above it are cut to the shortest prefix their siblings
   // leave free — "accounting" survives where "documents" can be cut.
   const dirs = await folderLabels(recent);
+  const labels = since(labelsStarted);
+  // A later request (another tab, a new folder choice, settings) owns the
+  // page now. An older slow bridge response must not paint over it.
+  if (run !== emptyRenderRun) { building({ cancelled: true }); return; }
   emptyTab.innerHTML = `
     <div class="empty-state-container${emptyQuery ? ' has-query' : ''}">
       <div class="empty-state-title">No file is open</div>
@@ -3188,6 +3218,7 @@ async function renderEmptyTab(): Promise<void> {
     if (event.key === 'Escape' && field.value) { event.preventDefault(); field.value = ''; emptyQuery = ''; void runEmptySearch(); }
   });
   if (emptyQuery) void runEmptySearch();
+  building({ checks, labels, checked, shown: recent.length });
 }
 emptyTab.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
@@ -3399,8 +3430,11 @@ function tabCardNow(i: number): string | null {
 }
 
 function showTabs(): void {
+  const opening = log.time('tabs', 'tab switcher built');
   void (async () => {
-    if (!await leaveCurrent()) return;
+    const beforeLeave = performance.now();
+    if (!await leaveCurrent()) { opening({ left: since(beforeLeave), stayed: true }); return; }
+    const left = since(beforeLeave);
     openTabSwitcher({
       tabs: () => tabs.map((t, i) => ({ title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path, external: Boolean(t.path) && isExternalPath(t.path) })),
       previewNow: (i) => tabCardNow(i),
@@ -3488,6 +3522,7 @@ function showTabs(): void {
       closeAll: closeAllTabs,
       move: moveTab,
     });
+    opening({ left, count: tabs.length });
   })();
 }
 
