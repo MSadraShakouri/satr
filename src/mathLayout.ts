@@ -41,7 +41,13 @@ function reset(flow: HTMLElement, units: HTMLElement[]): void {
   flow.classList.remove('is-fitted');
   flow.querySelectorAll(':scope > br.math-br').forEach((br) => br.remove());
   flow.classList.remove('is-wrapped');
-  for (const unit of units) unit.classList.remove('is-line-start', 'is-overwide');
+  for (const unit of units) {
+    unit.classList.remove('is-line-start', 'is-overwide');
+    for (const base of unit.querySelectorAll<HTMLElement>('.katex-html > .base.is-inline-scroll')) {
+      base.classList.remove('is-inline-scroll');
+      base.style.removeProperty('max-width');
+    }
+  }
 }
 
 function breakBefore(flow: HTMLElement, unit: HTMLElement): void {
@@ -571,6 +577,7 @@ export function layoutMath(root: HTMLElement): void {
   // Write.
   for (const f of flows) if (f.display) f.flow.classList.remove('is-measuring');
   const inline: Flow[] = [];
+  const inlineAll: Flow[] = [];
   const fitted: Fitted[] = [];
   for (const f of flows) {
     if (!(f.available > 0)) continue; // no width to lay out against: ask again later
@@ -579,6 +586,7 @@ export function layoutMath(root: HTMLElement): void {
       applyDisplay(f.flow, f.units, f.available, f.plain, f.cont, displayStarts(f.units, f.available, f.plain, f.cont), floor, fitted);
     } else {
       f.units.forEach((unit, index) => { if (f.plain[index] > f.available) unit.classList.add('is-overwide'); });
+      inlineAll.push(f);
       if (f.units.length > 1) inline.push(f);
     }
   }
@@ -603,6 +611,40 @@ export function layoutMath(root: HTMLElement): void {
       for (const u of f.units) u.classList.remove('is-line-start');
     }
     markLineStarts(inline);
+  }
+  // Let an overwide inline unit use KaTeX's own breaks first. A KaTeX
+  // base that is still wider than the paragraph gets its own scroll box,
+  // not the whole unit: relations and other breakable pieces keep wrapping.
+  // A newly repeated relation can change the line starts, so re-mark after
+  // adding boxes and repeat until no new box is needed. Print stays intact.
+  if (root.ownerDocument === document && root.closest('.preview-pane')) {
+    for (;;) {
+      const widen: HTMLElement[] = [];
+      for (const f of inlineAll) for (const unit of f.units) {
+        if (unit.classList.contains('is-line-start') && !unit.classList.contains('is-overwide') &&
+            unit.getBoundingClientRect().width > f.available + 0.5) widen.push(unit);
+      }
+      for (const unit of widen) unit.classList.add('is-overwide');
+      const tooWide: Array<[HTMLElement, number]> = [];
+      for (const f of inlineAll) for (const unit of f.units) {
+        if (!(unit.classList.contains('is-overwide') || unit.classList.contains('is-line-start'))) continue;
+        for (const base of unit.querySelectorAll<HTMLElement>('.katex-html > .base')) {
+          if (!base.classList.contains('is-inline-scroll') && base.getBoundingClientRect().width > f.available + 0.5) {
+            tooWide.push([base, f.available]);
+          }
+        }
+      }
+      if (!tooWide.length && !widen.length) break;
+      for (const [base, available] of tooWide) {
+        base.style.maxWidth = `${available}px`;
+        base.classList.add('is-inline-scroll');
+      }
+      for (const f of inline) {
+        f.flow.classList.remove('is-wrapped');
+        for (const unit of f.units) unit.classList.remove('is-line-start');
+      }
+      markLineStarts(inline);
+    }
   }
   settleFitted(fitted);
 

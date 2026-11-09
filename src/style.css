@@ -775,6 +775,21 @@ body {
   display: inline;
   white-space: normal;
 }
+/* A KaTeX base that remains wider than the reading column after normal
+   inline wrapping scrolls itself; adjacent formula pieces still wrap. */
+.preview-pane .math-flow:not(.is-display) .katex-html > .base.is-inline-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* KaTeX's strut describes its height, but ink can extend beyond it. */
+  padding-block: 0.3em;
+}
+@media print {
+  .preview-pane .math-flow:not(.is-display) .katex-html > .base.is-inline-scroll {
+    max-width: none !important;
+    overflow: visible;
+    padding-block: 0;
+  }
+}
 .math-cont,
 .math-unit.is-line-start > .math-plain {
   display: none;
