@@ -11,7 +11,7 @@
 // nothing between, and a pair a heading or a list broke are plain text, so
 // their dollars are not coloured and nothing inside them is styled as math.
 import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type MathSpan } from './mathScan';
-import { StateField, type EditorState, type Range, type Transaction } from '@codemirror/state';
+import { StateField, type EditorState, type Range, type Text, type Transaction } from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
 import { isolatesOf } from './caretMotion';
@@ -28,6 +28,9 @@ import { isolatesOf } from './caretMotion';
 //
 //   - a delimiter or an escape went in or came out ($ \ ` ~), or
 //   - a line break went in or came out, or
+//   - a blank dollar pair gains/loses its content, or the character just
+//     after a dollar changes (the scanner's price rule), or an edit after a
+//     backslash changes whether the next dollar is escaped, or
 //   - the change touched the head of a line, where markdown keeps the block
 //     markers that end a `$$` pair (#, -, 1., >, ```, and the rest of
 //     isMathBlockBoundary).
@@ -42,16 +45,36 @@ const SHAPES_MATH = /[$\\`~]/;
  *  indent, then a marker such as `1.` and its space. */
 const LINE_HEAD = 5;
 
+/** A blank pair touching the edit may become a formula (or stop being one).
+ *  Look only at this line: rescanning a whole long note on every character
+ *  inside math would put the typing cost we removed back on the hot path. */
+function touchesBlankPair(doc: Text, from: number, to: number): boolean {
+  const line = doc.lineAt(from);
+  if (to > line.to) return false;
+  const left = line.text.lastIndexOf('$', from - line.from - 1);
+  const right = line.text.indexOf('$', to - line.from);
+  return left >= 0 && right >= 0 && !line.text.slice(left + 1, right).trim();
+}
+
 /** True when a change cannot have moved where any formula begins or ends. */
 function keepsShape(tr: Transaction): boolean {
   let keeps = true;
-  tr.changes.iterChanges((fromA, toA, fromB, _toB, inserted) => {
+  tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
     if (!keeps) return;
     const put = inserted.toString();
     const took = tr.startState.doc.sliceString(fromA, toA);
     if (put.includes('\n') || took.includes('\n')) { keeps = false; return; }
     if (SHAPES_MATH.test(put) || SHAPES_MATH.test(took)) { keeps = false; return; }
-    if (fromB - tr.newDoc.lineAt(fromB).from <= LINE_HEAD) keeps = false;
+    const line = tr.newDoc.lineAt(fromB);
+    if (fromB - line.from <= LINE_HEAD) { keeps = false; return; }
+    if (!line.text.includes('$')) return; // no dollar changed and this line has none
+    // `$ $` is not math until it has content, and deleting the last content
+    // makes it plain text again. Likewise a digit immediately after a closer
+    // changes the scanner's price rule, even though no dollar was edited.
+    if ((put.trim() || took.trim()) &&
+        (touchesBlankPair(tr.startState.doc, fromA, toA) || touchesBlankPair(tr.newDoc, fromB, toB))) { keeps = false; return; }
+    if ((fromA > 0 && /[$\\\\]/.test(tr.startState.doc.sliceString(fromA - 1, fromA))) ||
+        (fromB > 0 && /[$\\\\]/.test(tr.newDoc.sliceString(fromB - 1, fromB)))) keeps = false;
   });
   return keeps;
 }
@@ -317,6 +340,14 @@ function mathTokens(text: string): Token[] {
 // costs one parse per keystroke, not one per formula.
 type Fault = { message: string; from: number; to: number };
 const verdicts = new Map<string, Fault | null>();
+
+/** Pay the checker's first-use cost while the app is idle, not on the first
+ *  letter of a formula. These examples are not added to the verdict cache. */
+export function warmMathChecker(): void {
+  mathFault('z', false);
+  mathFault('\\znotacommand', false);
+}
+
 function verdict(text: string, display: boolean): Fault | null {
   const key = `${display ? 'd' : 'i'}${text}`;
   const known = verdicts.get(key);

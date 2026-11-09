@@ -7,6 +7,7 @@
 // The path is the source path the specs always used. A node_modules path
 // reaches the CodeMirror view that the app bundles.
 import * as cmView from '@codemirror/view';
+import katex from 'katex';
 
 // Every module in src/ except main.ts, which starts the app when it loads.
 const sources = import.meta.glob(['../../src/*.ts', '!../../src/main.ts', '!../../src/*.d.ts'], { eager: true }) as Record<string, Record<string, unknown>>;
@@ -16,6 +17,7 @@ for (const [key, mod] of Object.entries(sources)) byName.set(key.split('/').pop(
 
 function load(path: string): Record<string, unknown> {
   if (path.startsWith('/node_modules/@codemirror/view/')) return cmView as unknown as Record<string, unknown>;
+  if (path === '/node_modules/katex') return { default: katex };
   const name = path.split('/').pop() as string;
   const mod = byName.get(name);
   if (!mod) throw new Error(`satr test hook: no module for ${path}`);

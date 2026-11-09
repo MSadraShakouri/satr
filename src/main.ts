@@ -35,7 +35,7 @@ import { findLatexMath } from './mathNormalize';
 import { showNotice, type NoticeHandle } from './notice';
 import { inALoop, launchBegan, launchFinished, type BadStart } from './launchGuard';
 import { sayMemory, watchForTrouble } from './vitals';
-import { mathFaultAt } from './mathSource';
+import { mathFaultAt, warmMathChecker } from './mathSource';
 import { closeTimestampPicker, letNoteGo, normalizeMathIn, timestampPicker } from './commands';
 import { shortenPathIn } from './pathShort';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -1298,7 +1298,7 @@ let mathWarningCount = 0;
 // What is being said about the formula the caret is in, and the notice
 // saying it, so that moving along the same broken formula does not keep
 // putting the same sentence back on the screen.
-let mathSaying: { text: string; notice: NoticeHandle } | null = null;
+let mathSaying: { text: string | null; notice: NoticeHandle } | null = null;
 let mathConfirmTimer: number | undefined;
 
 /** Unfolds upward from the pill the gray sits on: height of the clip shell
@@ -1382,10 +1382,18 @@ function updateMathSaying(): void {
   const reason = hasNote() && !picture.url && mode === 'edit'
     ? mathFaultAt(editor.view.state, editor.view.state.selection.main.head) : null;
   if (reason === (mathSaying?.text ?? null)) return;
-  mathSaying?.notice.hide();
-  // 0: it stays while the caret is in the formula, rather than flashing for
-  // four seconds and leaving the writer to remember it.
-  mathSaying = reason === null ? null : { text: reason, notice: showNotice(reason, 0) };
+  if (reason === null) {
+    // Keep the handle through its fade: another verdict can arrive before it
+    // finishes, and should reuse the same notice instead of flashing a new one.
+    if (mathSaying) { mathSaying.text = null; mathSaying.notice.hide(); }
+    return;
+  }
+  if (mathSaying?.notice.update(reason)) {
+    mathSaying.text = reason;
+  } else {
+    // 0: it stays while the caret is in the formula, rather than timing out.
+    mathSaying = { text: reason, notice: showNotice(reason, 0) };
+  }
 }
 // How long after the last keystroke the note is counted for LaTeX-style
 // formulas. The count reads the whole note — on a big one that is a copy of
@@ -4464,6 +4472,15 @@ async function boot(): Promise<void> {
     };
     if (typeof requestIdleCallback === 'function') requestIdleCallback(prepare);
     else window.setTimeout(prepare, 2000);
+    // Starting the first formula otherwise loads the code font and wakes the
+    // math checker on the typing path. Do both after launch, during idle; the
+    // live verdict still runs normally on every edit, with no waiting period.
+    const warmMath = (): void => {
+      void document.fonts?.load('16px VazirCode').catch(() => undefined);
+      warmMathChecker();
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(warmMath);
+    else window.setTimeout(warmMath, 2000);
   }
 }
 /** When Satr went to the background (kept, so a launch after a kill counts too). */
