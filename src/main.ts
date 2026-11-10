@@ -187,9 +187,11 @@ let viewOnly = false;
  *  So the views whose header says the name are exactly the views whose
  *  header never leaves, and one flag is enough for both. */
 let namedFile = false;
-function setViewOnly(on: boolean): void {
+function setViewOnly(on: boolean, hasSourcePreview = false): void {
   viewOnly = on;
   document.body.classList.toggle('is-view-only', on);
+  // Read-only Markdown still has two useful views; neither grants a write.
+  document.body.classList.toggle('is-readonly-note', on && hasSourcePreview);
   nameInChrome();
 }
 /**
@@ -835,6 +837,7 @@ function renderPreview(): void {
     const back = log.time('file', 'reading view kept', { chars: source.length });
     keptNotes = keptNotes.filter((note) => note !== kept);
     preview.replaceChildren(kept.nodes);
+    preview.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((box) => { box.disabled = viewOnly; });
     renderedNote = { path: filePath, stamp, chars: kept.chars, formulas: kept.formulas };
     keptMeasured = true;
     mathFilling?.stop();
@@ -871,11 +874,9 @@ function renderPreview(): void {
   mathFilling = fillMath(preview, note.formulas, previewPane, noteGrew);
   built({ formulas: note.formulas.length, waiting: mathFilling.left(), words: Math.round(performance.now() - words) });
   renderedNote = { path: filePath, stamp, chars: note.html.length, formulas: note.formulas };
-  // A task is ticked where it is read, not only where it is written. The
-  // parser hands over a box that cannot be touched; here, and only here, it
-  // is live — a card in the tab switcher and an exported page keep theirs
-  // inert, since there is no note behind them to write the tick into.
-  preview.querySelectorAll('input[type="checkbox"]').forEach((box) => box.removeAttribute('disabled'));
+  // A writable note's tasks can be ticked where they are read. A read-only
+  // hand-over, like a card or exported page, must leave its boxes inert.
+  preview.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((box) => { box.disabled = viewOnly; });
   applyPreviewFolds();
   watchSections();
   scheduleMathLayout(preview);
@@ -1496,7 +1497,7 @@ function setMode(requested: Mode, restoredLine?: number): void {
   updateMathSaying();
   const previewButton = document.querySelector<HTMLButtonElement>('#preview-toggle')!;
   previewButton.innerHTML = mode === 'edit' ? bookIcon : penIcon;
-  previewButton.setAttribute('aria-label', mode === 'edit' ? 'Open preview' : 'Return to editor');
+  previewButton.setAttribute('aria-label', mode === 'edit' ? 'Open preview' : viewOnly ? 'View source' : 'Return to editor');
   syncingScroll = true;
   if (mode === 'preview') {
     if (previewDirty) renderPreview();
@@ -2308,7 +2309,8 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // are not text, a file another app lent us read-only, shared text. The
   // chrome says so (a header with the file's name and a ⋮ in place of the
   // pen) rather than letting a tap land in an editor that refuses it.
-  setViewOnly(Boolean(imageTab || documentTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy));
+  const incomingNote = Boolean(incoming && (incoming.kind === 'text' || incoming.kind === 'shared-text') && fileKind(fileName(path)) === 'note');
+  setViewOnly(Boolean(imageTab || documentTab || incoming?.readOnly || incoming?.kind === 'shared-text' || lossy), incomingNote);
   // The chrome comes back whenever the open file changes, as Obsidian does
   // on active-leaf-change. Without this you could scroll a note until the
   // bars left, open a PDF, and arrive at a view that keeps its header —
@@ -4859,6 +4861,7 @@ function flash(el: HTMLElement): void {
  *  reading view finds it by occurrence). If the range went away while the
  *  sheet was open, the code lands at the caret instead. */
 function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, found: { from: number; to: number } | null): void {
+  if (viewOnly) return;
   // As with a fresh code: the note is let go so the keyboard comes down off
   // the sheet, the caret it had is remembered rather than relied upon, and
   // the note is not taken back when the code lands — the keyboard would be
@@ -4868,6 +4871,7 @@ function editTimestampAt(initial: { seconds: number; format: TimestampFormat }, 
   timestampPicker.open({
     initial,
     onInsert: (code) => {
+      if (viewOnly) return;
       const view = editor.view;
       if (found && found.to <= view.state.doc.length && view.state.doc.sliceString(found.from, found.to).startsWith('<t:')) {
         view.dispatch({ changes: { from: found.from, to: found.to, insert: code }, userEvent: 'input' });
@@ -4947,6 +4951,7 @@ setTimestampChipTap((chip) => {
  *  that comes back. If the line turns out not to be a task after all, the
  *  box is put back the way the reader found it. */
 function tickTaskFromBox(box: HTMLInputElement): void {
+  if (viewOnly) { box.checked = !box.checked; return; }
   const item = box.closest<HTMLElement>('li');
   const at = Number(item?.dataset.line);
   const doc = editor.view.state.doc;

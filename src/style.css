@@ -393,7 +393,7 @@ body.is-named-file .topbar::before {
 body.is-view-only #file-actions {
   display: grid;
 }
-body.is-view-only #preview-toggle {
+body.is-view-only:not(.is-readonly-note) #preview-toggle {
   display: none;
 }
 /* The name is in the header now, so the inline title does not say it twice.
