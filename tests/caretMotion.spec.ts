@@ -23,12 +23,8 @@ async function draft(page: Page, text: string, caret = 0) {
   }, { text, caret });
 }
 
-// The rule the writer asked for, and the one the platform's own fields follow:
-// a press is ONE position, in the paragraph's own order — the visual right is
-// the previous position in an RTL paragraph and the next one in an LTR
-// paragraph — and the caret is painted on the line's side. No walking by
-// drawing position: that is what a shift+→ used to skip a whole inline formula
-// with, and it left the `$` signs unstoppable.
+// Arrows and Shift+arrows follow drawn positions. At a bidi boundary a
+// selection may change by more than one logical character in a single press.
 
 // The stepwise combinator: press a motion key one step at a time and record
 // where the caret is, logically and visually.
@@ -95,11 +91,12 @@ test('plain Latin text still moves one glyph per press', async ({ page }) => {
   expect(left.map((s) => s.pos)).toEqual([4, 3, 2, 1, 0]);
 });
 
-test('shift+arrows extend the selection one character a press', async ({ page }) => {
+test('shift+arrows move the selection endpoint visually', async ({ page }) => {
   await draft(page, 'اب ABC د', 8);
   const steps = await walk(page, 'Shift+ArrowRight', 6);
-  // RTL: shift+→ walks back, the head giving up one character each press.
-  expect(steps.map((s) => s.pos), JSON.stringify(steps)).toEqual([7, 6, 5, 4, 3, 2]);
+  // The visual path crosses the embedded Latin run in its drawn order.
+  expect(steps.map((s) => s.pos), JSON.stringify(steps)).toEqual([7, 6, 4, 5, 6, 2]);
+  for (let i = 1; i < steps.length; i++) expect(steps[i].x).toBeGreaterThan(steps[i - 1].x);
   const sel = await page.evaluate(() => window.testEditor.getSelection());
   expect(sel).toEqual([8, 2]); // anchor stays at 8, the head walks back to 2
 });

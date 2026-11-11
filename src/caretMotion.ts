@@ -1,45 +1,17 @@
-// Caret motion: the caret goes where the key points, and a selection grows by
-// characters.
-//
-// Measured against the platform's own fields first. An arrow is a visual
-// direction, so the caret follows what is drawn: in `سلام test تست` the press
-// after `سلام` steps 4px into the space, not 30px across the English word, and
-// a walk down the line falls 988, 975, 970, 965, 955, 951, 946, 938, 930, 925
-// without a single reversal. That is CodeMirror's own motion and it is better
-// than anything written here: through `این یک فرمول است $a^2 + b$ و ادامه دارد`
-// it reaches every one of the formula's positions — 17, 18, then the formula
-// right to left, then 25, 26 — each a glyph from the last. Stepping by
-// *document order* instead, as this file used to, is what put the keys back to
-// front inside an inline formula or a code span: those read left to right
-// whatever the Persian around them says, so a → there walked the caret left.
-//
-// A selection is the exception, and keeps the step this file has always made:
-// one character a press, in the line's own order. Visually a formula's two
-// faces share slots, so a shift+→ from just after `$a^2 + b$` grew by the
-// whole formula in one press — the skip the writer reported — and a selection
-// is counted in characters, not in drawn positions. Math and code need no
-// other special case: they never vote for a line's direction (src/direction.ts)
-// and a line that is nothing but math or code is LTR there.
-//
-// The keys are read from a capture listener on the editor element rather than
-// from a keymap, because CodeMirror drops *every* key event while an IME
-// composition is open (@codemirror/view's InputState.handleEvent gives up on
-// key events while composing). Gboard keeps a word composed until it commits,
-// and that is where the phone's → was dead: the browser's own motion inside a
-// composition goes nowhere, and no keymap is even reached. Owning the two keys
-// here means the note answers them the same way whether or not a word is still
-// with the keyboard.
+// Ordinary and Shift+arrows use CodeMirror visual motion, including during IME
+// composition. Browser caret affinity can still differ at some nested bidi slots. The capture listener is needed because CodeMirror ignores
+// keyboard events while composing. Selection can span multiple logical
+// characters in a single visual step at a bidirectional boundary.
 
 import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction, type Text, type Range} from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import { cursorCharLeft, cursorCharRight } from '@codemirror/commands';
+import { cursorCharLeft, cursorCharRight, selectCharLeft, selectCharRight } from '@codemirror/commands';
 import { directionsField, type TextDirection } from './direction';
 import { inMath } from './mathSource';
 
-/** The other edge of the run `head` bounds — the position drawn in the same
- *  place as it. A run embedded against the line is reversed as a block, so its
- *  two edges share their two homes: in `اب ABC د` the caret before `A` and the
- *  caret after `C` are both drawn at 966 and at 936. */
+/** A candidate for the other edge of the run `head` bounds. In a simple
+ *  embedded run the two edges share their two homes, but nested runs need not
+ *  do so; the caller checks their coordinates before using the candidate. */
 function mateOf(view: EditorView, head: number): number | null {
   const line = view.state.doc.lineAt(head);
   const at = head - line.from;
@@ -58,8 +30,7 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
     if (!(dir === -1 ? cursorCharLeft(view) : cursorCharRight(view))) return false;
     // CodeMirror picks a shared slot's meaning from the way the caret came.
     // Pinned instead to the one this note gives it (the rule below), so the
-    // place the caret is drawn means the same thing however it was reached —
-    // and so a walk back visits every position a walk out did. Without this,
+    // place the caret is drawn means the same thing in simple runs. Without this,
     // going right through `اب ABC د` lands on the caret *after* `ABC` drawn
     // between `اب` and `ABC`, and the caret before `A` is never reached.
     const sel = view.state.selection.main;
@@ -68,18 +39,16 @@ function move(view: EditorView, dir: -1 | 1, extend: boolean): boolean {
     const mate = mateOf(view, sel.head);
     if (mate === null || mate === from) return true;
     const side = sideAt(view.state.doc, view.state.field(directionsField, false)?.dirs, mate);
+    // Nested bidi runs do not always share a visual slot at their endpoints.
+    // Only normalize if it leaves the caret at the very same drawn position.
+    const here = view.coordsAtPos(sel.head, sel.assoc < 0 ? -1 : 1);
+    const there = view.coordsAtPos(mate, side);
+    if (!here || !there || Math.abs(here.left - there.left) > 1 ||
+        Math.abs(here.top - there.top) > 1) return true;
     view.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(mate, side)]) });
     return true;
   }
-  const sel = view.state.selection.main;
-  const line = view.state.doc.lineAt(sel.head);
-  const rtl = view.textDirectionAt(line.from) === Direction.RTL;
-  // Flat document offsets, so a step across a line break lands on the previous
-  // line's end or the next line's start — the paragraph's own order.
-  const target = sel.head + (rtl ? -dir : dir);
-  if (target < 0 || target > view.state.doc.length) return false;
-  view.dispatch({ selection: EditorSelection.create([EditorSelection.range(sel.anchor, target)]) });
-  return true;
+  return dir === -1 ? selectCharLeft(view) : selectCharRight(view);
 }
 
 /** The four keys of a physical keyboard, and Gboard's own arrow row: the IME
@@ -113,40 +82,9 @@ const arrowKeys = ViewPlugin.fromClass(class {
   }
 });
 
-// The caret follows the line, never the run it happens to sit next to.
-//
-// A position where two runs meet has TWO homes — one at each end of the
-// embedded run — and the caret's side (assoc) is what picks between them.
-// −1 means "I belong to the character before me", +1 "to the one after me".
-//
-// The rule is the line's own: the caret belongs to the text written in the
-// line's direction, never to the run embedded in it. In a Persian line that
-// means the side of the Persian on one side or the other of an English word:
-//
-//     سلام |test تست     the caret is before `test`, so it belongs to the
-//                        Persian BEFORE it (−1) and is painted between سلام
-//                        and the word — where a reader reads "before test"
-//     سلام test| تست     the caret is after `test`, so it belongs to the
-//                        Persian AFTER it (+1) and is painted on the far
-//                        side of the word — where a reader reads "after test"
-//
-// Pinning the side to +1 everywhere, as this file used to, only answers the
-// second of those. At the start of the word +1 attaches the caret to the
-// word, and it was painted at the word's far left: the writer put the caret
-// after سلام and the note showed it after `test`, so a keystroke there read
-// as if it were going to the wrong side of the English. Measured on
-// `سلام test تست`: offset 5 painted at x=925, with سلام at 955 and the word
-// from 925 to 951. It now paints at 951.
-//
-// Inside a word, and at the two ends of the line, the two homes are the same
-// place and the side changes nothing — so this only ever speaks where a
-// reader would otherwise have to guess.
-//
-// Applied in the same transaction as the edit (a filter, not a follow-up
-// dispatch), so a typed character never paints one frame on the wrong side.
-// Only a single collapsed caret is touched — a selection keeps its own ends.
-// Composing text is left alone entirely: the keyboard owns the caret while a
-// word is still being composed.
+// Pick a stable representation of a shared visual slot for ordinary arrows.
+// Preserve the existing side policy for edits; the primary caret is drawn by
+// the browser, not a second CodeMirror caret layer.
 
 /** A character the line reads against its own flow: a letter of the other
  *  script, and in a Persian line a digit too — digits are their own little
@@ -170,9 +108,8 @@ function sideAt(doc: Text, dirs: readonly TextDirection[] | undefined, head: num
 }
 
 const lineSide = EditorState.transactionFilter.of((tr) => {
-  // Only an edit: the arrow keys are CodeMirror's own now, and it already
-  // paints a moved caret on the side the reader is following — the same side
-  // this rule picks, measured at both edges of `$a^2 + b$` in a Persian line.
+  // Only edits: preserve the existing paragraph-side policy for typed text.
+  // Composition is left to the keyboard; arrow movement is handled above.
   if (!tr.docChanged || tr.newSelection.ranges.length !== 1) return tr;
   const main = tr.newSelection.main;
   if (!main.empty) return tr;

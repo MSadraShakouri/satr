@@ -1292,10 +1292,12 @@ body {
 .cm-activeLine {
   background: transparent !important;
 }
-/* Caret, as Obsidian mobile draws it: CodeMirror's own 1.2px cursor in the
-   accent colour, blinking every 1.2s. CodeMirror restarts the blink on every
-   edit or caret move, so it stays solid while you type — no custom animation
-   here, which is what used to keep it blinking mid-word. */
+/* Primary caret is native, as in Obsidian: it shares its position with the
+   platform insertion handle. Keep the accent on native and drop cursors. */
+.cm-editor .cm-content,
+.cm-editor .cm-line {
+  caret-color: var(--caret-color);
+}
 .cm-editor .cm-cursor,
 .cm-editor .cm-dropCursor {
   border-left-color: var(--caret-color);

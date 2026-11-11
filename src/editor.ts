@@ -11,7 +11,7 @@ import type { SyntaxNode } from '@lezer/common';
 import { closeFind, findBar, findNext, findPrevious, isFindOpen, openFind, revealThirdDown, setFindQuery } from './findBar';
 import { collectHeadings, type Heading } from './outline';
 import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField, StateEffect, Transaction, RangeSetBuilder, type Extension, type Text } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { wikiLinks, wikiRuntime } from './wikiLinks';
@@ -1041,7 +1041,7 @@ const keyboardAttributes = EditorView.contentAttributes.of({
 // The contenteditable path CodeMirror uses without EditContext is the one
 // Android has supported since forever: the keyboard, the selection handles,
 // the double tap and the selection bar all work on the DOM selection, which
-// is what drawSelection and the tight selection layer already keep in step.
+// is also where the browser draws the primary caret.
 // So the app opts out. (Nothing else changes: the editor is a contenteditable
 // either way, and only Android ever took this branch.)
 (EditorView as unknown as { EDIT_CONTEXT?: boolean }).EDIT_CONTEXT = false;
@@ -1162,7 +1162,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      followCaretScript, lineNumberSlot.of(gutterScript.on ? lineNumberConfig() : []), drawSelection({ cursorBlinkRate: 1200 }), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      followCaretScript, lineNumberSlot.of(gutterScript.on ? lineNumberConfig() : []), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw

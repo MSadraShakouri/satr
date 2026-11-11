@@ -3,12 +3,13 @@
 // rectangle from the left edge to the right edge, so indentation and empty
 // lines turn into solid slabs. This layer paints only what is actually
 // selected text instead:
-//   - one box per visual row, from the first to the last selected glyph
+//   - boxes hug selected glyphs on each row, including separate bidi fragments
 //   - leading indentation is skipped
 //   - an empty line, or a line break inside the selection, gets a small
 //     caret-sized mark instead of a full-width block
 // The native selection (and Android's handles + copy/paste menu) stays active
-// underneath; drawSelection() keeps it invisible and draws the caret.
+// underneath; only its highlight is hidden. The primary caret is native, like
+// Obsidian, so it stays attached to the platform’s insertion handle.
 import { Direction, EditorView, RectangleMarker, layer } from '@codemirror/view';
 
 const MARK = 'cm-satr-selection';
@@ -28,16 +29,23 @@ function glyphRows(view: EditorView, from: number, to: number): Row[] {
   const rows: Row[] = [];
   const add = (rect: { top: number; bottom: number; left: number; right: number } | null | undefined): void => {
     if (!rect || rect.right <= rect.left || rect.bottom <= rect.top) return;
-    const mid = (rect.top + rect.bottom) / 2;
-    const row = rows.find((item) => mid > item.top && mid < item.bottom);
-    if (row) {
-      row.left = Math.min(row.left, rect.left);
-      row.right = Math.max(row.right, rect.right);
-      row.top = Math.min(row.top, rect.top);
-      row.bottom = Math.max(row.bottom, rect.bottom);
-    } else {
-      rows.push({ top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right });
+    // On mixed-direction lines a logically contiguous selection can have
+    // separated visual fragments. Merging everything on the row would paint
+    // unselected letters in the gap. Merge only touching/overlapping boxes.
+    const merged: Row = { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+    for (let i = 0; i < rows.length;) {
+      const item = rows[i];
+      const mid = (merged.top + merged.bottom) / 2;
+      if (mid > item.top && mid < item.bottom && merged.left <= item.right + 1 && merged.right >= item.left - 1) {
+        merged.left = Math.min(merged.left, item.left);
+        merged.right = Math.max(merged.right, item.right);
+        merged.top = Math.min(merged.top, item.top);
+        merged.bottom = Math.max(merged.bottom, item.bottom);
+        rows.splice(i, 1);
+        i = 0; // the expanded fragment may now touch an earlier one
+      } else i++;
     }
+    rows.push(merged);
   };
   // Measure the selected TEXT one run at a time. Widgets (the file title,
   // inline replacements) and any non-text node are walked past instead of
@@ -150,7 +158,7 @@ export const tightSelection = [
     update: (update) => update.docChanged || update.selectionSet || update.geometryChanged || update.focusChanged,
   }),
   EditorView.theme({
-    // Hide CodeMirror's block-style selection; ours replaces it.
-    '.cm-selectionLayer': { display: 'none !important' },
+    // Only the highlight is replaced. Do not hide the native caret.
+    '.cm-line::selection, .cm-line ::selection': { backgroundColor: 'transparent !important' },
   }),
 ];
