@@ -45,33 +45,41 @@
 
 <table>
   <tr>
-    <td width="238" align="center" valign="top">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/reading-math-dark.png">
-        <img src="docs/screenshots/reading-math-dark.png" width="215" alt="Reading view with centered display math">
-      </picture>
-      <br><sub><b>Reading view</b> — display math</sub>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/reading-top.png" width="330" alt="The demo note in the reading view, Persian and English">
+      <br><sub><b>Reading view</b> — the demo note</sub>
     </td>
-    <td width="238" align="center" valign="top">
-      <img src="docs/screenshots/date-sheet.png" width="215" alt="The Jalali calendar sheet, month آبان ۱۴۰۵">
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/date-sheet.png" width="330" alt="The Jalali calendar sheet, month آبان ۱۴۰۵">
       <br><sub><b>Jalali sheet</b> — آبان ۱۴۰۵</sub>
     </td>
-    <td width="238" align="center" valign="top">
-      <img src="docs/screenshots/pdf-viewer.png" width="215" alt="A Persian PDF open in Satr's document reader">
-      <br><sub><b>PDF reader</b> — a Persian document</sub>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/reading-math-dark.png">
+        <img src="docs/screenshots/reading-math.png" width="330" alt="Display math rendered in the reading view">
+      </picture>
+      <br><sub><b>Display math</b> — follows your theme</sub>
     </td>
-    <td width="238" align="center" valign="top">
-      <img src="docs/screenshots/reading-table.png" width="215" alt="A right-to-left table in the reading view">
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/reading-table.png" width="330" alt="A right-to-left table in the reading view">
       <br><sub><b>RTL tables</b> — the mirror image</sub>
     </td>
-    <td width="238" align="center" valign="top">
-      <img src="docs/screenshots/files-drawer.png" width="215" alt="The files drawer with folders in Persian and English">
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/pdf-viewer.png" width="330" alt="A Persian PDF open in Satr's document reader">
+      <br><sub><b>PDF reader</b> — a Persian document</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/files-drawer.png" width="330" alt="The files drawer with folders in Persian and English">
       <br><sub><b>Files</b> — spaces and folders</sub>
     </td>
   </tr>
 </table>
 
-*The strip scrolls sideways →. All screenshots are the real app — the web build at a phone viewport — using the demo note, a seeded vault and an imported PDF.*
+*All screenshots are the real app — the web build at a phone viewport — using the demo note, a seeded vault and an imported PDF.*
 
 ## Install
 
