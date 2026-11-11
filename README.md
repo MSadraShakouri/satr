@@ -38,7 +38,7 @@
 | ✍️ **True bidirectional writing** — every line follows its first letter; numbers, dates, math and code sit correctly in Persian prose. | 🧮 **Math with KaTeX** — live preview while editing, long formulas that wrap at `=` and `≤` but never at a bare `+`, Persian words inside formulas that read right to left. |
 | 📄 **PDF export** — A4, one or two columns, column order that follows the note's language, footnotes at the foot, page numbers in Persian digits. | 📅 **Dates done right** — Discord-style `<t:…>` stamps in your own language, written for you by a Gregorian **or Jalali** calendar sheet with a live sample of every format. |
 | 🗂️ **Your files, your folders** — plain `.md` you can edit anywhere; Spaces as shortcuts; tabs you rearrange; each note remembers its place, caret and folds. | 🔍 **Search and outline** — find & replace with regular expressions, search across every note, an outline tree that flips with the note's direction. |
-| 📝 **Obsidian's Markdown** — `[[wiki links]]`, `==highlights==`, task lists, footnote popovers, folding headings, lists that count in Persian digits or Abjad letters (`الف.`). | 📂 **Any file opens** — code with highlighting, CSV as a table, HTML as a full page, images, and PDFs in a built-in reader with its own chrome and one-finger zoom. |
+| 📝 **Obsidian's Markdown** — `[[wiki links]]` show their titles until edited, alongside `==highlights==`, task lists, footnote popovers, folding headings and lists in Persian digits or Abjad letters (`الف.`). | 📂 **Any file opens** — code with highlighting, CSV as a table, HTML as a full page, images, and PDFs in a built-in reader with its own chrome and one-finger zoom. |
 | ⚡ **Fast and private** — instant cold start, fully offline, and a fresh install writes nothing until your first keystroke. | 🌗 **Light and dark** — themes that follow the system, with dark pages for documents that are already dark. |
 
 ## Screenshots
@@ -117,7 +117,7 @@ cd android && ./gradlew assembleDebug
 <details>
 <summary>Release signing (maintainers)</summary>
 
-GitHub Actions builds the APK when a `v*` tag matching `package.json`'s version is pushed, and publishes it as a release. It signs with the keystore in the `ANDROID_KEYSTORE_BASE64` secret (PKCS12, alias `satr`, password `android`):
+GitHub Actions builds and publishes an APK for every pushed `v*` tag; the tag supplies the APK version. Keep `package.json` and the lockfile at the same version for local builds. It signs with the keystore in the `ANDROID_KEYSTORE_BASE64` secret (PKCS12, alias `satr`, password `android`):
 
 ```sh
 keytool -genkeypair -v -keystore satr-debug.jks -storetype PKCS12 -alias satr -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Satr"

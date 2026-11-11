@@ -6,7 +6,7 @@ A to-do roadmap for the complete Satr editor. The original product decisions and
 
 Satr runs as a web app (Vite + TypeScript + CodeMirror 6) and as an Android app
 (Capacitor 7, `android/`, with Satr's own print, storage, system-bars and
-open-file plugins). The code is **0.19.1**'s: 0.18.1 and 0.18.2 were released
+open-file plugins). This tree prepares **0.21.0**; see its changes below. 0.20.0 was released, and 0.18.1 and 0.18.2 were released
 and withdrawn, 0.18.3 carried the per-file memory into a database of its own,
 0.18.4 added the log the app keeps of itself, 0.18.5 is what that log said
 when it came back off the author's phone — the file being read, and read
@@ -48,7 +48,7 @@ Editor
 - [x] Math digits (Settings → Editor): formulas show all their digits in one set — as typed, English, or Persian — in the preview and the PDF alike, and the note keeps the digits that were typed (5)
 - [x] Switching between editing and reading keeps the same place: the mapping measures the rendered math and table heights and re-measures as they settle (fonts, the Android grow-box pass, images), compensating the scroll (9)
 - [x] Footnotes: insert at the caret, write the note in a popover at the reference
-- [x] Wiki links `[[Note]]`, `[[Note|text]]`, `[[Note#Heading]]`: styled in the editor, tap to open, a popup of notes while typing `[[`; broken links dimmed in the reading view
+- [x] Wiki links `[[Note]]`, `[[Note|text]]`, `[[Note#Heading]]`: the editor shows the title or alias when not editing, reveals source when touched, and keeps tap-to-open and the `[[` picker; broken links dim in the reading view
 - [x] Images in the reading view and the PDF, centred and at most the text's width: `![alt](path)` relative to the note, `![[name.png]]` found anywhere by name (as Obsidian), optional size `|300` or `|300x200`; a dashed placeholder for a missing picture
 - [x] `==Highlight==` as in Obsidian (editor, reading view, PDF)
 - [x] The note always has room under its last line: the page scrolls a good deal further than the text, and a tap below the last line puts the caret at the end of the note. The room is for the writer's own scrolling — typing never spends it: the caret walks down through it, and the page moves by a line at most, so writing at the end of a note does not slide the text away under the caret. Enter reveals the line it opens, in the room the note already has (16, 20, 22)
@@ -86,7 +86,7 @@ Chrome
 
 - [x] Gesture audit on a phone: every swipe and slide (drawer edges, swipe from over the toolbar, find bar, tab switcher and card swipes, bottom sheets, the scope pill, text selection near the edges) — in daily use on the device
 - [ ] Keyboard toolbar: reorder buttons in Settings (show/hide is done)
-- [ ] Wiki links: hide the brackets in live preview when the caret is elsewhere (Obsidian does; needs care so typing never lands in a hidden range)
+- [x] Wiki links: hide brackets in live preview when the caret is elsewhere, reveal the source for editing, and keep the closing brackets in place on Enter.
 - [x] First run on the device: no space yet leads to picking a folder — tested in use on the device
 - [ ] Persian UI strings (later)
 
@@ -290,6 +290,21 @@ Everything since `v0.11.3`: the ordered list written over four times until it is
 - [x] **Four the writer reported in the panels.** *Reveal current file* is a button now, not a switch that rearranged the panel whenever the note changed — one press takes the panel to the note wherever it lives, and nothing moves it by itself, so reading can no longer change what a search covers or where a new note lands. With **Include subfolders** off, a search roots at the open note's own folder rather than the space top, which in a space whose top level holds folders had returned nothing but the open note. The in-note find draws the current match as Obsidian's reading view does — a 3px accent ring on it, a 2px translucent one on the other 39 — where before every match wore the same ring and you could not tell which one you were on. And the navigation bars only move on a reversal: a thumb's 4–6px wobble landing more than 200 ms after they hid used to walk straight into `restoreNavigation()` and flash them, which tests/navAutoHide.spec.ts:151 now pins.
 - [x] **Checked.** 442 of 443 specs pass across the sheet. The one red — tests/mathBreaks.spec.ts:210, the break point inside a wide group — is red on the commit before this round as well, on the Chromium build this sandbox now carries; it is the environment, not the round.
 - [x] `package.json`, the lockfile's two root fields and the APK's `versionName` (which falls back to it) carry **0.12.0** — the dev banner's number matches the app's, as it must.
+
+### 0.21.0: prepared release (November 2026)
+
+Changes since 0.20.0, on the combined main and dev tree:
+
+- **Wiki-link live preview.** `[[Note]]` shows its title and `[[Note|label]]` its label until the caret or selection touches it; opening the link and its original source are preserved. Embeds, incomplete links, code and math stay literal.
+- **Large PDFs.** The reader can open supported local PDFs with bounded random reads instead of first moving the whole file through the JavaScript bridge. Non-seekable incoming files may need a private cache copy, limited to 256 MiB with 64 MiB free-space reserve; the complete-buffer fallback is capped at 128 MiB. The first-page and worker logs distinguish insertion, frame opportunity, engine round trips and pixel copies; they do not claim a physical-paint or phone-speed measurement.
+- **Math and the caret.** Improved formula wrapping and inline overflow, live math editing and errors, and native caret placement around mixed-direction text. Direction-changing line boundaries and some complex mixed runs remain limitations.
+- **Switching and files.** Tab cards are reused and prepared while idle; recents are checked in bounded batches. Read-only incoming Markdown offers both source and reading views. Folder sorting and moving, and document-header controls, received fixes.
+- **Editing polish.** Paired Markdown marks keep their appearance around a trailing space, and Enter at the visible end of a line leaves hidden closing marks on the original line.
+- **Deferred.** On the tested phone Gboard can insert a real space immediately on suggestion acceptance; the author reproduced it in the Obsidian APK as well. No spacing fix is included in this release.
+
+### 0.20.0: large notes and document reading (November 2026)
+
+The released 0.20.0 improved large-note typing and progressive math rendering, reading-place restoration, document orientation and header controls, PDF first-page diagnostics, folder picking and sorting, and the new-tab workflow.
 
 ### 0.19.1: the card is what you can see (November 2026)
 

@@ -1,6 +1,6 @@
 # The plan
 
-The author's list, as it stands after 0.20.0, plus
+The author's list for the prepared 0.21.0 release, plus
 the findings he asked be added from this side (marked *(found here)*) — do not
 invent any others. Web first, then APK. Lint and GitHub stay deferred. Italic
 notes are the state of play, not new work. **Android 6 and up, always** — the
@@ -78,7 +78,7 @@ the phone — or comes back to life if it has not been.
 
 ## typing and the keyboard
 
-- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing) (important for typing UX) — *not started. The editor already sends the keyboard exactly Obsidian's own attributes (spellcheck on, autocorrect on, autocapitalize on) and no longer second-guesses a typed space, so whatever is left is somewhere else and has never been traced.*
+- [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing) (important for typing UX) — *deferred. On the tested phone, a Gboard suggestion can arrive at Satr as an input event that already includes a space; a plain editable control deferred it until the next word. The author subsequently reproduced the immediate space in the actual Obsidian APK too, correcting the earlier comparison. Satr keeps spellcheck off and autocorrect/autocapitalize on. A pairing or selection-state difference is a lead, not a confirmed cause; no fix is included.*
 - [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really — *still happening, and nothing has been done about it yet. It needs the device: the swipe is the keyboard's own gesture and arrives as a run of deletions with no key event, so the next step is to watch what the note receives at position 0 and refuse anything that would walk out of it.*
 - [x] putting caret somewhere when * * icons aren't visible makes it before the * icon rather than after it, this itself isn't an issue but a new line that way inserts the * in the new line, that's the bad behavior rather than having the caret not do what it is doing right now — *the same hidden-marker Enter issue already fixed in 6509df4; the duplicate is recorded as done, not fixed again.*
 - [ ] `==test ==` should highlight in the source view but not in the reading view —
