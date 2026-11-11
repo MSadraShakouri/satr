@@ -8,7 +8,7 @@ newest phone gets the best path and the oldest gets a working one, decided at
 runtime; never a lowest common denominator for everybody.
 
 Closed cases do not live here. What shipped is written up release by release in
-ROADMAP.md. **A tick survives here only while it is still unconfirmed** — a fix
+the GitHub release notes; the roadmap keeps only the view that faces forward. **A tick survives here only while it is still unconfirmed** — a fix
 waiting on the phone, a fix that cannot be checked until something else is
 built, or a bug believed fixed and being watched for its return — **or while it
 records a decision** worth not making twice. Everything else has been removed.
