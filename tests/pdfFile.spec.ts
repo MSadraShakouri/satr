@@ -1102,10 +1102,14 @@ test('the counter rides with the floating buttons, pill and all', async ({ page 
   expect(dropped).toBeGreaterThan(0); // and is still on the screen, not off it
   expect(await header()).toBe(headerWas); // while the document's only label stays
 
+  // The document controls no longer return on an upward scroll: the chosen
+  // interaction is a tap on the page (documentChrome.spec.ts).
   await page.mouse.wheel(0, -500);
   await page.waitForTimeout(500);
-  expect(await page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(false);
-  expect(await offTheEdge()).toBe(above); // and back above the pill with it
+  expect(await page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(true);
+  await page.mouse.click(195, 400);
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains('is-hidden-nav'))).toBe(false);
+  await expect.poll(offTheEdge).toBe(above); // and back above the pill with it
 });
 });
 

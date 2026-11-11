@@ -132,7 +132,7 @@ test('the ⋮ carries dark pages as well, beside settings', async ({ page }) => 
   await openDocument(page);
   await page.locator('#file-actions').click();
   const items = await page.locator('[role="menuitem"]').allInnerTexts();
-  expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Dark pages', 'Settings']);
+  expect(items).toEqual(['Rename…', 'Move to…', 'Delete', 'Dark pages', 'Rotation', 'Settings']);
 
   // and it opens the same sheet the toolbar opens, on the same answer
   await page.locator('.menu-item', { hasText: 'Dark pages' }).click();

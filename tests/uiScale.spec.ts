@@ -41,6 +41,9 @@ async function boot(page: Page, url = '/') {
     localStorage.setItem('satr:view:Notes/Scale.md', JSON.stringify({ mode: 'preview', line: 0 }));
   }, NOTE);
   await page.goto(url);
+  // The reading view puts words up before filling math. Wait for the sign
+  // the scale assertions measure, rather than racing the asynchronous fill.
+  await expect(page.locator('.preview-pane .katex svg').first()).toBeAttached({ timeout: 15000 });
   await page.evaluate(() => document.fonts.ready);
 }
 

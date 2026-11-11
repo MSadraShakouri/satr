@@ -47,7 +47,9 @@ test('a notice slides with the files drawer, like the header buttons', async ({ 
   await notice(page);
   const before = await page.evaluate(() => document.querySelector('.notice')!.getBoundingClientRect().left);
   await page.evaluate(() => document.body.classList.add('files-open'));
-  await expect.poll(async () => page.evaluate(() => document.querySelector('#files')!.getBoundingClientRect().left)).toBeGreaterThan(40);
+  // Wait for the notice itself, not just the moving button: the button can
+  // cross x=40 before the notice has moved the 40px asserted below.
+  await expect.poll(async () => page.evaluate(() => document.querySelector('.notice')!.getBoundingClientRect().left)).toBeGreaterThan(before + 40);
   const after = await page.evaluate(() => {
     const notice = document.querySelector('.notice')!.getBoundingClientRect().left;
     const files = document.querySelector('#files')!.getBoundingClientRect().left;

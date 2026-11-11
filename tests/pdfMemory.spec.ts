@@ -55,6 +55,9 @@ test('reading down a document does not keep every page it has been past', async 
   test.slow();
   await boot(page, { 'book.pdf': PDF }, 'book.pdf');
   await readThis(page);
+  // A first canvas may be only a small sketch; wait for the page picture
+  // before measuring its memory rather than sampling the placeholder.
+  await expect.poll(() => pictureMb(page), { timeout: 15000 }).toBeGreaterThan(1);
   const atTop = await pictureMb(page);
 
   // Down the whole document at a reader's pace -- half a screen at a time,
