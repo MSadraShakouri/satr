@@ -80,3 +80,67 @@ export function imagesOnPage(doc: PdfDocumentObject, page: PdfPageObject): Promi
     worker.postMessage({ id, type: 'ExecuteRequest', data: { name: 'imagesOnPage', args: [doc, page] } });
   });
 }
+
+/** Open an immutable Blob without first materializing it as a whole buffer. */
+export async function openPdfBlob(id: string, blob: Blob): Promise<{ document: PdfDocumentObject; reads: number; bytes: number }> {
+  await pdfium();
+  const worker = link;
+  if (!worker) throw new Error('PDF engine unavailable');
+  const requestId = `satr-blob-${asked += 1}`;
+  return new Promise((resolve, reject) => {
+    const hear = (event: MessageEvent<{ id: string; type: string; data?: { type: string; value?: unknown } }>): void => {
+      if (event.data?.id !== requestId || event.data.type !== 'ExecuteResponse') return;
+      worker.removeEventListener('message', hear);
+      const answer = event.data.data;
+      if (answer?.type === 'result') resolve(answer.value as { document: PdfDocumentObject; reads: number; bytes: number });
+      else reject(new Error('Could not open PDF by random access'));
+    };
+    worker.addEventListener('message', hear);
+    worker.postMessage({ id: requestId, type: 'ExecuteRequest', data: { name: 'openRandomBlob', args: [id, blob] } });
+  });
+}
+
+/** Open a bounded native capability through the worker's synchronous adapter. */
+export async function openPdfUrlSource(id: string, source: { url: string; size: number }): Promise<{ document: PdfDocumentObject; reads: number; bytes: number }> {
+  await pdfium();
+  const worker = link;
+  if (!worker) throw new Error('PDF engine unavailable');
+  const requestId = `satr-url-${asked += 1}`;
+  return new Promise((resolve, reject) => {
+    const hear = (event: MessageEvent<{ id: string; type: string; data?: { type: string; value?: unknown } }>): void => {
+      if (event.data?.id !== requestId || event.data.type !== 'ExecuteResponse') return;
+      worker.removeEventListener('message', hear);
+      if (event.data.data?.type === 'result') resolve(event.data.data.value as { document: PdfDocumentObject; reads: number; bytes: number });
+      else reject(new Error('Could not open PDF by random access'));
+    };
+    worker.addEventListener('message', hear);
+    worker.postMessage({ id: requestId, type: 'ExecuteRequest', data: { name: 'openRandomUrl', args: [id, source] } });
+  });
+}
+
+/** Report a read failure after a successful custom open; a partial page is not success. */
+export function onPdfReadFailure(id: string, callback: () => void): () => void {
+  const worker = link;
+  if (!worker) return () => undefined;
+  const hear = (event: MessageEvent<{ type?: string; documentId?: string }>): void => {
+    if (event.data?.type === 'satr-pdf-read-failed' && event.data.documentId === id) callback();
+  };
+  worker.addEventListener('message', hear);
+  return () => worker.removeEventListener('message', hear);
+}
+
+/** Cumulative input reads as seen by PDFium, not the page bitmap size. */
+export function randomPdfStats(document: PdfDocumentObject): Promise<{ reads: number; bytes: number } | null> {
+  const worker = link;
+  if (!worker) return Promise.resolve(null);
+  const requestId = `satr-stats-${asked += 1}`;
+  return new Promise((resolve) => {
+    const hear = (event: MessageEvent<{ id: string; type: string; data?: { type: string; value?: unknown } }>): void => {
+      if (event.data?.id !== requestId || event.data.type !== 'ExecuteResponse') return;
+      worker.removeEventListener('message', hear);
+      resolve(event.data.data?.type === 'result' ? event.data.data.value as { reads: number; bytes: number } | null : null);
+    };
+    worker.addEventListener('message', hear);
+    worker.postMessage({ id: requestId, type: 'ExecuteRequest', data: { name: 'randomPdfStats', args: [document.id] } });
+  });
+}

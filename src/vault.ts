@@ -21,6 +21,7 @@ export interface Entry {
   name: string;
   kind: 'file' | 'folder';
   mtime: number;
+  size?: number;
 }
 
 /** What a file opened as text turned out to be.
@@ -55,6 +56,8 @@ export interface Backend {
    *  being turned into 41 million characters of base64 and back again
    *  before the engine saw a byte of it. */
   readBytes(path: string): Promise<Uint8Array | null>;
+  /** Immutable browser-store blob, without materialising its bytes. */
+  readBlob?(path: string): Promise<Blob | null>;
   /** Bytes straight in, without going through text. The browser vault only:
    *  the device writes a file by its path and has no need of it. */
   writeBytes?(path: string, blob: Blob): Promise<void>;
@@ -166,6 +169,11 @@ class WebBackend implements Backend {
   }
   async read(path: string): Promise<string | null> {
     return this.contents(path);
+  }
+  async readBlob(path: string): Promise<Blob | null> {
+    if (!(path in this.index.files) || localStorage.getItem(fileKey(path)) !== null) return null;
+    const value = await getStored(path);
+    return value && 'blob' in value ? value.blob : null;
   }
   async readBytes(path: string): Promise<Uint8Array | null> {
     if (!(path in this.index.files)) return null;
@@ -415,7 +423,7 @@ class DeviceBackend implements Backend {
   async stat(path: string): Promise<Entry | null> {
     try {
       const s = await this.fs.stat({ path: path || '/', directory: EXTERNAL });
-      return { path, name: basename(path), kind: s.type === 'directory' ? 'folder' : 'file', mtime: s.mtime ?? 0 };
+      return { path, name: basename(path), kind: s.type === 'directory' ? 'folder' : 'file', mtime: s.mtime ?? 0, size: s.size };
     } catch {
       return null;
     }

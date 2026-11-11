@@ -30,6 +30,7 @@ import { EngineRunner, PdfEngine as PdfiumEngine, PdfiumNative } from '@embedpdf
 import type { ImageDataConverter } from '@embedpdf/engines';
 import type { PdfDocumentObject, PdfPageObject } from '@embedpdf/models';
 import { imagesOnPage } from './pdfiumImages';
+import { blobPdfSource, openRandomPdf, urlPdfSource } from './pdfRandom';
 
 /** What the page sends to start us: everything the engine needs that only
  *  a document can know. */
@@ -56,11 +57,50 @@ const toBlob: ImageDataConverter<Blob> = async (getImageData, type = 'image/png'
 
 const runner = new EngineRunner();
 let native: PdfiumNative | null = null;
+const randomDocuments = new Map<string, { release(): void; stats(): { reads: number; bytes: number } }>();
+const closingRandom = new Map<string, string>();
+const respond = runner.respond.bind(runner);
+runner.respond = ((message: { id: string; type: string; data?: { type?: string } }) => {
+  const documentId = closingRandom.get(message.id);
+  if (documentId && message.type === 'ExecuteResponse') {
+    closingRandom.delete(message.id);
+    if (message.data?.type === 'result') {
+      randomDocuments.get(documentId)?.release();
+      randomDocuments.delete(documentId);
+    }
+  }
+  respond(message as never);
+}) as typeof runner.respond;
 
 // The runner's own execute is an instance property, so this keeps hold of
 // it and stands in front of it rather than replacing it.
 const engineAnswers = runner.execute;
 runner.execute = (async (request: Ask) => {
+  if (request.data?.name === 'openRandomBlob' || request.data?.name === 'openRandomUrl') {
+    try {
+      if (!native) throw new Error('PDF engine is not ready');
+      const [id, input] = request.data.args as [string, Blob | { url: string; size: number }];
+      const source = input instanceof Blob ? blobPdfSource(input) : urlPdfSource(input.url, input.size);
+      let reads = 0, bytes = 0;
+      const read = source.read;
+      source.read = (position, length) => { reads += 1; bytes += length; return read(position, length); };
+      const opened = openRandomPdf(native, id, source, () => self.postMessage({ type: 'satr-pdf-read-failed', documentId: id }));
+      randomDocuments.set(id, { release: opened.release, stats: () => ({ reads, bytes }) });
+      runner.respond({ id: request.id, type: 'ExecuteResponse', data: { type: 'result', value: { document: opened.document, reads, bytes } } as never });
+    } catch (error) {
+      runner.respond({ id: request.id, type: 'ExecuteResponse', data: { type: 'error', value: { type: 'reject', reason: { message: String(error) } } } as never });
+    }
+    return;
+  }
+  if (request.data?.name === 'randomPdfStats') {
+    const [id] = request.data.args as [string];
+    runner.respond({ id: request.id, type: 'ExecuteResponse', data: { type: 'result', value: randomDocuments.get(id)?.stats() ?? null } as never });
+    return;
+  }
+  if (request.data?.name === 'closeDocument') {
+    const doc = request.data.args[0] as PdfDocumentObject;
+    if (randomDocuments.has(doc.id)) closingRandom.set(request.id, doc.id);
+  }
   if (request.data?.name === 'imagesOnPage') {
     const [document_, page] = request.data.args as [PdfDocumentObject, PdfPageObject];
     let value: unknown = [];

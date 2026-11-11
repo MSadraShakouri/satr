@@ -21,7 +21,8 @@ import { PdfErrorCode, type PdfBookmarkObject, type PdfDocumentObject, type PdfP
 import * as log from './log';
 import { sayMemory } from './vitals';
 import type { ImageDataLike, Rect as PageRect } from '@embedpdf/models';
-import { imagesOnPage, pdfium, type PageRect as PictureRect } from './pdfiumEngine';
+import { imagesOnPage, onPdfReadFailure, openPdfBlob, openPdfUrlSource, pdfium, randomPdfStats, type PageRect as PictureRect } from './pdfiumEngine';
+import { closeDevicePdf, type DevicePdfSource } from './pdfDevice';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
 import { keepSketches, recallSketches } from './pdfSketchCache';
 
@@ -64,7 +65,11 @@ export interface PdfOptions {
    *  counter belongs there rather than in the document: it is chrome, not
    *  part of the page. */
   overlay?: HTMLElement | null;
+  /** Complete read if a native random source cannot initially be opened. */
+  readDeviceFallback?: (source: DevicePdfSource) => Promise<ArrayBuffer>;
+  onSourceFailure?: () => void;
 }
+
 
 /** The two stops Obsidian offers in its display options' zoom section. */
 export type PdfFit = 'width' | 'height';
@@ -942,7 +947,7 @@ const looksLikePaper = (drawn: HTMLCanvasElement, from: Rect): boolean => {
  *  the same file never share the engine's copy of it. */
 let opened = 0;
 
-export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, options: PdfOptions): Promise<PdfHandle> {
+export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | Blob | DevicePdfSource, options: PdfOptions): Promise<PdfHandle> {
   // PDFium, not pdf.js: the engine draws on its own and hands back a
   // picture, so there is no worker to wire up and no cmap, font or decoder
   // directory to point at — the one wasm file carries all of it, which is
@@ -955,10 +960,38 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
   starting();
   opened += 1;
   const id = `satr-${opened}`;
-  const parsing = log.time('pdf', 'document parsed', { bytes: typeof source === 'string' ? 0 : source.byteLength });
-  const document_: PdfDocumentObject = await (typeof source === 'string'
-    ? engine.openDocumentUrl({ id, url: source })
-    : engine.openDocumentBuffer({ id, content: source })).toPromise();
+  const parsing = log.time('pdf', 'document parsed', { bytes: typeof source === 'string' ? 0 : source instanceof ArrayBuffer ? source.byteLength : source.size });
+  let deviceSource: DevicePdfSource | null = null;
+  let randomOpened = false;
+  let document_: PdfDocumentObject;
+  if (source instanceof Blob) {
+    try {
+      const opened = await openPdfBlob(id, source);
+      document_ = opened.document;
+      randomOpened = true;
+      log.note('pdf', 'random source opened', { size: source.size, reads: opened.reads, bytes: opened.bytes });
+    } catch (error) {
+      log.warn('pdf', 'random source fell back to full read', { why: String(error).slice(0, 120) });
+      document_ = await engine.openDocumentBuffer({ id, content: await source.arrayBuffer() }).toPromise();
+    }
+  } else if (typeof source === 'object' && !(source instanceof ArrayBuffer) && source.kind === 'device-pdf') {
+    try {
+      const opened = await openPdfUrlSource(id, { url: source.url, size: source.size });
+      document_ = opened.document;
+      deviceSource = source;
+      randomOpened = true;
+      log.note('pdf', 'random source opened', { size: source.size, reads: opened.reads, bytes: opened.bytes });
+    } catch (error) {
+      if (!options.readDeviceFallback) { await closeDevicePdf(source); throw error; }
+      log.warn('pdf', 'random source fell back to full read', { why: String(error).slice(0, 120) });
+      let all: ArrayBuffer;
+      try { all = await options.readDeviceFallback(source); } finally { await closeDevicePdf(source); }
+      document_ = await engine.openDocumentBuffer({ id, content: all }).toPromise();
+    }
+  } else if (typeof source === 'string') document_ = await engine.openDocumentUrl({ id, url: source }).toPromise();
+  else if (source instanceof ArrayBuffer) document_ = await engine.openDocumentBuffer({ id, content: source }).toPromise();
+  else throw new Error('Unsupported PDF source');
+  const stopSourceFailure = randomOpened && options.onSourceFailure ? onPdfReadFailure(id, options.onSourceFailure) : () => undefined;
   parsing({ pages: document_.pageCount });
   // Reading the bytes, building the engine and parsing the document turned
   // out to be the small half of an open. These two are the other half: the
@@ -994,6 +1027,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
     // sharp tile over it is another, and neither is on the JavaScript heap:
     // this is the only place the app can see what a document costs it.
     sayMemory('document open');
+    if (randomOpened) void randomPdfStats(document_).then((stats) => {
+      if (stats) log.note('pdf', 'random reads after first page', stats);
+    });
   };
 
   const { scroller } = options;
@@ -3295,6 +3331,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       putDown(true);
       document.removeEventListener('visibilitychange', onHidden);
       watchers.clear();
+      stopSourceFailure();
       window.clearTimeout(settleTimer);
       window.clearTimeout(idleTimer);
       window.clearTimeout(placeTimer);
@@ -3315,7 +3352,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
       // The document's memory goes back to the engine; the engine itself is
       // the app's and stays up, because compiling the wasm again for the
       // next document would be felt.
-      void engine.closeDocument(document_).toPromise().catch(() => undefined);
+      void engine.closeDocument(document_).toPromise().catch(() => undefined).finally(() => { if (deviceSource) void closeDevicePdf(deviceSource); });
       scroller.removeAttribute('data-pan-x');
       delete scroller.dataset.ignoreSwipe;
       doc.remove();
@@ -3333,10 +3370,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer, o
  *  starts from the top. */
 const HEAD_BYTES = 64 * 1024;
 
-export async function pdfKey(bytes: Uint8Array | ArrayBuffer): Promise<string> {
-  const all = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const head = all.subarray(0, HEAD_BYTES);
-  const stamp = new TextEncoder().encode(String(all.byteLength));
+export async function pdfKey(bytes: Uint8Array | ArrayBuffer | Blob): Promise<string> {
+  const length = bytes instanceof Blob ? bytes.size : bytes.byteLength;
+  const head = bytes instanceof Blob ? new Uint8Array(await bytes.slice(0, HEAD_BYTES).arrayBuffer()) : (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).subarray(0, HEAD_BYTES);
+  return pdfKeyHead(head, length);
+}
+
+export async function pdfKeyHead(head: Uint8Array, length: number): Promise<string> {
+  const stamp = new TextEncoder().encode(String(length));
   const both = new Uint8Array(head.byteLength + stamp.byteLength);
   both.set(head, 0);
   both.set(stamp, head.byteLength);

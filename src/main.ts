@@ -218,7 +218,11 @@ function nameInChrome(): void {
 const picture = { path: '', url: '' };
 /** The PDF open in the tab, as its own bytes: pdf.js reads them, and the
  *  place is remembered against them. */
-const openedDocument: { path: string; bytes: Uint8Array | null } = { path: '', bytes: null };
+type DevicePdfPath = { kind: 'device-path'; path: string; incomingId?: string };
+const openedDocument: { path: string; bytes: Uint8Array | null; blob: Blob | null; device: DevicePdfPath | null } = { path: '', bytes: null, blob: null, device: null };
+let pdfMountGeneration = 0;
+let pdfOpening: AbortController | null = null;
+let pdfLoadGeneration = 0;
 /**
  * The last document's bytes, kept so that coming back to its tab does not
  * read the whole file off the disk again.
@@ -313,7 +317,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', app
  *  bytes, and has no lines for the note machinery to scroll to: everything
  *  that would move the reading view for a note leaves this one alone, or it
  *  would drag the reader back to page one the moment the pages appear. */
-const documentOpen = (): boolean => Boolean(openedDocument.bytes) && openedDocument.path === filePath;
+const documentOpen = (): boolean => Boolean(openedDocument.bytes || openedDocument.blob || openedDocument.device) && openedDocument.path === filePath;
 function rememberPicture(path: string, url: string | null | undefined): boolean {
   if (!url?.startsWith('data:image/')) return false;
   picture.path = path;
@@ -653,6 +657,9 @@ function watchSections(fresh = true): void {
  *  way kept its header, its strip and its thumbnails on the screen over an
  *  empty tab, still naming a file that was no longer open. */
 function closeDocument(): void {
+  pdfMountGeneration += 1;
+  pdfOpening?.abort();
+  pdfOpening = null;
   pdfChrome?.destroy();
   pdfChrome = null;
   syncFindButton();
@@ -782,25 +789,28 @@ function renderPreview(): void {
   }
   // A PDF: pdf.js draws its pages into the pane, which scrolls them, and the
   // place it was left at comes back with it (src/pdfView.ts).
-  if (openedDocument.bytes && openedDocument.path === filePath) {
-    const bytes = openedDocument.bytes;
+  if ((openedDocument.bytes || openedDocument.blob || openedDocument.device) && openedDocument.path === filePath) {
+    const bytes = (openedDocument.bytes || openedDocument.blob || openedDocument.device)!;
+    const generation = pdfMountGeneration;
+    const opening = new AbortController();
+    pdfOpening = opening;
     const path = filePath;
     preview.innerHTML = '';
     preview.classList.add('is-document');
     previewPane.classList.add('is-document');
     previewReady = (async () => {
       try {
-        await mountPdf(path, bytes);
+        await mountPdf(path, bytes, generation, opening.signal);
       } catch (error) {
         // Not a PDF after all, or one pdf.js will not read: say so where the
         // pages would have been, rather than leaving an empty reading view.
         // And say it in the log too: a refusal used to leave the record
         // ending at "engine ready" with no reason, which reads like a hang
         // rather than an answer.
-        log.fail('pdf', 'could not be opened', { path, bytes: bytes?.byteLength ?? 0, why: String(error).slice(0, 120) });
-        if (filePath !== path) return;
+        log.fail('pdf', 'could not be opened', { path, bytes: bytes instanceof Blob ? bytes.size : bytes instanceof Uint8Array ? bytes.byteLength : 0, why: String(error).slice(0, 120) });
+        if (filePath !== path || generation !== pdfMountGeneration) return;
         preview.innerHTML = `<p class="pdf-unreadable">“${escapeText(fileName(path))}” could not be opened.</p>`;
-      }
+      } finally { if (pdfOpening === opening) pdfOpening = null; }
     })();
     return;
   }
@@ -889,11 +899,51 @@ function renderPreview(): void {
 /** The page a document is to be opened at, set by a search result on its
  *  way in and spent by the viewer as it mounts. */
 let openAtPage = 0;
-async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
-  const { showPdf, pdfKey } = await import('./pdfView');
-  if (filePath !== path) return;
-  const key = await pdfKey(bytes);
-  if (filePath !== path) return;
+async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, generation: number, signal: AbortSignal): Promise<void> {
+  const { showPdf, pdfKey, pdfKeyHead } = await import('./pdfView');
+  const current = () => filePath === path && generation === pdfMountGeneration;
+  if (!current()) return;
+  const { openDevicePdf, openIncomingPdf, closeDevicePdf, readDeviceHead, readDeviceAll, probeDeviceWorker } = await import('./pdfDevice');
+  let bytes: Uint8Array | Blob | import('./pdfDevice').DevicePdfSource;
+  let key: string;
+  if (!(input instanceof Blob) && !(input instanceof Uint8Array)) {
+    let native: import('./pdfDevice').DevicePdfSource | null = null;
+    try {
+      native = input.incomingId ? await openIncomingPdf(input.incomingId, signal) : await openDevicePdf(input.path);
+      if (!current()) { await closeDevicePdf(native); return; }
+      const head = await readDeviceHead(native, signal);
+      if (!current()) { await closeDevicePdf(native); return; }
+      key = await pdfKeyHead(head, native.size);
+      const supported = native.size >= 16 * 1024 * 1024 && await probeDeviceWorker(native, head, signal);
+      if (!current()) { await closeDevicePdf(native); return; }
+      if (supported) bytes = native;
+      else {
+        const all = await readDeviceAll(native, signal);
+        if (await pdfKey(all) !== key) throw new Error('PDF changed while opening');
+        await closeDevicePdf(native);
+        native = null;
+        bytes = all;
+        if (!input.incomingId) {
+          const entry = await backend.stat(path);
+          keepDocument({ path, mtime: entry?.mtime ?? 0, bytes: all });
+        }
+        log.note('pdf', 'worker range unavailable; binary file read', { bytes: all.byteLength });
+      }
+    } catch (error) {
+      if (native) await closeDevicePdf(native);
+      if (!current()) return;
+      log.note('pdf', 'using whole-file source', { why: String(error).slice(0, 120) });
+      if (input.incomingId) throw error;
+      const all = await backend.readBytes(input.path);
+      if (!all?.byteLength) throw new Error('Cannot read PDF');
+      bytes = all;
+      const entry = await backend.stat(path);
+      keepDocument({ path, mtime: entry?.mtime ?? 0, bytes: all });
+      key = await pdfKey(all);
+    }
+  } else { bytes = input; key = await pdfKey(bytes); }
+  const device = !(bytes instanceof Uint8Array) && !(bytes instanceof Blob) ? bytes : null;
+  if (!current()) { if (device) await closeDevicePdf(device); return; }
   // The strip is part of the room the column has to leave, so the class
   // that makes room for it goes on before the viewer measures the column —
   // it reads that inset once, on the way in, and a padding that changes
@@ -908,7 +958,8 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
   // went the instant the pdf opened, which is the flash the bars used to
   // have from the other side.)
   forgetHand();
-  const handle = await showPdf(preview, bytes.slice().buffer, {
+  let handle: Awaited<ReturnType<typeof showPdf>>;
+  try { handle = await showPdf(preview, bytes instanceof Uint8Array ? bytes.slice().buffer : bytes, {
     scroller: previewPane,
     key,
     cardFor: path,
@@ -927,14 +978,54 @@ async function mountPdf(path: string, bytes: Uint8Array): Promise<void> {
     // The page counter is chrome: it rides in the floating layer with the
     // navbar pill rather than inside the document.
     overlay: document.querySelector<HTMLElement>('#navbar-wrap'),
-  });
-  if (filePath !== path) { handle.destroy(); return; }
+    onSourceFailure: () => {
+      if (!current()) return;
+      log.warn('pdf', 'random source failed after opening; reading whole file', { path });
+      closeDocument();
+      const retryGeneration = pdfMountGeneration;
+      const retryOpening = new AbortController();
+      pdfOpening = retryOpening;
+      void (async () => {
+        try {
+          let all: Uint8Array | null;
+          if (input instanceof Blob) all = new Uint8Array(await input.arrayBuffer());
+          else if (!(input instanceof Uint8Array) && input.incomingId) {
+            const retry = await openIncomingPdf(input.incomingId, retryOpening.signal);
+            try { all = await readDeviceAll(retry, retryOpening.signal); } finally { await closeDevicePdf(retry); }
+          } else all = await backend.readBytes(path);
+          if (!all?.byteLength) throw new Error('Cannot read PDF');
+          if (filePath !== path || retryGeneration !== pdfMountGeneration) return;
+          useDocumentBytes(path, all);
+        } catch (error) {
+          if (filePath !== path || retryGeneration !== pdfMountGeneration) return;
+          log.fail('pdf', 'whole-file retry failed', { path, why: String(error).slice(0, 120) });
+          preview.innerHTML = `<p class="pdf-unreadable">“${escapeText(fileName(path))}” could not be opened.</p>`;
+        } finally { if (pdfOpening === retryOpening) pdfOpening = null; }
+      })();
+    },
+    readDeviceFallback: async (source) => {
+      let all: Uint8Array | null;
+      try { all = await readDeviceAll(source, signal); }
+      catch (error) {
+        if (signal.aborted || isExternalPath(path)) throw error;
+        all = await backend.readBytes(path);
+      }
+      if (!all?.byteLength) throw new Error('Cannot read PDF');
+      if (await pdfKey(all) !== key) throw new Error('PDF changed while opening');
+      if (!isExternalPath(path)) {
+        const entry = await backend.stat(path);
+        keepDocument({ path, mtime: entry?.mtime ?? 0, bytes: all });
+      }
+      return all.slice().buffer;
+    },
+  }); } catch (error) { if (device) await closeDevicePdf(device); throw error; }
+  if (!current()) { handle.destroy(); return; }
   pdfView = handle;
   if (openAtPage) { ownScroll(400); openAtPage = 0; }
   // Obsidian's chrome around it: the strip of controls and the panel of
   // thumbnails and contents (src/pdfChrome.ts).
   const { mountPdfChrome } = await import('./pdfChrome');
-  if (filePath !== path) { handle.destroy(); pdfView = null; return; }
+  if (!current()) { handle.destroy(); if (pdfView === handle) pdfView = null; return; }
   const { openDarkPages, openRotation } = await import('./pdfChrome');
   const themed = { mode: () => pdfTheme, set: setPdfTheme };
   openPdfTheme = () => openDarkPages(themed);
@@ -2185,17 +2276,52 @@ async function leaveCurrent(): Promise<boolean> {
  *  from disk when they have. The stat costs a millisecond or two and saves
  *  the whole read, which on a phone is the largest part of opening a pdf. */
 async function openDocumentBytes(path: string): Promise<void> {
+  const generation = pdfLoadGeneration;
+  const current = () => filePath === path && generation === pdfLoadGeneration;
+  const incoming = externalFilesByPath.get(path);
+  if (incoming && backend.kind === 'device') {
+    if (!current()) return;
+    openedDocument.path = path;
+    openedDocument.bytes = null;
+    openedDocument.blob = null;
+    openedDocument.device = { kind: 'device-path', path, incomingId: incoming.id };
+    if (mode === 'preview') renderPreview();
+    return;
+  }
   const entry = await backend.stat(path);
+  if (!current()) return;
   const kept = keptDocuments.find((doc) => doc.path === path);
   if (entry && kept && kept.mtime === entry.mtime) {
     log.note('pdf', 'bytes kept', { path, bytes: kept.bytes.byteLength });
-    keepDocument(kept); // used, so it is the newest of the pair again
+    keepDocument(kept);
     useDocumentBytes(path, kept.bytes);
+    return;
+  }
+  if (backend.kind === 'device' && entry?.size != null && entry.size >= 16 * 1024 * 1024 && entry.size <= 0xffffffff) {
+    if (!current()) return;
+    openedDocument.path = path;
+    openedDocument.bytes = null;
+    openedDocument.blob = null;
+    openedDocument.device = { kind: 'device-path', path };
+    if (mode === 'preview') renderPreview();
+    return;
+  }
+  // The IndexedDB Blob is an immutable snapshot. Large browser documents can
+  // travel to the PDF worker without first becoming one large JS buffer.
+  const blob = await backend.readBlob?.(path).catch((error: unknown) => { log.warn('pdf', 'blob read failed', { why: String(error).slice(0, 120) }); return null; });
+  if (!current()) return;
+  if (blob && blob.size >= 16 * 1024 * 1024 && blob.size <= 0xffffffff) {
+    if (!current()) return;
+    openedDocument.path = path;
+    openedDocument.bytes = null;
+    openedDocument.blob = blob;
+    openedDocument.device = null;
+    if (mode === 'preview') renderPreview();
     return;
   }
   const reading = log.time('pdf', 'bytes read', { path });
   const started = performance.now();
-  const bytes = await backend.readBytes(path);
+  const bytes = blob ? new Uint8Array(await blob.arrayBuffer()) : await backend.readBytes(path);
   // How fast, not just how long: 877 ms for his 8.9 MB book and 205 ms for
   // his 2.2 MB one are the same 10 MB a second, and that is a fact about
   // the bridge rather than about either book.
@@ -2204,7 +2330,7 @@ async function openDocumentBytes(path: string): Promise<void> {
     bytes: bytes?.byteLength ?? 0,
     mbPerSecond: Math.round((bytes?.byteLength ?? 0) / 1000 / took) / 1,
   });
-  if (!bytes?.byteLength) return;
+  if (!current() || !bytes?.byteLength) return;
   keepDocument({ path, mtime: entry?.mtime ?? 0, bytes });
   useDocumentBytes(path, bytes);
 }
@@ -2215,6 +2341,8 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
   if (filePath !== path) return;
   openedDocument.path = path;
   openedDocument.bytes = bytes;
+  openedDocument.blob = null;
+  openedDocument.device = null;
   if (mode === 'preview') renderPreview();
 }
 
@@ -2222,6 +2350,7 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
 const since = (mark: number): number => Math.round(performance.now() - mark);
 
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  pdfLoadGeneration += 1;
   rescued = ''; // a file is open: the empty tab has nothing left to explain
   if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
   ++viewGeneration;
@@ -2262,6 +2391,8 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   picture.url = '';
   openedDocument.path = '';
   openedDocument.bytes = null;
+  openedDocument.blob = null;
+  openedDocument.device = null;
   let opening: Mode = 'edit';
   if (documentTab) {
     // A PDF has no text mode either: it is read, page by page, however this
@@ -2663,6 +2794,7 @@ async function newFile(dir = whereNewNotesGo()): Promise<void> {
 }
 
 function showIncomingScreen(path: string, file: IncomingOpenFile): void {
+  pdfLoadGeneration += 1;
   ++viewGeneration;
   window.clearTimeout(viewTimer);
   holdUntil = 0;
@@ -2745,6 +2877,10 @@ async function openIncomingPath(path: string, after?: () => void): Promise<void>
   // A picture is never text, whatever the plugin had to call it: an image the
   // plugin decoded (an older build, or a type it did not know) is shown as the
   // picture it is, read-only, and its bytes never reach the editor.
+  if (isDocument(path)) {
+    if (curTab().path === path) showFile(path, '', after);
+    return;
+  }
   if (isPicture(path)) {
     const pictureFile: IncomingOpenFile = { ...existing, kind: 'binary', readOnly: true, lossy: false, text: undefined };
     externalFilesByPath.set(path, pictureFile);
@@ -3081,6 +3217,7 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
+  pdfLoadGeneration += 1;
   applyRotation(loadSettings().documentRotation, false);
   displayedTab = curTab();
   ++viewGeneration;
@@ -3102,6 +3239,8 @@ function showEmptyTab(): void {
   closeDocument();
   openedDocument.path = '';
   openedDocument.bytes = null;
+  openedDocument.blob = null;
+  openedDocument.device = null;
   preview.classList.remove('is-document');
   previewPane.classList.remove('is-document');
   setViewOnly(false);
@@ -4711,7 +4850,7 @@ function onForeground(from: Wiring): void {
   // about 60 ms together. A note is left alone, as he says a note is fine.
   window.setTimeout(() => {
     if (painted || !systemSaysActive) return;
-    if (!isDocument(filePath) || openedDocument.path !== filePath || !openedDocument.bytes) return;
+    if (!isDocument(filePath) || openedDocument.path !== filePath || (!openedDocument.bytes && !openedDocument.blob && !openedDocument.device)) return;
     log.warn('app', 'came back and nothing painted: building the document again', {
       afterMs: Math.round(performance.now() - asked),
       visibility: document.visibilityState,
