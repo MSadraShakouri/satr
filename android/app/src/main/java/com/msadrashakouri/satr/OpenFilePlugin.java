@@ -245,6 +245,9 @@ public class OpenFilePlugin extends Plugin {
         }
     }
 
+    /** The grant stays in this plugin; the range plugin receives no arbitrary URI. */
+    Uri uriForPdf(String id) { return sources.get(id); }
+
     private JSObject describe(String id) throws Exception {
         String shared = sharedText.get(id);
         if (shared != null) {
@@ -280,6 +283,14 @@ public class OpenFilePlugin extends Plugin {
         result.put("mimeType", mime);
         result.put("size", Math.max(0, size));
         result.put("modified", modifiedTime(id));
+
+        if ("application/pdf".equalsIgnoreCase(mime) || name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
+            result.put("mimeType", "application/pdf");
+            result.put("kind", "binary");
+            result.put("readOnly", true);
+            result.put("lossy", false);
+            return result;
+        }
 
         // A picture is never text. Decoding its bytes gave the page one
         // replacement character per byte — a megabyte of them per megabyte of

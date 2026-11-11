@@ -27,6 +27,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StoragePlugin.class);
         registerPlugin(SystemBarsPlugin.class);
         registerPlugin(OpenFilePlugin.class);
+        registerPlugin(PdfRangePlugin.class);
         registerPlugin(SplashPlugin.class);
         registerPlugin(SharePlugin.class);
         registerPlugin(DiagnosticsPlugin.class);
@@ -34,6 +35,14 @@ public class MainActivity extends BridgeActivity {
         // said at the last resume of the run before this one.
         ResumeWatch.startRun(this);
         super.onCreate(savedInstanceState);
+        com.getcapacitor.Bridge bridge = getBridge();
+        bridge.setWebViewClient(new com.getcapacitor.BridgeWebViewClient(bridge) {
+            @Override public android.webkit.WebResourceResponse shouldInterceptRequest(android.webkit.WebView view, android.webkit.WebResourceRequest request) {
+                com.getcapacitor.PluginHandle handle = bridge.getPlugin("SatrPdfRange");
+                android.webkit.WebResourceResponse response = handle == null ? null : ((PdfRangePlugin) handle.getInstance()).intercept(bridge, request);
+                return response != null ? response : super.shouldInterceptRequest(view, request);
+            }
+        });
         splashScreen.setKeepOnScreenCondition(() -> !splashDismissed);
         new android.os.Handler(android.os.Looper.getMainLooper())
             .postDelayed(() -> splashDismissed = true, 8000);
