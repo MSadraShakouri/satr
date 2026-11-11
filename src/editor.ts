@@ -14,7 +14,7 @@ import { Annotation, Compartment, Prec, EditorSelection, EditorState, StateField
 import { EditorView, keymap, lineNumbers, Decoration, ViewPlugin, WidgetType, GutterMarker, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { caretMotion } from './caretMotion';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { wikiLinks, wikiRuntime } from './wikiLinks';
+import { wikiLinks, wikiLinkPreview, wikiClosingAt, wikiRuntime } from './wikiLinks';
 import { indentBox, listLine, livePreview, markerGap, markerText, numberMarker, remeasured } from './livePreview';
 import { markerStrip } from './markerWidth';
 import { autoSpace } from './autoSpace';
@@ -583,10 +583,12 @@ const HIDDEN_NODE = /Mark$|^URL$|^LinkTitle$/;
  *  which is where a tap past the last word lands, because a hidden mark has no
  *  width to tap: `word *bold*` reads as `word bold`, and a finger at the end of
  *  it puts the caret in front of the closing `*`. */
-function onlyHiddenAfter(state: EditorState, head: number, end: number): boolean {
+function onlyHiddenAfter(view: EditorView, head: number, end: number): boolean {
+  const state = view.state;
   if (!state.sliceDoc(head, end).trim()) return false; // nothing there at all
   const tree = syntaxTree(state);
   for (let at = head; at < end; at += 1) {
+    if (at === head && at + 2 <= end && wikiClosingAt(view, at)) { at += 1; continue; }
     if (HIDDEN_CHAR.test(state.sliceDoc(at, at + 1))) continue;
     let mark = false;
     for (let node: SyntaxNode | null = tree.resolveInner(at, 1); node; node = node.parent) {
@@ -612,7 +614,7 @@ function enterAtDrawnEnd(view: EditorView): boolean {
   const range = view.state.selection.main;
   if (range.empty) {
     const end = view.state.doc.lineAt(range.head).to;
-    if (range.head < end && onlyHiddenAfter(view.state, range.head, end)) {
+    if (range.head < end && onlyHiddenAfter(view, range.head, end)) {
       view.dispatch({ selection: { anchor: end } });
     }
   }
@@ -1196,7 +1198,7 @@ export class SatrEditor {
       titleField,
       rtlLineDirection, directionsField, directionPlugin, lineGutterField,
       csvSlot.of([]),
-      markdownOnlySlot.of([headingLineField, livePreview]),
+      markdownOnlySlot.of([headingLineField, livePreview, wikiLinkPreview]),
       // After the live preview: a lettered line is given a list's indent
       // here, and a quoted line is given the quote's by the live preview —
       // the one that comes last writes the line's style, and the lettered
@@ -1606,7 +1608,7 @@ export class SatrEditor {
     if (!asCode) {
       this.view.dispatch({ effects: [
         languageSlot.reconfigure(readsEveryNumber(markdown({ base: markdownLanguage, addKeymap: false, extensions: [Highlight], codeLanguages: languages }))),
-        markdownOnlySlot.reconfigure([headingLineField, livePreview]),
+        markdownOnlySlot.reconfigure([headingLineField, livePreview, wikiLinkPreview]),
         markdownLateSlot.reconfigure([persianListMarkerPlugin, mathSource]),
       ] });
       return;
