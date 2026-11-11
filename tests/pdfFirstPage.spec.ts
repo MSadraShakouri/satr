@@ -43,11 +43,50 @@ test('the first page says who drew it and how long the plan took', async ({ page
   const facts = first!.facts ?? {};
   // Never again a line with no facts on it at all.
   expect(Object.keys(facts), 'where the picture came from').toContain('from');
-  expect(['engine', 'shelf']).toContain(facts.from);
+  expect(['engine', 'unknown']).toContain(facts.from);
   expect(Object.keys(facts), 'how long the plan took to put one up').toContain('plan');
   expect(typeof facts.plan).toBe('number');
   expect(Number(facts.plan), 'the plan is part of the open, not longer than it').toBeLessThanOrEqual(Number(first!.ms ?? 0) + 50);
   // A document nobody has read before is drawn by the engine, and then the
   // engine's own share of the wait is on the line too.
   if (facts.from === 'engine') expect(Object.keys(facts)).toContain('engineMs');
+});
+
+test('the tracked picture records a frame opportunity without calling it a paint', async ({ page }) => {
+  await boot(page);
+  await expect.poll(async () => (await logLines(page)).some((l) => l.text === 'tracked picture frame opportunity'), { timeout: 10000 }).toBe(true);
+  const lines = await logLines(page);
+  const inserted = lines.find((l) => l.text === 'first page on glass')!;
+  const frame = lines.find((l) => l.text === 'tracked picture frame opportunity')!;
+  expect(['base', 'photo']).toContain(inserted.facts?.picture);
+  expect(inserted.facts?.page).toBeGreaterThanOrEqual(1);
+  expect(inserted.facts?.pixelCopyMs).toBeGreaterThanOrEqual(0);
+  expect(frame.facts?.page).toBe(inserted.facts?.page);
+  expect(frame.facts?.picture).toBe(inserted.facts?.picture);
+  expect(frame.facts?.afterPlacementMs).toBeGreaterThanOrEqual(0);
+  expect(frame.facts?.connected).toBe(true);
+  expect(frame.facts?.visible).toBe(true);
+});
+
+test('the shelf wait distinguishes an empty shelf from recalled pages', async ({ page }) => {
+  await boot(page);
+  const firstWait = (await logLines(page)).find((l) => l.text === 'shelf waited for')!;
+  expect(firstWait.facts?.status).toBe('ready');
+  expect(firstWait.facts?.recalled).toBe(0);
+  await page.evaluate(async (pdf) => {
+    const { pdfKey } = (window as any).__satr.load('/src/pdfView.ts');
+    const { keepSketches } = (window as any).__satr.load('/src/pdfSketchCache.ts');
+    const raw = Uint8Array.from(atob(pdf.split(',')[1]), (c) => c.charCodeAt(0));
+    const canvas = document.createElement('canvas');
+    canvas.width = 100; canvas.height = 141;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 100, 141);
+    ctx.fillStyle = '#000'; ctx.fillRect(10, 10, 30, 30);
+    await keepSketches(await pdfKey(raw), 4, 0, new Map([[0, canvas]]));
+  }, PDF);
+  await page.reload();
+  await expect.poll(async () => (await logLines(page)).some((l) => l.text === 'shelf waited for'), { timeout: 10000 }).toBe(true);
+  const hit = (await logLines(page)).find((l) => l.text === 'shelf waited for')!;
+  expect(hit.facts?.status).toBe('ready');
+  expect(hit.facts?.recalled).toBe(1);
 });

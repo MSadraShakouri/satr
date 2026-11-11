@@ -995,14 +995,13 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   parsing({ pages: document_.pageCount });
   // Reading the bytes, building the engine and parsing the document turned
   // out to be the small half of an open. These two are the other half: the
-  // column of boxes being built and laid out, and the moment a page is
-  // actually on the glass -- which is the one a reader would call "opened".
+  // column of boxes being built and laid out, and when a tracked picture
+  // is inserted. The historical "on glass" label does not prove a paint.
   const building = log.time('pdf', 'column built', { pages: document_.pageCount });
   let firstPicture: ReturnType<typeof log.time> | null = log.time('pdf', 'first page on glass');
-  // What the engine itself did before anything was on screen, so the open
-  // can be read as "waiting for the engine" or "waiting for everything
-  // else". On his phone the first page costs 228 to 340 ms and only part of
-  // that is drawing; nothing said which part.
+  // Worker round trips before the tracked picture is inserted. These can
+  // include queue and transfer time and can cover more than one page; they
+  // are not PDFium CPU time and are not proof that a picture was painted.
   let firstEngineMs = 0;
   let firstPixels = 0;
   /** When the first drawing plan was made, so the wait between a laid-out
@@ -1010,19 +1009,36 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
    *  226ms with no engine facts at all -- a page off the shelf, drawn by
    *  nobody-said-what. */
   let planningAt = 0;
-  const drewSomething = (): void => {
+  let firstPixelCopyMs = 0;
+  let firstFrameRequest = 0;
+  const drewSomething = (page: number, canvas: HTMLCanvasElement, picture: 'base' | 'photo'): void => {
     if (!firstPicture) return;
+    const placedAt = performance.now();
     firstPicture({
-      // Where the first picture came from: the engine drew it, or it came
-      // back off the shelf (pdfSketchCache) already drawn.
-      from: firstPixels ? 'engine' : 'shelf',
+      // Base canvases come from an engine request. A photo can have been
+      // cut from a new sketch or a shelf sketch, so do not guess its source.
+      from: picture === 'base' ? 'engine' : 'unknown',
       ...(firstPixels ? {
         engineMs: Math.round(firstEngineMs),
         megapixels: Math.round(firstPixels / 1e5) / 10,
       } : {}),
-      ...(planningAt ? { plan: Math.round(performance.now() - planningAt) } : {}),
+      ...(planningAt ? { plan: Math.round(placedAt - planningAt) } : {}),
+      // engineMs includes worker queue and transfer. Pixel copies over all
+      // base work before this insertion are timed separately.
+      pixelCopyMs: Math.round(firstPixelCopyMs),
+      picture,
+      page,
     });
     firstPicture = null;
+    // This is a frame opportunity *before* paint, not proof that the pixels
+    // reached the display. Do not force a layout merely to measure it.
+    if (document.visibilityState === 'visible') firstFrameRequest = requestAnimationFrame(() => {
+      firstFrameRequest = 0;
+      if (!shut) log.note('pdf', 'tracked picture frame opportunity', {
+        page, picture, afterPlacementMs: Math.round(performance.now() - placedAt),
+        connected: canvas.isConnected, visible: document.visibilityState === 'visible',
+      });
+    });
     // The reading that explains a kill. A page of a book is a canvas, the
     // sharp tile over it is another, and neither is on the JavaScript heap:
     // this is the only place the app can see what a document costs it.
@@ -1419,7 +1435,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       dropPhotos(slab, index, (photo) => whole || inside(photo.part, part));
       slab.photos.push({ canvas: made.canvas, index, part, whole });
       slab.box.append(made.canvas);
-      drewSomething();
+      drewSomething(slab.page, made.canvas, 'photo');
     });
   };
   /** Which pages have a question outstanding, so a page being drawn
@@ -2073,7 +2089,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       }
       // The engine's rounding, not ours, decides how wide the picture is.
       if (slice === 0 && picture.width !== made.canvas.width) made.canvas.width = picture.width;
+      const copyStarted = firstPicture ? performance.now() : 0;
       made.context.putImageData(new ImageData(picture.data, picture.width, picture.height), 0, top);
+      if (copyStarted) firstPixelCopyMs += performance.now() - copyStarted;
       ring.push(...darkRing(picture));
       if (slice + 1 < slices) await breathe();
     }
@@ -2085,7 +2103,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     // is never a column of empty boxes
     slab.base?.remove();
     slab.box.prepend(made.canvas);
-    drewSomething();
+    drewSomething(slab.page, made.canvas, 'base');
     slab.base = made.canvas;
     slab.baseTask = null;
   }
@@ -2937,10 +2955,17 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     // before it is the one part of an open that grows with how much of it
     // was read.
     const shelving = log.time('pdf', 'shelf waited for');
-    const recalling = recallSketches(options.key, slabs.length).catch(() => []);
-    void recalling.then(putBack);
-    await Promise.race([recalling, new Promise((go) => { window.setTimeout(go, RECALL_WAIT_MS); })]);
-    shelving();
+    const recalling = recallSketches(options.key, slabs.length)
+      .then((pages) => ({ status: 'ready' as const, pages }))
+      .catch(() => ({ status: 'error' as const, pages: [] as { page: number; canvas: HTMLCanvasElement }[] }));
+    void recalling.then(({ pages }) => putBack(pages));
+    let shelfTimeout = 0;
+    const result = await Promise.race([
+      recalling,
+      new Promise<{ status: 'timeout'; pages: [] }>((go) => { shelfTimeout = window.setTimeout(() => go({ status: 'timeout', pages: [] }), RECALL_WAIT_MS); }),
+    ]);
+    window.clearTimeout(shelfTimeout);
+    shelving({ status: result.status, recalled: result.pages.length });
   }
   planningAt = performance.now();
   drawBand();
@@ -3337,6 +3362,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       window.clearTimeout(placeTimer);
       stopLiving();
       shut = true;
+      if (firstFrameRequest) cancelAnimationFrame(firstFrameRequest);
       stopGlide();
       watcher.disconnect();
       scroller.removeEventListener('scroll', onScroll);
