@@ -1,98 +1,123 @@
-# Satr
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img src="docs/logo-light.png" width="280" alt="Satr — سطر">
+  </picture>
+</p>
 
-A Markdown editor for Android that writes Persian and English side by side. It looks and feels like Obsidian's phone app and works on plain `.md` files in your own folders.
+<h3 align="center">A Markdown editor for Android that writes<br>Persian and English side by side.</h3>
 
-*Satr* (سطر) means "line".
+<p align="center">
+  <a href="https://github.com/MSadraShakouri/satr/actions/workflows/build-android.yml"><img src="https://github.com/MSadraShakouri/satr/actions/workflows/build-android.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/MSadraShakouri/satr/releases/latest"><img src="https://img.shields.io/github/v/release/MSadraShakouri/satr" alt="Release"></a>
+  <a href="https://github.com/MSadraShakouri/satr/releases"><img src="https://img.shields.io/github/downloads/MSadraShakouri/satr/total" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
-## What it does
+<p align="center">
+  <a href="#install">Download</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#develop">Develop</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
 
-- **Both directions in one note.** Prose follows its first strong letter. Numbers and dates infer their direction from surrounding prose, using the same policy in the editor, reading view and PDF. Math and literal code stay LTR and never influence neighbouring prose. A formula and a code span are each one thing, isolated, so they stand on the same side of a Persian line in the editor as they do in the reading view and the PDF. The line numbers keep the left edge; only the right sidebar's outline reads the note's majority.
-- **Live preview while editing**, with Obsidian's rule: the Markdown syntax shows only on the line you're editing. There's also a separate reading view (double-tap it to edit). Switching between the two keeps the same place: the mapping measures the rendered formulas and tables and compensates. A list, a numbered item, a to-do, a quote and every level of their nesting start exactly where the reading view puts them — same indent, same step per level, same word at the end of a row — so the switch doesn't shift the text sideways. Tables, math and mermaid stay as source while you edit. Inside `$…$` or `$$…$$` nothing is Markdown at all — a `**` is never bold, a `[a](b)` never becomes a link, `` `c` `` never becomes code and a `[^1]` never becomes a footnote reference: every one of them is just a character of the formula, in the editor and in the reading view alike.
-- **Math with KaTeX.** In the reading view and the PDF, long formulas wrap to the screen at `=`, `<`, `≤` and other relations, never at `+` or `−`, break first at the writer's own line ends, then at commas (which stay put), then at those relations — repeated on the next line — and last at spaces you typed between words, including words inside `\text{...}` and the other text commands. A Persian phrase is the one exception: its words stay a single run, so they read right to left instead of being handed to the page one word at a time, which would lay them out left to right. A group in plain parentheses or brackets is a step behind all of those: it is never broken while the line can hold it, and a group too wide for the line breaks inside itself at its own commas and relations rather than at whatever atom the browser would otherwise split. Overwide display formulas in print can also use KaTeX’s own operator breaks to fit the column. A display formula is as tall as its content, including a large fraction; the Android preview grows the box to what actually painted instead of clipping it to the font strut. The drawn signs (the vector arrow, stretchy brackets, roots) scale with the system font size exactly like the letters, as in the PDF: the app WebView is pinned at 100% text zoom and the phone's font scale is applied in CSS, so the em a sign is laid out in is the size of the letter beside it. The source is never changed.
-- **Obsidian's Markdown:**
-  - `[[wiki links]]`, with a picker while you type
-  - `![[image embeds]]` with `|300` sizes
-  - `==highlights==`
-  - task lists
-  - ordered lists in Persian digits or Abjad letters (`۱.`, `الف.`), drawn in the reading view exactly as typed
-  - footnotes, written in a popover
-  - tables, each with a direction of its own (its first cell, or `<!-- table: rtl -->` above it). A right-to-left table is the mirror image of the English one: `---:` sets the column against the end of the row — the left — and `:---` against its start, on screen and in the PDF alike
-  - folding headings
-- **Images** in the reading view and the PDF, centred:
-  - `![alt](path)` is relative to the note.
-  - `![[name.png]]` finds the image anywhere in your folders.
-- **PDF export** through Android's print dialog, as Markor does:
-  - Vazirmatn font, A4
-  - one or two columns, set in Settings → PDF export and remembered per file on this device
-  - automatic column order from the majority of prose letters (math and code ignored), or explicit LTR / RTL
-  - centred display equations by default, or aligned to the reading edge; equations themselves always stay LTR
-  - export starts directly with the saved options—no configuration popup
-  - headings kept with following content, including at column boundaries
-  - ordered-list markers hang beside their text, lined up at their ends, each list given room for its own widest marker so a `۱۰۰.` or an `الف.` never runs into the margin
-  - footnotes at the foot of each page (each column in two-column mode), numbered across the whole sheet
-  - page numbers in Persian digits
-  - page breaks (`\pagebreak`)
-  - your own CSS; two-column mode fixes A4 geometry, 1-inch outer margins and an 8 mm gap
-- **Your files, your folders.**
-  - *Spaces* are shortcuts to folders; Satr never writes its own config into them.
-  - *All files* walks the whole storage.
-  - Notes open in tabs you can rearrange. Each file remembers its reading position, view, caret and folds across switches, tab closure/reopening and app restarts. Android files opened by another app keep a bookmark tied to the source URI, not the temporary permission ID, so opening the same file again comes back to the tab it already has.
-  - Launch is yours to set: **restore the tabs you had**, **always open a new empty tab**, or **open one after you have been away** for a time you choose (5 minutes to a day, 30 by default). The last tab can be closed — the empty "No file is open" tab is what is left — and the tab switcher's *n tabs* menu closes them all at once. Hold a folder to **open all its notes in tabs**, in order, or to **replace the tabs** with that folder.
-  - Undo **and redo** belong to each open tab, in memory. Switching tabs or losing focus keeps both stacks; closing the tab or app ends them. No persistent revision history is added.
-- **Discord-style timestamps.** `<t:1700000000>` or `<t:1700000000:R>` in a note reads as a date or a relative time — all seven formats, in your own language and locale — and the relative form keeps counting while you read. The PDF prints them with the same grey chip. The **Date** button on the keyboard toolbar opens a calendar sheet that writes the code for you — Gregorian or Jalali, in your Dates language, with hour and minute and the seven formats each showing a live sample — and tapping a date in the reading view reopens the sheet on that moment to edit it. The months sit on a track you can swipe, one month a swipe, running the way your language reads.
-- **Any file opens**, not just Markdown: a `.patch`, a `.json`, a script, a photo. Plain UTF-8 text is editable whatever its extension; anything else is shown as the bytes decode, read-only, so Satr can never write rubbish back over it. Photos open in the reading view as pictures. An `.html` file is a page rather than a note: you edit its markup as text, and the reading view hands it the whole pane to be itself — its own stylesheet, its own layout, edge to edge, with none of Satr's typography over the top and nothing rewritten. Satr adds only what the file left out, Vazirmatn and your own text size, which a single line of the page's own CSS replaces. The page runs its own code in the same sealed frame a `live` block gets — an origin of its own, no network, no reach into your notes — and pictures beside it in your folders are resolved for it. Only a file too large to load is turned away.
-- **Search and outline** in one drawer, for this note or all notes, with regular expressions. Find and replace in the note has one bar; a hit lands a third of the way down the page rather than behind the keyboard, and closing the bar leaves the caret after the match instead of a selection with handles over it. The outline tree flips to the note's majority direction; every heading keeps its own. The All-notes search has an **Include subfolders** toggle (header + Settings) — off, it shows only the space's top-level notes.
-- **Typing like Obsidian:**
-  - Brackets, quotes, `$`, `*`, `_`, `=` and backticks pair up and wrap a selection.
-  - `$$` then `$$` opens a math block. A lone `$$` or `$$$$` with nothing between is just text. Only a `$$ … $$` pair whose dollars sit on different lines is a display block; the empty writing line counts as math.
-  - Math source is styled like Obsidian: what's between the dollars is monospace and italic, while the dollars themselves keep the note's font in the accent colour (they mark a formula's edges at a glance). A line holding only `$$` never turns monospace, and a pair a heading, a list, a quote or a fence broke is plain text on both sides — editor and reading view read the same rule.
-  - A Markdown character inside a formula belongs to the formula, so it never pairs with one in another formula: in `$*$ foo foo foo $*$` the foos are prose between two formulas and stay in the note's own font.
-  - A new to-do box is always empty, whatever the line above it says. And when the line under an item is already an empty item, Enter moves into that one instead of making a second empty item and pushing the numbers below.
-  - Ordered lists number themselves while you write, from the head of the list down. Enter on an item numbers the new one after the item above it, and any edit at all renumbers the run — not just Enter — counting from the head's own number and never from 1 (`6.` then Enter gives `7.`; `6.` over `3.` becomes `6. 7. 8.`). A line that leaves the list — deleted, joined to the line above, or emptied — brings the numbers below it down, so Backspace and a selection work like the toolbar's delete-line. Editing an item's text moves nothing. A blank line, prose or another list ends the run, a nested item numbers itself and renumbers the list it hangs under, and a note you open or a list you paste keeps the numbers it came with.
-  - **One list, one language**, and the marker is the one you typed. The head decides the digits — `1.`, `۱.` or `١.` — so a marker typed on another keyboard is written over at once. Letters work the same way, typed rather than chosen: `الف.` `ب.` `ج.` counts in ابجد, a `پ.` turns the list to ابپتث, and `a.` `b.` `c.` counts in English letters (`A.` `B.` in capitals), while a lone `A. Smith` over `B. Jones` stays two sentences. The punctuation is yours too: a list written `۱)` keeps its paren instead of being given a dot.
-  - Markor's keyboard: autocorrect and word suggestions on, but never a spell-check underline in your text. Spaces are never second-guessed: what you type (or what the keyboard's auto-correct sends) goes in as it is, before a `)` as anywhere else.
-- **A note may bring its own look, and its own code.** HTML written in a note is rendered — your own containers, tables, `<details>`, inline SVG — and the styling that comes with it is kept, whether that is a `<style>` block or a `style` attribute on an element. A note's CSS reaches that note and stops: every selector is put under the element the note is drawn in, `html`, `body` and `:root` mean the note's own root, and `@import` is dropped, so a title page written to stand on its own cannot move the app around it, and in a folder export one file's colours cannot repaint the thirty-nine after it. What a note styles, it styles in the reading view and in the PDF alike. Code is not let loose in the page but given a frame of its own: a fenced block marked `live` runs in a sandbox with an opaque origin and no network, so it can draw a figure, animate a mechanism or work a number out, and it cannot read a single note of yours. `height=` on the fence says how tall it starts; in the reading view it then measures itself. Scripts loose in the markup, frames of your own and `onclick=` attributes are still dropped.
-- **A caret the keyboard can see.** The editor is a plain editable region, not Chrome's EditContext API, so the keyboard, the selection handles and the selection bar all act on the same text the note has: the suggestion strip and auto-correct come back after a backspace, tapping a word brings up what the keyboard suggests for it, and "Select all" takes the whole note. Double tap a word to select it, and drag before lifting the finger to take in more. An arrow key moves the caret one position the way it points — one *drawn* position, so inside an English word or a formula written in a Persian line the caret goes where the key points instead of doubling back or leaping across the run. Where two positions share a place on screen, that place means the one the line's own script gives it, so the way back retraces the way out. Selecting is unchanged: shift and an arrow grow the selection one character a press, in the line's own order, and never swallow a formula whole. The keys answer even while the keyboard is still holding a word.
-- **Fast start, and an install that writes nothing.** The last screen appears at once, before the app's code has loaded. A fresh install leaves your folders alone: the demo and an untouched new note are shown, not saved, and the first keystroke is what makes a note a file.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-editor-dark.png">
+    <img src="docs/screenshots/hero-editor.png" width="300" alt="Satr editing its demo note, Persian and English on one screen">
+  </picture>
+</p>
 
-Open [demo.md](demo.md) in Satr to see all of it: in a browser it opens by itself on the very first run, and nowhere else. It is only shown until you write in it.
+*Satr* (سطر, "line") looks and feels like Obsidian's phone app and works on **plain `.md` files in your own folders** — no database, no account, no sync service, no network. What makes it different is the writing itself: every line takes its direction from its first letter, and numbers, dates, formulas and code sit correctly inside Persian prose in the editor, the reading view and the PDF alike.
+
+## Features
+
+| | |
+| --- | --- |
+| ✍️ **True bidirectional writing** — every line follows its first letter; numbers, dates, math and code sit correctly in Persian prose. | 🧮 **Math with KaTeX** — live preview while editing, long formulas that wrap at `=` and `≤` but never at a bare `+`, Persian words inside formulas that read right to left. |
+| 📄 **PDF export** — A4, one or two columns, column order that follows the note's language, footnotes at the foot, page numbers in Persian digits. | 📅 **Dates done right** — Discord-style `<t:…>` stamps in your own language, written for you by a Gregorian **or Jalali** calendar sheet with a live sample of every format. |
+| 🗂️ **Your files, your folders** — plain `.md` you can edit anywhere; Spaces as shortcuts; tabs you rearrange; each note remembers its place, caret and folds. | 🔍 **Search and outline** — find & replace with regular expressions, search across every note, an outline tree that flips with the note's direction. |
+| 📝 **Obsidian's Markdown** — `[[wiki links]]`, `==highlights==`, task lists, footnote popovers, folding headings, lists that count in Persian digits or Abjad letters (`الف.`). | 📂 **Any file opens** — code with highlighting, CSV as a table, HTML as a full page, images, and PDFs in a built-in reader with its own chrome and one-finger zoom. |
+| ⚡ **Fast and private** — instant cold start, fully offline, and a fresh install writes nothing until your first keystroke. | 🌗 **Light and dark** — themes that follow the system, with dark pages for documents that are already dark. |
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/reading-top.png" width="330" alt="The demo note in the reading view, Persian and English">
+      <br><sub><b>Reading view</b> — the demo note</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/date-sheet.png" width="330" alt="The Jalali calendar sheet, month آبان ۱۴۰۵">
+      <br><sub><b>Jalali sheet</b> — آبان ۱۴۰۵</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/reading-math-dark.png">
+        <img src="docs/screenshots/reading-math.png" width="330" alt="Display math rendered in the reading view">
+      </picture>
+      <br><sub><b>Display math</b> — follows your theme</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/reading-table.png" width="330" alt="A right-to-left table in the reading view">
+      <br><sub><b>RTL tables</b> — the mirror image</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/pdf-viewer.png" width="330" alt="A Persian PDF open in Satr's document reader">
+      <br><sub><b>PDF reader</b> — a Persian document</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/files-drawer.png" width="330" alt="The files drawer with folders in Persian and English">
+      <br><sub><b>Files</b> — spaces and folders</sub>
+    </td>
+  </tr>
+</table>
+
+*All screenshots are the real app — the web build at a phone viewport — using the demo note, a seeded vault and an imported PDF.*
 
 ## Install
 
-Download `satr-debug-<version>.apk` from [Releases](https://github.com/MSadraShakouri/Satr/releases) and install it. Android 6 or later is required. On first run Satr asks for "All files access" so it can open your notes wherever they are.
+Download `satr-debug-<version>.apk` from [Releases](https://github.com/MSadraShakouri/satr/releases/latest) and install it.
 
-Each release is signed with the same key, so a new APK installs over the old one and keeps your settings.
+> [!NOTE]
+> Android 6 or later is required. On first run Satr asks for **All files access**, so it can open your notes wherever they are. Each release is signed with the same key — a new APK installs over the old one and keeps your settings.
 
 ## Develop
 
+> [!TIP]
+> No Android device at hand? The web app is the same editor in a browser — `npm run dev` and open it. Notes live in the browser's storage.
+
 ```sh
 npm install
-npm run dev          # the web app at http://localhost:5173 (notes live in the browser's storage)
+npm run dev          # the web app at http://localhost:5173
 npm run build        # type-check and build to dist/
-npm start            # build, then serve dist/ on the network, also at :5173 (open it on the phone)
+npm start            # build, then serve dist/ on the network for a phone
 ```
 
-Browser regression tests cover editor input, selection geometry, pagination and PDF rendering:
+Browser tests (Playwright) cover editor input, selection geometry, pagination and PDF rendering:
 
 ```sh
-npx playwright install chromium   # once; use --with-deps on Linux if needed
-npm test                         # all browser regressions
-npm run test:pdf                  # PDF-only regressions
+npx playwright install chromium   # once
+npm test
 ```
 
-Or set `CHROMIUM_EXECUTABLE_PATH` to an installed Chromium. These tests cover context-aware delimiters, non-overlapping selections, three-line widow/orphan protection, stranded headings, per-file PDF options, LTR/RTL columns and the math-heavy Homework 12.2 document (8 pages in one column, 4 in two, at the same font size). They do not test Android's IME or native print dialog.
-
-To build the Android app (JDK 21 and the Android SDK are needed):
+To build the Android app, JDK 21 and the Android SDK are needed:
 
 ```sh
 npm run android:sync
-cd android
-./gradlew assembleDebug
+cd android && ./gradlew assembleDebug
 ```
 
-### Releases
+<details>
+<summary>Release signing (maintainers)</summary>
 
-GitHub Actions (`.github/workflows/build-android.yml`) builds the APK when a `v*` tag matching `package.json`'s version is pushed, and publishes it as a release. It signs with the keystore in the `ANDROID_KEYSTORE_BASE64` secret: PKCS12, alias `satr`, password `android`. Create the keystore once:
+GitHub Actions builds the APK when a `v*` tag matching `package.json`'s version is pushed, and publishes it as a release. It signs with the keystore in the `ANDROID_KEYSTORE_BASE64` secret (PKCS12, alias `satr`, password `android`):
 
 ```sh
 keytool -genkeypair -v -keystore satr-debug.jks -storetype PKCS12 -alias satr -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Satr"
@@ -101,58 +126,32 @@ gh secret set ANDROID_KEYSTORE_BASE64 < satr-debug.b64
 ```
 
 Keep both files out of git; they're already in `.gitignore`.
+</details>
 
 ## Built with
 
-- Vite, TypeScript and CodeMirror 6
-- marked, DOMPurify, KaTeX and highlight.js
-- Paged.js for the PDF
-- Capacitor 7 for Android
-- Fonts: Vazirmatn and Vazir Code
+Vite, TypeScript and CodeMirror 6 · marked, DOMPurify, KaTeX and highlight.js · Paged.js for the PDF, PDFium for the reader · Capacitor 7 for Android · fonts: Vazirmatn, Vazir Code, XB Zar.
 
-## Plans
+## Roadmap
 
 See [ROADMAP.md](ROADMAP.md).
 
-### Direction of numbers and other neutral text
+## License
 
-The note's majority — whichever script has more strong letters, with math and
-code ignored — flips the outline tree (the line numbers stay on the left edge).
-Arrow keys walk a mixed line in visual order, one drawn position a press, and a
-place on screen that two positions share means the one the line's own script
-gives it — so the caret never doubles back inside a line and every position is
-reachable from either side. After any edit the caret keeps the line's side, not
-the side of the character just typed or deleted, so a number or an English word
-inside Persian text never turns the caret around. Between lines it is the
-line's own direction that decides which key means forward — ← on a Persian
-line, → on an English one — exactly as in a browser's own text field, in
-Obsidian, and in every editor that gives each line a direction; ↓, ↑, Home and
-End cross a direction change without that switch. The outline marks the heading two thirds down the page, where you are
-reading, rather than the one that has just left the top edge. Formulas can show
-all their digits in one set — English or Persian — in the preview and the PDF
-(Settings → Editor, "Math digits"); the note keeps the digits that were typed.
+[MIT](LICENSE) — free to use, study, change and share.
 
-The editor caches whole-document context, rather than guessing from the visible
-lines. Preview and print use the same resolver over rendered prose (including
-soft source newlines):
+<details>
+<summary>The fine print — how Satr treats your text</summary>
 
-1. A block's own first strong letter wins. Digits—including Persian and Arabic
-   digits—punctuation, Markdown metadata, math and code are not strong prose.
-2. For neutral content, unanimous preceding prose since the current heading or
-   file start wins, even when following prose has the opposite direction.
-3. In a mixed section, use the nearest strong prose on either side, skipping
-   math/code. Agreement wins; disagreement prefers the preceding prose. With
-   only one neighbour, use it. Never look through a following heading.
-4. With no prose evidence, use the current heading, otherwise LTR. Neutral
-   headings inherit a parent heading; without a parent, they look into their own
-   section before falling back to LTR. A new section never borrows a later
-   heading's direction.
-5. A line with no strong letter of its own — a bare number, a date, a `#` or a
-   list marker — continues the line above it, so a new line is written in the
-   language you are writing in and a heading or a marker never turns it around.
+**Direction.** A line's direction comes from its first strong letter. Numbers and dates infer theirs from the surrounding prose; math and code are isolated islands that stay left-to-right wherever they sit. A formula, a code span, a timestamp chip — each is one thing, standing on the same side of a Persian line in the editor as in the reading view and the PDF. The line numbers keep the left edge; only the outline reads the note's majority.
 
-This controls paragraph direction/alignment, not character reversal. Math remains
-isolated LTR even inside an RTL paragraph or on an RTL-ordered PDF sheet; a
-Persian phrase written inside a formula reads right to left there, word by word —
-whether it sits in `\text{…}` or bare in the middle of the expression, in a
-fraction's argument or under a root.
+**Live preview.** Markdown syntax shows only on the line you're editing — Obsidian's rule, as the editor's normal state. Inside `$…$` nothing is Markdown at all: a `**` is never bold, a `[a](b)` never a link. Switching between editing and reading keeps your place, measuring rendered formulas and tables to compensate the scroll.
+
+**Math.** Display formulas break first at the writer's own line ends, then at commas, then at relations — repeated on the next line — and last at spaces between words. A Persian phrase inside a formula stays a single right-to-left run. Drawn signs scale with the font exactly like letters. The source is never changed.
+
+**Lists.** One list, one language: the head decides the digits (`1.`, `۱.`) and the letters (`a.`, `الف.`); markers hang beside their text and keep the punctuation you typed. Lists renumber themselves on every edit, counting from the head's own number.
+
+**PDF.** Vazirmatn on A4, one or two columns remembered per file, headings kept with what follows them, footnotes at the foot of each page or column, ordered-list markers hung and lined up, `۱۰۰.` never running into the margin, and your own CSS if the note brings it.
+
+**Files.** Spaces are shortcuts to folders and Satr never writes config into them. Any UTF-8 text file is editable whatever its extension; anything else opens read-only, so Satr can never write rubbish over a file it doesn't understand. An `.html` file is a page, given the whole pane with its own stylesheet in a sealed frame.
+</details>
