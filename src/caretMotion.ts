@@ -3,7 +3,7 @@
 // keyboard events while composing. Selection can span multiple logical
 // characters in a single visual step at a bidirectional boundary.
 
-import { EditorSelection, EditorState, Prec, RangeSetBuilder, Transaction, type Text, type Range} from '@codemirror/state';
+import { EditorSelection, EditorState, StateEffect, StateField, Prec, RangeSetBuilder, Transaction, type Text, type Range} from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { cursorCharLeft, cursorCharRight, selectCharLeft, selectCharRight } from '@codemirror/commands';
 import { directionsField, type TextDirection } from './direction';
@@ -66,6 +66,19 @@ const arrowKeys = ViewPlugin.fromClass(class {
     const dir = arrowDir(event);
     if (!dir) return;
     if (!move(this.view, dir, event.shiftKey)) return;
+    if (!event.shiftKey && !this.view.composing) {
+      const v = this.view, sel = v.state.selection.main, line = v.state.doc.lineAt(sel.head);
+      const ltr = v.state.field(directionsField, false)?.dirs[line.number - 1] !== 'rtl';
+      if (ltr && sel.empty && sel.assoc === -1 && sel.head > line.from) {
+        const span = v.bidiSpans(line).find(s => s.to === sel.head - line.from && s.dir === Direction.RTL);
+        if (span) {
+          const here = v.coordsAtPos(sel.head, -1), there = v.coordsAtPos(sel.head, 1);
+          if (here && there && Math.abs(here.left - there.left) > 1) {
+            v.dispatch({effects: rtlAffinityEffect.of({from: line.from + span.from, to: sel.head})});
+          }
+        }
+      }
+    }
     // Claim the key: the browser's own motion would otherwise follow ours, and
     // CodeMirror's keymaps would step a second time.
     event.preventDefault();
@@ -180,6 +193,24 @@ const ltrIsolate = Decoration.mark({
   bidiIsolate: Direction.LTR,
 });
 const numberIsolate = ltrIsolate;
+// A generated directional mark gives Chromium a native caret affinity on the
+// right edge of an isolated number. It is not part of the document.
+const numberIsolateCaret = Decoration.mark({
+  attributes: { class: 'cm-number-caret-affinity', style: 'unicode-bidi: isolate; direction: ltr' },
+  bidiIsolate: Direction.LTR,
+});
+
+function activeNumberEnd(view: EditorView): number {
+  const s = view.state.selection.main;
+  if (view.composing || !s.empty || s.assoc >= 0) return -1;
+  const line = view.state.doc.lineAt(s.head);
+  const offset = s.head - line.from;
+  const next = line.text[offset] ?? '';
+  const following = line.text[offset + 1] ?? '';
+  if (/[0-9۰-۹٠-٩]/.test(next) || (CS_SEP.includes(next) && next !== '' && /[0-9۰-۹٠-٩]/.test(following))) return -1;
+  const before = line.text.slice(0, offset);
+  return /[0-9۰-۹٠-٩]+(?:[,.:/][0-9۰-۹٠-٩]+)+$/.test(before) ? s.head : -1;
+}
 
 // `![Screenshot_20261014-082559_MiXplorer](_res/Screenshot_20261014-082559_MiXplorer.png)`
 // on a Persian line drew as `) …png(] … ![`: the picture's `!` at the line's
@@ -243,6 +274,7 @@ function linkIsolate(match: string): { from: number; to: number } | null {
 function numberIsolates(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const ranges: { from: number; to: number; deco: Decoration }[] = [];
+  const activeEnd = activeNumberEnd(view);
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     const links: [number, number][] = [];
@@ -262,7 +294,7 @@ function numberIsolates(view: EditorView): DecorationSet {
       if (inMath(view.state, start)) continue;
       if (links.some(([a, b]) => start >= a && start < b)) continue; // inside a link's run
       if (carriedAway(view, start, start + match[0].length)) continue;
-      ranges.push({ from: start, to: start + match[0].length, deco: numberIsolate });
+      ranges.push({ from: start, to: start + match[0].length, deco: start + match[0].length === activeEnd ? numberIsolateCaret : numberIsolate });
     }
   }
   ranges.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -272,9 +304,14 @@ function numberIsolates(view: EditorView): DecorationSet {
 
 const numberRuns = ViewPlugin.fromClass(class {
   isolates: DecorationSet;
-  constructor(view: EditorView) { this.isolates = numberIsolates(view); }
+  private activeEnd: number;
+  constructor(view: EditorView) { this.activeEnd = activeNumberEnd(view); this.isolates = numberIsolates(view); }
   update(update: ViewUpdate) {
-    if (update.docChanged || update.viewportChanged) this.isolates = numberIsolates(update.view);
+    const end = activeNumberEnd(update.view);
+    if (update.docChanged || update.viewportChanged || end !== this.activeEnd) {
+      this.activeEnd = end;
+      this.isolates = numberIsolates(update.view);
+    }
   }
 }, {
   provide: (plugin) => {
@@ -283,4 +320,20 @@ const numberRuns = ViewPlugin.fromClass(class {
   },
 });
 
-export const caretMotion = [lineSide, arrowKeys, numberRuns];
+// Chromium sometimes paints an RTL run's end at its other bidi edge even
+// though the CM association and insertion offset are correct. A generated RLM
+// on the run gives the native caret the right affinity without adding source
+// characters. It is cleared on the next edit or selection change.
+const rtlAffinityEffect = StateEffect.define<{from:number;to:number}>();
+const rtlAffinity = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(old, tr) {
+    let value = tr.docChanged || tr.selection ? Decoration.none : old;
+    for (const effect of tr.effects) if (effect.is(rtlAffinityEffect)) {
+      value = Decoration.set([Decoration.mark({class:'cm-rtl-caret-affinity'}).range(effect.value.from,effect.value.to)]);
+    }
+    return value;
+  },
+  provide: field => EditorView.decorations.from(field)
+});
+export const caretMotion = [lineSide, arrowKeys, numberRuns, rtlAffinity];

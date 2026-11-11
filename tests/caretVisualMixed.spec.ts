@@ -232,3 +232,177 @@ test('mixed-direction selection does not paint unselected letters between visual
     expect(painted, `${c.char} at ${i}: ${JSON.stringify(out)}`).toBe(i < 5);
   }
 });
+
+// Measure the browser's red painted caret, not coordsAtPos or a DOM range:
+// Chromium can paint the other bidi affinity at the very same source offset.
+async function paintedLineX(page: Page): Promise<number> {
+  const rect = await page.locator('.cm-editor').last().locator('.cm-line').first().boundingBox();
+  if (!rect) throw new Error('line is not on screen');
+  const clip = { x: Math.floor(rect.x), y: Math.floor(rect.y), width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
+  const png = await page.screenshot({ caret: 'initial', animations: 'disabled', clip });
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const xs: number[] = [];
+  for (let i = 0; i < data.length; i += info.channels) {
+    if (data[i] > 220 && data[i + 1] < 50 && data[i + 2] < 50) xs.push((i / info.channels) % info.width);
+  }
+  expect(xs.length, 'the native caret must be visible').toBeGreaterThan(5);
+  return clip.x + Math.min(...xs);
+}
+
+for (const text of ['تست ۱۲:۳۲ تست', 'سلام 12:30 تست', 'سلام ۱۲.۵ تست', 'سلام 1,234 تست']) {
+  test(`native caret walks both ways through ${text}`, async ({ page }) => {
+    await setup(page, text);
+    await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
+      caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    }` });
+    for (const [start, key, direction] of [[0, 'ArrowLeft', -1], [text.length, 'ArrowRight', 1]] as const) {
+      await setup(page, text, start);
+      const xs: number[] = [];
+      // The initial RTL edge can be clipped at the right of the screenshot.
+      for (let i = 0; i < text.length - 1; i++) {
+        await page.keyboard.press(key);
+        xs.push(await paintedLineX(page));
+      }
+      for (let i = 1; i < xs.length; i++) {
+        const delta = (xs[i] - xs[i - 1]) * direction;
+        expect(delta, `${text} ${key}: ${JSON.stringify(xs)}`).toBeGreaterThan(0);
+        expect(delta, `${text} ${key}, no skipped number: ${JSON.stringify(xs)}`).toBeLessThan(30);
+      }
+      expect(await page.evaluate(() => visualCaretEditor.getValue())).toBe(text);
+    }
+  });
+}
+
+test('typing at the corrected native time boundary keeps the source insertion point', async ({ page }) => {
+  const text = 'تست ۱۲:۳۲ تست';
+  await setup(page, text, text.length);
+  for (let i = 0; i < 9; i++) await page.keyboard.press('ArrowRight');
+  expect(await page.evaluate(() => visualCaretEditor.view.state.selection.main.head)).toBe(9);
+  await expect(page.locator('.cm-number-caret-affinity')).toHaveCount(1);
+  await page.keyboard.type('X');
+  expect(await page.evaluate(() => visualCaretEditor.getValue())).toBe('تست ۱۲:۳۲X تست');
+  await expect(page.locator('.cm-number-caret-affinity')).toHaveCount(0);
+});
+
+for (const text of ['سلام $abcd$ بعد', 'متن $x^2+12$ بعد']) {
+  test(`native caret walks both ways across inline math: ${text}`, async ({ page }) => {
+    await setup(page, text);
+    await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
+      caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    }` });
+    for (const [start, key, direction] of [[0, 'ArrowLeft', -1], [text.length, 'ArrowRight', 1]] as const) {
+      await setup(page, text, start);
+      const xs: number[] = [];
+      for (let i = 0; i < text.length - 1; i++) {
+        await page.keyboard.press(key);
+        xs.push(await paintedLineX(page));
+      }
+      for (let i = 1; i < xs.length; i++) {
+        const delta = (xs[i] - xs[i - 1]) * direction;
+        expect(delta, `${text} ${key}: ${JSON.stringify(xs)}`).toBeGreaterThan(0);
+        expect(delta, `${text} ${key}, no skipped formula: ${JSON.stringify(xs)}`).toBeLessThan(30);
+      }
+    }
+  });
+}
+
+test('typing at the corrected native math boundary inserts inside the formula', async ({ page }) => {
+  const text = 'سلام $abcd$ بعد';
+  await setup(page, text, text.length);
+  for (let i = 0; i < 9; i++) await page.keyboard.press('ArrowRight');
+  expect(await page.evaluate(() => visualCaretEditor.view.state.selection.main.head)).toBe(10);
+  await expect(page.locator('.cm-math-caret-affinity')).toHaveCount(1);
+  await page.keyboard.type('x');
+  expect(await page.evaluate(() => visualCaretEditor.getValue())).toBe('سلام $abcdx$ بعد');
+});
+
+for (const [text, presses, className] of [
+  ['تست ۱۲:۳۲ تست', 9, 'cm-number-caret-affinity'],
+  ['سلام $abcd$ بعد', 9, 'cm-math-caret-affinity'],
+] as const) {
+  test(`affinity hint does not move text: ${text}`, async ({ page }) => {
+    await setup(page, text, text.length);
+    for (let i = 0; i < presses; i++) await page.keyboard.press('ArrowRight');
+    await expect(page.locator(`.${className}`)).toHaveCount(1);
+    const charRects = () => page.evaluate(() => {
+      const line = visualCaretEditor.view.contentDOM.querySelector('.cm-line')!;
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      const boxes: { text: string; left: number; right: number }[] = [];
+      for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+        for (let i = 0; i < node.length; i++) {
+          const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+          const box = range.getBoundingClientRect();
+          boxes.push({ text: node.data[i], left: box.left, right: box.right });
+        }
+      }
+      return boxes;
+    });
+    const withHint = await charRects();
+    await page.addStyleTag({ content: `.${className}::after { content: none !important; }` });
+    const withoutHint = await charRects();
+    expect(withHint).toEqual(withoutHint);
+  });
+}
+
+for (const text of ['hello فارسی 12.34 done', 'hello $אבג+x$ end']) {
+  test(`native caret walks both directions in LTR text with RTL runs: ${text}`, async ({ page }) => {
+    await setup(page, text);
+    await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
+      caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    }` });
+    for (const [start, key, direction] of [[0, 'ArrowRight', 1], [text.length, 'ArrowLeft', -1]] as const) {
+      await setup(page, text, start);
+      const xs = [await paintedLineX(page)];
+      for (let i = 0; i < text.length; i++) {
+        await page.keyboard.press(key);
+        xs.push(await paintedLineX(page));
+      }
+      for (let i = 1; i < xs.length; i++) {
+        const delta = (xs[i] - xs[i - 1]) * direction;
+        expect(delta, `${text} ${key}: ${JSON.stringify(xs)}`).toBeGreaterThan(0);
+        expect(delta, `${text} ${key}: ${JSON.stringify(xs)}`).toBeLessThan(30);
+      }
+    }
+  });
+}
+
+test('the nested-run affinity hint keeps the text in place and typing at the source position', async ({ page }) => {
+  const text = 'hello فارسی 12.34 done';
+  await setup(page, text);
+  for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowRight');
+  expect(await page.evaluate(() => visualCaretEditor.view.state.selection.main.head)).toBe(12);
+  await expect(page.locator('.cm-rtl-caret-affinity')).toHaveCount(1);
+  const charRects = () => page.evaluate(() => {
+    const line = visualCaretEditor.view.contentDOM.querySelector('.cm-line')!;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    const boxes: { text: string; left: number; right: number }[] = [];
+    for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+      for (let i = 0; i < node.length; i++) {
+        const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+        const box = range.getBoundingClientRect(); boxes.push({ text: node.data[i], left: box.left, right: box.right });
+      }
+    }
+    return boxes;
+  });
+  const withHint = await charRects();
+  await page.addStyleTag({ content: '.cm-rtl-caret-affinity::after { content: none !important; }' });
+  expect(withHint).toEqual(await charRects());
+  await page.keyboard.type('X');
+  expect(await page.evaluate(() => visualCaretEditor.getValue())).toBe('hello فارسی X12.34 done');
+});
+
+test('the native caret walks back through inline code without jumping over it', async ({ page }) => {
+  const text = 'سلام `code()` بعد';
+  await setup(page, text, text.length);
+  await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
+    caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+  }` });
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+  const xs = [await paintedLineX(page)];
+  for (let i = 0; i < 8; i++) { await page.keyboard.press('ArrowRight'); xs.push(await paintedLineX(page)); }
+  for (let i = 1; i < xs.length; i++) {
+    expect(xs[i] - xs[i - 1], JSON.stringify(xs)).toBeGreaterThan(0);
+    expect(xs[i] - xs[i - 1], JSON.stringify(xs)).toBeLessThan(30);
+  }
+  expect(await page.evaluate(() => visualCaretEditor.getValue())).toBe(text);
+});

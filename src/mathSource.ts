@@ -15,6 +15,7 @@ import { StateField, type EditorState, type Range, type Text, type Transaction }
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
 import { isolatesOf } from './caretMotion';
+import { directionsField } from './direction';
 
 // Scanning the whole note for every keystroke is what made typing heavy in a
 // big one: doc.toString() copies the text, maskCode() copies it again, and
@@ -122,6 +123,14 @@ export function inCode(state: EditorState, pos: number): boolean {
 // been told about leaves its motion reasoning about a line that is not the one
 // on the screen — arrows leap and turn back. `bidiIsolate` is how it is told.
 const mathText = Decoration.mark({ class: 'cm-math', bidiIsolate: Direction.LTR });
+const mathTextCaret = Decoration.mark({ class: 'cm-math cm-math-caret-affinity', bidiIsolate: Direction.LTR });
+function activeMathEnd(view: EditorView): number {
+  const s = view.state.selection.main;
+  if (view.composing || !s.empty || s.assoc >= 0 || s.head >= view.state.doc.length || view.state.sliceDoc(s.head, s.head + 1) !== '$') return -1;
+  const line = view.state.doc.lineAt(s.head);
+  if (view.state.field(directionsField, false)?.dirs[line.number - 1] !== 'rtl') return -1;
+  return view.state.field(mathSpans).some(span => span.to - span.delim === s.head) ? s.head : -1;
+}
 const mathDelim = Decoration.mark({ class: 'cm-math-delim' });
 const mathDelimWrong = Decoration.mark({ class: 'cm-math-delim cm-math-delim-wrong' });
 
@@ -395,6 +404,7 @@ function build(view: EditorView): DecorationSet {
   const { state } = view;
   const out: Range<Decoration>[] = [];
   const spans = state.field(mathSpans);
+  const activeEnd = activeMathEnd(view);
   for (const { from, to } of view.visibleRanges) {
     for (const span of spans) {
       if (span.to < from || span.from > to) continue;
@@ -412,7 +422,7 @@ function build(view: EditorView): DecorationSet {
       const wrong = fault !== null;
       out.push((wrong ? mathDelimWrong : mathDelim).range(span.from, open));
       if (wrong) out.push(errorMark(fault.message).range(open, close));
-      out.push(mathText.range(open, close));
+      out.push((close === activeEnd ? mathTextCaret : mathText).range(open, close));
       // Where to point, in the formula's own coordinates. KaTeX gives a
       // position and a length, and the length is zero for everything that
       // ran out of input: a bare "\\frac" is reported at the end of the
@@ -454,10 +464,12 @@ function build(view: EditorView): DecorationSet {
 const mathDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
   isolates: DecorationSet;
-  constructor(view: EditorView) { this.decorations = build(view); this.isolates = isolatesOf(this.decorations); }
+  private activeEnd: number;
+  constructor(view: EditorView) { this.activeEnd = activeMathEnd(view); this.decorations = build(view); this.isolates = isolatesOf(this.decorations); }
   update(update: ViewUpdate): void {
-    // The caret decides nothing here any more, so it costs nothing to move.
-    if (update.docChanged || update.viewportChanged) {
+    const end = activeMathEnd(update.view);
+    if (update.docChanged || update.viewportChanged || end !== this.activeEnd) {
+      this.activeEnd = end;
       this.decorations = build(update.view);
       this.isolates = isolatesOf(this.decorations);
     }

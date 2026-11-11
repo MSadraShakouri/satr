@@ -85,6 +85,7 @@ const taskDone = Decoration.mark({ class: 'cm-lp-task is-checked' });
 const listHidden = Decoration.mark({ class: 'cm-lp-list-hidden' });
 const rule = Decoration.replace({ widget: new RuleWidget() });
 const inlineCode = Decoration.mark({ class: 'cm-lp-inline-code', bidiIsolate: Direction.LTR });
+const inlineCodeCaret = Decoration.mark({ class: 'cm-lp-inline-code cm-code-caret-affinity', bidiIsolate: Direction.LTR });
 // Neutralises markdown styling the parser applies to characters that are not
 // markdown at all (see the Emphasis case below).
 const plainText = Decoration.mark({ class: 'cm-lp-plain' });
@@ -382,7 +383,9 @@ function build(view: EditorView): DecorationSet {
           case 'InlineCode': {
             // A backtick pair inside a formula is part of the formula, not code.
             if (insideMath(node.from, node.to)) return;
-            out.push(inlineCode.range(node.from, node.to));
+            const sel = state.selection.main;
+            const caretAtEnd = !view.composing && sel.empty && sel.head === node.to && sel.assoc < 0;
+            out.push((caretAtEnd ? inlineCodeCaret : inlineCode).range(node.from, node.to));
             if (touches(node.from, node.to)) return false;
             for (let child = node.node.firstChild; child; child = child.nextSibling) {
               if (child.name === 'CodeMark') out.push(hidden.range(child.from, child.to));

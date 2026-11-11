@@ -5811,3 +5811,8 @@ iframe.html-file {
 [dir="rtl"] .setting-item[data-open] .setting-item-icon svg {
   transform: scaleX(-1);
 }
+
+/* Native Chromium caret affinity; these generated marks are not source text. */
+.cm-number-caret-affinity::after, .cm-math-caret-affinity::after, .cm-code-caret-affinity::after { content: "\200e"; }
+
+.cm-rtl-caret-affinity::after { content: "\200f"; }
