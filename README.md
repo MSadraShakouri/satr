@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
-    <img src="docs/logo-light.png" width="330" alt="Satr — سطر">
+    <img src="docs/logo-light.png" width="280" alt="Satr — سطر">
   </picture>
 </p>
 
@@ -25,7 +25,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-editor-dark.png">
-    <img src="docs/screenshots/hero-editor.png" width="380" alt="Satr editing its demo note, Persian and English on one screen">
+    <img src="docs/screenshots/hero-editor.png" width="300" alt="Satr editing its demo note, Persian and English on one screen">
   </picture>
 </p>
 
@@ -43,21 +43,35 @@
 
 ## Screenshots
 
-<p>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/reading-math-dark.png">
-    <img src="docs/screenshots/reading-math-dark.png" width="250" alt="Reading view with centered display math">
-  </picture>
-  <img src="docs/screenshots/date-sheet.png" width="250" alt="The Jalali calendar sheet, month آبان ۱۴۰۵">
-  <img src="docs/screenshots/pdf-viewer.png" width="250" alt="A Persian PDF open in Satr's document reader">
-</p>
+<table>
+  <tr>
+    <td width="238" align="center" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/reading-math-dark.png">
+        <img src="docs/screenshots/reading-math-dark.png" width="215" alt="Reading view with centered display math">
+      </picture>
+      <br><sub><b>Reading view</b> — display math</sub>
+    </td>
+    <td width="238" align="center" valign="top">
+      <img src="docs/screenshots/date-sheet.png" width="215" alt="The Jalali calendar sheet, month آبان ۱۴۰۵">
+      <br><sub><b>Jalali sheet</b> — آبان ۱۴۰۵</sub>
+    </td>
+    <td width="238" align="center" valign="top">
+      <img src="docs/screenshots/pdf-viewer.png" width="215" alt="A Persian PDF open in Satr's document reader">
+      <br><sub><b>PDF reader</b> — a Persian document</sub>
+    </td>
+    <td width="238" align="center" valign="top">
+      <img src="docs/screenshots/reading-table.png" width="215" alt="A right-to-left table in the reading view">
+      <br><sub><b>RTL tables</b> — the mirror image</sub>
+    </td>
+    <td width="238" align="center" valign="top">
+      <img src="docs/screenshots/files-drawer.png" width="215" alt="The files drawer with folders in Persian and English">
+      <br><sub><b>Files</b> — spaces and folders</sub>
+    </td>
+  </tr>
+</table>
 
-<p>
-  <img src="docs/screenshots/reading-table.png" width="250" alt="A right-to-left table in the reading view">
-  <img src="docs/screenshots/files-drawer.png" width="250" alt="The files drawer with folders in Persian and English">
-</p>
-
-*All screenshots are the real app — the web build at a phone viewport — using the demo note, a seeded vault and an imported PDF.*
+*The strip scrolls sideways →. All screenshots are the real app — the web build at a phone viewport — using the demo note, a seeded vault and an imported PDF.*
 
 ## Install
 
