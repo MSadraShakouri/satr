@@ -190,16 +190,26 @@ These synthetic timings do not establish phone performance.*
 ## sidebar, tabs and files
 
 - [ ] PDF cards after deletion *(found here: deleting an active PDF or its
-  folder can refile its card during reader destruction; deleting and recreating
-  a folder can also leave a stale child card. Desktop controlled cases reproduce
-  both. This is a stale thumbnail/position, not deletion of the underlying PDF
-  or a note. A safe fix must handle in-flight writes and path reuse.)*
+  folder could refile its card during reader destruction; deleting and recreating
+  a folder could leave a stale child card. Same-page deletion and moves now
+  invalidate the subtree, fence old viewer writes and in-flight reads, and let
+  a moved viewer file at its new path. The fix does not coordinate separate
+  browser tabs or guarantee cleanup if the page closes during invalidation.
+  This is a stale thumbnail/position, not loss of the PDF or a note. Desktop
+  30-card save medians across three runs were 2.7–2.75ms before and
+  2.6–3.25ms after; reads 0.3–0.4ms in both. Not phone measurements.)*
 - [ ] web vault durability on failures *(found here: injected IndexedDB
   transaction aborts can be reported as successful writes; closing the page with
   a held commit can lose an unsaved edit. These are controlled browser failures,
-  not proof of the reported phone incident. A partial guard was not shipped:
-  multi-file interruption, cross-tab races and page-close durability remain
-  unresolved, and the prototype's 30-write desktop median rose 21.8 to 24.4ms.)*
+  not proof of the reported phone incident. A narrower safeguard now retains an
+  older localStorage copy until its migration transaction commits, keeps a newer
+  local copy, and checks a folder's legacy migrations before moving any files.
+  Five fault-injection cases failed before and pass after. Normal writes still
+  do not wait for commit; interrupted multi-file operations, cross-tab races and
+  page-close durability remain unresolved. The broader guard prototype was not
+  shipped: its 30-write desktop median rose 21.8 to 24.4ms. For this narrower
+  change a four-file folder-rename probe had seven-sample desktop medians of
+  19.5ms before and 19.9ms after, with overlapping ranges.)*
 
 - [x] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me (I have an idea right now: show the current dir at the top of the new tab page, will be really good) — *built your way: the new tab page says which folder the note will land in, and that line opens a sheet that walks folders like the drawer does — a row goes into a folder, the + makes one, and nothing changes until **Put new notes here** is pressed. In a space the walk cannot rise above the space root; in All files it reaches the whole vault. It was already landing beside the note you were last in rather than at the scope's base — the app simply never said so. A pick belongs to the tab it was made on and is never written to disk; import follows the same folder.*
 - [x] new note tab long file names should get truncated, right now it makes the screen scrollable — *built, and it was not the tab strip. The strip and its cards already take an ellipsis: a 96-character name measures 171 pixels of a 486-pixel title, and the document stays 390 of 390 at a phone's width. What scrolled was the other half of "new tab": the recent notes list on it. A row there is the name with the folder under it, and the folder line was clamped (`max-width: 100%`, nowrap, ellipsis) while the name was not — the row is a column, so the name set its width, and the name set the page's. A 96-character name made the page 350 pixels of column ask for 615. The name now wears the same four lines as the folder under it, and the page is 350 of 350. `tests/newTab.spec.ts`, which fails at 615 with them taken out.*
