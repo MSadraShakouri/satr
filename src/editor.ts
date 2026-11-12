@@ -22,7 +22,7 @@ import { Highlight, highlightTag } from './highlightSyntax';
 import { CODE_COLOURS } from './codeHighlight';
 import { languages } from '@codemirror/language-data';
 import { inCode, inMath, mathSource } from './mathSource';
-import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath } from './delimiterInput';
+import { deleteDelimiterPair, delimiterInput, enterCodeFence, enterDisplayMath, proseDelimitersEnabled, setProseDelimiters } from './delimiterInput';
 import { INDENT_STEP, enterEndsPrefixLine, enterInCode } from './enterKey';
 import { tightSelection } from './selection';
 import { toolbarCommands } from './commands';
@@ -1599,6 +1599,10 @@ export class SatrEditor {
     // row are both "not code", and the second one's own punctuation still
     // has to reach the painter.
     const csv = isCsvFile(name) ? name : '';
+    // Reapply even when the file kind matches: a restored tab's EditorState
+    // may have been saved under a different name or before a rename.
+    const prose = !asCode && !csv;
+    if (proseDelimitersEnabled(this.view.state) !== prose) this.view.dispatch({ effects: setProseDelimiters.of(prose) });
     if (csv !== this.csvName) {
       this.csvName = csv;
       this.view.dispatch({ effects: csvSlot.reconfigure(csv ? csvColumns(csv) : []) });

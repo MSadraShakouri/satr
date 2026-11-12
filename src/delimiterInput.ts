@@ -25,6 +25,18 @@ import { EditorSelection, StateEffect, StateField, type EditorState, type Select
 import { EditorView } from '@codemirror/view';
 import { closingMathDelimiter, inCode, inMath } from './mathSource';
 
+// Markdown input rules must not alter code or delimited data. Keep the mode
+// in each editor state so restored tab sessions can be updated independently.
+export const setProseDelimiters = StateEffect.define<boolean>();
+const proseDelimiters = StateField.define<boolean>({
+  create: () => true,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(setProseDelimiters)) return effect.value;
+    return value;
+  },
+});
+export const proseDelimitersEnabled = (state: EditorState): boolean => state.field(proseDelimiters, false) !== false;
+
 type Pair = { from: number; to: number; mark: string };
 const addPair = StateEffect.define<Pair>({ map: (p, changes) => ({ ...p, from: changes.mapPos(p.from, 1), to: changes.mapPos(p.to, -1) }) });
 const pairs = StateField.define<Pair[]>({
@@ -260,7 +272,7 @@ export function insertDelimiter(view: EditorView, text: string): boolean {
 export function enterDisplayMath(view: EditorView): boolean {
   const { state } = view;
   const range = state.selection.main;
-  if (state.readOnly || !range.empty || state.selection.ranges.length !== 1 || inCode(state, range.head)) return false;
+  if (!proseDelimitersEnabled(state) || state.readOnly || !range.empty || state.selection.ranges.length !== 1 || inCode(state, range.head)) return false;
   const line = state.doc.lineAt(range.head);
   const match = /^([ \t]*)\$\$([ \t]*)(\$\$)?[ \t]*$/.exec(line.text);
   if (!match) return false;
@@ -278,7 +290,7 @@ export function enterDisplayMath(view: EditorView): boolean {
 export function enterCodeFence(view: EditorView): boolean {
   const { state } = view;
   const range = state.selection.main;
-  if (state.readOnly || !range.empty || state.selection.ranges.length !== 1) return false;
+  if (!proseDelimitersEnabled(state) || state.readOnly || !range.empty || state.selection.ranges.length !== 1) return false;
   const line = state.doc.lineAt(range.head);
   const match = /^([ \t]*)(`{3,})([^\n`]*?)[ \t]*((?:`{3,})[ \t]*)?$/.exec(line.text);
   if (!match) return false;
@@ -311,7 +323,7 @@ export function enterCodeFence(view: EditorView): boolean {
 
 export function deleteDelimiterPair(view: EditorView): boolean {
   const { state } = view;
-  if (state.readOnly || state.selection.ranges.some((r) => !r.empty)) return false;
+  if (!proseDelimitersEnabled(state) || state.readOnly || state.selection.ranges.some((r) => !r.empty)) return false;
   const emptyPairs = state.selection.ranges.map((r) => state.field(pairs, false)?.find((p) =>
     r.head === p.from + p.mark.length && r.head === p.to - p.mark.length));
   if (emptyPairs.some((p) => !p)) return false;
@@ -327,7 +339,7 @@ export function deleteDelimiterPair(view: EditorView): boolean {
 // in front of a closing bracket lived here; it was more trouble than it was
 // worth — a space before `)` is usually wanted, and never surprising.)
 const input = EditorView.inputHandler.of((view, from, to, text) => {
-  if (view.composing || view.state.readOnly || from !== view.state.selection.main.from || to !== view.state.selection.main.to) return false;
+  if (!proseDelimitersEnabled(view.state) || view.composing || view.state.readOnly || from !== view.state.selection.main.from || to !== view.state.selection.main.to) return false;
   if (/^(\${1,2}|\*{1,3}|_{1,3}|~{1,2}|={1,2}|%{1,2}|`{1,3}|")$/.test(text)) return insertDelimiter(view, text);
   if (text === ' ' && from === to) {
     // An empty pair's closing half goes away, whatever its length: `= ` out of
@@ -342,4 +354,4 @@ const input = EditorView.inputHandler.of((view, from, to, text) => {
   return false;
 });
 
-export const delimiterInput = [pairs, loneMark, input];
+export const delimiterInput = [proseDelimiters, pairs, loneMark, input];
