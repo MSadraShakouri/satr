@@ -4,7 +4,7 @@ import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, 
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews, forgetViews } from './viewStore';
 import { startKeeping, flush as flushLog } from './logStore';
 import * as log from './log';
-import { tellWhyItDied, tellWhatTheLastResumeSaid, watchTheThread } from './diagnostics';
+import { tellWhyItDied, tellWhatTheLastResumeSaid, watchTheThread, reportLaunchScripts } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
 import type { EditorState, Text } from '@codemirror/state';
@@ -4707,6 +4707,11 @@ function tellHowThePageLoaded(): void {
       scriptsDone: Math.round(nav.domContentLoadedEventEnd),
       loaded: Math.round(nav.loadEventEnd),
     });
+    const reportScripts = (): void => reportLaunchScripts(
+      performance.getEntriesByType('resource') as PerformanceResourceTiming[], nav.domContentLoadedEventEnd,
+    );
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(reportScripts, { timeout: 4000 });
+    else setTimeout(reportScripts, 0);
   };
   if (document.readyState === 'complete') say();
   else window.addEventListener('load', () => setTimeout(say, 0), { once: true });

@@ -308,3 +308,37 @@ test('the log says which build wrote it', async ({ page }) => {
   const start = await read(page).then((lines) => find(lines, 'launch', 'cold start'));
   expect(start?.facts?.build, 'and so does the launch line').toBeTruthy();
 });
+
+test('launch resource timings name only the three slowest same-origin scripts before scripts finished', async ({ page }) => {
+  await boot(page, { 'A.md': NOTE }, 'A.md');
+  const result = await page.evaluate(() => {
+    const log = window.__satr.load('/src/log.ts');
+    const diagnostics = window.__satr.load('/src/diagnostics.ts') as any;
+    log.forget();
+    const entry = (name: string, duration: number, responseEnd: number, initiatorType = 'script') =>
+      ({ name, duration, responseEnd, initiatorType, transferSize: 123, decodedBodySize: 456 });
+    diagnostics.reportLaunchScripts([
+      entry('/assets/slow.js?private=secret', 40, 80), entry('/assets/medium.js', 30, 90),
+      entry('/assets/fast.js', 20, 90), entry('/assets/extra.js', 10, 90),
+      entry('https://other.example/foreign.js', 100, 80), entry('/after.js', 150, 101),
+      entry('/style.css', 200, 80, 'link'), entry('/hidden.js', 90, 0),
+    ], 100);
+    return log.lines().filter(l => l.text === 'launch script resource');
+  });
+  expect(result.map(l => l.facts?.name)).toEqual(['slow.js', 'medium.js', 'fast.js']);
+  expect(result.map(l => l.facts?.resourceMs)).toEqual([40, 30, 20]);
+  expect(result[0].facts?.transferBytes).toBe(123);
+  expect(result[0].facts?.decodedBytes).toBe(456);
+  expect(JSON.stringify(result)).not.toContain('secret');
+});
+
+test('startup records the script resources from the actual browser timeline', async ({ page }) => {
+  await boot(page, { 'A.md': NOTE }, 'A.md');
+  await expect.poll(async () => (await read(page)).some(l => l.text === 'launch script resource')).toBe(true);
+  const scripts = (await read(page)).filter(l => l.text === 'launch script resource');
+  expect(scripts.length).toBeLessThanOrEqual(3);
+  for (const line of scripts) {
+    expect(line.facts?.name).toMatch(/\.js$/);
+    expect(line.facts?.resourceMs).toEqual(expect.any(Number));
+  }
+});

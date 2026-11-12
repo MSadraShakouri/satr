@@ -238,3 +238,24 @@ export function watchTheThread(): void {
     log.note('app', 'long tasks this run', { felt: said + missed, worstMs: worst, kept: said });
   }, { capture: true });
 }
+
+/** Resource timings are network/cache time, not JavaScript parse or execution
+ *  time. Keep only same-origin script files finished before DOMContentLoaded;
+ *  URLs, query strings and vault paths do not belong in this diagnostic. */
+export function reportLaunchScripts(entries: readonly PerformanceResourceTiming[], scriptsDone: number): void {
+  const scripts = entries.filter((entry) => {
+    if (entry.initiatorType !== 'script' && entry.initiatorType !== 'link') return false;
+    if (!(entry.responseEnd > 0 && entry.responseEnd <= scriptsDone)) return false;
+    try {
+      const url = new URL(entry.name, location.href);
+      return url.origin === location.origin && /\.m?js$/i.test(url.pathname);
+    } catch { return false; }
+  }).sort((a, b) => b.duration - a.duration).slice(0, 3);
+  for (const entry of scripts) {
+    const name = new URL(entry.name, location.href).pathname.split('/').pop() || 'script';
+    log.note('launch', 'launch script resource', {
+      name, resourceMs: Math.round(entry.duration),
+      transferBytes: entry.transferSize, decodedBytes: entry.decodedBodySize,
+    });
+  }
+}
