@@ -44,6 +44,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { closeTabSwitcher, isTabSwitcherOpen, openTabSwitcher, prepareTabSwitcher, stopPreparingTabSwitcher, type TabSwitcherDeps } from './tabs';
 import { cardKept, cardNow, forgetTabCard, liveStamp, rememberCard, rememberShot, shotNow, warmTabCards, type Shot } from './tabCards';
+import { cardEpoch, currentCard, forgetPdfCardsWithin } from './pdfCardLifecycle';
 import { installLiveBlocks, stripLiveBlocks } from './liveBlocks';
 import { keepTimestampsCurrent, restyleTimestamps, setTimestampStyle, TIMESTAMP_START, type TimestampFormat } from './timestamps';
 import { maskMathAndCode } from './mathScan';
@@ -2592,10 +2593,6 @@ async function moveFile(from: string, to: string, onDisk: string): Promise<void>
       const moving = log.time('file', 'renamed', { from: fileName(from), to: fileName(to) });
       await backend.rename(from, to);
       moving();
-      // The card is filed under the path, so it moves with the file by
-      // being dropped: the next read of the document files a new one.
-      void import('./pdfCard').then(({ forgetCard }) => forgetCard(from));
-      forgetTabCard(from);
     } catch (error) {
       // A name the disk already has is the rename refusing, and that refusal is
       // what the reader is told. A file that is not there to move (deleted
@@ -2626,6 +2623,13 @@ async function moveFile(from: string, to: string, onDisk: string): Promise<void>
 
 /** A file or folder moved (renamed): the open note, history and view memory follow. */
 function pathMoved(from: string, to: string): void {
+  // Both spellings can have pictures from a previous occupant. Invalidate
+  // synchronously, before an old viewer can file during its teardown.
+  void forgetPdfCardsWithin(from).catch(() => {});
+  void forgetPdfCardsWithin(to).catch(() => {});
+  if (filePath && within(filePath, from)) pdfView?.setCardPath(to + filePath.slice(from.length));
+  forgetTabCard(from);
+  forgetTabCard(to);
   forgetTextWithin(from);
   forgetTextWithin(to);
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
@@ -2665,6 +2669,7 @@ function pathMoved(from: string, to: string): void {
 }
 /** A file or folder was deleted: forget it; if the open note went, open another. */
 function pathDeleted(path: string): void {
+  void forgetPdfCardsWithin(path).catch(() => {});
   forgetTextWithin(path);
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   // A card outliving its file would be a tab showing the inside of
@@ -3644,9 +3649,10 @@ function tabSwitcherDeps(): TabSwitcherDeps {
           // Costs nothing when the page, the zoom and the place are the
           // ones already filed.
           if (path === filePath && pdfView) await pdfView.keepNow().catch(() => undefined);
+          const epoch = cardEpoch(path);
           const { recallCard } = await import('./pdfCard');
           const card = await recallCard(path);
-          if (!card) return `${cardName(path)}<p class="tab-card-note">PDF</p>`;
+          if (!card || !currentCard(path, epoch)) return `${cardName(path)}<p class="tab-card-note">PDF</p>`;
           // Held, so the next opening of the switcher paints this page
           // without a database read and without waiting for one.
           rememberShot(path, card);

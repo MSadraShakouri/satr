@@ -145,6 +145,11 @@ export function forgetShot(path: string): void {
   shots.delete(path);
 }
 
+/** Forget pictures in a moved or deleted subtree, including closed tabs. */
+export function forgetShotsWithin(path: string): void {
+  for (const key of shots.keys()) if (key === path || key.startsWith(`${path}/`)) shots.delete(key);
+}
+
 /** A file renamed, deleted, or replaced: its card goes with it, so a tab
  *  can never show the inside of a file that is no longer there. */
 export function forgetTabCard(path: string): void {

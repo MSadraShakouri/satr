@@ -18,7 +18,8 @@
 // is never started, and the file is never opened.
 
 import { forgetShot } from './tabCards';
-import { dropAside, getAside, putAside } from './webStore';
+import { getAside, putAside } from './webStore';
+import { cardEpoch, cardOperation, cardsSettled, currentCard, forgetPdfCardsWithin } from './pdfCardLifecycle';
 
 const CARD = 'pdf-card/';
 
@@ -147,28 +148,30 @@ const asJpeg = (canvas: HTMLCanvasElement): Promise<Blob | null> =>
  */
 export async function keepCard(
   path: string, page: number, pages: number, canvas: HTMLCanvasElement,
-  how?: { dark?: boolean; crop?: Crop | null; rough?: boolean },
+  how?: { dark?: boolean; crop?: Crop | null; rough?: boolean; epoch?: number },
 ): Promise<void> {
   if (!path) return;
-  // A sketch does not paint over a picture. The reader files its card as
-  // the app is being put away, and a page scrolled to a moment before that
-  // is still being drawn -- so what is to hand is sometimes the hundred
-  // pixels the flick layer keeps, stretched across a card, which is the
-  // "thumbnail quality is really bad" this file was written to end. It may
-  // still make the first card for a document, where the choice is between
-  // a rough picture and no picture at all.
-  if (how?.rough) {
-    const have = await getAside<Card>(CARD + path).catch(() => null);
-    if (have?.shot && have.rough !== true) return;
-  }
+  const epoch = how?.epoch ?? cardEpoch(path);
+  if (!currentCard(path, epoch)) return;
+  // The source canvas belongs to the viewer and may disappear at any await.
   const copy = copyOf(canvas, how?.crop);
   if (!copy) return;
+  // Encoding need not hold up deletion or another card. The epoch is checked
+  // again when encoding finishes and inside the serialized database operation.
   const shot = await asJpeg(copy);
-  if (!shot) return;
-  await putAside(CARD + path, { page, pages, shot, at: Date.now(), dark: how?.dark === true, rough: how?.rough === true } satisfies Card);
-  // The switcher holds the last picture it showed for each document so it
-  // can draw a card without waiting; this one is newer than that.
-  forgetShot(path);
+  if (!shot || !currentCard(path, epoch)) return;
+  await cardOperation(async () => {
+    if (!currentCard(path, epoch)) return;
+    // A sketch cannot paint over a real picture; it may make the first card.
+    if (how?.rough) {
+      const have = await getAside<Card>(CARD + path).catch(() => null);
+      if (!currentCard(path, epoch) || (have?.shot && have.rough !== true)) return;
+    }
+    await putAside(CARD + path, { page, pages, shot, at: Date.now(), dark: how?.dark === true, rough: how?.rough === true } satisfies Card);
+    // If invalidation began while putAside was in flight it is queued behind
+    // this write, so it will remove it before any replacement is filed.
+    if (currentCard(path, epoch)) forgetShot(path);
+  });
 }
 
 /**
@@ -184,8 +187,11 @@ export async function keepCard(
  */
 export async function recallCard(path: string): Promise<{ page: number; pages: number; shot: Blob; at: number; dark: boolean } | null> {
   if (!path) return null;
+  const epoch = cardEpoch(path);
+  await cardsSettled();
+  if (!currentCard(path, epoch)) return null;
   const card = await getAside<Card>(CARD + path).catch(() => null);
-  if (!card?.shot) return null;
+  if (!card?.shot || !currentCard(path, epoch)) return null;
   return { page: card.page, pages: card.pages, shot: card.shot, at: card.at ?? 0, dark: card.dark === true };
 }
 
@@ -193,5 +199,5 @@ export async function recallCard(path: string): Promise<{ page: number; pages: n
  *  tab card can never show the inside of a file that is no longer there. */
 export async function forgetCard(path: string): Promise<void> {
   if (!path) return;
-  await dropAside(CARD + path).catch(() => {});
+  await forgetPdfCardsWithin(path).catch(() => {});
 }

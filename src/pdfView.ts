@@ -25,6 +25,7 @@ import { imagesOnPage, onPdfReadFailure, openPdfBlob, openPdfUrlSource, pdfium, 
 import { closeDevicePdf, type DevicePdfSource } from './pdfDevice';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
 import { keepSketches, recallSketches } from './pdfSketchCache';
+import { cardEpoch } from './pdfCardLifecycle';
 
 // Per-run shelf outcomes at the end of the bounded wait. A late answer is
 // not counted as an on-time hit, even if it is eventually used.
@@ -121,6 +122,8 @@ export interface PdfHandle {
    * identical one is not drawn again.
    */
   keepNow(): Promise<void>;
+  /** Follow a file or folder move without letting the old path be refiled. */
+  setCardPath(path: string): void;
   /** Where the reader is on the page's own scale: the page, and how far
    *  down it in the units an outline row's `top` is given in. */
   reading(): { page: number; top: number };
@@ -959,6 +962,8 @@ const paneDocuments = new WeakMap<HTMLElement, Set<HTMLElement>>();
 const touchOwner = new WeakMap<HTMLElement, HTMLElement>();
 
 export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | Blob | DevicePdfSource, options: PdfOptions): Promise<PdfHandle> {
+  let cardPath = options.cardFor ?? '';
+  let cardVersion = cardEpoch(cardPath);
   // PDFium, not pdf.js: the engine draws on its own and hands back a
   // picture, so there is no worker to wire up and no cmap, font or decoder
   // directory to point at — the one wasm file carries all of it, which is
@@ -3056,7 +3061,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     const looked = slab ? lookedAt(slab) : null;
     const drawn = looked?.canvas ?? slab?.base ?? null;
     const here = drawn ?? sketches.get(pageShown() - 1);
-    if (options.cardFor && here) {
+    if (cardPath && here) {
+      // Capture the path and incarnation before the dynamic import yields.
+      const path = cardPath;
+      const epoch = cardVersion;
       const dark = slab?.box.classList.contains('is-dark-page') === true;
       const crop = looked?.crop ?? null;
       // Said plainly when it is the hundred-pixel sketch and not the page:
@@ -3065,7 +3073,8 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       // the thing he called "really bad", so one is allowed to make a card
       // where there is none and never to replace a real one.
       const rough = !drawn;
-      carding = import('./pdfCard').then(({ keepCard }) => keepCard(options.cardFor!, pageShown(), slabs.length, here, { dark, crop, rough }));
+      const page = pageShown();
+      carding = import('./pdfCard').then(({ keepCard }) => keepCard(path, page, slabs.length, here, { dark, crop, rough, epoch }));
       void carding;
     }
   };
@@ -3202,6 +3211,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
 
   const handle: PdfHandle = {
     pages: document_.pageCount,
+    setCardPath: (path) => { cardPath = path; cardVersion = cardEpoch(path); putDownWas = ''; },
     keepNow: async (): Promise<void> => {
       if (cardState() !== putDownWas) putDown(true);
       await carding.catch(() => undefined);
