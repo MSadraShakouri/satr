@@ -126,7 +126,11 @@ function markers(view: EditorView): RectangleMarker[] {
         if (end) {
           const rtl = view.textDirectionAt(line.from) === Direction.RTL;
           const mid = (end.top + end.bottom) / 2;
-          const row = rows.find((item) => mid > item.top && mid < item.bottom);
+          // A bidi line may have several separated selected fragments on the
+          // same row. Extending the first one to a distant line-end caret
+          // would paint the unselected glyphs between them.
+          const row = rows.find((item) => mid > item.top && mid < item.bottom &&
+            end.left >= item.left - 1 && end.left <= item.right + 1);
           if (row && rtl) row.left = Math.min(row.left, end.left - BREAK_WIDTH);
           else if (row) row.right = Math.max(row.right, end.right + BREAK_WIDTH);
           else rows.push({ top: end.top, bottom: end.bottom, left: rtl ? end.left - BREAK_WIDTH : end.right, right: rtl ? end.left : end.right + BREAK_WIDTH });
