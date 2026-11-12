@@ -79,6 +79,10 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
   let at = within(options.start, ceiling) || options.start === ceiling ? options.start : ceiling;
   let naming = false;
   let renderToken = 0;
+  let rendering = false;
+  // A pending folder creation must not take the walk away from a later tap,
+  // even if the reader has since returned to the same folder.
+  let walkGeneration = 0;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'menu-backdrop';
@@ -113,6 +117,12 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
 
   async function render(): Promise<void> {
     const token = ++renderToken;
+    // Until the new path and its rows are drawn, the old path on screen is
+    // not the destination held in `at`. Do not let it be acted on as if it
+    // were current, but leave backdrop and Escape available to dismiss.
+    rendering = true;
+    sheet.setAttribute('aria-busy', 'true');
+    sheet.querySelectorAll<HTMLButtonElement>('button').forEach((button) => { button.disabled = true; });
     const children = await childrenOf(at);
     if (closed || token !== renderToken) return;
     const folders = children.filter((entry) => entry.kind === 'folder' && (options.canEnter?.(entry.path) ?? true));
@@ -146,6 +156,8 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
       <div class="dir-walk-foot">
         <button type="button" class="dir-walk-confirm" data-confirm${options.canConfirm && !options.canConfirm(at) ? ' disabled' : ''}>${escapeHtml(options.confirm)}</button>
       </div>`;
+    rendering = false;
+    sheet.removeAttribute('aria-busy');
     if (naming) {
       const input = sheet.querySelector<HTMLInputElement>('.dir-walk-input');
       input?.focus();
@@ -162,10 +174,15 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
     naming = false;
     const wanted = raw.trim().replace(/[\\/]/g, ' ').trim();
     if (!wanted) { void render(); return; }
-    const name = await freeName(at, wanted);
-    const path = joinPath(at, name);
-    try { await backend.mkdir(path); at = path; } catch { /* stay where we are */ }
-    await render();
+    const parent = at;
+    const generation = ++walkGeneration;
+    const name = await freeName(parent, wanted);
+    const path = joinPath(parent, name);
+    try {
+      await backend.mkdir(path);
+      if (!closed && generation === walkGeneration) at = path;
+    } catch { /* stay where we are */ }
+    if (!closed) await render();
   }
 
   sheet.addEventListener('mousedown', (event) => {
@@ -173,12 +190,13 @@ export function walkToFolder(options: FolderWalk): Promise<string | null> {
     if (!(event.target as HTMLElement).closest('.dir-walk-input')) event.preventDefault();
   });
   sheet.addEventListener('click', (event) => {
+    if (rendering) return;
     const target = event.target as HTMLElement;
     if (target.closest('[data-confirm]')) { if (options.canConfirm?.(at) ?? true) close(at); return; }
-    if (target.closest('[data-up]')) { if (at !== ceiling) { at = dirname(at); void render(); } return; }
+    if (target.closest('[data-up]')) { if (at !== ceiling) { at = dirname(at); walkGeneration += 1; void render(); } return; }
     if (target.closest('[data-add]')) { naming = true; void render(); return; }
     const into = target.closest<HTMLElement>('[data-into]')?.dataset.into;
-    if (into !== undefined && dirname(into) === at && (options.canEnter?.(into) ?? true)) { at = into; void render(); }
+    if (into !== undefined && dirname(into) === at && (options.canEnter?.(into) ?? true)) { at = into; walkGeneration += 1; void render(); }
   });
   backdrop.addEventListener('click', () => { close(null); });
   document.addEventListener('keydown', onKey, true);
