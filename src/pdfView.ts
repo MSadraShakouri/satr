@@ -955,6 +955,8 @@ const looksLikePaper = (drawn: HTMLCanvasElement, from: Rect): boolean => {
 let opened = 0;
 /** PDF documents currently attached to each shared preview pane. */
 const paneDocuments = new WeakMap<HTMLElement, Set<HTMLElement>>();
+/** A held one-finger zoom owns the shared pane until it lifts or closes. */
+const touchOwner = new WeakMap<HTMLElement, HTMLElement>();
 
 export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | Blob | DevicePdfSource, options: PdfOptions): Promise<PdfHandle> {
   // PDFium, not pdf.js: the engine draws on its own and hands back a
@@ -2735,6 +2737,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     if (touches.size === 1 && event.timeStamp - lastTap.time < DOUBLE_TAP_MS
       && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < DOUBLE_TAP_SLOP) {
       hold = { id: event.pointerId, y: event.clientY, x: event.clientX, zoom, moved: false, about: pageUnder(event.clientY) };
+      touchOwner.set(scroller, doc);
       // The origin is set when the drag starts, not here: a tap that turns
       // out to be an ordinary double tap must find the column exactly as
       // the tap handler left it.
@@ -2773,6 +2776,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     // By the pointer, not by the count: a stray contact elsewhere on the
     // glass must not stop the finger that is zooming from being heard.
     if (hold && event.pointerId === hold.id) {
+      if (touchOwner.get(scroller) !== doc) return;
       event.preventDefault();
       const dy = event.clientY - hold.y;
       if (!hold.moved && Math.abs(dy) > DRAG_SLOP) {
@@ -2809,6 +2813,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     if (hold) {
       const held = hold;
       hold = null;
+      if (touchOwner.get(scroller) !== doc) {
+        doc.style.transform = '';
+        doc.style.transformOrigin = '';
+        unspace();
+        stopLiving();
+        return;
+      }
+      touchOwner.delete(scroller);
       scroller.style.touchAction = '';
       delete scroller.dataset.ignoreSwipe;
       // A finger that only tapped is a double tap, and that is the tap
@@ -2873,7 +2885,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   // late, and the pane scrolled away under the finger instead of zooming.
   // The touch event itself can, and this is the only thing it is for.
   const onTouchMove = (event: TouchEvent): void => {
-    if (hold && event.touches.length === 1) event.preventDefault();
+    if (hold && touchOwner.get(scroller) === doc && event.touches.length === 1) event.preventDefault();
   };
   scroller.addEventListener('touchmove', onTouchMove, { passive: false });
   scroller.addEventListener('pointerdown', onPointerDown, { passive: true });
@@ -2884,6 +2896,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   // A double tap zooms in about the place tapped, and the next one takes it
   // back to the page's own width.
   const onTap = (event: PointerEvent): void => {
+    if (hold && touchOwner.get(scroller) !== doc) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     // The event's own clock, not the wall clock read here.
     //
@@ -3405,6 +3418,12 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       scroller.removeEventListener('pointerup', endPinch);
       scroller.removeEventListener('pointercancel', endPinch);
       scroller.removeEventListener('touchmove', onTouchMove);
+      if (touchOwner.get(scroller) === doc) {
+        touchOwner.delete(scroller);
+        scroller.style.touchAction = '';
+        delete scroller.dataset.ignoreSwipe;
+      }
+      hold = null;
       for (const slab of slabs) forget(slab);
       // The document's memory goes back to the engine; the engine itself is
       // the app's and stays up, because compiling the wasm again for the
@@ -3419,7 +3438,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
         paneDocuments.delete(scroller);
         scroller.removeAttribute('data-pan-x');
       }
-      delete scroller.dataset.ignoreSwipe;
+      if (!touchOwner.has(scroller)) delete scroller.dataset.ignoreSwipe;
       counter.remove();
     },
   };
