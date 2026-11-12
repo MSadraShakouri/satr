@@ -148,3 +148,25 @@ test('saving a note writes a line, with the bytes and the time it took', async (
   expect(line!.facts).toHaveProperty('path');
   expect(line!.facts).toHaveProperty('bytes');
 });
+
+test('a felt long task includes a clearly labelled memory sample taken afterward', async ({ page }) => {
+  const out = await page.evaluate(async () => {
+    const log = window.__satr.load('/src/log.ts');
+    log.forget();
+    const canvas = document.createElement('canvas');
+    canvas.width = 1000; canvas.height = 1000; document.body.append(canvas);
+    // Let the observer deliver earlier work first, then hold the main thread.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    log.forget();
+    const start = performance.now(); while (performance.now() - start < 220) { /* deliberately busy */ }
+    await new Promise(resolve => setTimeout(resolve, 150));
+    canvas.remove();
+    return log.lines().filter(line => line.text === 'the thread was busy');
+  });
+  expect(out.length).toBeGreaterThan(0);
+  const line = out.find(line => Number(line.facts?.ms) >= 200)!;
+  expect(line).toBeTruthy();
+  expect(Number(line.facts?.canvases)).toBeGreaterThanOrEqual(1);
+  expect(Number(line.facts?.pictureMb)).toBeGreaterThanOrEqual(4);
+  expect(Number(line.facts?.sampleAfterMs)).toBeGreaterThanOrEqual(0);
+});

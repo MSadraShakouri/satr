@@ -11,6 +11,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import * as log from './log';
 import type { Facts } from './log';
+import { memoryFacts } from './vitals';
 
 export interface Exit {
   reason: string;
@@ -224,6 +225,10 @@ export function watchTheThread(): void {
           ms,
           whileTouching: touching,
           what: blame?.containerType ?? blame?.name ?? 'script',
+          // The observer runs after the task. These are current readings,
+          // not a claim to have sampled memory inside the blocked thread.
+          sampleAfterMs: Math.max(0, Math.round(performance.now() - (entry.startTime + entry.duration))),
+          ...memoryFacts(),
           ...(said === MOST_LONG_TASKS ? { andNoMore: true } : {}),
         });
       }
