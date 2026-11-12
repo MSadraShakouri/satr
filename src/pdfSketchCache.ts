@@ -71,6 +71,16 @@ type Shelf = { at: number; pages: number; leaves: Leaf[] };
 
 const shelves = new Map<string, Shelf>();
 
+// One page may close two readers at once. Their list read, update and prune
+// must not interleave, or either prune can delete the other's new shelf.
+// This queue only coordinates this JavaScript page, not other browser tabs.
+let shelfWrites: Promise<void> = Promise.resolve();
+function shelfUpdate(work: () => Promise<void>): Promise<void> {
+  const next = shelfWrites.then(work);
+  shelfWrites = next.catch(() => undefined);
+  return next;
+}
+
 /** When each document was last put down, oldest first out. Kept apart
  *  from the shelves so that deciding what to drop does not mean reading
  *  every picture back out of the database. */
@@ -152,11 +162,14 @@ export async function keepSketches(
   if (!leaves.length) return;
   const shelf: Shelf = { at: Date.now(), pages, leaves };
   shelves.set(key, shelf);
-  const list = await readList();
-  list[key] = shelf.at;
-  await putAside(LIST, list);
-  await putAside(SHELF + key, shelf);
-  await prune();
+  await shelfUpdate(async () => {
+    shelves.set(key, shelf); // a preceding prune may have run while this waited
+    const list = await readList();
+    list[key] = shelf.at;
+    await putAside(LIST, list);
+    await putAside(SHELF + key, shelf);
+    await prune();
+  });
 }
 
 /** Turn a kept picture back into a canvas the sketch book can hold. */
@@ -202,17 +215,24 @@ export async function recallSketches(
   // Opening a document is reading it: it goes to the front of the queue
   // even if it is closed again without a page being drawn.
   if (out.length) {
-    const list = await readList();
-    list[key] = Date.now();
-    await putAside(LIST, list);
+    await shelfUpdate(async () => {
+      // Do not resurrect an entry pruned while its picture was decoding.
+      if (shelves.get(key) !== shelf) return;
+      const list = await readList();
+      if (!(key in list)) return;
+      list[key] = Date.now();
+      await putAside(LIST, list);
+    });
   }
   return out;
 }
 
 /** Everything, gone — the reader deleting a document, or a test. */
 export async function forgetSketches(): Promise<void> {
-  shelves.clear();
-  for (const key of await asideKeys()) if (key.startsWith(SHELF) || key === LIST) await dropAside(key);
+  await shelfUpdate(async () => {
+    shelves.clear();
+    for (const key of await asideKeys()) if (key.startsWith(SHELF) || key === LIST) await dropAside(key);
+  });
 }
 
 /** What the shelves hold, in bytes, for anyone counting. */
