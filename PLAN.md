@@ -78,6 +78,11 @@ the phone — or comes back to life if it has not been.
 
 ## typing and the keyboard
 
+*Code and data files no longer receive Markdown's delimiter-pair and skip
+rules. Desktop synthetic language switching had a 5.8ms median both before and
+after; big-note keystroke medians across three runs were 3.1/3.2/3.4ms before,
+3.0/4.2/3.2ms after. These are not phone typing measurements.*
+
 - [ ] some concept called phantom spaces or something, where a space exists but isn't inserted until a keystroke, apparently keyboard level, but my app fights with it. Where when there's no space between letters and stuff like closed parentheses or quotes or etc, it doesn't insert a space on autocorrect but inserts at the next keystroke, cases like a) or a" and etc (Obsidian never has done this but it works normally and my app is broken, very weird, specifically with parentheses this issue exists, needs research in Obsidian to see why it happens, and possible testing) (important for typing UX) — *deferred. On the tested phone, a Gboard suggestion can arrive at Satr as an input event that already includes a space; a plain editable control deferred it until the next word. The author subsequently reproduced the immediate space in the actual Obsidian APK too, correcting the earlier comparison. Satr keeps spellcheck off and autocorrect/autocapitalize on. A pairing or selection-state difference is a lead, not a confirmed cause; no fix is included.*
 - [ ] Gboard has backspace dragging which deletes words, it spills into the file name if it's at the start, doesn't delete, but it's a bug and doesn't delete the rest, strange but really — *still happening, and nothing has been done about it yet. It needs the device: the swipe is the keyboard's own gesture and arrives as a run of deletions with no key event, so the next step is to watch what the note receives at position 0 and refuse anything that would walk out of it.*
 - [x] putting caret somewhere when * * icons aren't visible makes it before the * icon rather than after it, this itself isn't an issue but a new line that way inserts the * in the new line, that's the bad behavior rather than having the caret not do what it is doing right now — *the same hidden-marker Enter issue already fixed in 6509df4; the duplicate is recorded as done, not fixed again.*
@@ -168,10 +173,29 @@ the phone — or comes back to life if it has not been.
 
 ## search
 
+*PDF results now keep their page association when files finish out of order;
+move/delete invalidates extracted text, empty pages stay empty, and failed text
+extraction can retry after its cooldown without a refresh loop. On desktop the
+warmed textless/text extraction medians were 0.7/8.7ms before and 0.7/10.3ms
+after all these changes; search-hit-to-page was 95ms to 72ms in one sample.
+These synthetic timings do not establish phone performance.*
+
 - [ ] I believe search isn't too much live, especially for left sidebar
 - [ ] search needs thought for text, right now it isn't too reliable unless searching exactly a subset of a string, I have ideas for it such as each word space separated being a query
 
 ## sidebar, tabs and files
+
+- [ ] PDF cards after deletion *(found here: deleting an active PDF or its
+  folder can refile its card during reader destruction; deleting and recreating
+  a folder can also leave a stale child card. Desktop controlled cases reproduce
+  both. This is a stale thumbnail/position, not deletion of the underlying PDF
+  or a note. A safe fix must handle in-flight writes and path reuse.)*
+- [ ] web vault durability on failures *(found here: injected IndexedDB
+  transaction aborts can be reported as successful writes; closing the page with
+  a held commit can lose an unsaved edit. These are controlled browser failures,
+  not proof of the reported phone incident. A partial guard was not shipped:
+  multi-file interruption, cross-tab races and page-close durability remain
+  unresolved, and the prototype's 30-write desktop median rose 21.8 to 24.4ms.)*
 
 - [x] new note creation, currently creates at scope base which is undesirable, would really like an option for it but needs thought, right now I have an alternative way which is holding the folder and pressing new note but that's not enjoyable for me (I have an idea right now: show the current dir at the top of the new tab page, will be really good) — *built your way: the new tab page says which folder the note will land in, and that line opens a sheet that walks folders like the drawer does — a row goes into a folder, the + makes one, and nothing changes until **Put new notes here** is pressed. In a space the walk cannot rise above the space root; in All files it reaches the whole vault. It was already landing beside the note you were last in rather than at the scope's base — the app simply never said so. A pick belongs to the tab it was made on and is never written to disk; import follows the same folder.*
 - [x] new note tab long file names should get truncated, right now it makes the screen scrollable — *built, and it was not the tab strip. The strip and its cards already take an ellipsis: a 96-character name measures 171 pixels of a 486-pixel title, and the document stays 390 of 390 at a phone's width. What scrolled was the other half of "new tab": the recent notes list on it. A row there is the name with the folder under it, and the folder line was clamped (`max-width: 100%`, nowrap, ellipsis) while the name was not — the row is a column, so the name set its width, and the name set the page's. A 96-character name made the page 350 pixels of column ask for 615. The name now wears the same four lines as the folder under it, and the page is 350 of 350. `tests/newTab.spec.ts`, which fails at 615 with them taken out.*
@@ -201,6 +225,15 @@ the phone — or comes back to life if it has not been.
 - [ ] image size choosing interactively, needs thought, while choosing and after the image is inserted, this related to pdf import of images too
 
 ## PDF, and other files beside the note
+
+*Reproduced browser fixes: canvas allocation/detail failures can recover;
+closing a viewer stops its late work and releases only its own pan and held-zoom
+claims; same-page overlapping sketch saves no longer prune each other; failed
+sketch painting releases its decoded bitmap. The shelf queue is confined to one
+JavaScript page, not cross-tab. A 1000-pointer desktop batch was 3.9ms before
+and after; first-canvas insertion across twelve opens was 355.6ms before and
+344.1/365.9/350.7ms in three after runs. Those are synthetic browser timings,
+not physical paint or phone measurements.*
 
 - [ ] pdf compression with something like ghostscript, the method not the tool, tested normal file and 108kb became 98kb, but in files with images it compresses images, if we do something like squoosh we probably won't need to do this
 - [ ] pdf dual panes with notes (like an overlay with adjustable size)
