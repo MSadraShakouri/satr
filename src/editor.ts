@@ -1136,6 +1136,9 @@ export class SatrEditor {
   private codeMode = false;
   private codeName = '';
   private csvName = '';
+  // Punctuation in code and delimited data can be literal file content, not
+  // prose: inserting a space inside a string or CSV field changes its value.
+  private shouldAutoSpace(): boolean { return this.autoSpaceOn && !this.codeMode && !this.csvName; }
   isCodeFile(): boolean { return this.codeMode; }
   /** Bring the caret's line back into view after a beat — the keyboard has
    *  taken the bottom of the screen and the caret must step clear of it. Set
@@ -1164,7 +1167,7 @@ export class SatrEditor {
     titleRuntime.onRename = options?.onRename ?? (() => null);
     titleRuntime.checkName = options?.checkName ?? (() => null);
     const extensions: Extension[] = [
-      followCaretScript, lineNumberSlot.of(gutterScript.on ? lineNumberConfig() : []), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.autoSpaceOn)), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
+      followCaretScript, lineNumberSlot.of(gutterScript.on ? lineNumberConfig() : []), tightSelection, caretMotion, listNumbering, taskPastedOnEmptyLine, autoSpaceSlot.of(autoSpace(() => this.shouldAutoSpace())), historySlot.of(history()), readOnlySlot.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), findBar,
       // GFM base: strikethrough, task lists and tables get parsed.
       // No markdown keymap: its Backspace deletes a whole "- " / "- [ ] " at
       // once. Obsidian deletes character by character, revealing the raw
@@ -1575,7 +1578,7 @@ export class SatrEditor {
   setAutoSpace(on: boolean): void {
     if (on === this.autoSpaceOn) return;
     this.autoSpaceOn = on;
-    this.view.dispatch({ effects: autoSpaceSlot.reconfigure(autoSpace(() => this.autoSpaceOn)) });
+    this.view.dispatch({ effects: autoSpaceSlot.reconfigure(autoSpace(() => this.shouldAutoSpace())) });
   }
   /** Open this file as what it is. A note, a page and plain text are read by
    *  the Markdown parser as they always were; a file with a language behind
