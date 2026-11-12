@@ -179,6 +179,10 @@ export function createTimestampPicker(): TimestampPicker {
     const base = timestampLocaleTag();
     return calendarOverride ? `${base.split('-u-ca-')[0]}-u-ca-${calendarOverride}` : base;
   };
+  // A bare language tag can itself select the Persian calendar (notably fa).
+  // Ask the same Intl formatter that draws the grid instead of inspecting the tag.
+  const activeCalendar = (): 'gregory' | 'persian' =>
+    dateFormat(tag(), { year: 'numeric', month: 'numeric', day: 'numeric' }).resolvedOptions().calendar === 'persian' ? 'persian' : 'gregory';
   const number = (value: number): string => numberFormat(tag()).format(value);
 
   const close = (): void => {
@@ -265,7 +269,7 @@ export function createTimestampPicker(): TimestampPicker {
     // order, and only the highlight moves to the one the sheet is wearing.
     const calButton = sheet.querySelector<HTMLButtonElement>('[data-stamp-cal]');
     if (calButton) {
-      const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
+      const active = activeCalendar();
       for (const option of calButton.querySelectorAll<HTMLElement>('[data-stamp-cal-option]')) {
         option.classList.toggle('is-active', option.dataset.stampCalOption === active);
       }
@@ -792,7 +796,7 @@ export function createTimestampPicker(): TimestampPicker {
         return;
       }
       if (target.closest('[data-stamp-cal]')) {
-        const active = calendarOverride ?? (/persian/.test(timestampLocaleTag()) ? 'persian' : 'gregory');
+        const active = activeCalendar();
         // Re-anchor the view BEFORE the words change: a month's first day in
         // one calendar sits mid-month in the other, so carrying that Date
         // over opened the neighbouring month — on 23 October the Jalali grid
