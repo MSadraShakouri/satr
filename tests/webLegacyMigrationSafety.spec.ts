@@ -116,3 +116,34 @@ test('migration can retry after a transaction aborts', async ({page}) => {
  });
  expect(result).toEqual({first:'legacy text',backed:'legacy text',second:'legacy text',remaining:null});
 });
+
+test('a legacy file remains readable when opening IndexedDB fails', async ({page}) => {
+ await page.addInitScript(()=>{
+  localStorage.setItem('satr:demoShown','1');
+  localStorage.setItem('satr:fs:index',JSON.stringify({files:{'Notes/old.md':1},folders:['Notes']}));
+  localStorage.setItem('satr:fs:file:Notes/old.md','legacy text');
+  const original=indexedDB.open.bind(indexedDB);
+  indexedDB.open=function(name,version){if(name==='satr')throw new Error('injected unavailable database');return original(name,version);};
+ });
+ await page.goto('/');await page.waitForFunction(()=>Boolean(window.__satr));
+ const result=await page.evaluate(async()=>{
+  const {backend}=window.__satr.load('/src/vault.ts');
+  const value=await backend.read('Notes/old.md');let error=false;
+  try{await backend.rename('Notes/old.md','Notes/new.md');}catch{error=true;}
+  return {value,error,backup:localStorage.getItem('satr:fs:file:Notes/old.md')};
+ });
+ expect(result).toEqual({value:'legacy text',error:true,backup:'legacy text'});
+});
+
+test('a migration whose put throws keeps its local copy', async ({page}) => {
+ await boot(page,true);
+ const result=await page.evaluate(async()=>{
+  const {backend}=window.__satr.load('/src/vault.ts');const {dropStored}=window.__satr.load('/src/webStore.ts');
+  await dropStored('Notes/old.md');localStorage.setItem('satr:fs:file:Notes/old.md','legacy text');
+  const put=IDBObjectStore.prototype.put;
+  IDBObjectStore.prototype.put=function(value,key){if(key==='Notes/old.md')throw new Error('injected put failure');return put.call(this,value,key);};
+  try {const value=await backend.read('Notes/old.md');return {value,backup:localStorage.getItem('satr:fs:file:Notes/old.md')};}
+  finally {IDBObjectStore.prototype.put=put;}
+ });
+ expect(result).toEqual({value:'legacy text',backup:'legacy text'});
+});
