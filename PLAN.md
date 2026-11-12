@@ -143,6 +143,12 @@ after; big-note keystroke medians across three runs were 3.1/3.2/3.4ms before,
 
 ## source mode and the reading view
 
+- [ ] note CSS scope *(found here: a synthetic `body ~ .sibling` rule can
+  style a sibling outside a note after rewriting. This shows the selector
+  boundary can be escaped, not that a particular toolbar was affected.
+  Nested selectors and at-rules also need examination before claiming a
+  complete containment fix.)*
+
 - [ ] watch for the whole reading view turning RTL after a refresh or cold start — *reported intermittently in the web app in Chrome on Android 16 when reopening a mixed Persian/English note at the middle or bottom; even English headings and paragraphs turn RTL. Opening at the top is correct. Not seen in the APK. On `07d4c8b`, a reconstructed note stayed correctly directed across desktop Chromium refreshes and true cold starts at saved positions, so the cause and first affected version are still unknown. A separate deferred-math change in `b6f96f8` can change the direction of math-only list items; it does not explain the whole-view report. Revisit if it happens again.*
 - [x] external Markdown shows the header but is stuck in source with no way to switch to preview — *a read-only hand-over hid the switch along with the pen. It now keeps the header and the file menu, offers source and preview, and remains read-only in both: tasks and timestamp chips cannot change the note. A browser test exercises the real incoming-file flow with the native URI calls mocked; the Android provider itself is not simulated.*
 
