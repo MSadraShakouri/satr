@@ -26,15 +26,14 @@
  */
 import { pdfium } from './pdfiumEngine';
 import { inReadingOrder } from './pdfText';
-import { backend, extension } from './vault';
+import { backend, extension, within } from './vault';
 
 /** Documents this can read. Only PDFs today; the app opens nothing else
  *  that has text in it. */
 export const isDocument = (name: string): boolean => extension(name) === 'pdf';
 
-/** What has been read, by path. A document is a file on disk and this is
- *  a session's worth of searching: a file that changes while the app is
- *  open is read again when the app is next started. */
+/** What has been read, by path. In-app moves and deletions invalidate this
+ *  cache; independent changes are not observed until the next app start. */
 interface Read {
   /** Every page's text, run together. */
   text: string;
@@ -68,8 +67,15 @@ export function pageAt(path: string, offset: number): number {
   return low + 1;
 }
 
-/** Forget a document's text: it has been written over or removed. */
-export const forgetText = (path: string): void => { held.delete(path); reading.delete(path); };
+/** Invalidate a file or subtree after an in-app move or deletion. Removing
+ *  an in-flight promise also invalidates its eventual result; a newer read
+ *  for the same path is never removed by the older one's completion. */
+export function forgetTextWithin(path: string): void {
+  if (!path) return;
+  for (const key of held.keys()) if (within(key, path)) held.delete(key);
+  for (const key of reading.keys()) if (within(key, path)) reading.delete(key);
+}
+export const forgetText = (path: string): void => forgetTextWithin(path);
 
 async function read(path: string): Promise<Read> {
   const bytes = await backend.readBytes(path);
@@ -88,8 +94,10 @@ async function read(path: string): Promise<Read> {
       // Persian page written by Word puts every lam-alef back to front.
       // The glyph boxes say which pairs those are.
       const glyphs = await engine.getPageGlyphs(document_, page).toPromise();
-      const [raw] = await engine.getTextSlices(document_,
-        [{ pageIndex: page.index, charIndex: 0, charCount: glyphs.length }]).toPromise();
+      // PDFium may return stray characters for a zero-length text slice.
+      // A page with no glyphs has no searchable text.
+      const [raw] = glyphs.length ? await engine.getTextSlices(document_,
+        [{ pageIndex: page.index, charIndex: 0, charCount: glyphs.length }]).toPromise() : [''];
       const text = inReadingOrder(raw ?? '', glyphs);
       pages.push(text);
       at += text.length + 1; // the newline this page is joined on
@@ -114,6 +122,7 @@ export function textOf(path: string): Promise<string> {
       .then(() => read(path))
       .catch((): Read => ({ text: '', starts: [] }))
       .then((found) => {
+        if (reading.get(path) !== asked) return held.get(path)?.text ?? '';
         held.set(path, found);
         reading.delete(path);
         return found.text;

@@ -60,7 +60,7 @@ import { applyRotation } from './orientation';
 import { canImportFiles, nameParts, pickFiles } from './importFile';
 import { incomingIdentities, incomingVaultPath, onIncomingFile, openIncomingFile, openIncomingInOtherApp, openPathForIdentities, openTabForSameFile, pendingIncomingFile, readIncomingText, supportsIncomingFiles, writeIncomingText, type IncomingOpenFile } from './openWith';
 import { currentScope, scopeName, scopeRoot, walkDir } from './spaces';
-import { pageAt as documentPageAt } from './documentText';
+import { forgetTextWithin, pageAt as documentPageAt } from './documentText';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkFiles, walkNotes, within, type TextOpen } from './vault';
 import { fileKind, isEditableFile } from './fileKinds';
 
@@ -892,7 +892,7 @@ function renderPreview(): void {
 /** Draw a PDF into the reading view, where it was left. */
 /** The page a document is to be opened at, set by a search result on its
  *  way in and spent by the viewer as it mounts. */
-let openAtPage = 0;
+let openAtPage: { path: string; page: number } | null = null;
 async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, generation: number, signal: AbortSignal): Promise<void> {
   const { showPdf, pdfKey, pdfKeyHead } = await import('./pdfView');
   const current = () => filePath === path && generation === pdfMountGeneration;
@@ -952,6 +952,7 @@ async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, 
   // went the instant the pdf opened, which is the flash the bars used to
   // have from the other side.)
   forgetHand();
+  const searchPlace = openAtPage?.path === path ? openAtPage : null;
   let handle: Awaited<ReturnType<typeof showPdf>>;
   try { handle = await showPdf(preview, bytes instanceof Uint8Array ? bytes.slice().buffer : bytes, {
     scroller: previewPane,
@@ -962,8 +963,8 @@ async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, 
     // to afterwards, because the remembered place is restored over
     // several frames while the column settles and would win a race
     // against anything done after the mount.
-    place: openAtPage
-      ? { page: openAtPage, into: 0, zoom: readPlace(key)?.zoom ?? 1 }
+    place: searchPlace
+      ? { page: searchPlace.page, into: 0, zoom: readPlace(key)?.zoom ?? 1 }
       : readPlace(key),
     onPlace: (place) => writePlace(key, place),
     // Putting a document back where it was is not the reader scrolling: the
@@ -1015,7 +1016,14 @@ async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, 
   }); } catch (error) { if (device) await closeDevicePdf(device); throw error; }
   if (!current()) { handle.destroy(); return; }
   pdfView = handle;
-  if (openAtPage) { ownScroll(400); openAtPage = 0; }
+  if (openAtPage?.path === path) {
+    const requested = openAtPage;
+    openAtPage = null;
+    ownScroll(400);
+    // A newer hit can be chosen while showPdf is still opening. goTo drops
+    // the viewer's pending restoration before placing that later request.
+    if (requested !== searchPlace) handle.goTo(requested.page);
+  }
   // Obsidian's chrome around it: the strip of controls and the panel of
   // thumbnails and contents (src/pdfChrome.ts).
   const { mountPdfChrome } = await import('./pdfChrome');
@@ -2352,6 +2360,7 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
 const since = (mark: number): number => Math.round(performance.now() - mark);
 
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  if (openAtPage && openAtPage.path !== path) openAtPage = null;
   pdfLoadGeneration += 1;
   rescued = ''; // a file is open: the empty tab has nothing left to explain
   if (path && !isExternalPath(path)) lastNotePath = path; // where a new note belongs (focusedNoteDir)
@@ -2617,6 +2626,8 @@ async function moveFile(from: string, to: string, onDisk: string): Promise<void>
 
 /** A file or folder moved (renamed): the open note, history and view memory follow. */
 function pathMoved(from: string, to: string): void {
+  forgetTextWithin(from);
+  forgetTextWithin(to);
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   for (const note of [...keptNotes]) if (within(note.path, from)) forgetNote(note.path);
   const move = (p: string): string => (within(p, from) ? to + p.slice(from.length) : p);
@@ -2654,6 +2665,7 @@ function pathMoved(from: string, to: string): void {
 }
 /** A file or folder was deleted: forget it; if the open note went, open another. */
 function pathDeleted(path: string): void {
+  forgetTextWithin(path);
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   // A card outliving its file would be a tab showing the inside of
   // something that is not there any more; a folder takes its notes' with it.
@@ -3219,6 +3231,7 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
+  openAtPage = null;
   pdfLoadGeneration += 1;
   applyRotation(loadSettings().documentRotation, false);
   displayedTab = curTab();
@@ -4291,8 +4304,22 @@ const sidebar = createRightSidebar(rightPanel, {
       // Written down rather than done in the callback: the viewer is
       // mounted after the file is opened, and the handle to tell does not
       // exist yet when that callback runs.
-      openAtPage = documentPageAt(path, from);
-      void openFile(path);
+      const page = documentPageAt(path, from);
+      // An already-mounted document has no upcoming mount to consume a
+      // request. Turn it now; never leave its page for an unrelated PDF.
+      if (filePath === path && pdfView) {
+        rememberRecent(path);
+        openAtPage = null;
+        ownScroll(400);
+        pdfView.goTo(page);
+      } else {
+        const request = { path, page };
+        openAtPage = request;
+        void openFile(path).then(() => {
+          // A missing file or a refused leave never reached this document.
+          if (openAtPage === request && filePath !== path) openAtPage = null;
+        });
+      }
       return;
     }
     void openFile(path, () => {
