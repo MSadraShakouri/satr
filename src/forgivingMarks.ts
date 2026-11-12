@@ -64,7 +64,9 @@ const KINDS: ReadonlyArray<{ mark: string; kind: ForgivingKind; node: string }> 
 function occurrences(text: string, mark: string): number[] {
   const found: number[] = [];
   for (let at = text.indexOf(mark); at >= 0; at = text.indexOf(mark, at + 1)) {
-    if (text[at - 1] === '\\') continue;
+    let slashes = 0;
+    for (let i = at - 1; i >= 0 && text[i] === '\\'; i -= 1) slashes += 1;
+    if (slashes % 2) continue;
     const before = text[at - 1] ?? '';
     const after = text[at + mark.length] ?? '';
     if (before === mark[0] || after === mark[0]) continue;
