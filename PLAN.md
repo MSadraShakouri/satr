@@ -216,7 +216,7 @@ overlapped, so those do not establish a speed change.*
   not proof of the reported phone incident. A narrower safeguard now retains an
   older localStorage copy until its migration transaction commits, keeps a newer
   local copy, and checks a folder's legacy migrations before moving any files.
-  Five fault-injection cases failed before and pass after. Normal writes still
+  Seven fault-injection cases failed before and pass after. Normal writes still
   do not wait for commit; interrupted multi-file operations, cross-tab races and
   page-close durability remain unresolved. The broader guard prototype was not
   shipped: its 30-write desktop median rose 21.8 to 24.4ms. For this narrower
