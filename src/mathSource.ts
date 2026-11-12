@@ -10,7 +10,7 @@
 // only "$$" never turns monospace. A lone unpaired "$$", "$$$$" / "$$ $$" with
 // nothing between, and a pair a heading or a list broke are plain text, so
 // their dollars are not coloured and nothing inside them is styled as math.
-import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, type MathSpan } from './mathScan';
+import { scanMath, spansHold, spansOverlap, closingDelimiterEnd, inCodeAt, isMathBlockBoundary, isClosingFenceLine, type MathSpan } from './mathScan';
 import { StateField, type EditorState, type Range, type Text, type Transaction } from '@codemirror/state';
 import { Decoration, Direction, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { mathFault } from './math';
@@ -28,7 +28,9 @@ import { directionsField } from './direction';
 // runs again when the change could have moved an edge:
 //
 //   - a delimiter or an escape went in or came out ($ \ ` ~), or
-//   - a line break went in or came out, or
+//   - a line break went in or came out, or a line became blank/nonblank, or
+//   - the edited line became or stopped being a math-block boundary or a
+//     potential closing code fence, or
 //   - a blank dollar pair gains/loses its content, or the character just
 //     after a dollar changes (the scanner's price rule), or an edit after a
 //     backslash changes whether the next dollar is escaped, or
@@ -68,6 +70,15 @@ function keepsShape(tr: Transaction): boolean {
     if (SHAPES_MATH.test(put) || SHAPES_MATH.test(took)) { keeps = false; return; }
     const line = tr.newDoc.lineAt(fromB);
     if (fromB - line.from <= LINE_HEAD) { keeps = false; return; }
+    const oldLine = tr.startState.doc.lineAt(fromA);
+    // List, quote and footnote boundaries can start after arbitrarily much
+    // whitespace, and ordered markers can be longer than LINE_HEAD. A blank
+    // line also ends a multiline code span, and adding/removing a word after
+    // a fence changes whether it can close. Either can change which dollars
+    // are masked even when the edited line itself contains none.
+    if (isMathBlockBoundary(oldLine.text) !== isMathBlockBoundary(line.text) ||
+        isClosingFenceLine(oldLine.text) !== isClosingFenceLine(line.text) ||
+        (/^[ \t]*$/.test(oldLine.text) !== /^[ \t]*$/.test(line.text))) { keeps = false; return; }
     if (!line.text.includes('$')) return; // no dollar changed and this line has none
     // `$ $` is not math until it has content, and deleting the last content
     // makes it plain text again. Likewise a digit immediately after a closer

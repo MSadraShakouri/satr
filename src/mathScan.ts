@@ -43,6 +43,12 @@ export function isMathBlockBoundary(line: string): boolean {
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
+/** A line that can close a fence, independent of the opening run's length. */
+export function isClosingFenceLine(line: string): boolean {
+  const match = FENCE.exec(line);
+  return Boolean(match && !match[2].trim());
+}
+
 /** The characters of [from, to) made spaces, newlines kept. */
 const blankChunk = (chunk: string): string => chunk.replace(/[^\n]/g, ' ');
 
