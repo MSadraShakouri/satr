@@ -180,6 +180,10 @@ warmed textless/text extraction medians were 0.7/8.7ms before and 0.7/10.3ms
 after all these changes; search-hit-to-page was 95ms to 72ms in one sample.
 These synthetic timings do not establish phone performance.*
 
+- [ ] PDF outline regex *(found here: `Page [1-2]` is accepted as a
+  regular expression but searched literally in the current document; the
+  same document finds `Page 1`. This remains open: matching and page
+  highlights need to agree rather than returning text-only hits.)*
 - [ ] I believe search isn't too much live, especially for left sidebar
 - [ ] search needs thought for text, right now it isn't too reliable unless searching exactly a subset of a string, I have ideas for it such as each word space separated being a query
 
@@ -253,6 +257,14 @@ not physical paint or phone measurements.*
 - [ ] the ... button doesn't work when the scroll down page number thing is hidden *(found here: the counter is `.pdf-counter`, a text-only element in the floating layer, hidden on its own when a document has one page; nothing in it is a button. So I need the steps: which switch hides it, and where the ⋯ is meanwhile.)*
 
 ## launch and scrolling
+
+- [ ] reading-place reset interrupted by page closure *(found here: a held
+  reset write followed by closing the browser page can bring an old position
+  back. This does not lose note content. A separate immediate reload failed
+  once and passed 15 repeats.)*
+- [ ] browser launch coordination *(found here: an experimental Web Locks
+  approach can hang startup if the lock request stalls; that prototype was not
+  shipped, and cross-tab/crash guarantees remain unresolved.)*
 
 - slowness of launch, needs reorganizing notes
 
