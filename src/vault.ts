@@ -14,7 +14,7 @@
 // state live in the app's own storage.
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { forgetInside, wroteInside } from './folderTimes';
-import { asStored, dropStored, getStored, putStored, storedText } from './webStore';
+import { asStored, dropStored, getStored, migrateStored, putStored, storedText } from './webStore';
 
 export interface Entry {
   path: string;
@@ -160,8 +160,10 @@ class WebBackend implements Backend {
     if (!(path in this.index.files)) return null;
     const left = localStorage.getItem(fileKey(path));
     if (left !== null) {
-      await putStored(path, asStored(left));
-      localStorage.removeItem(fileKey(path));
+      if (await migrateStored(path, asStored(left))) {
+        // A newer synchronous save may have arrived while the transaction ran.
+        if (localStorage.getItem(fileKey(path)) === left) localStorage.removeItem(fileKey(path));
+      }
       return left;
     }
     const value = await getStored(path);
@@ -229,19 +231,30 @@ class WebBackend implements Backend {
     if (await this.stat(to)) throw new Error('Something with that name already exists');
     if (from in this.index.files) {
       await this.contents(from); // anything left in localStorage lands in the store
+      if (localStorage.getItem(fileKey(from)) !== null) throw new Error('The local copy could not be safely moved into browser storage');
       const value = await getStored(from);
-      if (value) { await putStored(to, value); await dropStored(from); }
+      if (!value) throw new Error('The file could not be read from browser storage');
+      await putStored(to, value); await dropStored(from);
       localStorage.removeItem(fileKey(from));
       this.index.files[to] = this.index.files[from];
       delete this.index.files[from];
       this.addFolders(to);
     } else if (this.isFolder(from)) {
       const move = (path: string): string => to + path.slice(from.length);
-      for (const path of Object.keys(this.index.files)) {
-        if (!within(path, from)) continue;
+      const files = Object.keys(this.index.files).filter((path) => within(path, from));
+      // Migrate legacy copies before moving anything: a failed migration of
+      // the second file must not strand the first. Do not retain the whole
+      // folder's contents in memory; it may include large PDFs.
+      for (const path of files) {
+        if (localStorage.getItem(fileKey(path)) === null) continue;
         await this.contents(path);
+        if (localStorage.getItem(fileKey(path)) !== null) throw new Error('The local copy could not be safely moved into browser storage');
+      }
+      for (const path of files) {
+        if (localStorage.getItem(fileKey(path)) !== null) throw new Error('A newer local copy arrived during the move');
         const value = await getStored(path);
-        if (value) { await putStored(move(path), value); await dropStored(path); }
+        if (!value) throw new Error('The file could not be read from browser storage');
+        await putStored(move(path), value); await dropStored(path);
         localStorage.removeItem(fileKey(path));
         this.index.files[move(path)] = this.index.files[path];
         delete this.index.files[path];

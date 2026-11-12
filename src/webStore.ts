@@ -57,6 +57,22 @@ export async function putStored(path: string, value: Stored): Promise<void> {
   await ask('readwrite', (store) => store.put(value, path));
 }
 
+/** Migration may discard the sole legacy copy only after the enclosing
+ * transaction commits. A request's success alone is not that guarantee. */
+export async function migrateStored(path: string, value: Stored): Promise<boolean> {
+  const open = await db();
+  if (!open) return false;
+  return new Promise<boolean>((resolve) => {
+    try {
+      const tx = open.transaction(STORE, 'readwrite');
+      tx.oncomplete = () => resolve(true);
+      tx.onabort = () => resolve(false);
+      tx.onerror = () => resolve(false);
+      tx.objectStore(STORE).put(value, path);
+    } catch { resolve(false); }
+  });
+}
+
 export async function dropStored(path: string): Promise<void> {
   await ask('readwrite', (store) => store.delete(path));
 }
