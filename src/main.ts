@@ -1,4 +1,5 @@
 import { asMarkdown } from './csv';
+import { MARKER } from './listMarkers';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
 import { dropRecord, keepStorage, openViewStore, readRecord, recordKeys, writeRecord, flushViews, forgetViews } from './viewStore';
 import { startKeeping, flush as flushLog } from './logStore';
@@ -5089,13 +5090,14 @@ setTimestampChipTap((chip) => {
  *  the tick can live, so it is written there and the box follows the render
  *  that comes back. If the line turns out not to be a task after all, the
  *  box is put back the way the reader found it. */
+const taskMarker = new RegExp(`^[ \\t]*(?:>[ \\t]?)*(?:[-*+]|${MARKER}[.)])[ \\t]+\\[.\\]`);
 function tickTaskFromBox(box: HTMLInputElement): void {
   if (viewOnly) { box.checked = !box.checked; return; }
   const item = box.closest<HTMLElement>('li');
   const at = Number(item?.dataset.line);
   const doc = editor.view.state.doc;
   const line = Number.isFinite(at) && at >= 0 && at < doc.lines ? doc.line(at + 1) : null;
-  const marker = line && /^[ \t]*(?:>[ \t]?)*(?:[-*+]|\d+[.)])[ \t]+\[.\]/.exec(line.text);
+  const marker = line && taskMarker.exec(line.text);
   if (!line || !marker) { box.checked = !box.checked; return; }
   const from = line.from + marker[0].length - 2;
   editor.view.dispatch({ changes: { from, to: from + 1, insert: box.checked ? 'x' : ' ' }, userEvent: 'input' });
