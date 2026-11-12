@@ -73,6 +73,9 @@ test('the shelf wait distinguishes an empty shelf from recalled pages', async ({
   const firstWait = (await logLines(page)).find((l) => l.text === 'shelf waited for')!;
   expect(firstWait.facts?.status).toBe('ready');
   expect(firstWait.facts?.recalled).toBe(0);
+  expect(firstWait.facts?.pictureBytes).toBe(0);
+  expect(firstWait.facts?.ready).toBe(1);
+  expect(firstWait.facts?.readyHits).toBe(0);
   await page.evaluate(async (pdf) => {
     const { pdfKey } = (window as any).__satr.load('/src/pdfView.ts');
     const { keepSketches } = (window as any).__satr.load('/src/pdfSketchCache.ts');
@@ -89,4 +92,9 @@ test('the shelf wait distinguishes an empty shelf from recalled pages', async ({
   const hit = (await logLines(page)).find((l) => l.text === 'shelf waited for')!;
   expect(hit.facts?.status).toBe('ready');
   expect(hit.facts?.recalled).toBe(1);
+  expect(hit.facts?.pictureBytes).toBe(100 * 141 * 4);
+  expect(hit.facts?.ready).toBe(1);
+  expect(hit.facts?.readyHits).toBe(1);
+  expect(hit.facts?.timeouts).toBe(0);
+  expect(hit.facts?.errors).toBe(0);
 });

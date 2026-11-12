@@ -26,6 +26,13 @@ import { closeDevicePdf, type DevicePdfSource } from './pdfDevice';
 import { asFileWroteIt, inReadingOrder, joinersIn, withJoiners, type Joiners } from './pdfText';
 import { keepSketches, recallSketches } from './pdfSketchCache';
 
+// Per-run shelf outcomes at the end of the bounded wait. A late answer is
+// not counted as an on-time hit, even if it is eventually used.
+let shelfReady = 0;
+let shelfReadyHits = 0;
+let shelfTimeouts = 0;
+let shelfErrors = 0;
+
 /** Where the reader was. The page and how far into it, rather than a scroll
  *  offset, so the place survives a different zoom, a rotation, or a wider
  *  screen — the offset would mean a different line of a different page. */
@@ -2965,7 +2972,14 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       new Promise<{ status: 'timeout'; pages: [] }>((go) => { shelfTimeout = window.setTimeout(() => go({ status: 'timeout', pages: [] }), RECALL_WAIT_MS); }),
     ]);
     window.clearTimeout(shelfTimeout);
-    shelving({ status: result.status, recalled: result.pages.length });
+    if (result.status === 'ready') {
+      shelfReady += 1;
+      if (result.pages.length) shelfReadyHits += 1;
+    } else if (result.status === 'timeout') shelfTimeouts += 1;
+    else shelfErrors += 1;
+    const pictureBytes = result.pages.reduce((n, page) => n + page.canvas.width * page.canvas.height * 4, 0);
+    shelving({ status: result.status, recalled: result.pages.length, pictureBytes,
+      ready: shelfReady, readyHits: shelfReadyHits, timeouts: shelfTimeouts, errors: shelfErrors });
   }
   planningAt = performance.now();
   drawBand();
