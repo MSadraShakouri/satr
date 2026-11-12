@@ -57,3 +57,21 @@ test('overlapping sketch saves do not prune one another', async ({page})=>{
  expect(result.alpha).toBe(1);
  expect(result.bravo).toBe(1);
 });
+
+for (const failure of ['no context', 'draw throws'] as const) {
+ test(`a recalled picture releases its bitmap when ${failure}`, async ({page}) => {
+  await page.addInitScript(()=>{localStorage.setItem('satr:demoShown','1');localStorage.setItem('satr:tabs',JSON.stringify({tabs:[{path:''}],active:0}));});
+  await page.goto('/'); await page.waitForFunction(()=>Boolean(window.__satr));
+  const result = await page.evaluate(async (kind) => {
+   const shelf=window.__satr.load('/src/pdfSketchCache.ts');await shelf.forgetSketches();
+   const canvas=document.createElement('canvas');canvas.width=100;canvas.height=100;canvas.getContext('2d')!.fillRect(0,0,100,100);
+   await shelf.keepSketches('bitmap-release',1,0,new Map([[0,canvas]]));
+   const bitmap=window.createImageBitmap;const context=HTMLCanvasElement.prototype.getContext;let closed=0;
+   window.createImageBitmap=async()=>({width:100,height:100,close:()=>{closed++;}} as ImageBitmap);
+   (HTMLCanvasElement.prototype as any).getContext=function(){return kind==='no context'?null:{drawImage(){throw new Error('injected draw failure');}};};
+   try {const pages=await shelf.recallSketches('bitmap-release',1);return {closed,pages:pages.length};}
+   finally {window.createImageBitmap=bitmap;HTMLCanvasElement.prototype.getContext=context;}
+  },failure);
+  expect(result.pages).toBe(0);expect(result.closed,'the decoded bitmap is released').toBe(1);
+ });
+}

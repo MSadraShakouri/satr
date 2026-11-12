@@ -176,14 +176,17 @@ export async function keepSketches(
 async function paint(shot: Blob): Promise<HTMLCanvasElement | null> {
   try {
     const picture = await createImageBitmap(shot);
-    const canvas = document.createElement('canvas');
-    canvas.width = picture.width;
-    canvas.height = picture.height;
-    const context = canvas.getContext('2d');
-    if (!context) return null;
-    context.drawImage(picture, 0, 0);
-    picture.close();
-    return canvas;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = picture.width;
+      canvas.height = picture.height;
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+      context.drawImage(picture, 0, 0);
+      return canvas;
+    } finally {
+      picture.close();
+    }
   } catch { return null; }
 }
 
