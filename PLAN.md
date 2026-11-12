@@ -208,8 +208,10 @@ overlapped, so those do not establish a speed change.*
   a moved viewer file at its new path. The fix does not coordinate separate
   browser tabs or guarantee cleanup if the page closes during invalidation.
   This is a stale thumbnail/position, not loss of the PDF or a note. Desktop
-  30-card save medians across three runs were 2.7–2.75ms before and
-  2.6–3.25ms after; reads 0.3–0.4ms in both. Not phone measurements.)*
+  30-card save medians across six desktop runs were 2.7–5.1ms before and
+  2.7–4.1ms after; reads were 0.3–0.5ms and 0.35–0.5ms respectively. The
+  overlapping, variable timings do not establish a speed change and are not
+  phone measurements.)*
 - [ ] web vault durability on failures *(found here: injected IndexedDB
   transaction aborts can be reported as successful writes; closing the page with
   a held commit can lose an unsaved edit. These are controlled browser failures,
