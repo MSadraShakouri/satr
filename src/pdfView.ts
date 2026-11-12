@@ -953,6 +953,8 @@ const looksLikePaper = (drawn: HTMLCanvasElement, from: Rect): boolean => {
 /** Each document opened in this session gets its own name, so two tabs on
  *  the same file never share the engine's copy of it. */
 let opened = 0;
+/** PDF documents currently attached to each shared preview pane. */
+const paneDocuments = new WeakMap<HTMLElement, Set<HTMLElement>>();
 
 export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | Blob | DevicePdfSource, options: PdfOptions): Promise<PdfHandle> {
   // PDFium, not pdf.js: the engine draws on its own and hands back a
@@ -1083,6 +1085,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   // One page is its own counter: it says nothing a reader doesn't see.
   counter.hidden = document_.pageCount < 2;
   host.append(doc);
+  const paneDocs = paneDocuments.get(scroller) ?? new Set<HTMLElement>();
+  paneDocs.add(doc);
+  paneDocuments.set(scroller, paneDocs);
   overlay.prepend(counter); // above the navbar pill, which is the layer's own child
 
   let zoom = clamp(options.place?.zoom ?? 1, MIN_ZOOM, MAX_ZOOM);
@@ -2053,7 +2058,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     stop(slab.baseTask);
     const raster = rasterFor(width, height);
     const made = sheet(width, height, raster);
-    if (!made) return;
+    // Nothing was drawn. Leave the page eligible for a later plan rather
+    // than claiming a resolution it never received.
+    if (!made) { slab.baseScale = 0; return; }
     const tall = made.canvas.height;
     const slices = slicesFor(made.canvas.width * tall);
     const ring: number[] = [];
@@ -2206,7 +2213,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     const quick = sweeping();
     const raster = rasterFor(width, height, quick ? QUICK_SHARE : 1);
     const made = sheet(width, height, raster);
-    if (!made) return;
+    // The old tile is still on screen but it was not drawn at the new
+    // zoom. Do not let the failed replacement claim its sharpness.
+    if (!made) { slab.detailZoom = 0; return; }
     const tall = made.canvas.height;
     const slices = slicesFor(made.canvas.width * tall);
     // In strips, with the thread handed back between them, exactly as the
@@ -2861,9 +2870,10 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   // the gesture begins, so setting it on the second tap is already too
   // late, and the pane scrolled away under the finger instead of zooming.
   // The touch event itself can, and this is the only thing it is for.
-  scroller.addEventListener('touchmove', (event: TouchEvent) => {
+  const onTouchMove = (event: TouchEvent): void => {
     if (hold && event.touches.length === 1) event.preventDefault();
-  }, { passive: false });
+  };
+  scroller.addEventListener('touchmove', onTouchMove, { passive: false });
   scroller.addEventListener('pointerdown', onPointerDown, { passive: true });
   scroller.addEventListener('pointermove', onPointerMove, { passive: false });
   scroller.addEventListener('pointerup', endPinch, { passive: true });
@@ -3388,14 +3398,22 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       scroller.removeEventListener('pointermove', onPointerMove);
       scroller.removeEventListener('pointerup', endPinch);
       scroller.removeEventListener('pointercancel', endPinch);
+      scroller.removeEventListener('touchmove', onTouchMove);
       for (const slab of slabs) forget(slab);
       // The document's memory goes back to the engine; the engine itself is
       // the app's and stays up, because compiling the wasm again for the
       // next document would be felt.
       void engine.closeDocument(document_).toPromise().catch(() => undefined).finally(() => { if (deviceSource) void closeDevicePdf(deviceSource); });
-      scroller.removeAttribute('data-pan-x');
-      delete scroller.dataset.ignoreSwipe;
       doc.remove();
+      // A newer viewer can already be in this shared pane while an older
+      // mount finishes. Its pages still need to claim horizontal panning.
+      paneDocs.delete(doc);
+      for (const other of paneDocs) if (!scroller.contains(other)) paneDocs.delete(other);
+      if (!paneDocs.size && paneDocuments.get(scroller) === paneDocs) {
+        paneDocuments.delete(scroller);
+        scroller.removeAttribute('data-pan-x');
+      }
+      delete scroller.dataset.ignoreSwipe;
       counter.remove();
     },
   };
