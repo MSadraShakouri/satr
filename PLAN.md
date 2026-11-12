@@ -178,7 +178,13 @@ move/delete invalidates extracted text, empty pages stay empty, and failed text
 extraction can retry after its cooldown without a refresh loop. On desktop the
 warmed textless/text extraction medians were 0.7/8.7ms before and 0.7/10.3ms
 after all these changes; search-hit-to-page was 95ms to 72ms in one sample.
-These synthetic timings do not establish phone performance.*
+These synthetic timings do not establish phone performance. A later hit
+chosen while the PDF engine is opening is now held through pane layout until
+reader input; a controlled scroll reset failed before the change and passes
+after. The older race failed 3 of 20 two-worker base repetitions and passed
+30 of 30 after. Ordinary-hit desktop medians were 86ms → 103ms in one
+seven-sample run and 106.5ms → 102ms in a twelve-sample run; the ranges
+overlapped, so those do not establish a speed change.*
 
 - [ ] PDF outline regex *(found here: `Page [1-2]` is accepted as a
   regular expression but searched literally in the current document; the
