@@ -1,3 +1,4 @@
+import { watchGestureFrames } from './gestureFrames';
 import { asMarkdown } from './csv';
 import { MARKER } from './listMarkers';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
@@ -4549,6 +4550,7 @@ async function boot(): Promise<void> {
   void tellWhyItDied();
   void tellWhatTheLastResumeSaid();
   watchTheThread();
+  watchGestureFrames();
   warmTheEngine();
   warmTheCards();
   const ready = log.time('launch', 'ready to read');
