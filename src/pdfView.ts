@@ -128,6 +128,8 @@ export interface PdfHandle {
    *  down it in the units an outline row's `top` is given in. */
   reading(): { page: number; top: number };
   goTo(page: number): void;
+  /** A search target received during mounting remains held through layout. */
+  goToOpening(page: number): void;
   fitTo(mode: PdfFit): void;
   /** Which stop the page is sitting at, if either — for the checkmark. */
   fitNow(): PdfFit | null;
@@ -3389,6 +3391,16 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
     onPage: (listen: (page: number) => void) => {
       watchers.add(listen);
       return () => { watchers.delete(listen); };
+    },
+    goToOpening: (page: number) => {
+      // Just like the initial saved place, retain a late search target until
+      // the reader touches the pane. A mount or resize can reset scrollTop
+      // after a one-shot goTo, putting the reader back on the first page.
+      pending = { page: clamp(Math.round(page), 1, document_.pageCount), into: 0, zoom, across: acrossNow() };
+      applyPending();
+      showCounter();
+      drawBand();
+      if (scroller.clientHeight && Math.abs(scroller.scrollTop - topFor(pending)) <= 4) remember();
     },
     goTo: (page: number) => {
       letGo();

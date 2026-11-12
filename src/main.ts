@@ -1021,9 +1021,9 @@ async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, 
     const requested = openAtPage;
     openAtPage = null;
     ownScroll(400);
-    // A newer hit can be chosen while showPdf is still opening. goTo drops
-    // the viewer's pending restoration before placing that later request.
-    if (requested !== searchPlace) handle.goTo(requested.page);
+    // A newer hit chosen while showPdf was opening must survive the same
+    // late layout changes as the initial saved place.
+    if (requested !== searchPlace) handle.goToOpening(requested.page);
   }
   // Obsidian's chrome around it: the strip of controls and the panel of
   // thumbnails and contents (src/pdfChrome.ts).
