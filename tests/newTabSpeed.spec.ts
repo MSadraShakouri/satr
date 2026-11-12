@@ -99,3 +99,29 @@ test('the log names the new-tab checks and switcher preparation', async ({ page 
   expect(switcher.facts?.count).toBe(2);
   expect(switcher.ms).toEqual(expect.any(Number));
 });
+
+test('a failed recent-file check does not leave the previous new-tab page in place', async ({ page }) => {
+  await boot(page, [existing[0]]);
+  await page.locator('#nav-new').click();
+  await expect(page.locator('#empty-tab .empty-state-recent-item')).toHaveAttribute('data-path', existing[0]);
+  await page.locator('#nav-back').evaluate((el: HTMLElement) => el.click());
+  await expect(page.locator('body')).not.toHaveClass(/is-empty-tab/);
+  await page.evaluate(([bad, good]) => {
+    localStorage.setItem('satr:recent', JSON.stringify([bad, good]));
+    const vault = (window as any).__satr.load('/src/vault.ts');
+    const stat = vault.backend.stat.bind(vault.backend);
+    vault.backend.stat = async (path: string) => {
+      if (path === bad) throw new Error('stat refused');
+      return stat(path);
+    };
+  }, [existing[1], existing[2]]);
+  await page.locator('#nav-new').evaluate((el: HTMLElement) => el.click());
+  await expect(page.locator('#empty-tab [data-act="new"]')).toBeVisible();
+  await expect(page.locator('#empty-tab .empty-state-recent-item')).toHaveCount(1);
+  await expect(page.locator('#empty-tab .empty-state-recent-item')).toHaveAttribute('data-path', existing[2], { timeout: 3000 });
+  const warning = await page.evaluate(() => (window as any).__satr.load('/src/log.ts').lines()
+    .find((line: any) => line.text === 'could not check recent file'));
+  expect(warning?.kind).toBe('warning');
+  expect(warning?.facts?.path).toBe(existing[1]);
+  expect(warning?.facts?.why).toContain('stat refused');
+});

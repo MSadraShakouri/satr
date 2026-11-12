@@ -3318,7 +3318,13 @@ async function renderEmptyTab(): Promise<void> {
   // burst over a long history and still fill the list when files are gone.
   for (let i = 0; i < candidates.length && recent.length < 8; i += 4) {
     const batch = candidates.slice(i, i + 4);
-    const entries = await Promise.all(batch.map((path) => backend.stat(path)));
+    const entries = await Promise.all(batch.map(async (path) => {
+      try { return await backend.stat(path); }
+      catch (error) {
+        log.warn('file', 'could not check recent file', { path, why: String(error).slice(0, 200) });
+        return null;
+      }
+    }));
     checked += batch.length;
     for (let j = 0; j < batch.length && recent.length < 8; j += 1) {
       if (entries[j]) recent.push(batch[j]);
