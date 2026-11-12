@@ -110,7 +110,7 @@ export function loadSettings(): Settings {
     // exactly what a round of this cost already. So all three carry over to
     // the one he picked, once; the other three are still in the list below
     // for anyone who wants them back.
-    if ((Number(saved.version) || 1) < 7 && s.documentChrome !== 'split') s.documentChrome = 'split';
+    if ((Number(saved.version) || 1) < 6 && s.documentChrome !== 'split') s.documentChrome = 'split';
     s.version = SETTINGS_VERSION;
     s.fontSize = Math.min(24, Math.max(12, Number(s.fontSize) || DEFAULTS.fontSize));
     s.lineHeight = Math.min(2.4, Math.max(1.2, Number(s.lineHeight) || DEFAULTS.lineHeight));

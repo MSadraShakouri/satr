@@ -286,7 +286,7 @@ test('an answer saved before this round is carried to the picked one', async ({ 
     localStorage.setItem('satr:fs:file:Notes/handout.pdf', pdf as string);
     localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/handout.pdf' }], active: 0 }));
     localStorage.setItem('satr:demoShown', '1');
-    localStorage.setItem('satr:settings', JSON.stringify({ version: 6, documentChrome: 'all' }));
+    localStorage.setItem('satr:settings', JSON.stringify({ version: 5, documentChrome: 'all' }));
   }, PDF);
   await page.goto('/');
   await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 20000 });
