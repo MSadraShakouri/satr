@@ -4139,6 +4139,8 @@ async function documentsIn(root: string, recursive: boolean): Promise<{ path: st
     out.push({ path, text: text ?? '' });
     if (text !== null) continue;
     void textOf(path).then(() => {
+      // A failed extraction waits for a later query, not a self-refresh loop.
+      if (textHeld(path) === null) return;
       // One refresh for a batch of them, on the next quiet moment: ten
       // documents landing within a second of each other is one search of
       // the folder, not ten.

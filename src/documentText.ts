@@ -45,6 +45,9 @@ interface Read {
 const held = new Map<string, Read>();
 /** What is being read, so a search on every keystroke asks once. */
 const reading = new Map<string, Promise<string>>();
+/** Avoid hammering a broken file on every search. */
+const retryAfter = new Map<string, number>();
+const RETRY_MS = 5000;
 /** Nothing is read until the panel asks for documents at all, and only
  *  one document is read at a time: ten files opened in the engine at once
  *  is ten copies of ten files in memory, and the queue is over in a
@@ -74,12 +77,13 @@ export function forgetTextWithin(path: string): void {
   if (!path) return;
   for (const key of held.keys()) if (within(key, path)) held.delete(key);
   for (const key of reading.keys()) if (within(key, path)) reading.delete(key);
+  for (const key of retryAfter.keys()) if (within(key, path)) retryAfter.delete(key);
 }
 export const forgetText = (path: string): void => forgetTextWithin(path);
 
 async function read(path: string): Promise<Read> {
   const bytes = await backend.readBytes(path);
-  if (!bytes) return { text: '', starts: [] };
+  if (!bytes) throw new Error('Document bytes unavailable');
   const engine = await pdfium();
   const id = `satr-search-${path}`;
   const document_ = await engine.openDocumentBuffer({ id, content: bytes.slice().buffer }).toPromise();
@@ -109,22 +113,24 @@ async function read(path: string): Promise<Read> {
 }
 
 /**
- * A document's text, read if it has not been read yet. Never throws: a
- * file that cannot be read is a file with nothing in it, which is how the
- * search should treat it either way.
+ * A failed read returns no text for this search but is not cached as an
+ * empty document. A later search can retry after the quiet interval.
  */
 export function textOf(path: string): Promise<string> {
   const already = held.get(path);
   if (already) return Promise.resolve(already.text);
   let asked = reading.get(path);
   if (!asked) {
+    if ((retryAfter.get(path) ?? 0) > performance.now()) return Promise.resolve('');
     asked = queue
       .then(() => read(path))
-      .catch((): Read => ({ text: '', starts: [] }))
+      .catch((): Read | null => null)
       .then((found) => {
         if (reading.get(path) !== asked) return held.get(path)?.text ?? '';
-        held.set(path, found);
         reading.delete(path);
+        if (!found) { retryAfter.set(path, performance.now() + RETRY_MS); return ''; }
+        retryAfter.delete(path);
+        held.set(path, found);
         return found.text;
       });
     queue = asked;
