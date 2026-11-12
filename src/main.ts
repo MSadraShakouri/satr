@@ -7,7 +7,7 @@ import * as log from './log';
 import { tellWhyItDied, tellWhatTheLastResumeSaid, watchTheThread } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
-import type { EditorState } from '@codemirror/state';
+import type { EditorState, Text } from '@codemirror/state';
 import '@codemirror/view';
 import { setTimestampChipTap } from './livePreview';
 import 'katex/dist/katex.min.css';
@@ -680,9 +680,9 @@ function closeDocument(): void {
 //
 // So the view goes with the tab. What is kept is the built DOM itself --
 // formulas already drawn, code already coloured, images already loaded --
-// and it is handed back only when the note is the same note: same path, and
-// the same text, by length and hash. An edit changes the stamp, so an
-// edited note is built again, which is the only correct answer.
+// and it is handed back only when the note is the same note: same path and
+// exactly the same text. The immutable editor document is shared with the
+// tab's session in the usual case, and compares equal without copying it.
 //
 // Two of them, newest first, the way documents are kept (KEPT_DOCUMENTS
 // above) -- the note and the one beside it. A drawn note is heavy, most of
@@ -693,7 +693,7 @@ function closeDocument(): void {
  *  app, so it goes on the pile with it -- priced again from nothing, a note
  *  coming back changes height under the reader. */
 type Pricing = { lines: number; height: number; guess: number; applied: number; line: string };
-type KeptNote = { path: string; stamp: string; chars: number; nodes: DocumentFragment; formulas: Formula[]; pricing: Pricing };
+type KeptNote = { path: string; sourceDoc: Text; chars: number; nodes: DocumentFragment; formulas: Formula[]; pricing: Pricing };
 const KEPT_NOTES = 2;
 const KEPT_NOTE_CHARS = 4 * 1024 * 1024;
 let keptNotes: KeptNote[] = [];
@@ -711,18 +711,10 @@ function forgetNote(path: string): void {
   keptNotes = keptNotes.filter((note) => note.path !== path);
   if (renderedNote?.path === path) renderedNote = null;
 }
-/** The same text gives the same stamp; a character more or less does not.
- *  Length alone would miss a swapped word, and the whole string kept for
- *  comparison would be the note a second time. djb2 over 130kB is a
- *  millisecond. */
-function stampOf(source: string): string {
-  let hash = 5381;
-  for (let i = 0; i < source.length; i += 1) hash = ((hash * 33) ^ source.charCodeAt(i)) | 0;
-  return `${source.length}:${hash}`;
-}
 /** The note the reading view is showing right now, and what it was built
- *  from -- so that leaving it can keep it. */
-let renderedNote: { path: string; stamp: string; chars: number; formulas: Formula[] } | null = null;
+ *  from -- so that leaving it can keep it. A hash cannot prove equality:
+ *  distinct same-length notes can collide and show the wrong reading view. */
+let renderedNote: { path: string; sourceDoc: Text; chars: number; formulas: Formula[] } | null = null;
 /** A note handed back from the pile is already measured: its sections carry
  *  the heights they were last laid out at, and the placement that follows
  *  can trust them instead of laying out every formula on the note again.
@@ -838,18 +830,18 @@ function renderPreview(): void {
     previewReady = showHtmlFile(preview, editor.getValue(), page, () => filePath === page);
     return;
   }
+  const sourceDoc = editor.view.state.doc;
   const source = editor.getValue();
-  const stamp = stampOf(source);
   // The same note, unchanged, as it was left: the view goes back into the
-  // page whole. Nothing is parsed, nothing is drawn again, and the formulas
-  // that were on screen are still on it.
-  const kept = keptNotes.find((note) => note.path === filePath && note.stamp === stamp);
+  // page whole. Text.eq is exact, and returns immediately for the document
+  // shared by an unchanged tab; unlike a short hash it cannot collide.
+  const kept = keptNotes.find((note) => note.path === filePath && note.sourceDoc.eq(sourceDoc));
   if (kept) {
     const back = log.time('file', 'reading view kept', { chars: source.length });
     keptNotes = keptNotes.filter((note) => note !== kept);
     preview.replaceChildren(kept.nodes);
     preview.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((box) => { box.disabled = viewOnly; });
-    renderedNote = { path: filePath, stamp, chars: kept.chars, formulas: kept.formulas };
+    renderedNote = { path: filePath, sourceDoc, chars: kept.chars, formulas: kept.formulas };
     keptMeasured = true;
     mathFilling?.stop();
     // Whatever was still waiting when he left is still waiting now, and the
@@ -884,7 +876,7 @@ function renderPreview(): void {
   mathFilling?.stop();
   mathFilling = fillMath(preview, note.formulas, previewPane, noteGrew);
   built({ formulas: note.formulas.length, waiting: mathFilling.left(), words: Math.round(performance.now() - words) });
-  renderedNote = { path: filePath, stamp, chars: note.html.length, formulas: note.formulas };
+  renderedNote = { path: filePath, sourceDoc, chars: note.html.length, formulas: note.formulas };
   // A writable note's tasks can be ticked where they are read. A read-only
   // hand-over, like a card or exported page, must leave its boxes inert.
   preview.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((box) => { box.disabled = viewOnly; });
