@@ -1830,7 +1830,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
    *  been on the screen yet. */
   let unpainted = false;
   const pump = async (): Promise<void> => {
-    if (drawing) return;
+    if (shut || drawing) return;
     drawing = true;
     try {
       // A frame for the pages just put up out of the book, before the
@@ -1840,7 +1840,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       // reader watches empty boxes for all of it. This is the whole of
       // what he asked for: the soft ones, now, and the sharp one after.
       if (unpainted) { unpainted = false; await breathe(); }
-      while (queue.length) {
+      while (!shut && queue.length) {
         // The move first, then the work: while a zoom is gliding, the
         // pages travel on the pictures they already have. Drawing one
         // during the motion is the stutter this animation was built to
@@ -1861,9 +1861,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
             && (sweeping() || !job.slab.detailQuick)) continue;
           await paintDetail(job.slab, want);
         }
-        await breathe();
+        if (!shut) await breathe();
       }
-    } finally { drawing = false; rest(); }
+    } finally { drawing = false; if (!shut) rest(); }
   };
 
   /**
@@ -1908,6 +1908,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   /** Nothing for half a second: carry on with the sketch book. */
   const rest = (): void => {
     window.clearTimeout(idleTimer);
+    if (shut) return;
     // Before the walk and after it. Before, because the walk over a long
     // document runs for half a minute -- his book is four hundred pages
     // of sketching -- and a refresh in the middle of it would otherwise
@@ -1918,6 +1919,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   };
 
   const drawBand = (): void => {
+    if (shut) return;
     const jobs: Job[] = [];
     /** Pages whose picture is already drawn and only has to be put back,
      *  nearest the reader first like everything else here. */
@@ -2918,6 +2920,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   doc.addEventListener('pointerup', onTap);
 
   const onResize = (): void => {
+    if (shut) return;
     const held = placeNow();
     measureFit();
     layout();
@@ -3015,7 +3018,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
   /** The last card write, so the tab switcher can wait for a fresh one. */
   let carding: Promise<unknown> = Promise.resolve();
   putDown = (always = false): void => {
-    if (!options.key || !sketches.size) return;
+    if (shut || !options.key || !sketches.size) return;
     // Nothing new to say, and said recently enough: a reader sitting on
     // one page has the shelf they are going to get.
     // The zoom is part of what is being filed now: the card is the part of
@@ -3387,6 +3390,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       stopLiving();
       shut = true;
       if (firstFrameRequest) cancelAnimationFrame(firstFrameRequest);
+      if (replanning) cancelAnimationFrame(replanning);
+      window.clearTimeout(coolDown);
+      queue = [];
       stopGlide();
       watcher.disconnect();
       scroller.removeEventListener('scroll', onScroll);
