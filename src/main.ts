@@ -1256,7 +1256,9 @@ async function refreshOnResume(): Promise<void> {
 }
 
 async function performSave(path: string, text: string, authorization?: SaveConflict): Promise<boolean> {
+  const saveStarted = performance.now();
   const disk = await readDiskVersion(path);
+  const checkMs = Math.round(performance.now() - saveStarted);
   const baseline = diskBase?.path === path ? diskBase : null;
   if (disk?.text === text) {
     setDiskBaseIfCurrent(path, disk);
@@ -1291,9 +1293,15 @@ async function performSave(path: string, text: string, authorization?: SaveConfl
     }
     const writing = log.time('file', 'written', { path });
     await backend.write(path, text);
-    writing({ bytes: text.length });
+    // Keep the historical bytes field for existing log readers. It has always
+    // been UTF-16 code units; name that unit without encoding the note.
+    writing({ bytes: text.length, codeUnits: text.length });
+    const verifying = performance.now();
     const entry = await backend.stat(path);
+    const statMs = Math.round(performance.now() - verifying);
     setDiskBaseIfCurrent(path, { text, mtime: entry?.mtime ?? Date.now() });
+    log.note('file', 'vault save completed', { path, codeUnits: text.length, checkMs, statMs,
+      totalMs: Math.round(performance.now() - saveStarted) });
   }
   return true;
 }

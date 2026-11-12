@@ -170,3 +170,27 @@ test('a felt long task includes a clearly labelled memory sample taken afterward
   expect(Number(line.facts?.pictureMb)).toBeGreaterThanOrEqual(4);
   expect(Number(line.facts?.sampleAfterMs)).toBeGreaterThanOrEqual(0);
 });
+
+test('a completed vault save separates the conflict check, write and following stat', async ({ page }) => {
+  await page.evaluate(() => {
+    const log = window.__satr.load('/src/log.ts'); log.forget();
+    const vault = (window as any).__satr.load('/src/vault.ts');
+    const stat = vault.backend.stat.bind(vault.backend);
+    const write = vault.backend.write.bind(vault.backend);
+    vault.backend.stat = async (path: string) => { await new Promise(r => setTimeout(r, 45)); return stat(path); };
+    vault.backend.write = async (path: string, text: string) => { await new Promise(r => setTimeout(r, 60)); return write(path, text); };
+  });
+  await page.locator('#app .cm-content').click();
+  await page.keyboard.insertText('سلام😀');
+  const read = () => page.evaluate(() => window.__satr.load('/src/log.ts').lines());
+  await expect.poll(async () => (await read()).some(l => l.text === 'vault save completed')).toBe(true);
+  const lines = await read();
+  const written = lines.find(l => l.text === 'written')!;
+  const completed = lines.find(l => l.text === 'vault save completed')!;
+  expect(Number(completed.facts?.checkMs)).toBeGreaterThanOrEqual(40);
+  expect(Number(completed.facts?.statMs)).toBeGreaterThanOrEqual(40);
+  expect(Number(completed.facts?.totalMs)).toBeGreaterThanOrEqual(140);
+  expect(written.facts?.codeUnits).toBe(written.facts?.bytes);
+  expect(completed.facts?.codeUnits).toBe(written.facts?.codeUnits);
+  expect(completed.facts?.path).toBe('Notes/A.md');
+});
