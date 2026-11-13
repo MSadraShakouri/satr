@@ -57,11 +57,17 @@ test('a launch says where its time went, from zero', async ({ page }) => {
   expect(first?.ms, 'the first file is timed').toBeGreaterThanOrEqual(0);
   expect(ready?.ms, 'and so is the whole of it').toBeGreaterThanOrEqual(0);
 
-  // In order, and the whole is at least the sum of the parts it contains.
+  // The positions read may overlap the first-file read;
+  // their durations must not be added as if the operations were serial.
+  const setup = find(lines, 'launch', 'entry setup');
+  const gate = find(lines, 'launch', 'saved positions gate');
+  expect(setup?.facts?.entryMs, 'when the app entry began').toEqual(expect.any(Number));
+  expect(setup?.facts?.setupMs, 'synchronous setup before boot').toEqual(expect.any(Number));
+  expect(places?.facts?.mayOverlapFile).toBe(true);
+  expect(gate?.facts?.waitMs, 'remaining wait before showing the first screen').toEqual(expect.any(Number));
   expect(cold!.at).toBeLessThanOrEqual(places!.at);
   expect(places!.at).toBeLessThanOrEqual(first!.at);
   expect(first!.at).toBeLessThanOrEqual(ready!.at);
-  expect(ready!.ms!).toBeGreaterThanOrEqual(places!.ms! + first!.ms! - 1);
   // And against a clock this test kept itself, rather than only against
   // itself: the app cannot claim a launch longer than the page took to open.
   expect(ready!.ms!).toBeLessThan(wall + 1000);

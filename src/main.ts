@@ -65,6 +65,11 @@ import { forgetTextWithin, pageAt as documentPageAt } from './documentText';
 import { DEFAULT_FOLDER, backend, basename, dirname, extension, freeName, isNote, joinPath, looksBinary, migrateOldNotes, mimeType, stem, walkFiles, walkNotes, within, type TextOpen } from './vault';
 import { fileKind, isEditableFile } from './fileKinds';
 
+// ES module dependencies have already evaluated when this line runs. The
+// interval from here to boot says what our synchronous app setup costs, not
+// script fetching or the dependency parse/evaluation before the entry ran.
+const entryStartedAt = performance.now();
+
 type Mode = 'edit' | 'preview';
 // The tour (demo.md, at the top of the repo): the first note in a fresh
 // browser, and nowhere else — the new-tab page used to carry a row for it and
@@ -4567,6 +4572,7 @@ let queuedIncomingId = '';
 let badStart: BadStart = { times: 0, path: '' };
 let rescued = '';
 async function boot(): Promise<void> {
+  const bootStartedAt = performance.now();
   keepSnapshots();
   // Before anything that can break: an error during the launch is the one
   // most worth having, and the handlers cost nothing until something throws.
@@ -4582,6 +4588,10 @@ async function boot(): Promise<void> {
   // The clock on every line is milliseconds since the page began loading, so
   // these read as a launch from zero without anything having to subtract.
   log.note('launch', 'cold start', { native: isNative(), build: log.build() });
+  log.note('launch', 'entry setup', {
+    entryMs: Math.round(entryStartedAt),
+    setupMs: Math.round(bootStartedAt - entryStartedAt),
+  });
   if (badStart.times) {
     log.warn('launch', 'the last launch did not finish', { times: badStart.times, file: fileName(badStart.path) || 'nothing' });
   }
@@ -4597,14 +4607,16 @@ async function boot(): Promise<void> {
   warmTheEngine();
   warmTheCards();
   const ready = log.time('launch', 'ready to read');
+  // Start only after the launch guard is armed, so a failure here still
+  // counts as an interrupted launch. File access can run while it opens.
+  const places = log.time('launch', 'reading places read', { mayOverlapFile: true });
+  const placesReady = openViewStore().then(() => { places(); keepStorage(); });
+  // A native-listener failure must not leave the independent store promise
+  // unobserved before the finally block has a chance to wait for it.
+  void placesReady.catch(() => undefined);
   try {
-    // Before the first file opens, so that a file asking where it was left
-    // is answered from the store rather than guessed at. One read of a few
-    // hundred small records; the app is already waiting on the vault.
-    const places = log.time('launch', 'reading places read');
-    await openViewStore();
-    places();
-    keepStorage();
+    // Saved positions and the first file may be read in parallel; showing
+    // either a file or an interactive empty tab still waits for positions.
     if (supportsIncomingFiles()) {
       await onIncomingFile((id) => {
         if (!bootReady) queuedIncomingId = id;
@@ -4612,7 +4624,7 @@ async function boot(): Promise<void> {
       });
     }
     const first = log.time('launch', 'first file on screen');
-    await openFirstNote();
+    await openFirstNote(placesReady);
     first();
     // This far is far enough to call it a launch: the reader has something
     // on screen. Anything that goes wrong after this is not a start-up loop.
@@ -4627,6 +4639,10 @@ async function boot(): Promise<void> {
       if (queued && queued !== pending) await handleIncomingId(queued);
     }
   } finally {
+    // An early file-read or listener failure must not expose the app while
+    // the independently started position store is still being populated.
+    // On a store failure the old launch also continued through this finally.
+    await placesReady.catch(() => undefined);
     ready();
     bootReady = true;
     window.__satrBooted = true; // the cover in index.html stops waiting for this
@@ -4957,7 +4973,13 @@ function warmTheEngine(): void {
   else window.setTimeout(warm, 1500);
 }
 
-async function openFirstNote(): Promise<void> {
+async function waitForPlaces(ready: Promise<void>): Promise<void> {
+  const started = performance.now();
+  await ready;
+  log.note('launch', 'saved positions gate', { waitMs: Math.round(performance.now() - started) });
+}
+
+async function openFirstNote(placesReady: Promise<void>): Promise<void> {
   // A new empty tab at launch: the setting asks for one, or the app was away
   // long enough. Show it before file access, so the last note never sits
   // on screen behind a permission sheet.
@@ -4968,6 +4990,8 @@ async function openFirstNote(): Promise<void> {
   // past the loop rather than a way of losing the reader's work.
   const loop = inALoop(badStart);
   if (loop) {
+    // Reset the loaded database, not just the temporary local fallback.
+    await waitForPlaces(placesReady);
     rescued = fileName(badStart.path);
     forgetViews();
     log.warn('launch', 'started on an empty tab after a bad start', { times: badStart.times, file: rescued || 'nothing' });
@@ -4977,6 +5001,9 @@ async function openFirstNote(): Promise<void> {
   // From here the app is running and being looked at: the clock starts again.
   watchSeen();
   if (openEmpty) {
+    // An empty tab can immediately open another file; its saved position
+    // must already be available when the screen becomes interactive.
+    if (!loop) await waitForPlaces(placesReady);
     const empty = tabs.findIndex((t) => !t.path);
     if (empty >= 0) activeTab = empty;
     else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
@@ -4986,7 +5013,7 @@ async function openFirstNote(): Promise<void> {
     return;
   }
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)
-  if (!curTab().path && tabs.length > 1) { showEmptyTab(); void leftSidebar.refresh(); return; }
+  if (!curTab().path && tabs.length > 1) { await waitForPlaces(placesReady); showEmptyTab(); void leftSidebar.refresh(); return; }
   let path = curTab().path || filePath;
   // A picture or a document is shown, not read: its bytes as text are the
   // whole file. Only the picture was spared that, and the launch is the
@@ -5005,6 +5032,8 @@ async function openFirstNote(): Promise<void> {
     text = await backend.read(path);
     reading({ bytes: text?.length ?? 0, status: text === null ? 'gone' : 'text' });
   }
+  // Every branch below can show a file or an interactive empty tab.
+  await waitForPlaces(placesReady);
   if (text === null) {
     ({ path, text } = await firstNote());
     // There is nothing to open: the space holds no note this tab can show.
