@@ -52,6 +52,7 @@ import { maskMathAndCode } from './mathScan';
 import { closeSettings, isSettingsOpen, loadSettings, openSettings, saveSettings, type QuickAction, type Settings } from './settings';
 import { onThemeChange } from './theme';
 import type { PdfChrome, PdfTheme } from './pdfChrome';
+import type { OverlaySource } from './pdfOverlay';
 import { setHighlightAll } from './findBar';
 import { loadPrintOptions, printOptionsKey } from './printOptions';
 import demoNote from '../demo.md?raw';
@@ -2250,6 +2251,42 @@ const TABS_KEY = 'satr:tabs';
 let tabs: Tab[] = [{ path: '' }];
 let activeTab = 0;
 let displayedTab: Tab | null = null;
+let lastOverlayNote: Tab | null = null;
+let pinnedPdf: import('./pdfOverlay').PdfOverlay | null = null;
+let pinnedTab: Tab | null = null;
+let pinRequest = 0;
+function closePinnedPdf(): void { pinRequest += 1; pinnedPdf?.destroy(); pinnedPdf = null; pinnedTab = null; }
+async function keepPdfOnScreen(): Promise<void> {
+  const pdfTab = curTab();
+  const source = openedDocument.bytes || openedDocument.blob || openedDocument.device;
+  const reader = pdfView;
+  if (!reader || !source || openedDocument.path !== pdfTab.path) { showNotice('Wait for the PDF to open.', 3000); return; }
+  const place = reader.place();
+  const request = ++pinRequest;
+  let note = lastOverlayNote && tabs.includes(lastOverlayNote) && fileKind(fileName(lastOverlayNote.path)) === 'note'
+    ? lastOverlayNote : tabs.find((tab) => fileKind(fileName(tab.path)) === 'note');
+  if (!note) {
+    // The last note may have been closed. Reopen the most recent existing
+    // one instead of asking the reader to manufacture a second tab first.
+    let path = '';
+    for (const candidate of recentNotes()) {
+      if (fileKind(fileName(candidate)) === 'note' && await backend.stat(candidate).catch(() => null)) { path = candidate; break; }
+    }
+    if (request !== pinRequest || curTab() !== pdfTab || pdfView !== reader) return;
+    if (!path) { showNotice('Open a note in another tab first.', 3000); return; }
+    await openFile(path);
+    if (filePath === path) note = curTab();
+  } else await switchTab(tabs.indexOf(note));
+  if (!note || request !== pinRequest || curTab() !== note || !tabs.includes(pdfTab)) return;
+  const { createPdfOverlay } = await import('./pdfOverlay');
+  if (request !== pinRequest || curTab() !== note || !tabs.includes(pdfTab)) return;
+  pinnedTab = pdfTab;
+  pinnedPdf = createPdfOverlay({ source: source as OverlaySource, path: pdfTab.path, place,
+    hide: () => closePinnedPdf(),
+    openNormally: () => { const at = tabs.indexOf(pdfTab); closePinnedPdf(); if (at >= 0) void switchTab(at); },
+    failed: () => { closePinnedPdf(); showNotice('Could not keep this PDF on screen.', 4000); },
+  });
+}
 const curTab = (): Tab => tabs[activeTab];
 function saveTabs(): void {
   const safeTabs = tabs.filter((tab) => !isExternalPath(tab.path));
@@ -2385,6 +2422,8 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
 const since = (mark: number): number => Math.round(performance.now() - mark);
 
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
+  if (fileKind(fileName(path)) === 'note') lastOverlayNote = curTab();
+  else if (pinnedPdf) closePinnedPdf();
   if (openAtPage && openAtPage.path !== path) openAtPage = null;
   pdfLoadGeneration += 1;
   rescued = ''; // a file is open: the empty tab has nothing left to explain
@@ -2652,6 +2691,7 @@ function pathMoved(from: string, to: string): void {
   // synchronously, before an old viewer can file during its teardown.
   void forgetPdfCardsWithin(from).catch(() => {});
   void forgetPdfCardsWithin(to).catch(() => {});
+  if (pinnedTab && within(pinnedTab.path, from)) pinnedPdf?.move(to + pinnedTab.path.slice(from.length));
   if (filePath && within(filePath, from)) pdfView?.setCardPath(to + filePath.slice(from.length));
   forgetTabCard(from);
   forgetTabCard(to);
@@ -2695,6 +2735,7 @@ function pathMoved(from: string, to: string): void {
 /** A file or folder was deleted: forget it; if the open note went, open another. */
 function pathDeleted(path: string): void {
   void forgetPdfCardsWithin(path).catch(() => {});
+  if (pinnedTab && within(pinnedTab.path, path)) closePinnedPdf();
   forgetTextWithin(path);
   linkIndexAt = 0; // the notes changed: rebuild the link index next time
   // A card outliving its file would be a tab showing the inside of
@@ -2838,6 +2879,7 @@ async function newFile(dir = whereNewNotesGo()): Promise<void> {
 }
 
 function showIncomingScreen(path: string, file: IncomingOpenFile): void {
+  if (pinnedPdf) closePinnedPdf();
   pdfLoadGeneration += 1;
   ++viewGeneration;
   window.clearTimeout(viewTimer);
@@ -3121,6 +3163,7 @@ function newTab(): void {
  *  so the switcher can redraw from the new list. */
 async function closeTab(index: number): Promise<void> {
   if (!tabs[index]) return;
+  if (tabs[index] === pinnedTab) closePinnedPdf();
   log.note('tabs', 'closed', { what: fileName(tabs[index].path) || 'empty tab', open: tabs.length });
   if (tabs.length < 2) {
     // The last tab: it becomes the empty tab, and the note it had can come back.
@@ -3167,6 +3210,7 @@ async function openFolderTabs(folder: string, replace: boolean): Promise<void> {
   const block = paths.map((path) => tabs.find((t) => t.path === path) ?? { path });
   const inBlock = new Set(paths);
   if (replace) {
+    if (pinnedTab && !inBlock.has(pinnedTab.path)) closePinnedPdf();
     for (const tab of tabs) if (!inBlock.has(tab.path) && tab.path) { closedTabs.push({ path: tab.path }); if (closedTabs.length > 20) closedTabs.shift(); }
     tabs = block;
     activeTab = 0;
@@ -3261,6 +3305,7 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
+  if (pinnedPdf) closePinnedPdf();
   openAtPage = null;
   pdfLoadGeneration += 1;
   applyRotation(loadSettings().documentRotation, false);
@@ -3562,7 +3607,7 @@ function showTabActions(): void {
     { title: 'Reopen closed tab', icon: icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), disabled: closedTabs.length === 0, action: () => reopenClosedTab() },
     'separator',
     { title: 'Close all tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: tabs.every((t) => !t.path), action: () => { void closeAllTabs(); } },
-    { title: 'Close other tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: n < 2, action: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); } },
+    { title: 'Close other tabs', icon: icon('<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9.5 12l5 5M14.5 12l-5 5"/>'), warning: true, disabled: n < 2, action: () => { if (pinnedTab && pinnedTab !== curTab()) closePinnedPdf(); closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); } },
     { title: 'Close current tab', icon: icon('<path d="M18 6 6 18M6 6l12 12"/>'), warning: true, disabled: emptyOnly, action: () => { void closeTab(activeTab); } },
   ]);
 }
@@ -3636,7 +3681,7 @@ function tabCardNow(i: number): string | null {
 
 function tabSwitcherDeps(): TabSwitcherDeps {
   return {
-      tabs: () => tabs.map((t, i) => ({ key: t.path ?? '', title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path, external: Boolean(t.path) && isExternalPath(t.path) })),
+      tabs: () => tabs.map((t, i) => ({ key: t.path ?? '', title: t.path ? displayNameForPath(t.path) : 'New tab', active: i === activeTab, empty: !t.path, external: Boolean(t.path) && isExternalPath(t.path), pinned: t === pinnedTab })),
       previewNow: (i) => tabCardNow(i),
       preview: async (i) => {
         const path = tabs[i].path;
@@ -3674,6 +3719,7 @@ function tabSwitcherDeps(): TabSwitcherDeps {
           // Costs nothing when the page, the zoom and the place are the
           // ones already filed.
           if (path === filePath && pdfView) await pdfView.keepNow().catch(() => undefined);
+          else if (pinnedTab?.path === path && pinnedPdf) await pinnedPdf.keepNow().catch(() => undefined);
           const epoch = cardEpoch(path);
           const { recallCard } = await import('./pdfCard');
           const card = await recallCard(path);
@@ -3713,13 +3759,14 @@ function tabSwitcherDeps(): TabSwitcherDeps {
         // are the machinery landing somewhere, not a choice.
         const picked = tabs[i]?.path;
         if (picked) rememberRecent(picked);
+        if (tabs[i] === pinnedTab && pinnedPdf) { pinnedPdf.expand(); return; }
         void switchTab(i);
       },
       close: closeTab,
       newTab,
       canReopen: () => closedTabs.length > 0,
       reopen: reopenClosedTab,
-      closeOthers: () => { closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
+      closeOthers: () => { if (pinnedTab && pinnedTab !== curTab()) closePinnedPdf(); closedTabs.push(...tabs.filter((t) => t !== curTab() && t.path).map(({ path }) => ({ path }))); tabs = [curTab()]; activeTab = 0; renderNavButtons(); },
       closeAll: closeAllTabs,
       move: moveTab,
   };
@@ -3873,6 +3920,7 @@ function showFileMenu(): void {
   // rather than Obsidian's "Adapt to theme" because that is the thing it
   // does and the words he used looking for it; the moon is what a reader
   // is already looking for when they want this.
+  if (documentOpen()) entries.push({ title: 'Keep PDF on screen', icon: svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 11h18M12 4v7"/>'), action: () => { void keepPdfOnScreen(); } });
   if (documentOpen()) entries.push(
     { title: 'Dark pages', icon: MENU_ICONS.dark, action: () => openPdfTheme?.() },
   );
@@ -4538,6 +4586,7 @@ function handleBack(): boolean {
   else if (folderExport?.isOpen()) folderExport.close();
   else if (document.querySelector('#save-conflict-dialog')) closeSaveConflict();
   else if (document.body.classList.contains('external-file-active')) returnFromIncomingFile();
+  else if (pinnedPdf?.closePopup()) { /* PDF navigation, not the PDF itself */ }
   else if (editor.findOpen) editor.closeFind();
   else if (document.body.classList.contains('files-open')) toggleFiles(false);
   else if (document.body.classList.contains('outline-open')) toggleOutline(false);

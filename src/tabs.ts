@@ -15,6 +15,7 @@ export interface TabCard {
   key?: string;
   active: boolean;
   empty: boolean;
+  pinned?: boolean;
   /** A file another app handed over (ACTION_VIEW / ACTION_SEND), not a note
    *  of the vault. Handing the same file over twice opens a second tab —
    *  there is no way back from the token it arrives as to the tab already
@@ -174,6 +175,7 @@ function createTabSwitcher(deps: TabSwitcherDeps, preparing: boolean): void {
       <div class="mobile-tab-wrapper">
         <div class="mobile-tab${tab.active ? ' is-active' : ''}${tab.empty || initial[i] ? '' : ' is-empty'}" data-index="${i}">
           <div class="mobile-tab-preview">
+            ${tab.pinned ? '<span class="mobile-tab-pinned">On screen</span>' : ''}
             ${tabs.length > 1 || !tabs[0].empty ? `<div class="close-button" data-close="${i}" role="button" aria-label="Close tab">${ICONS.x}</div>` : ''}
             <div class="mobile-tab-preview-embed"><div class="mobile-tab-preview-page markdown-preview-view">${initial[i]}</div></div>
             <div class="mobile-tab-preview-empty">${ICONS.file}</div>
