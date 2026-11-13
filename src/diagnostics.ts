@@ -193,7 +193,7 @@ export async function tellWhatTheLastResumeSaid(): Promise<void> {
 const FELT_MS = 120;
 const MOST_LONG_TASKS = 60;
 
-export function watchTheThread(): void {
+export function watchTheThread(context?: () => Facts): void {
   if (typeof PerformanceObserver !== 'function') return;
   const kinds = (PerformanceObserver as unknown as { supportedEntryTypes?: string[] }).supportedEntryTypes;
   if (kinds && !kinds.includes('longtask')) return;
@@ -229,6 +229,7 @@ export function watchTheThread(): void {
           // not a claim to have sampled memory inside the blocked thread.
           sampleAfterMs: Math.max(0, Math.round(performance.now() - (entry.startTime + entry.duration))),
           ...memoryFacts(),
+          ...context?.(),
           ...(said === MOST_LONG_TASKS ? { andNoMore: true } : {}),
         });
       }

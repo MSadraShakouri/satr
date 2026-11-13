@@ -1,4 +1,5 @@
 import { watchGestureFrames } from './gestureFrames';
+import { watchEditorDiagnostics } from './editorDiagnostics';
 import { asMarkdown } from './csv';
 import { MARKER } from './listMarkers';
 import { readViewMemory, writeViewMemory, viewMemoryKey, readPlace, writePlace, type ViewIdentity, type SavedView } from './viewMemory';
@@ -229,6 +230,8 @@ const picture = { path: '', url: '' };
 type DevicePdfPath = { kind: 'device-path'; path: string; incomingId?: string };
 const openedDocument: { path: string; bytes: Uint8Array | null; blob: Blob | null; device: DevicePdfPath | null } = { path: '', bytes: null, blob: null, device: null };
 let pdfMountGeneration = 0;
+// Clock for the currently displayed PDF, starting at showFile, not the tap.
+let pdfShowFileAt = 0;
 let pdfOpening: AbortController | null = null;
 let pdfLoadGeneration = 0;
 /**
@@ -964,6 +967,7 @@ async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, 
     scroller: previewPane,
     key,
     cardFor: path,
+    showFileAt: pdfShowFileAt,
     // A search result names a page, and that beats where the document
     // was left: it is given as the place it opens at rather than scrolled
     // to afterwards, because the remembered place is restored over
@@ -1363,15 +1367,25 @@ async function saveNow(): Promise<boolean> {
   // performSave, whose caller retries while the text differs from the disk's,
   // which for a note that was never written is always.)
   if (onlyOnScreen?.path === path && onlyOnScreen.text === text && !(await backend.stat(path))) return true;
+  const saveAttemptAt = performance.now();
   const task = performSave(path, text);
   activeSave = task;
   let saved = false;
+  let outcome: 'completed' | 'not completed' | 'error' = 'not completed';
   try {
     saved = await task;
+    outcome = saved ? 'completed' : 'not completed';
   } catch (error) {
+    outcome = 'error';
     showNotice(`Couldn't save: ${error instanceof Error ? error.message : String(error)}`, 5000);
     return false;
   } finally {
+    // The API completed; this is not proof of survival after a process kill.
+    // Do not include a path, note text, or the provider's error message.
+    (outcome === 'error' ? log.warn : log.note)('file', 'save attempt finished', {
+      outcome, totalMs: Math.round(performance.now() - saveAttemptAt),
+      source: isExternalPath(path) ? 'incoming' : backend.kind,
+    });
     if (activeSave === task) activeSave = null;
   }
   if (saved && filePath === path && editor.getValue() !== diskBase?.text) return saveNow();
@@ -1634,10 +1648,12 @@ function setMode(requested: Mode, restoredLine?: number): void {
 function toggleFiles(open?: boolean): void { drawers.toggle('left', open); }
 function toggleOutline(open?: boolean): void { drawers.toggle('right', open); }
 
+let editorDiagnostics: ReturnType<typeof watchEditorDiagnostics> | undefined;
+const editorStartedAt = performance.now();
 editor = new SatrEditor(document.querySelector('#editor')!, update, {
   title: fileBase,
   autoSpace: loadSettings().spaceAfterPunctuation,
-  onSelection: () => { rememberViewSoon(); updateMathSaying(); },
+  onSelection: (head, from, to) => { editorDiagnostics?.selection(head, from === to, editor.view.composing); rememberViewSoon(); updateMathSaying(); },
   onFold: () => { noteReshaped(); applyPreviewFolds(); renderMenuButton(); rememberViewSoon(); },
   linkNames: () => { if (Date.now() - linkIndexAt > 30000) void refreshLinkIndex(); return noteNames(); },
   openLink: (target, heading) => openLink(target, heading),
@@ -1654,6 +1670,8 @@ editor = new SatrEditor(document.querySelector('#editor')!, update, {
     return null;
   },
 });
+const editorConstructionMs = performance.now() - editorStartedAt;
+editorDiagnostics = watchEditorDiagnostics(editor.view.dom);
 window.addEventListener('satr:font-scale-change', () => {
   editor.remeasure();
   if (previewVisible()) { layoutMath(preview); scheduleMathLayout(preview); }
@@ -2109,6 +2127,7 @@ for (const type of ['touchstart', 'wheel', 'keydown', 'mousedown'] as const) {
 }
 editor.view.scrollDOM.addEventListener('scroll', () => {
   if (mode === 'edit' && performance.now() < holdUntil && !syncingScroll && Math.abs(editorScroll(editor.view, scrollBand()) - holdLine) > 0.5) {
+    editorDiagnostics?.correction(editor.view.composing);
     const generation = viewGeneration;
     const y = scrollBand();
     syncingScroll = true;
@@ -2384,6 +2403,7 @@ function showFile(path: string, content: string, after?: () => void, options?: {
   // editor before anything could be seen.
   const imageTab = isPicture(path);
   const documentTab = isDocument(path);
+  pdfShowFileAt = documentTab ? performance.now() : 0;
   // A document may turn with the phone; a note being typed into stays put.
   applyRotation(loadSettings().documentRotation, documentTab);
   const fileText = content; // what the file itself holds; for a picture, not its note
@@ -4591,6 +4611,8 @@ async function boot(): Promise<void> {
   log.note('launch', 'entry setup', {
     entryMs: Math.round(entryStartedAt),
     setupMs: Math.round(bootStartedAt - entryStartedAt),
+    // Inside setupMs, not another duration to add to it.
+    editorMs: Math.round(editorConstructionMs),
   });
   if (badStart.times) {
     log.warn('launch', 'the last launch did not finish', { times: badStart.times, file: fileName(badStart.path) || 'nothing' });
@@ -4602,7 +4624,7 @@ async function boot(): Promise<void> {
   // the launch owes it nothing, and the line lands when it lands.
   void tellWhyItDied();
   void tellWhatTheLastResumeSaid();
-  watchTheThread();
+  watchTheThread(() => ({ screen: diagnosticScreen(), savePending: Boolean(activeSave || saveTimer !== undefined) }));
   watchGestureFrames();
   warmTheEngine();
   warmTheCards();
@@ -4646,6 +4668,14 @@ async function boot(): Promise<void> {
     ready();
     bootReady = true;
     window.__satrBooted = true; // the cover in index.html stops waiting for this
+    // A callback before a possible paint, not proof of display or input readiness.
+    const readyAt = performance.now();
+    if (document.visibilityState === 'visible') requestAnimationFrame(() => {
+      log.note('launch', 'first screen frame opportunity', {
+        afterReadyMs: Math.round(performance.now() - readyAt),
+        visible: document.visibilityState === 'visible',
+      });
+    });
     // The real note is on screen: lift the start-up copy.
     //
     // On the device the system splash (android/.../MainActivity.java) is held
@@ -4841,12 +4871,18 @@ const NOTHING_PAINTED_MS = 600;
  *  wrote it cannot be read when one of them goes missing, which is exactly
  *  what a frozen resume looks like from here. */
 type Wiring = 'native' | 'page';
+function diagnosticScreen(): 'empty' | 'pdf' | 'picture' | 'note' {
+  if (!filePath) return 'empty';
+  if (isDocument(filePath)) return 'pdf';
+  if (isPicture(filePath)) return 'picture';
+  return 'note';
+}
 function onBackground(from: Wiring): void {
   systemSaysActive = false;
   // The last thing written before the phone may decide to end the run: what
   // was being held when it went away is the reading a kill is judged by.
   sayMemory('going away');
-  log.note('app', 'went to the background', { from });
+  log.note('app', 'went to the background', { from, screen: diagnosticScreen(), savePending: Boolean(activeSave || saveTimer !== undefined) });
   // The spare book goes while we are away. Two documents' bytes is the
   // right trade while he is reading both -- it saved a 10.7 MB read at
   // every swap -- and the wrong one in the background, which is where the
@@ -4878,6 +4914,8 @@ function onForeground(from: Wiring): void {
     ...(away ? { awayFor: Math.round((Date.now() - away) / 1000) } : {}),
     // The page's own opinion, at the moment the system says otherwise.
     visibility: document.visibilityState,
+    screen: diagnosticScreen(),
+    savePending: Boolean(activeSave || saveTimer !== undefined),
   });
   // Written to the database now rather than within four seconds. A frozen
   // resume is one the reader ends by throwing the app out of recents, and
@@ -5035,6 +5073,9 @@ async function openFirstNote(placesReady: Promise<void>): Promise<void> {
   // Every branch below can show a file or an interactive empty tab.
   await waitForPlaces(placesReady);
   if (text === null) {
+    if (path) log.warn('launch', 'saved launch tab unavailable', {
+      kind: isDocument(path) ? 'pdf' : isPicture(path) ? 'picture' : 'note',
+    });
     ({ path, text } = await firstNote());
     // There is nothing to open: the space holds no note this tab can show.
     // A fresh install lands here, and it must not be given a note it never

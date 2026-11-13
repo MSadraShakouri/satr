@@ -1,3 +1,4 @@
+import { slowPdfRenders } from './pdfDiagnostics';
 // A PDF, opened where it was left.
 //
 // pdf.js draws it, which is what both readers this was measured against do:
@@ -63,6 +64,8 @@ export interface PdfOptions {
   /** The file's path, only so that the small picture a tab card shows can
    *  be filed under it. The document itself is known by its bytes. */
   cardFor?: string;
+  /** When main began showFile for this document, on the performance clock. */
+  showFileAt?: number;
   place?: PdfPlace | null;
   /** Called as the reader moves, already settled — the caller writes it down. */
   onPlace?: (place: PdfPlace) => void;
@@ -1046,6 +1049,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
       pixelCopyMs: Math.round(firstPixelCopyMs),
       picture,
       page,
+      ...(options.showFileAt !== undefined && options.showFileAt > 0 ? { sinceShowFileMs: Math.round(placedAt - options.showFileAt) } : {}),
     });
     firstPicture = null;
     // This is a frame opportunity *before* paint, not proof that the pixels
@@ -2019,7 +2023,9 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
    * twenty times what it comes to.
    */
   let perMillion = 0;
-  const costs = (pixels: number, ms: number): void => {
+  const slowRender = slowPdfRenders();
+  const costs = (pixels: number, ms: number, kind: 'base' | 'detail'): void => {
+    slowRender(ms, pixels, kind);
     if (firstPicture) { firstEngineMs += ms; firstPixels += pixels; }
     if (pixels < 250_000) return;
     const rate = ms / (pixels / 1e6);
@@ -2102,7 +2108,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
         if (slab.baseScale === drawnFor) slab.baseScale = 0;
         return; // called off, or the document went away
       }
-      costs(picture.width * picture.height, performance.now() - began);
+      costs(picture.width * picture.height, performance.now() - began, 'base');
       // The reader has moved while this was drawing and the page is gone
       // from the screen: it is not put up, and not kept. Between slices is
       // the whole point of the slicing -- a page being left behind stops
@@ -2251,7 +2257,7 @@ export async function showPdf(host: HTMLElement, source: string | ArrayBuffer | 
         if (slab.detailZoom === drawnAt) slab.detailZoom = 0;
         return;
       }
-      costs(picture.width * picture.height, performance.now() - began);
+      costs(picture.width * picture.height, performance.now() - began, 'detail');
       // Left behind between strips, the same as a page is: the rest of
       // the tile is not drawn and what landed is not put up.
       if (slab.detailTask !== task || !standing(slab).near) {
