@@ -58,7 +58,6 @@ export function createPdfOverlay(options: OverlayOptions): PdfOverlay {
   const expand = (): void => { if (!expanded) { previousHeight = height; expanded = true; setHeight(shell.clientHeight * .75); } };
   const toggle = (): void => { if (expanded) { expanded = false; setHeight(previousHeight); } else expand(); };
   grip.onpointerdown = (event) => {
-    if (document.body.classList.contains('keyboard-open')) return;
     event.preventDefault(); grip.setPointerCapture(event.pointerId);
     const y = event.clientY, start = root.getBoundingClientRect().height;
     let moved = false;
@@ -76,7 +75,16 @@ export function createPdfOverlay(options: OverlayOptions): PdfOverlay {
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); expanded = false; setHeight(height + (e.key === 'ArrowUp' ? -16 : 16)); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
   };
-  const resize = (): void => renderHeight();
+  // The Android WebView changes height as the keyboard opens and closes.
+  // That must not move the PDF's edge. A width change is different: it
+  // indicates a rotation or a resized window, where the old height may no
+  // longer fit, so reapply the screen limit only then.
+  let viewportWidth = window.innerWidth;
+  const resize = (): void => {
+    if (window.innerWidth === viewportWidth) return;
+    viewportWidth = window.innerWidth;
+    renderHeight();
+  };
   window.addEventListener('resize', resize);
   root.querySelector<HTMLButtonElement>('.pinned-hide')!.onclick = options.hide;
   root.querySelector<HTMLButtonElement>('.pinned-normal')!.onclick = options.openNormally;

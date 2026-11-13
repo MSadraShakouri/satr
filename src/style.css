@@ -5856,9 +5856,6 @@ body.has-pinned-pdf .topbar::before { display: none; }
 .pinned-thumbnails button { min-width: 0; background: transparent; }
 .pinned-thumbnails img { display: block; width: 100%; border: 1px solid var(--background-modifier-border); }
 .pinned-contents button { display: block; width: 100%; padding: 9px 0; text-align: start; background: transparent; }
-/* When the keyboard is up, give the editor the space the mockup kept for it;
-   the chosen size is restored when the keyboard leaves. */
-.keyboard-open .pinned-pdf { height: 120px !important; }
 .mobile-tab-pinned { position: absolute; z-index: 3; top: 8px; left: 8px; padding: 3px 7px; border-radius: 99px; background: var(--background-primary); color: var(--text-normal); font-size: 10px; box-shadow: 0 2px 8px #0002; }
 body.has-pinned-pdf.is-hidden-nav:not(.files-open):not(.outline-open) .topbar { transform: none; opacity: 1; }
 body.has-pinned-pdf.is-hidden-nav:not(.files-open):not(.outline-open) #files { pointer-events: auto; }

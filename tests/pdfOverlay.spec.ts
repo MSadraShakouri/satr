@@ -122,15 +122,30 @@ test('opening the overlay keeps the current PDF page and note edits survive tab 
   await expect(page.locator('.pinned-page')).toHaveText('3 / 4');
 });
 
-test('keyboard temporarily leaves the minimum PDF height, then restores the chosen height', async ({ page }) => {
+test('the keyboard class does not move or resize the PDF edge', async ({ page }) => {
   await boot(page); await pin(page);
-  const overlay = page.locator('.pinned-pdf');
-  const height = await overlay.evaluate(e => e.getBoundingClientRect().height);
-  expect(height).toBeGreaterThan(120);
+  const edge = () => page.locator('.pinned-pdf-bar').evaluate(el => {
+    const box = el.getBoundingClientRect(); return { top: box.top, bottom: box.bottom };
+  });
+  const before = await edge();
   await page.evaluate(() => document.body.classList.add('keyboard-open'));
-  expect(await overlay.evaluate(e => e.getBoundingClientRect().height)).toBe(120);
+  expect(await edge(), 'keyboard opening must not move the PDF edge').toEqual(before);
   await page.evaluate(() => document.body.classList.remove('keyboard-open'));
-  expect(await overlay.evaluate(e => e.getBoundingClientRect().height)).toBe(height);
+  expect(await edge(), 'keyboard closing must not move the PDF edge').toEqual(before);
+});
+
+test('the PDF edge can still be resized by hand while the keyboard is open', async ({ page }) => {
+  await boot(page); await pin(page);
+  await page.locator('.cm-content').focus();
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(page.locator('body')).toHaveClass(/keyboard-open/);
+  const overlay = page.locator('.pinned-pdf');
+  const before = await overlay.evaluate(el => el.getBoundingClientRect().height);
+  const grip = (await page.locator('.pinned-grip').boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 70, { steps: 5 }); await page.mouse.up();
+  await expect(page.locator('body')).toHaveClass(/keyboard-open/);
+  expect(await overlay.evaluate(el => el.getBoundingClientRect().height), 'a deliberate drag still resizes the PDF').toBeGreaterThan(before + 40);
 });
 
 test('the existing card marks which PDF is on screen', async ({ page }) => {
@@ -193,18 +208,45 @@ test('a recently closed note is reopened under the PDF', async ({ page }) => {
   await expect(page.locator('.cm-file-name')).toHaveText('closed');
 });
 
-test('a temporary viewport shrink does not forget the chosen PDF height', async ({ page }) => {
+test('a height-only viewport change never moves the PDF edge, even without editor focus', async ({ page }) => {
+  await boot(page); await pin(page);
+  const grip = (await page.locator('.pinned-grip').boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2, 500, { steps: 5 }); await page.mouse.up();
+  const edge = () => page.locator('.pinned-pdf-bar').evaluate(el => {
+    const box = el.getBoundingClientRect(); return { top: box.top, bottom: box.bottom };
+  });
+  const before = await edge();
+  await page.setViewportSize({ width: 390, height: 450 });
+  await page.waitForTimeout(200); // let the resize event and its layout settle
+  await expect(page.locator('body')).not.toHaveClass(/keyboard-open/);
+  expect(await edge(), 'a height-only viewport resize must not move the edge').toEqual(before);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+  expect(await edge(), 'restoring the viewport must not move the edge').toEqual(before);
+});
+
+test('keyboard-like viewport resizing never moves the PDF edge', async ({ page }) => {
   await boot(page); await pin(page);
   const overlay = page.locator('.pinned-pdf');
   const grip = (await page.locator('.pinned-grip').boundingBox())!;
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
   await page.mouse.move(grip.x + grip.width / 2, 500, { steps: 5 }); await page.mouse.up();
-  const original = await overlay.evaluate(e => e.getBoundingClientRect().height);
-  expect(original).toBeGreaterThan(400);
-  await page.setViewportSize({ width: 390, height: 450 });
-  await expect.poll(() => overlay.evaluate(e => e.getBoundingClientRect().height)).toBeLessThan(original);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => overlay.evaluate(e => e.getBoundingClientRect().height)).toBe(original);
+  const edge = () => page.locator('.pinned-pdf-bar').evaluate(el => {
+    const box = el.getBoundingClientRect(); return { top: box.top, bottom: box.bottom };
+  });
+  const before = await edge();
+  expect(await overlay.evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThan(400);
+  await page.locator('.cm-content').focus();
+  for (let i = 0; i < 2; i++) {
+    await page.setViewportSize({ width: 390, height: 450 });
+    await expect(page.locator('body')).toHaveClass(/keyboard-open/);
+    await page.waitForTimeout(200); // native WebView resize can arrive after the keyboard signal
+    expect(await edge(), 'the keyboard opening must not move the edge').toEqual(before);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('body')).not.toHaveClass(/keyboard-open/);
+    expect(await edge(), 'the keyboard closing must not move the edge').toEqual(before);
+  }
 });
 
 test('when no note is known, pinning says to open one rather than losing the PDF', async ({ page }) => {
@@ -344,4 +386,17 @@ test('back closes PDF navigation without hiding the PDF', async ({ page }) => {
   await page.evaluate(() => document.dispatchEvent(new Event('satr:back')));
   await expect(page.locator('.pinned-pdf-popup')).toBeHidden();
   await expect(page.locator('.pinned-pdf')).toBeVisible();
+});
+
+test('a changed viewport width still keeps the PDF within the resized screen', async ({ page }) => {
+  await boot(page); await pin(page);
+  const overlay = page.locator('.pinned-pdf');
+  const grip = (await page.locator('.pinned-grip').boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2, 500, { steps: 5 }); await page.mouse.up();
+  const original = await overlay.evaluate(el => el.getBoundingClientRect().height);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expect.poll(() => overlay.evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(220);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => overlay.evaluate(el => el.getBoundingClientRect().height)).toBe(original);
 });
