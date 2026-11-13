@@ -6,6 +6,9 @@ declare global { interface Window { visualCaretEditor: SatrEditor } }
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
+  // The launch cover sits above the isolated editor and can hide the caret
+  // from a screenshot even though the editor is focused underneath it.
+  await page.waitForSelector('#boot-snapshot', { state: 'detached' });
   await page.evaluate(async () => {
     const { SatrEditor } = await window.__satr.load('/src/editor.ts');
     const host = document.createElement('div');
@@ -85,10 +88,13 @@ test('shift selects one whole grapheme at a time', async ({ page }) => {
 // DOM Range rectangles do not carry the native bidi caret affinity. At a
 // number boundary they can be at the far side even when Chrome draws the
 // caret on the near side. Measure the red caret pixels, not Range geometry.
+// The red caret is set to manual animation in these screenshot tests: a
+// screenshot taken during the normal blink-off phase contains no caret at
+// all, regardless of whether the native caret is in the right place.
 test('the native caret stays on the left while typing an RTL-line time', async ({ page }) => {
   await setup(page, 'سلام ', 5);
   await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-    caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
   }` });
   for (const char of '12:30') {
     await page.keyboard.type(char);
@@ -130,7 +136,7 @@ test('the actually painted caret walks left through a time', async ({ page }) =>
   const text = 'سلام 12:30 تست';
   await setup(page, text);
   await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-    caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
   }` });
   const rect = await page.locator('.cm-editor').last().locator('.cm-line').first().boundingBox();
   if (!rect) throw new Error('line is not on screen');
@@ -156,7 +162,7 @@ test('the actually painted caret walks left through a time', async ({ page }) =>
 test('a mixed-script boundary has only the browser caret', async ({ page }) => {
   await setup(page, 'اب ABC د', 3); // after the space, before ABC
   await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-    caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
   }` });
   const geometry = await page.evaluate(() => {
     const v = visualCaretEditor.view;
@@ -253,7 +259,7 @@ for (const text of ['تست ۱۲:۳۲ تست', 'سلام 12:30 تست', 'سلا�
   test(`native caret walks both ways through ${text}`, async ({ page }) => {
     await setup(page, text);
     await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-      caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+      caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
     }` });
     for (const [start, key, direction] of [[0, 'ArrowLeft', -1], [text.length, 'ArrowRight', 1]] as const) {
       await setup(page, text, start);
@@ -288,7 +294,7 @@ for (const text of ['سلام $abcd$ بعد', 'متن $x^2+12$ بعد']) {
   test(`native caret walks both ways across inline math: ${text}`, async ({ page }) => {
     await setup(page, text);
     await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-      caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+      caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
     }` });
     for (const [start, key, direction] of [[0, 'ArrowLeft', -1], [text.length, 'ArrowRight', 1]] as const) {
       await setup(page, text, start);
@@ -348,7 +354,7 @@ for (const text of ['hello فارسی 12.34 done', 'hello $אבג+x$ end']) {
   test(`native caret walks both directions in LTR text with RTL runs: ${text}`, async ({ page }) => {
     await setup(page, text);
     await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-      caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+      caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
     }` });
     for (const [start, key, direction] of [[0, 'ArrowRight', 1], [text.length, 'ArrowLeft', -1]] as const) {
       await setup(page, text, start);
@@ -395,7 +401,7 @@ test('the native caret walks back through inline code without jumping over it', 
   const text = 'سلام `code()` بعد';
   await setup(page, text, text.length);
   await page.addStyleTag({ content: `.cm-editor .cm-content, .cm-editor .cm-line {
-    caret-color: rgb(255, 0, 0) !important; color: black !important; font-size: 24px !important;
+    caret-color: rgb(255, 0, 0) !important; caret-animation: manual !important; color: black !important; font-size: 24px !important;
   }` });
   for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
   const xs = [await paintedLineX(page)];
