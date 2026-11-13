@@ -15,10 +15,14 @@ async function boot(page: Page): Promise<void> {
   await page.waitForSelector('#boot-snapshot', { state: 'detached' });
   await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
 }
-async function pin(page: Page): Promise<void> {
+async function pin(page: Page, note = 'A'): Promise<void> {
   await page.locator('#file-actions').click();
   await page.getByRole('menuitem', { name: 'Keep PDF on screen' }).click();
+  await expect(page.locator('.mobile-tab-switcher')).toBeVisible();
   await expect(page.locator('.pinned-pdf .pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
+  await page.locator('.mobile-tab-title').getByText(note, { exact: true }).click();
+  await expect(page.locator('.cm-file-name')).toHaveText(note);
+  await expect(page.locator('.mobile-tab-switcher')).toHaveCount(0);
   await expect(page.locator('.menu-backdrop')).toHaveCount(0);
 }
 async function switchTo(page: Page, name: string): Promise<void> {
@@ -37,7 +41,7 @@ test('PDF stays above switching notes and resizing never moves their layout', as
   await page.mouse.move(box.x + box.width / 2, 0, { steps: 5 }); await page.mouse.up();
   expect(await overlay.evaluate(e => e.getBoundingClientRect().height)).toBe(120);
   expect(await page.locator('#editor-pane').evaluate(e => e.getBoundingClientRect().top)).toBe(noteTop);
-  await expect(page.locator('.topbar-title')).toBeHidden();
+  await expect(page.locator('#preview-toggle')).toBeVisible();
   await switchTo(page, 'B');
   await expect(page.locator('.cm-file-name')).toHaveText('B');
   await expect(overlay.locator('.pdf-page canvas').first()).toBeVisible();
@@ -96,7 +100,7 @@ test('closing the PDF tab disposes the overlay but leaves the note open', async 
   await expect(page.locator('.cm-file-name')).toHaveText('A');
 });
 
-test('a drawer and the tab switcher are above the PDF', async ({ page }) => {
+test('the drawer opens and the PDF remains in the tab switcher', async ({ page }) => {
   await boot(page); await pin(page);
   await page.locator('#files').click();
   await expect(page.locator('body')).toHaveClass(/files-open/);
@@ -170,14 +174,6 @@ test('the PDF still accepts pinch zoom in its own scroller', async ({ page }) =>
   await expect.poll(async () => (await first.boundingBox())!.width, { timeout: 4000 }).toBeGreaterThan(before * 1.5);
 });
 
-test('the files button remains usable when the note hides its navigation', async ({ page }) => {
-  await boot(page); await pin(page);
-  await page.evaluate(() => document.body.classList.add('is-hidden-nav'));
-  await expect(page.locator('#files')).toBeVisible();
-  await page.locator('#files').click();
-  await expect(page.locator('body')).toHaveClass(/files-open/);
-});
-
 test('the note reading view keeps the same minimum top when the PDF is resized', async ({ page }) => {
   await boot(page); await pin(page);
   await page.locator('#preview-toggle').evaluate((e: HTMLButtonElement) => e.click());
@@ -190,22 +186,6 @@ test('the note reading view keeps the same minimum top when the PDF is resized',
   const overlay = (await page.locator('.pinned-pdf').boundingBox())!;
   const title = (await page.locator('#preview .inline-title').boundingBox())!;
   expect(title.y).toBeGreaterThanOrEqual(overlay.y + overlay.height - 1);
-});
-
-test('a recently closed note is reopened under the PDF', async ({ page }) => {
-  const pdf = tinyPdf(2);
-  await page.addInitScript((data) => {
-    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/closed.md': 1, 'Notes/book.pdf': 1 }, folders: ['Notes'] }));
-    localStorage.setItem('satr:fs:file:Notes/closed.md', '# Reopened\n');
-    localStorage.setItem('satr:fs:file:Notes/book.pdf', data);
-    localStorage.setItem('satr:recent', JSON.stringify(['Notes/closed.md']));
-    localStorage.setItem('satr:demoShown', '1');
-    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/book.pdf' }], active: 0 }));
-  }, pdf);
-  await page.goto('/'); await page.waitForSelector('#boot-snapshot', { state: 'detached' });
-  await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
-  await pin(page);
-  await expect(page.locator('.cm-file-name')).toHaveText('closed');
 });
 
 test('a height-only viewport change never moves the PDF edge, even without editor focus', async ({ page }) => {
@@ -249,21 +229,6 @@ test('keyboard-like viewport resizing never moves the PDF edge', async ({ page }
   }
 });
 
-test('when no note is known, pinning says to open one rather than losing the PDF', async ({ page }) => {
-  await page.addInitScript((data) => {
-    localStorage.setItem('satr:fs:index', JSON.stringify({ files: { 'Notes/book.pdf': 1 }, folders: ['Notes'] }));
-    localStorage.setItem('satr:fs:file:Notes/book.pdf', data);
-    localStorage.setItem('satr:demoShown', '1');
-    localStorage.setItem('satr:tabs', JSON.stringify({ tabs: [{ path: 'Notes/book.pdf' }], active: 0 }));
-  }, tinyPdf(2));
-  await page.goto('/'); await page.waitForSelector('#boot-snapshot', { state: 'detached' });
-  await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 15000 });
-  await page.locator('#file-actions').click(); await page.getByRole('menuitem', { name: 'Keep PDF on screen' }).click();
-  await expect(page.getByText('Open a note in another tab first.')).toBeVisible();
-  await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible();
-  await expect(page.locator('.pinned-pdf')).toHaveCount(0);
-});
-
 test('closing other tabs also closes the pinned PDF', async ({ page }) => {
   await boot(page); await pin(page);
   await page.locator('#nav-tabs').click();
@@ -283,7 +248,7 @@ for (const kind of ['file', 'folder'] as const) {
       localStorage.setItem('satr:expanded:notes', JSON.stringify(['Notes', 'Notes/Private']));
       localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
     }, tinyPdf(3));
-    await page.goto('/'); await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 20000 }); await pin(page);
+    await page.goto('/'); await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 20000 }); await pin(page, 'note');
     await page.locator('#files').click();
     await page.locator(`#file-panel .tree-item-self[data-path="${kind === 'file' ? 'Notes/Private/book.pdf' : 'Notes/Private'}"]`).click({ button: 'right' });
     await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'Delete' }).click();
@@ -304,7 +269,7 @@ test('renaming the pinned PDF folder follows its tab and files only under the ne
     localStorage.setItem('satr:expanded:notes', JSON.stringify(['Notes', 'Notes/Private']));
     localStorage.setItem('satr:spaces', JSON.stringify([{ id: 'notes', name: 'Notes', path: 'Notes' }]));
   }, tinyPdf(3));
-  await page.goto('/'); await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 20000 }); await pin(page);
+  await page.goto('/'); await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 20000 }); await pin(page, 'note');
   await page.locator('#files').click();
   await page.locator('#file-panel .tree-item-self[data-path="Notes/Private"]').click({ button: 'right' });
   await page.locator('.menu.mod-bottom-sheet .menu-item', { hasText: 'Rename' }).click();
@@ -317,21 +282,11 @@ test('renaming the pinned PDF folder follows its tab and files only under the ne
   expect(await page.evaluate(async () => window.__satr.load('/src/pdfCard.ts').recallCard('Notes/Private/book.pdf'))).toBeNull();
 });
 
-test('the pinned PDF card expands the overlay without changing the note, and the grip restores it', async ({ page }) => {
-  await boot(page); await pin(page);
-  const overlay = page.locator('.pinned-pdf');
-  const original = await overlay.evaluate(e => e.getBoundingClientRect().height);
-  await page.locator('#nav-tabs').click();
-  await page.locator('.mobile-tab-title').getByText('book.pdf', { exact: true }).click();
-  await expect(page.locator('.cm-file-name')).toHaveText('A');
-  expect(await overlay.evaluate(e => e.getBoundingClientRect().height)).toBeGreaterThan(original);
-  await page.locator('.pinned-grip').click();
-  expect(await overlay.evaluate(e => e.getBoundingClientRect().height)).toBe(original);
-});
-
 test('PDF navigation remains inside the screen when the overlay is expanded', async ({ page }) => {
   await boot(page); await pin(page);
-  await page.locator('.pinned-grip').click();
+  const grip = (await page.locator('.pinned-grip').boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2, 600, { steps: 5 }); await page.mouse.up();
   await page.locator('.pinned-browse').click();
   const panel = (await page.locator('.pinned-pdf-popup').boundingBox())!;
   const shell = (await page.locator('.app-shell').boundingBox())!;
@@ -366,7 +321,7 @@ test('a late random-source failure retries the pinned PDF from complete bytes', 
   }, tinyPdf(3));
   await page.reload(); await page.waitForSelector('#boot-snapshot', { state: 'detached' });
   await expect(page.locator('#preview-pane .pdf-page canvas').first()).toBeVisible({ timeout: 30000 });
-  await pin(page);
+  await pin(page, 'overlay-note');
   await page.locator('.pinned-page').click(); await page.getByLabel('Page number').fill('2'); await page.locator('.pinned-page-form button').click();
   await expect(page.locator('.pinned-page')).toHaveText('2 / 3');
   await page.evaluate(() => {

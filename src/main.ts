@@ -1027,6 +1027,7 @@ async function mountPdf(path: string, input: Uint8Array | Blob | DevicePdfPath, 
   }); } catch (error) { if (device) await closeDevicePdf(device); throw error; }
   if (!current()) { handle.destroy(); return; }
   pdfView = handle;
+  if (pinnedTab?.path === path) pendingPinnedPlace = null;
   if (openAtPage?.path === path) {
     const requested = openAtPage;
     openAtPage = null;
@@ -2251,41 +2252,77 @@ const TABS_KEY = 'satr:tabs';
 let tabs: Tab[] = [{ path: '' }];
 let activeTab = 0;
 let displayedTab: Tab | null = null;
-let lastOverlayNote: Tab | null = null;
+const PINNED_PDF_KEY = 'satr:pinned-pdf';
 let pinnedPdf: import('./pdfOverlay').PdfOverlay | null = null;
 let pinnedTab: Tab | null = null;
+let pinnedSource: OverlaySource | null = null;
 let pinRequest = 0;
-function closePinnedPdf(): void { pinRequest += 1; pinnedPdf?.destroy(); pinnedPdf = null; pinnedTab = null; }
+let pinnedHeight: number | undefined;
+let accessDuringEmptyLaunch: Promise<void> | null = null;
+let pendingPinnedPlace: import('./pdfView').PdfPlace | null = null;
+function closePinnedPdf(): void {
+  pinRequest += 1; pinnedPdf?.destroy(); pinnedPdf = null; pinnedTab = null; pinnedSource = null; pinnedHeight = undefined; pendingPinnedPlace = null;
+  localStorage.removeItem(PINNED_PDF_KEY);
+  document.body.classList.remove('has-pinned-pdf', 'pinned-over-note', 'pinned-tab-switcher');
+}
+function updatePinnedVisibility(path = curTab().path): void {
+  const visible = Boolean(pinnedTab && (isTabSwitcherOpen() || curTab() !== pinnedTab));
+  pinnedPdf?.setVisible(visible);
+  document.body.classList.toggle('pinned-over-note', visible && fileKind(fileName(path)) === 'note');
+  document.body.classList.toggle('pinned-tab-switcher', visible && isTabSwitcherOpen());
+}
+async function mountPinned(place?: import('./pdfView').PdfPlace): Promise<void> {
+  const tab = pinnedTab, source = pinnedSource, request = ++pinRequest;
+  if (!tab || !source) return;
+  const { createPdfOverlay } = await import('./pdfOverlay');
+  if (request !== pinRequest || pinnedTab !== tab) return;
+  pinnedPdf?.destroy();
+  pinnedPdf = createPdfOverlay({ source, path: tab.path, place, height: pinnedHeight,
+    hide: () => closePinnedPdf(),
+    openNormally: () => { const at = tabs.indexOf(tab); if (isTabSwitcherOpen()) closeTabSwitcher(); if (at >= 0) void switchTab(at); },
+    failed: () => { if (pinnedTab === tab) { closePinnedPdf(); showNotice('Could not keep this PDF on screen.', 4000); } },
+  });
+  updatePinnedVisibility();
+}
+function beforePinnedScreenChange(next: Tab | null): void {
+  if (!pinnedTab) return;
+  if (displayedTab === pinnedTab && next !== pinnedTab) {
+    pinnedHeight = pinnedPdf?.height() ?? pinnedHeight;
+    const place = pendingPinnedPlace ?? pdfView?.place() ?? pinnedPdf?.place() ?? undefined;
+    pendingPinnedPlace = null;
+    pinnedPdf?.destroy(); pinnedPdf = null;
+    void mountPinned(place);
+  } else if (next === pinnedTab && displayedTab !== pinnedTab) {
+    pinnedHeight = pinnedPdf?.height() ?? pinnedHeight;
+    pinnedPdf?.destroy(); pinnedPdf = null; ++pinRequest;
+  }
+}
 async function keepPdfOnScreen(): Promise<void> {
-  const pdfTab = curTab();
+  const tab = curTab();
   const source = openedDocument.bytes || openedDocument.blob || openedDocument.device;
   const reader = pdfView;
-  if (!reader || !source || openedDocument.path !== pdfTab.path) { showNotice('Wait for the PDF to open.', 3000); return; }
+  if (!reader || !source || openedDocument.path !== tab.path) { showNotice('Wait for the PDF to open.', 3000); return; }
   const place = reader.place();
-  const request = ++pinRequest;
-  let note = lastOverlayNote && tabs.includes(lastOverlayNote) && fileKind(fileName(lastOverlayNote.path)) === 'note'
-    ? lastOverlayNote : tabs.find((tab) => fileKind(fileName(tab.path)) === 'note');
-  if (!note) {
-    // The last note may have been closed. Reopen the most recent existing
-    // one instead of asking the reader to manufacture a second tab first.
-    let path = '';
-    for (const candidate of recentNotes()) {
-      if (fileKind(fileName(candidate)) === 'note' && await backend.stat(candidate).catch(() => null)) { path = candidate; break; }
-    }
-    if (request !== pinRequest || curTab() !== pdfTab || pdfView !== reader) return;
-    if (!path) { showNotice('Open a note in another tab first.', 3000); return; }
-    await openFile(path);
-    if (filePath === path) note = curTab();
-  } else await switchTab(tabs.indexOf(note));
-  if (!note || request !== pinRequest || curTab() !== note || !tabs.includes(pdfTab)) return;
-  const { createPdfOverlay } = await import('./pdfOverlay');
-  if (request !== pinRequest || curTab() !== note || !tabs.includes(pdfTab)) return;
-  pinnedTab = pdfTab;
-  pinnedPdf = createPdfOverlay({ source: source as OverlaySource, path: pdfTab.path, place,
-    hide: () => closePinnedPdf(),
-    openNormally: () => { const at = tabs.indexOf(pdfTab); closePinnedPdf(); if (at >= 0) void switchTab(at); },
-    failed: () => { closePinnedPdf(); showNotice('Could not keep this PDF on screen.', 4000); },
-  });
+  closePinnedPdf();
+  pinnedTab = tab; pinnedSource = source as OverlaySource;
+  if (!isExternalPath(tab.path)) localStorage.setItem(PINNED_PDF_KEY, tab.path);
+  await mountPinned(place);
+  if (pinnedTab !== tab || !pinnedPdf) return;
+  showTabs();
+}
+async function restorePinnedPdf(): Promise<void> {
+  const path = localStorage.getItem(PINNED_PDF_KEY);
+  if (!path) return;
+  // An away launch shows its empty tab before storage permission resolves.
+  // Reuse that same request rather than treating inaccessible files as gone.
+  if (accessDuringEmptyLaunch) await accessDuringEmptyLaunch;
+  if (localStorage.getItem(PINNED_PDF_KEY) !== path || pinnedTab) return;
+  const tab = tabs.find(t => t.path === path);
+  if (!tab || !isDocument(path) || !await backend.stat(path).catch(() => null)) { localStorage.removeItem(PINNED_PDF_KEY); return; }
+  // Do not resurrect a pin that was changed while the disk check was pending.
+  if (localStorage.getItem(PINNED_PDF_KEY) !== path || pinnedTab) return;
+  pinnedTab = tab; pinnedSource = { kind: 'device-path', path }; pinnedHeight = undefined;
+  if (curTab() !== tab) await mountPinned();
 }
 const curTab = (): Tab => tabs[activeTab];
 function saveTabs(): void {
@@ -2422,8 +2459,8 @@ function useDocumentBytes(path: string, bytes: Uint8Array): void {
 const since = (mark: number): number => Math.round(performance.now() - mark);
 
 function showFile(path: string, content: string, after?: () => void, options?: { lossy?: boolean }): void {
-  if (fileKind(fileName(path)) === 'note') lastOverlayNote = curTab();
-  else if (pinnedPdf) closePinnedPdf();
+  beforePinnedScreenChange(curTab());
+  updatePinnedVisibility(path);
   if (openAtPage && openAtPage.path !== path) openAtPage = null;
   pdfLoadGeneration += 1;
   rescued = ''; // a file is open: the empty tab has nothing left to explain
@@ -2691,7 +2728,12 @@ function pathMoved(from: string, to: string): void {
   // synchronously, before an old viewer can file during its teardown.
   void forgetPdfCardsWithin(from).catch(() => {});
   void forgetPdfCardsWithin(to).catch(() => {});
-  if (pinnedTab && within(pinnedTab.path, from)) pinnedPdf?.move(to + pinnedTab.path.slice(from.length));
+  if (pinnedTab && within(pinnedTab.path, from)) {
+    const moved = to + pinnedTab.path.slice(from.length);
+    pinnedPdf?.move(moved);
+    if (pinnedSource && !(pinnedSource instanceof Blob) && !(pinnedSource instanceof Uint8Array)) pinnedSource = { ...pinnedSource, path: moved };
+    if (!isExternalPath(moved)) localStorage.setItem(PINNED_PDF_KEY, moved);
+  }
   if (filePath && within(filePath, from)) pdfView?.setCardPath(to + filePath.slice(from.length));
   forgetTabCard(from);
   forgetTabCard(to);
@@ -2879,7 +2921,8 @@ async function newFile(dir = whereNewNotesGo()): Promise<void> {
 }
 
 function showIncomingScreen(path: string, file: IncomingOpenFile): void {
-  if (pinnedPdf) closePinnedPdf();
+  beforePinnedScreenChange(curTab());
+  updatePinnedVisibility();
   pdfLoadGeneration += 1;
   ++viewGeneration;
   window.clearTimeout(viewTimer);
@@ -3305,7 +3348,8 @@ function openLink(target: string, heading = ''): void {
 // the recent notes.
 const emptyTab = document.querySelector<HTMLElement>('#empty-tab')!;
 function showEmptyTab(): void {
-  if (pinnedPdf) closePinnedPdf();
+  beforePinnedScreenChange(curTab());
+  updatePinnedVisibility();
   openAtPage = null;
   pdfLoadGeneration += 1;
   applyRotation(loadSettings().documentRotation, false);
@@ -3759,8 +3803,26 @@ function tabSwitcherDeps(): TabSwitcherDeps {
         // are the machinery landing somewhere, not a choice.
         const picked = tabs[i]?.path;
         if (picked) rememberRecent(picked);
-        if (tabs[i] === pinnedTab && pinnedPdf) { pinnedPdf.expand(); return; }
         void switchTab(i);
+      },
+      visibility: (open) => {
+        if (open && pinnedTab && curTab() === pinnedTab) {
+          pinnedHeight = pinnedPdf?.height() ?? pinnedHeight;
+          const place = pendingPinnedPlace ?? pdfView?.place() ?? pinnedPdf?.place() ?? undefined;
+          pinnedPdf?.destroy(); pinnedPdf = null;
+          void mountPinned(place);
+        } else if (!open && pinnedTab && curTab() === pinnedTab && pinnedPdf?.touched()) {
+          // The overlay was read in the tab grid while this same PDF sat
+          // underneath. Carry its place to the full reader, not vice versa.
+          const place = pinnedPdf.place();
+          if (place) {
+            pinnedHeight = pinnedPdf.height();
+            pendingPinnedPlace = place;
+            pinnedPdf.destroy(); pinnedPdf = null; ++pinRequest;
+            renderPreview();
+          }
+          updatePinnedVisibility();
+        } else updatePinnedVisibility();
       },
       close: closeTab,
       newTab,
@@ -4697,6 +4759,7 @@ async function boot(): Promise<void> {
     const first = log.time('launch', 'first file on screen');
     await openFirstNote(placesReady);
     first();
+    void restorePinnedPdf();
     // This far is far enough to call it a launch: the reader has something
     // on screen. Anything that goes wrong after this is not a start-up loop.
     launchFinished();
@@ -5096,7 +5159,8 @@ async function openFirstNote(placesReady: Promise<void>): Promise<void> {
     else { tabs.push({ path: '' }); activeTab = tabs.length - 1; }
     showEmptyTab();
     renderNavButtons();
-    void ensureFileAccess().then(() => { void leftSidebar.refresh(); });
+    accessDuringEmptyLaunch = ensureFileAccess();
+    void accessDuringEmptyLaunch.then(() => { void leftSidebar.refresh(); });
     return;
   }
   await ensureFileAccess(); // the app: all-files access first (src/native.ts)

@@ -3,11 +3,12 @@ import { readPlace, writePlace } from './viewMemory';
 import { openDevicePdf, openIncomingPdf, closeDevicePdf, readDeviceHead, readDeviceAll, probeDeviceWorker, type DevicePdfSource } from './pdfDevice';
 
 export type OverlaySource = Uint8Array | Blob | { kind: 'device-path'; path: string; incomingId?: string };
-export interface PdfOverlay { destroy(): void; move(path: string): void; keepNow(): Promise<void>; expand(): void; closePopup(): boolean }
+export interface PdfOverlay { destroy(): void; move(path: string): void; keepNow(): Promise<void>; place(): PdfPlace | null; height(): number; touched(): boolean; setVisible(visible: boolean): void; closePopup(): boolean }
 export interface OverlayOptions {
   source: OverlaySource;
   path: string;
-  place: PdfPlace;
+  place?: PdfPlace;
+  height?: number;
   hide(): void;
   openNormally(): void;
   failed(error: unknown): void;
@@ -26,7 +27,7 @@ export function createPdfOverlay(options: OverlayOptions): PdfOverlay {
       <button class="pinned-page" aria-label="Go to page">–</button>
       <button class="pinned-browse" aria-label="Thumbnails and table of contents"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1"/><rect x="3" y="13" width="7" height="7" rx="1"/><path d="M14 6h7M14 10h7M14 15h7M14 19h7"/></svg></button>
       <button class="pinned-normal" aria-label="Open PDF normally"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg></button>
-      <button class="pinned-grip" aria-label="Resize PDF overlay; tap to expand or restore"></button>
+      <button class="pinned-grip" aria-label="Resize PDF overlay"></button>
       <button class="pinned-hide" aria-label="Hide PDF overlay"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div><div class="pinned-pdf-popup" hidden></div>`;
   shell.append(root);
@@ -47,33 +48,33 @@ export function createPdfOverlay(options: OverlayOptions): PdfOverlay {
   let key = '';
   let path = options.path;
   let alive = true;
+  let touched = false;
+  root.addEventListener('pointerdown', (event) => {
+    if (!(event.target as Element).closest('.pinned-grip, .pinned-hide, .pinned-normal')) touched = true;
+  });
+  scroller.addEventListener('wheel', () => { touched = true; }, { passive: true });
   const abort = new AbortController();
-  let height = Math.max(120, Math.round(shell.clientHeight * .34));
+  let height = options.height ?? Math.max(120, Math.round(shell.clientHeight * .34));
   const renderHeight = (): void => {
     root.style.height = `${Math.max(120, Math.min(Math.max(120, shell.clientHeight - 170), height))}px`;
   };
   const setHeight = (n: number): void => { height = Math.max(120, n); renderHeight(); };
   renderHeight();
-  let expanded = false, previousHeight = height;
-  const expand = (): void => { if (!expanded) { previousHeight = height; expanded = true; setHeight(shell.clientHeight * .75); } };
-  const toggle = (): void => { if (expanded) { expanded = false; setHeight(previousHeight); } else expand(); };
   grip.onpointerdown = (event) => {
     event.preventDefault(); grip.setPointerCapture(event.pointerId);
     const y = event.clientY, start = root.getBoundingClientRect().height;
     let moved = false;
     const move = (e: PointerEvent): void => {
       if (Math.abs(e.clientY - y) > 6) moved = true;
-      if (moved) { expanded = false; setHeight(start + e.clientY - y); }
+      if (moved) setHeight(start + e.clientY - y);
     };
     const end = (e: PointerEvent): void => {
       grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', end); grip.removeEventListener('pointercancel', end);
-      if (!moved && e.type === 'pointerup') toggle();
     };
     grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
   };
   grip.onkeydown = (e) => {
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); expanded = false; setHeight(height + (e.key === 'ArrowUp' ? -16 : 16)); }
-    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setHeight(height + (e.key === 'ArrowUp' ? -16 : 16)); }
   };
   // The Android WebView changes height as the keyboard opens and closes.
   // That must not move the PDF's edge. A width change is different: it
@@ -239,7 +240,10 @@ export function createPdfOverlay(options: OverlayOptions): PdfOverlay {
     },
     move: (next) => { path = next; handle?.setCardPath(next); },
     keepNow: () => handle?.keepNow() ?? Promise.resolve(),
-    expand,
+    place: () => handle?.place() ?? null,
+    height: () => height,
+    touched: () => touched,
+    setVisible: (visible) => { root.hidden = !visible; document.body.classList.toggle('has-pinned-pdf', visible); },
     closePopup: () => { if (popup.hidden) return false; closePopup(); return true; },
   };
 }

@@ -5819,15 +5819,12 @@ iframe.html-file {
 
 /* The minimum strip is reserved once; a taller PDF covers the note rather
    than moving it. Both the note and the PDF keep their own scrollers. */
-body.has-pinned-pdf { --view-top-spacing-markdown: 0px; }
-body.has-pinned-pdf .workspace > .editor-pane,
-body.has-pinned-pdf[data-mode="preview"] .workspace > .preview-pane {
+body.has-pinned-pdf.pinned-over-note { --view-top-spacing-markdown: 0px; }
+body.has-pinned-pdf.pinned-over-note .workspace > .editor-pane,
+body.has-pinned-pdf.pinned-over-note[data-mode="preview"] .workspace > .preview-pane {
   position: absolute; top: calc(var(--safe-top) + 120px); bottom: 0; width: 100%; height: auto;
   -webkit-mask-image: var(--view-bottom-fade-mask); mask-image: var(--view-bottom-fade-mask);
 }
-body.has-pinned-pdf .topbar-title,
-body.has-pinned-pdf .topbar-actions,
-body.has-pinned-pdf .topbar::before { display: none; }
 .pinned-pdf {
   position: absolute; z-index: 5; top: var(--safe-top); left: 0; right: 0;
   display: flex; flex-direction: column; background: var(--background-primary);
@@ -5857,5 +5854,7 @@ body.has-pinned-pdf .topbar::before { display: none; }
 .pinned-thumbnails img { display: block; width: 100%; border: 1px solid var(--background-modifier-border); }
 .pinned-contents button { display: block; width: 100%; padding: 9px 0; text-align: start; background: transparent; }
 .mobile-tab-pinned { position: absolute; z-index: 3; top: 8px; left: 8px; padding: 3px 7px; border-radius: 99px; background: var(--background-primary); color: var(--text-normal); font-size: 10px; box-shadow: 0 2px 8px #0002; }
-body.has-pinned-pdf.is-hidden-nav:not(.files-open):not(.outline-open) .topbar { transform: none; opacity: 1; }
-body.has-pinned-pdf.is-hidden-nav:not(.files-open):not(.outline-open) #files { pointer-events: auto; }
+
+.pinned-pdf[hidden] { display: none; }
+body.pinned-tab-switcher .pinned-pdf { z-index: 31; }
+body.pinned-tab-switcher .mobile-tab-switcher-scroll { margin-top: calc(var(--safe-top) + 120px); height: auto; min-height: 0; flex: 1; padding-top: 0; }

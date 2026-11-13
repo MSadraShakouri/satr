@@ -37,6 +37,7 @@ export interface TabSwitcherDeps {
    */
   previewNow?(index: number): string | null;
   select(index: number): void;
+  visibility?(open: boolean): void;
   /** Resolves once the tab is gone (or the close was refused). */
   close(index: number): Promise<void>;
   newTab(): void;
@@ -60,6 +61,7 @@ const ICONS = {
 };
 
 let open: HTMLElement | null = null;
+let visibility: ((open: boolean) => void) | undefined;
 // One small, short-lived sheet can stay laid out while the user is in a note.
 // Never retain decoded pictures or an unbounded tree on a phone.
 const PARK_MS = 30_000; // do not hold the laid-out tree indefinitely
@@ -92,6 +94,7 @@ export function closeTabSwitcher(): void {
   const el = open;
   if (!el) return;
   open = null;
+  visibility?.(false); visibility = undefined;
   const park = parkOpen;
   parkOpen = null;
   invalidateOpen?.();
@@ -362,6 +365,7 @@ function createTabSwitcher(deps: TabSwitcherDeps, preparing: boolean): void {
   function show(nextDeps: TabSwitcherDeps, reuse: boolean): void {
     deps = nextDeps;
     open = el;
+    visibility = deps.visibility; visibility?.(true);
     safeToPark = true;
     invalidateOpen = () => {
       generation++;
