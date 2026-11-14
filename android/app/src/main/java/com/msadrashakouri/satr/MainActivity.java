@@ -26,6 +26,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PrintPlugin.class);
         registerPlugin(StoragePlugin.class);
         registerPlugin(ImageWritePlugin.class);
+        registerPlugin(ImagePastePlugin.class);
         registerPlugin(SystemBarsPlugin.class);
         registerPlugin(OpenFilePlugin.class);
         registerPlugin(PdfRangePlugin.class);
@@ -39,6 +40,10 @@ public class MainActivity extends BridgeActivity {
         com.getcapacitor.Bridge bridge = getBridge();
         bridge.setWebViewClient(new com.getcapacitor.BridgeWebViewClient(bridge) {
             @Override public android.webkit.WebResourceResponse shouldInterceptRequest(android.webkit.WebView view, android.webkit.WebResourceRequest request) {
+                if (view instanceof ImagePasteWebView) {
+                    android.webkit.WebResourceResponse paste = ((ImagePasteWebView) view).intercept(bridge, request);
+                    if (paste != null) return paste;
+                }
                 com.getcapacitor.PluginHandle handle = bridge.getPlugin("SatrPdfRange");
                 android.webkit.WebResourceResponse response = handle == null ? null : ((PdfRangePlugin) handle.getInstance()).intercept(bridge, request);
                 return response != null ? response : super.shouldInterceptRequest(view, request);
