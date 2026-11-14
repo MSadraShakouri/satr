@@ -9,7 +9,7 @@ import * as log from './log';
 import { tellWhyItDied, tellWhatTheLastResumeSaid, watchTheThread, reportLaunchScripts } from './diagnostics';
 import type { PdfHandle, PdfHit, PdfOutlineItem } from './pdfView';
 import type { Heading } from './outline';
-import type { EditorState, Text } from '@codemirror/state';
+import { Transaction, type EditorState, type Text } from '@codemirror/state';
 import '@codemirror/view';
 import { setTimestampChipTap } from './livePreview';
 import 'katex/dist/katex.min.css';
@@ -112,6 +112,7 @@ app.innerHTML = `
         <button tabindex="-1" data-command="ordered" aria-label="Numbered list"><svg viewBox="0 0 24 24"><path d="M10 12h11M10 18h11M10 6h11M4 10h2M4 6h1v4M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
         <button tabindex="-1" data-command="task" aria-label="To-do"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg></button>
         <button tabindex="-1" data-command="math" aria-label="Math"><svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></button>
+        <button tabindex="-1" data-command="image" aria-label="Add image"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-4.5-4.5L5 21"/></svg></button>
         <button tabindex="-1" data-command="timestamp" aria-label="Date"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></button>
         <button tabindex="-1" data-command="footnote" aria-label="Footnote"><svg viewBox="0 0 24 24"><path d="M3 7h10M3 12h10M3 17h7"/><path d="M17 5.5 19 4v7M17 11h4"/></svg></button>
         <button tabindex="-1" data-command="line" aria-label="Select whole line"><svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 18h16"/><path d="M4 12h16"/></svg></button>
@@ -4607,6 +4608,34 @@ function showSettings(): void {
   });
 }
 
+/** A moved note leaves its image files where they were. Hold the open note
+ * while making and verifying its recovery copy, so its editor and disk cannot
+ * diverge during the move. Folders move normally with their contents. */
+async function moveSidebarEntry(from:string,to:string,isFolder:boolean):Promise<void> {
+  if(pathMove)await pathMove;
+  if(isFolder || fileKind(from)!=='note' || dirname(from)===dirname(to)){await backend.rename(from,to);return;}
+  if(filePath===from && !await saveNow())throw new Error('The note could not be saved before moving.');
+  const active=filePath===from;
+  if(active)editor.setReadOnly(true);
+  const moving=(async()=>{
+    const {moveMarkdownWithImages}=await import('./imageMoveLinks');
+    const result=await moveMarkdownWithImages(backend,from,to);
+    if(active&&filePath===from){
+      if(editor.getValue()!==result.original)throw new Error(`The note changed while moving; its file is at ${to}.`);
+      if(result.changes.length)editor.view.dispatch({changes:result.changes,annotations:Transaction.addToHistory.of(false)});
+      diskBase={path:to,text:result.rewritten,mtime:Date.now()};
+    }
+    if(result.warning)showNotice(result.warning,8000);
+  })();
+  pathMove=moving;
+  try{await moving;}catch(error){
+    // A rare recovery failure may leave the note at the destination. Follow
+    // it instead of silently keeping the tab pointed at the missing source.
+    if(!await backend.stat(from).catch(()=>null) && await backend.stat(to).catch(()=>null))pathMoved(from,to);
+    throw error;
+  }finally{if(pathMove===moving)pathMove=null;if(active)editor.setReadOnly(viewOnly);}
+}
+
 // Left sidebar: spaces and the file explorer (src/leftSidebar.ts).
 const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file-panel')!, {
   currentPath: () => filePath,
@@ -4615,6 +4644,7 @@ const leftSidebar = createLeftSidebar(document.querySelector<HTMLElement>('#file
   exportNote: (path) => { void exportFilePdf(path); },
   open: (path) => { toggleFiles(false); void openFile(path); },
   createNote: (dir) => void newFile(dir),
+  move: moveSidebarEntry,
   renamed: pathMoved,
   deleted: pathDeleted,
   scopeChanged: () => {
@@ -4639,7 +4669,10 @@ let exitNotice: NoticeHandle | null = null;
 let logViewer: { isLogOpen(): boolean; closeLog(): void } | null = null;
 /** Returns true when the press should leave the app. */
 function handleBack(): boolean {
-  if (isMenuOpen()) closeMenu();
+  if (imageCamera) { imageCamera.dispose(); imageCamera = null; }
+  else if (imageFlow) imageFlow.back();
+  else if (imageOpening) { imageOpening.abort(); imageOpening = null; }
+  else if (isMenuOpen()) closeMenu();
   else if (isFolderWalkOpen()) closeFolderWalk();
   else if (isPopoverOpen()) closePopover();
   else if (isTabSwitcherOpen()) closeTabSwitcher();
@@ -5517,8 +5550,91 @@ toolbar.addEventListener('click', (event) => {
   }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-command]');
   if (!button) return;
+  if (button.dataset.command === 'image') { showImageMenu(); return; }
   editor.run(button.dataset.command!);
 });
+/** The original note and selection are captured before an image source opens;
+ * an asynchronous save must never insert into a different or changed note. */
+type ImageDestination = { path:string; text:string; selection:[number,number] };
+let imageFlow: import('./imageFlow').ImageFlow | null = null;
+let imageCamera: import('./imageCamera').ImageCamera | null = null;
+let imageOpening: AbortController | null = null;
+function imageDestination(): ImageDestination | null {
+  if (!hasNote() || viewOnly || mode !== 'edit' || isExternalPath(filePath) || fileKind(filePath) !== 'note') {
+    showNotice('Open an editable Markdown note to add an image.', 4000); return null;
+  }
+  return {path:filePath,text:editor.getValue(),selection:editor.getSelection()};
+}
+function sameImageDestination(dest:ImageDestination): boolean {
+  return filePath === dest.path && !viewOnly && mode === 'edit' && editor.getValue() === dest.text;
+}
+async function openImageEditor(blob:Blob,name:string,dest:ImageDestination):Promise<void> {
+  if(imageOpening || imageFlow || imageCamera)return;
+  if(!sameImageDestination(dest)){showNotice('The note changed before the image opened.',4000);return;}
+  const opening=new AbortController();imageOpening=opening;editor.blur();
+  try {
+    const {createImageFlow}=await import('./imageFlow');
+    const flow=await createImageFlow({image:blob,name,signal:opening.signal,onClose(){imageFlow=null;},async onInsert(output,originalName){
+      if(!sameImageDestination(dest))throw new Error('The note changed. Close this image and try again.');
+      const {saveImageResource}=await import('./imageStorage');
+      const saved=await saveImageResource(dest.path,originalName,output);
+      if(!sameImageDestination(dest))throw new Error(`The note changed; the image was saved at ${saved.path} but not inserted.`);
+      editor.setSelection(dest.selection[0],dest.selection[1],true);editor.insertText(saved.markdown);
+    }});
+    if(opening.signal.aborted){flow.dispose();return;}
+    if(!sameImageDestination(dest)){flow.dispose();throw new Error('The note changed before the image opened.');}
+    imageFlow=flow;document.body.append(flow.element);
+  }catch(error){if(!opening.signal.aborted)showNotice(error instanceof Error?error.message:'Could not open image',5000);}
+  finally{if(imageOpening===opening)imageOpening=null;}
+}
+function chooseImageFile(dest:ImageDestination):void {
+  const input=document.createElement('input');input.type='file';input.accept='image/*';input.hidden=true;document.body.append(input);
+  input.addEventListener('change',()=>{const file=input.files?.[0];input.remove();if(file)void openImageEditor(file,file.name,dest);},{once:true});
+  input.addEventListener('cancel',()=>input.remove(),{once:true});input.click();
+}
+async function openImageCamera(dest:ImageDestination):Promise<void> {
+  if(imageOpening || imageFlow || imageCamera)return;const opening=new AbortController();imageOpening=opening;editor.blur();
+  try{
+    const {createImageCamera}=await import('./imageCamera');
+    if(opening.signal.aborted)return;
+    if(!sameImageDestination(dest))throw new Error('The note changed before the camera opened.');
+    const camera=createImageCamera({onCancel(){imageCamera=null;},onPhoto(blob){imageCamera=null;void openImageEditor(blob,'',dest);}});
+    imageCamera=camera;document.body.append(camera.element);
+  }catch(error){if(!opening.signal.aborted)showNotice(error instanceof Error?error.message:'Could not open camera',5000);}
+  finally{if(imageOpening===opening)imageOpening=null;}
+}
+async function pasteImageFromClipboard(dest:ImageDestination):Promise<void> {
+  if(imageOpening || imageFlow || imageCamera)return;
+  const opening=new AbortController();imageOpening=opening;
+  try {
+    if(!navigator.clipboard?.read)throw new Error('Paste an image into the note using the keyboard.');
+    const items=await navigator.clipboard.read();
+    if(opening.signal.aborted)return;
+    for(const item of items){
+      const type=item.types.find(t=>t.startsWith('image/'));
+      if(type){const blob=await item.getType(type);if(opening.signal.aborted)return;
+        if(imageOpening===opening)imageOpening=null;
+        void openImageEditor(blob,'',dest);return;}
+    }
+    throw new Error('The clipboard has no image.');
+  }catch(error){if(!opening.signal.aborted)showNotice(error instanceof Error?error.message:'Could not read the clipboard.',5000);}
+  finally{if(imageOpening===opening)imageOpening=null;}
+}
+function showImageMenu():void {
+  const dest=imageDestination();if(!dest)return;
+  openMenu([
+    {title:'Choose image',action:()=>chooseImageFile(dest)},
+    {title:'Camera',action:()=>{void openImageCamera(dest);}},
+    {title:'Paste image',action:()=>{void pasteImageFromClipboard(dest);}},
+  ],{title:'Add image'});
+}
+editor.view.contentDOM.addEventListener('paste',(event:ClipboardEvent)=>{
+  if(imageFlow||imageCamera||imageOpening)return;
+  const file=[...(event.clipboardData?.items??[])].find(item=>item.type.startsWith('image/'))?.getAsFile();
+  if(!file)return;const dest=imageDestination();if(!dest)return;
+  event.preventDefault();event.stopPropagation();void openImageEditor(file,file.name||'',dest);
+},true);
+
 const toolbarList = document.querySelector<HTMLElement>('#edit-toolbar-list')!;
 function updateToolbarFades(): void {
   const max = toolbarList.scrollWidth - toolbarList.clientWidth;

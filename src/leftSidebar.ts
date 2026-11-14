@@ -42,6 +42,8 @@ export interface LeftSidebarDeps {
   /** Open a note in a new tab. */
   /** Create a note in a folder and open it. */
   createNote(dir: string): void;
+  /** Move a file or folder, before reporting the completed move. */
+  move(from: string, to: string, isFolder: boolean): Promise<void>;
   /** A file or folder was renamed or moved. */
   renamed(from: string, to: string): void;
   /** A file or folder was deleted. */
@@ -543,7 +545,7 @@ export function createLeftSidebar(root: HTMLElement, deps: LeftSidebarDeps) {
     });
     if (dir === null || dir === current || !valid(dir)) return;
     const to = joinPath(dir, basename(path));
-    try { await backend.rename(path, to); } catch (error) { alertError(error); return; }
+    try { await deps.move(path, to, isFolder); } catch (error) { alertError(error); return; }
     afterMove(path, to, isFolder);
   }
 
