@@ -139,3 +139,44 @@ export function asStored(text: string): Stored {
   }
   return { text };
 }
+
+/** Create an image only if the key is absent. Unlike putStored, this waits for
+ * the whole transaction to commit and reports a name collision separately. */
+export async function createOwnedStored(path: string, value: Stored, owner: string): Promise<'created' | 'exists' | 'failed'> {
+  const open = await db();
+  if (!open) return 'failed';
+  return new Promise((resolve) => {
+    let collision = false;
+    try {
+      const tx = open.transaction(STORE, 'readwrite');
+      const request = tx.objectStore(STORE).add({ ...value, imageWriteOwner: owner }, path);
+      request.onerror = (event) => {
+        collision = request.error?.name === 'ConstraintError';
+        event.preventDefault();
+        try { tx.abort(); } catch { /* already aborting */ }
+      };
+      tx.oncomplete = () => resolve('created');
+      tx.onabort = () => resolve(collision ? 'exists' : 'failed');
+      tx.onerror = (event) => { event.preventDefault(); };
+    } catch { resolve('failed'); }
+  });
+}
+
+/** Roll back only our own newly-created value. Never remove another writer's
+ * replacement when a save or the browser index update fails. */
+export async function removeOwnedStored(path: string, owner: string): Promise<boolean> {
+  const open = await db();
+  if (!open) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = open.transaction(STORE, 'readwrite'), store = tx.objectStore(STORE), request = store.get(path);
+      request.onsuccess = () => {
+        const value = request.result as { imageWriteOwner?: string } | undefined;
+        if (value?.imageWriteOwner === owner) store.delete(path);
+      };
+      request.onerror = () => { try { tx.abort(); } catch { /* already aborting */ } };
+      tx.oncomplete = () => resolve(true);
+      tx.onabort = () => resolve(false);
+    } catch { resolve(false); }
+  });
+}

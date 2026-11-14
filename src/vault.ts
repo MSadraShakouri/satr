@@ -14,7 +14,8 @@
 // state live in the app's own storage.
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { forgetInside, wroteInside } from './folderTimes';
-import { asStored, dropStored, getStored, migrateStored, putStored, storedText } from './webStore';
+import { asStored, createOwnedStored, dropStored, getStored, migrateStored, putStored, removeOwnedStored, storedText, type Stored } from './webStore';
+import { validateImageDestination, validateNoteBackupDestination, writeNativeImage, writeNativeNoteBackup } from './imageNativeWrite';
 
 export interface Entry {
   path: string;
@@ -61,6 +62,13 @@ export interface Backend {
   /** Bytes straight in, without going through text. The browser vault only:
    *  the device writes a file by its path and has no need of it. */
   writeBytes?(path: string, blob: Blob): Promise<void>;
+  /** Create a new image without overwriting an existing path. */
+  createImageBytes(path: string, blob: Blob, signal?: AbortSignal): Promise<void>;
+  createNoteBackup(path:string,text:string):Promise<void>;
+}
+
+export class ImageNameTakenError extends Error {
+  constructor() { super('An image with that name already exists'); this.name = 'ImageNameTakenError'; }
 }
 
 const MIME: Record<string, string> = {
@@ -200,6 +208,7 @@ class WebBackend implements Backend {
    *  The legacy migration runs before anything may be awaited, so it needs a
    *  way to put a file down without waiting. */
   writeSync(path: string, text: string): void {
+    this.index = this.load();
     localStorage.setItem(fileKey(path), text);
     this.index.files[path] = Date.now();
     this.addFolders(path);
@@ -207,6 +216,8 @@ class WebBackend implements Backend {
     this.save();
   }
   private note(path: string): void {
+    // Other tabs may have added files while the IndexedDB write was pending.
+    this.index = this.load();
     localStorage.removeItem(fileKey(path));
     this.index.files[path] = Date.now();
     this.addFolders(path);
@@ -221,7 +232,46 @@ class WebBackend implements Backend {
     await putStored(path, { blob, mime: blob.type || mimeType(path) });
     this.note(path);
   }
+  async createImageBytes(path: string, blob: Blob, signal?: AbortSignal): Promise<void> {
+    validateImageDestination(path);
+    if (!blob.size) throw new Error('Image has no bytes');
+    await this.createOwned(path,{blob,mime:blob.type || mimeType(path)},signal);
+  }
+  async createNoteBackup(path:string,text:string):Promise<void>{
+    validateNoteBackupDestination(path);
+    if(!text)throw new Error('Cannot back up an empty note');
+    await this.createOwned(path,{text});
+  }
+  private async createOwned(path:string,value:Stored,signal?:AbortSignal):Promise<void>{
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+    // Also look at the current shared index: a second tab may have changed it
+    // since this backend instance was constructed.
+    const current = this.load();
+    if (path in current.files || current.folders.includes(path) || localStorage.getItem(fileKey(path)) !== null) throw new ImageNameTakenError();
+    for (let parent = dirname(path); parent; parent = dirname(parent)) if (parent in current.files || localStorage.getItem(fileKey(parent)) !== null) throw new Error('Image folder is a file');
+    const owner = crypto.randomUUID();
+    const created = await createOwnedStored(path, value, owner);
+    if (created === 'exists') throw new ImageNameTakenError();
+    if (created !== 'created') throw new Error('Could not save image');
+    try {
+      if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+      const latest = this.load();
+      if (path in latest.files || latest.folders.includes(path) || localStorage.getItem(fileKey(path)) !== null) throw new ImageNameTakenError();
+      for (let parent = dirname(path); parent; parent = dirname(parent)) if (parent in latest.files || localStorage.getItem(fileKey(parent)) !== null) throw new Error('Image folder is a file');
+      // Preserve other recently-added files, and never delete a legacy copy.
+      this.index = latest;
+      this.index.files[path] = Date.now();
+      this.addFolders(path);
+      this.save();
+      wroteInside(path, this.index.files[path]);
+    } catch (error) {
+      this.index = this.load();
+      if (!await removeOwnedStored(path, owner)) throw new Error('Could not clean up the incomplete image');
+      throw error;
+    }
+  }
   async mkdir(path: string): Promise<void> {
+    this.index = this.load();
     if (!this.isFolder(path)) this.index.folders.push(path);
     this.addFolders(path);
     this.save();
@@ -413,6 +463,18 @@ class DeviceBackend implements Backend {
     // them: a folder's own modified time does not move when a file inside
     // it is rewritten (src/folderTimes.ts).
     wroteInside(path);
+  }
+  async createImageBytes(path: string, blob: Blob, signal?: AbortSignal): Promise<void> {
+    try { await writeNativeImage(path, blob, signal); }
+    catch (error) {
+      if ((error as { code?: string })?.code === 'IMAGE_EXISTS') throw new ImageNameTakenError();
+      throw error;
+    }
+    wroteInside(path);
+  }
+  async createNoteBackup(path:string,text:string):Promise<void>{
+    try { await writeNativeNoteBackup(path,text); }
+    catch(error) { if((error as {code?:string})?.code==='IMAGE_EXISTS')throw new ImageNameTakenError(); throw error; }
   }
   async mkdir(path: string): Promise<void> {
     await this.fs.mkdir({ path, directory: EXTERNAL, recursive: true });

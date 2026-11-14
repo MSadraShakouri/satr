@@ -25,6 +25,7 @@ public class MainActivity extends BridgeActivity {
         // Satr's own native plugins, registered before the bridge starts.
         registerPlugin(PrintPlugin.class);
         registerPlugin(StoragePlugin.class);
+        registerPlugin(ImageWritePlugin.class);
         registerPlugin(SystemBarsPlugin.class);
         registerPlugin(OpenFilePlugin.class);
         registerPlugin(PdfRangePlugin.class);
