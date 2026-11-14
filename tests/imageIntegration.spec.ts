@@ -60,3 +60,34 @@ test('Back cancels a delayed clipboard read without later opening the editor',as
  await addMenu(page);await page.locator('.menu:not(.is-closing) .menu-item',{hasText:'Paste image'}).click();await page.waitForFunction(()=>(window as any).finishClipboard);await page.evaluate(()=>document.dispatchEvent(new Event('satr:back')));await page.evaluate(()=>(window as any).finishClipboard());await page.waitForTimeout(200);
  await expect(page.locator('.image-flow')).toHaveCount(0);expect(await page.evaluate(async()=>{const {backend}=(window as any).__satr.load('/src/vault.ts');return backend.list('Notes/res')})).toEqual([]);
 });
+
+test('normal text paste continues through the editor without reading the clipboard API',async({page})=>{
+ await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{read:()=>{throw Error('clipboard read must not be used')}}});});
+ const before=await page.locator('.cm-content').innerText();
+ await page.evaluate(()=>{const data=new DataTransfer();data.setData('text/plain','normal pasted words');document.querySelector('.cm-content')!.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));});
+ await expect(page.locator('.cm-content')).toContainText('normal pasted words');await expect(page.locator('.image-flow')).toHaveCount(0);expect(await page.locator('.cm-content').innerText()).not.toBe(before);
+});
+
+test('a keyboard image transfer uses the image editor without reading the clipboard API',async({page})=>{
+ const input=await sharp({create:{width:300,height:200,channels:4,background:'#667799'}}).png().toBuffer();let requests=0;
+ await page.route('**/__satr_image_paste/*',async route=>{requests++;await route.fulfill({status:200,contentType:'image/png',body:input});});
+ await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{read:()=>{throw Error('clipboard read must not be used')}}});document.dispatchEvent(new CustomEvent('satr:native-image-paste',{detail:{token:'0123456789abcdef0123456789abcdef',type:'image/png'}}));});
+ await expect(page.locator('.image-select')).toBeVisible();expect(requests).toBe(1);await page.locator('.image-select [data-flow=crop]').click();await page.locator('.image-select [data-act=next]').click();await page.locator('.image-review select').selectOption('image/png');await page.locator('.image-review [data-act=insert]').click();await expect(page.locator('.image-flow')).toHaveCount(0);
+ const got=await page.evaluate(async()=>{const {backend}=(window as any).__satr.load('/src/vault.ts');return {file:await backend.stat('Notes/res/Image.png'),text:(document.querySelector('.cm-content') as HTMLElement).innerText};});expect(got.file?.kind).toBe('file');expect(got.text).toContain('![](res/Image.png)');
+});
+
+test('keyboard image transfer is ignored outside the note and Back cancels an in-flight transfer',async({page})=>{
+ let finish!:()=>void;const wait=new Promise<void>(resolve=>{finish=resolve});let requests=0;
+ await page.route('**/__satr_image_paste/*',async route=>{requests++;await wait;await route.fulfill({status:404,body:''}).catch(()=>{});});
+ await page.evaluate(()=>{const input=document.createElement('input');input.id='other-input';document.body.append(input);input.focus();document.dispatchEvent(new CustomEvent('satr:native-image-paste',{detail:{token:'0123456789abcdef0123456789abcdef',type:'image/png'}}));});expect(requests).toBe(0);
+ await page.locator('.cm-content').click();await page.evaluate(()=>document.dispatchEvent(new CustomEvent('satr:native-image-paste',{detail:{token:'0123456789abcdef0123456789abcdef',type:'image/png'}})));
+ await expect.poll(()=>requests).toBe(1);await page.evaluate(()=>document.dispatchEvent(new Event('satr:back')));finish();await page.waitForTimeout(150);await expect(page.locator('.image-flow')).toHaveCount(0);
+});
+
+test('a keyboard image arriving after the note changes is not inserted',async({page})=>{
+ const input=await sharp({create:{width:80,height:80,channels:4,background:'#445566'}}).png().toBuffer();let finish!:()=>void;const wait=new Promise<void>(resolve=>{finish=resolve});let requests=0;
+ await page.route('**/__satr_image_paste/*',async route=>{requests++;await wait;await route.fulfill({status:200,contentType:'image/png',body:input});});
+ await page.evaluate(()=>document.dispatchEvent(new CustomEvent('satr:native-image-paste',{detail:{token:'0123456789abcdef0123456789abcdef',type:'image/png'}})));await expect.poll(()=>requests).toBe(1);
+ await page.evaluate(()=>{const cm=document.querySelector('.cm-content') as HTMLElement;cm.focus();document.execCommand('insertText',false,' newer text');});finish();
+ await expect(page.locator('.notice')).toContainText('The note changed before the image opened');await expect(page.locator('.image-flow')).toHaveCount(0);expect(await page.evaluate(async()=>{const {backend}=(window as any).__satr.load('/src/vault.ts');return backend.list('Notes/res')})).toEqual([]);
+});

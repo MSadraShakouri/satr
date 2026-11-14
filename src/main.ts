@@ -5630,10 +5630,46 @@ function showImageMenu():void {
 }
 editor.view.contentDOM.addEventListener('paste',(event:ClipboardEvent)=>{
   if(imageFlow||imageCamera||imageOpening)return;
-  const file=[...(event.clipboardData?.items??[])].find(item=>item.type.startsWith('image/'))?.getAsFile();
+  const data=event.clipboardData;
+  const file=[...(data?.items??[])].filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).find(Boolean)
+    ?? [...(data?.files??[])].find(item=>item.type.startsWith('image/'));
   if(!file)return;const dest=imageDestination();if(!dest)return;
   event.preventDefault();event.stopPropagation();void openImageEditor(file,file.name||'',dest);
 },true);
+
+// Android keyboards can insert images with InputConnection.commitContent,
+// without putting an image in navigator.clipboard. Advertise that capability
+// only while the note itself has focus; native text inputs keep their own paste.
+if(Capacitor.getPlatform()==='android'){
+  const imagePaste=registerPlugin<{setEnabled(options:{enabled:boolean;sequence:number;session:string}):Promise<void>}>('SatrImagePaste');
+  const session=crypto.randomUUID();let sequence=0;
+  const setImagePaste=(enabled:boolean):void=>{void imagePaste.setEnabled({enabled,sequence:++sequence,session}).catch(()=>{});};
+  editor.view.contentDOM.addEventListener('focusin',()=>setImagePaste(hasNote()&&!viewOnly&&mode==='edit'&&!isExternalPath(filePath)&&fileKind(filePath)==='note'));
+  editor.view.contentDOM.addEventListener('focusout',()=>setImagePaste(false));
+  setImagePaste(!!document.activeElement && editor.view.contentDOM.contains(document.activeElement) && hasNote()&&!viewOnly&&mode==='edit'&&!isExternalPath(filePath)&&fileKind(filePath)==='note');
+}
+// The native WebView grants a short-lived, one-use local stream for a keyboard
+// image. Capture the note before reading, and never paste into a changed note.
+document.addEventListener('satr:native-image-paste',(event:Event)=>{
+  const active=document.activeElement;
+  if(!active || !editor.view.contentDOM.contains(active) || imageFlow||imageCamera||imageOpening)return;
+  const detail=(event as CustomEvent<{token?:string;type?:string}>).detail;
+  if(!detail || !/^[0-9a-f]{32}$/.test(detail.token??'') || !['image/png','image/jpeg','image/webp','image/gif'].includes(detail.type??''))return;
+  const dest=imageDestination();if(!dest)return;
+  const opening=new AbortController();imageOpening=opening;
+  void(async()=>{
+    try{
+      const response=await fetch(`/__satr_image_paste/${detail.token}`,{signal:opening.signal,cache:'no-store'});
+      if(!response.ok)throw new Error('Could not read the pasted image.');
+      const blob=await response.blob();
+      if(!blob.size||blob.size>64*1024*1024||blob.type!==detail.type)throw new Error('The pasted image is empty, too large, or unsupported.');
+      if(opening.signal.aborted)return;
+      if(imageOpening===opening)imageOpening=null;
+      void openImageEditor(blob,'',dest);
+    }catch(error){if(!opening.signal.aborted)showNotice(error instanceof Error?error.message:'Could not read the pasted image.',5000);}
+    finally{if(imageOpening===opening)imageOpening=null;}
+  })();
+});
 
 const toolbarList = document.querySelector<HTMLElement>('#edit-toolbar-list')!;
 function updateToolbarFades(): void {
