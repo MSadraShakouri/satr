@@ -81,6 +81,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The in-app viewfinder asks for this only when the camera is opened. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <!-- Notes are plain files in the phone's folders (src/vault.ts, StoragePlugin):
          all-files access on Android 11+, the classic permissions before that. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
